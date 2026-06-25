@@ -7,13 +7,14 @@ turn. This prototype covers **CLI (conversational) agents**.
 ## Layout
 
 ```
-harpe/                   # the `harpe` framework package: the loop + reusable cap impls
-  jo.toml                #   name = "harpe", runtime = python, dep harpe-caps
-  src/
-    Harpe.jo             #   Harpe.cli — the LLM↔program chat loop
-    HarpeCapsRuntime.jo  #   reusable capability impls: SkillsImpl, LoggerImpl
-    os.jo  subprocess.jo
+harpe/                   # three framework packages + an example agent
   caps/                  # `harpe-caps`: reusable capability interfaces (Skills, Logger) + types
+  jo.toml                # `harpe`: reusable capability IMPLS (runtime = python, dep harpe-caps)
+  src/
+    HarpeCapsRuntime.jo  #   SkillsImpl, LoggerImpl
+    os.jo
+  cli/                   # `harpe-cli`: the LLM↔program chat loop
+    jo.toml  src/Harpe.jo  src/os.jo   #   Harpe.cli + its FFI
   example/               # an example AGENT that depends on the framework
     jo.toml              #   the agent app: jo.main = Harpe.cli
     AGENT.md  skills/  .env.example
@@ -23,25 +24,27 @@ harpe/                   # the `harpe` framework package: the loop + reusable ca
       guest/             #   sandbox-guest: the model's per-turn program
 ```
 
-The framework (`harpe` + `harpe-caps`) owns the **loop** and the **reusable
-capabilities**; it does **not** own `runTask` or the per-turn entry. Each agent
-owns its `sandbox/`: `api` declares `runTask`, `runtime` has its own `main`
-(`Runtime.main`) where `jo.main` is rewired, and `guest` is what the LLM writes.
+The framework is three packages, each pulled in only where it's needed:
+`harpe-caps` (interfaces) and `harpe` (impls) are the reusable capabilities;
+`harpe-cli` is the loop. None of them owns `runTask` or the per-turn entry —
+each agent owns its `sandbox/`: `api` declares `runTask`, `runtime` has its own
+`main` (`SandboxRuntime.main`) where `jo.main` is rewired, and `guest` is what
+the LLM writes.
 
 ## How an agent is wired
 
-The agent app links its `main` to the framework loop:
+The agent app links its `main` to the loop package:
 
 ```toml
 # example/jo.toml
 [main.dependencies]
-harpe = { path = ".." }
+harpe-cli = { path = "../cli" }
 [main.links]
 "jo.main" = "Harpe.cli"
 ```
 
 The guest is the per-turn program. It depends on the agent's `api` (check) and
-`runtime` (link), and rewires the entry to the agent's own `Runtime.main`:
+`runtime` (link), and rewires the entry to the agent's own `SandboxRuntime.main`:
 
 ```toml
 # example/sandbox/guest/jo.toml
