@@ -1,0 +1,21 @@
+namespace SandboxRuntime
+
+import jo.IO.stdout
+import HarpeCaps.*
+import HarpeCapsRuntime.*
+import SandboxAPI
+
+// The agent's per-turn entry. The guest links jo.main = SandboxRuntime.main. It builds
+// the granted capabilities (reusing Harpe's impls) and runs the LLM's program.
+def main(): Unit receives stdout =
+  val argv: py.List = py.module("sys").argv.cast[py.List]
+  val skillsDir = if argv.size >= 2 then argv.get(1).asString else "skills"
+
+  val skillsImpl = new SkillsImpl(skillsDir)
+  val loggerImpl = new LoggerImpl(stdout)
+
+  with
+    HarpeCaps.skills = skillsImpl,
+    HarpeCaps.logger = loggerImpl
+  in
+    SandboxAPI.runTask()

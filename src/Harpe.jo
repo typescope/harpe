@@ -1,0 +1,249 @@
+//[ Harpe.jo
+  !
+  ! The CLI agent loop (the Harpe "conversational" trigger).
+  !
+  ! `jo.main = Harpe.cli` runs this. Each turn it:
+  !   1. reads a line from the user
+  !   2. asks the LLM, offering one tool: runCode(code)
+  !   3. on a runCode call: writes the program to sandbox/guest, builds & runs
+  !      it with `jo run`, and feeds stdout (or the compile error) back
+  !   4. repeats until the LLM replies with text, then prints the reply
+  !
+  ! The LLM only ever acts by writing a Jo program compiled against the
+  ! agent's sandbox — never by touching Python directly.
+//]
+
+namespace Harpe
+
+import jo.IO.stdout
+
+private def builtins: py.Dynamic = py.module("builtins")
+private def osMod: py.Dynamic = py.module("os")
+private def sysMod: py.Dynamic = py.module("sys")
+private def subprocessMod: py.Dynamic = py.module("subprocess")
+private def reMod: py.Dynamic = py.module("re")
+
+// ============================================
+// Small FFI helpers
+// ============================================
+
+private def attr(obj: py.Dynamic, name: String): py.Dynamic = builtins.getattr(obj, name)
+
+private def getenv(name: String, fallback: String): String =
+  attr(osMod, "environ").cast[py.Dict].get(name, fallback).asString
+
+private def fileExists(path: String): Bool = os.path.isfile(path)
+
+private def readFile(path: String): String = py.open(path, "r").read().asString
+
+// Concatenate the agent's API contract (sandbox/api/src/*.jo) for the prompt.
+private def readApiContract(): String =
+  var out = ""
+  val dir = "sandbox/api/src"
+  if os.path.isdir(dir) then
+    val names: py.List = os.listdir(dir)
+    var i = 0
+    while i < names.size do
+      val name = names.get(i).asString
+      if name.endsWith(".jo") then
+        out = out + readFile(os.path.join(dir, name)) + "\n"
+      i = i + 1
+  out
+
+private def writeFile(path: String, content: String): Unit =
+  val f = py.open(path, "w")
+  f.write(content)
+  f.close()
+
+private def stripAnsi(s: String): String =
+  reMod.sub("\\[[0-9;]*m", "", s).asString
+
+private def indexOfChar(s: String, c: Char): Int =
+  var i = 0
+  while i < s.size do
+    if s.get(i) == c then return i
+    i = i + 1
+  -1
+
+// Load KEY=VALUE lines from a .env file into the process environment.
+private def loadDotenv(path: String): Unit =
+  if fileExists(path) then
+    val env = attr(osMod, "environ").cast[py.Dict]
+    for line in readFile(path).lines do
+      val t = line.trim
+      val eq = indexOfChar(t, '=')
+      if t.size > 0 && !t.startsWith("#") && eq > 0 then
+        val key = t.substring(0, eq).trim
+        val value = t.substring(eq + 1, t.size).trim
+        env.set(key, value)
+
+// ============================================
+// LLM prompt and tools
+// ============================================
+
+private def systemPrompt(): String =
+  val persona  = if fileExists("AGENT.md") then readFile("AGENT.md") + "\n\n" else ""
+  val contract = readApiContract()
+  """
+    \{persona}You are a Harpe agent. You act ONLY by writing Jo programs and running
+    them with your single tool, runCode(code). Every reply, computation, or
+    capability call must be a Jo program you submit — you cannot touch the host.
+
+    Your program is `namespace UserTask` and implements the deferred `runTask`
+    declared in the agent's API contract below. Match its `receives` list exactly,
+    importing the API namespace it defines. The text your program prints with
+    `println` comes back to you as the tool result.
+
+    --- agent API contract (sandbox/api) ---
+    \{contract}
+    --- end contract ---
+
+    Before writing Jo, read the `jo-cheat-sheet` skill for syntax:
+        skills.read("jo-cheat-sheet")
+
+    Workflow: write Jo -> runCode -> if it fails to compile, read the error and
+    fix it -> once it runs, use the output to answer. Keep answers concise.
+    """
+
+private def buildTools(): py.List =
+  val schema = py.dict(
+    "type" ~ "object",
+    "properties" ~ py.dict(
+      "code" ~ py.dict(
+        "type" ~ "string",
+        "description" ~ "The Jo source code to compile and run"
+      )
+    ),
+    "required" ~ py.list("code")
+  )
+  val tool = py.dict(
+    "name" ~ "runCode",
+    "description" ~ "Write a Jo program (namespace UserTask, def runTask), compile it against the agent sandbox, and run it. Returns the program's stdout, or the compile error if it does not build.",
+    "input_schema" ~ schema
+  )
+  py.list(tool)
+
+// ============================================
+// The runCode tool: write -> build -> run -> capture
+// ============================================
+
+private def runCode(code: String, guestSrc: String, guestSpec: String, skillsDir: String): String =
+  writeFile(guestSrc, code)
+
+  val args = py.list("jo", "run", "--spec", guestSpec, "--", skillsDir)
+  val proc = subprocessMod.run(args, capture_output = true, text = true)
+
+  val rc  = attr(proc, "returncode").asInt
+  val out = attr(proc, "stdout").asString.trim
+  val err = stripAnsi(attr(proc, "stderr").asString).trim
+
+  if rc != 0 then
+    "The program did not run:\n\{err}"
+  else if out == "" then
+    "(the program produced no output)"
+  else
+    out
+
+// ============================================
+// The chat loop
+// ============================================
+
+def cli(): Unit receives stdout =
+  loadDotenv(".env")
+
+  val apiKey = getenv("ANTHROPIC_API_KEY", "")
+  if apiKey == "" then
+    println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
+    abort "ANTHROPIC_API_KEY not set"
+
+  val model     = getenv("MODEL", "claude-opus-4-6")
+  val skillsDir = "skills"
+  val guestSpec = "sandbox/guest/jo.toml"
+  val guestSrc  = "sandbox/guest/src/Task.jo"
+
+  val client = py.module("anthropic").Anthropic(api_key = apiKey)
+  val sys    = systemPrompt()
+  val tools  = buildTools()
+
+  println "harpe ▸ chat (Ctrl-D or 'quit' to exit)"
+
+  var messages: py.List = py.list()
+  var running = true
+
+  while running do
+    var userInput = ""
+    match py.try(py.input("\nYou ▸ "))
+      case Ok(s)  => userInput = s.trim
+      case Err(_) =>
+        running = false
+
+    if running && userInput != "" then
+      if userInput == "quit" || userInput == "exit" then
+        running = false
+      else
+        messages.append(py.dict("role" ~ "user", "content" ~ userInput))
+
+        var turnDone = false
+        while !turnDone do
+          val response = client.messages.create(
+            model = model,
+            max_tokens = 8096,
+            system = sys,
+            messages = messages,
+            tools = tools
+          )
+
+          val content: py.List = attr(response, "content").cast[py.List]
+
+          // Re-serialize the assistant message and collect tool calls.
+          var assistantContent: py.List = py.list()
+          var toolUses: py.List = py.list()
+          var i = 0
+          while i < content.size do
+            val block = content.get(i)
+            val btype = attr(block, "type").asString
+            if btype == "text" then
+              assistantContent.append(py.dict("type" ~ "text", "text" ~ attr(block, "text")))
+            else if btype == "tool_use" then
+              assistantContent.append(py.dict(
+                "type" ~ "tool_use",
+                "id" ~ attr(block, "id"),
+                "name" ~ attr(block, "name"),
+                "input" ~ attr(block, "input")
+              ))
+              toolUses.append(block)
+            i = i + 1
+
+          messages.append(py.dict("role" ~ "assistant", "content" ~ assistantContent))
+
+          if toolUses.size > 0 then
+            var toolResults: py.List = py.list()
+            var j = 0
+            while j < toolUses.size do
+              val tu = toolUses.get(j)
+              val code = attr(tu, "input").cast[py.Dict].get("code", "").asString
+              val result = runCode(code, guestSrc, guestSpec, skillsDir)
+              println "  ✓ ran"
+              toolResults.append(py.dict(
+                "type" ~ "tool_result",
+                "tool_use_id" ~ attr(tu, "id"),
+                "content" ~ result
+              ))
+              j = j + 1
+
+            messages.append(py.dict("role" ~ "user", "content" ~ toolResults))
+          else
+            var text = ""
+            var k = 0
+            while k < content.size do
+              val block = content.get(k)
+              if attr(block, "type").asString == "text" then
+                text = text + attr(block, "text").asString
+              k = k + 1
+
+            println ""
+            println "Agent ▸ \{text.trim}"
+            turnDone = true
+
+  println "Goodbye."
+end
