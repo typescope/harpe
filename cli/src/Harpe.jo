@@ -150,12 +150,14 @@ private def runCode(code: String, guestSrc: String, guestSpec: String, skillsDir
 
 def cli(): Unit receives stdout =
   loadDotenv(".env")
-
   val apiKey = getenv("ANTHROPIC_API_KEY", "")
   if apiKey == "" then
     println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
-    abort "ANTHROPIC_API_KEY not set"
+  else
+    runChat(apiKey)
+end
 
+private def runChat(apiKey: String): Unit receives stdout =
   val model     = getenv("MODEL", "claude-opus-4-6")
   val skillsDir = "skills"
   val guestSpec = "sandbox/guest/jo.toml"
