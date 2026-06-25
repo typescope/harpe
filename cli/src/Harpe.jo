@@ -22,6 +22,9 @@ private def osMod: py.Dynamic = py.module("os")
 private def sysMod: py.Dynamic = py.module("sys")
 private def subprocessMod: py.Dynamic = py.module("subprocess")
 private def reMod: py.Dynamic = py.module("re")
+private def timeMod: py.Dynamic = py.module("time")
+private def jsonMod: py.Dynamic = py.module("json")
+private def globMod: py.Dynamic = py.module("glob")
 
 // ============================================
 // Small FFI helpers
@@ -124,25 +127,72 @@ private def buildTools(): py.List =
   py.list(tool)
 
 // ============================================
-// The runCode tool: write -> build -> run -> capture
+// The runCode tool: write -> build -> run -> capture (timed + logged)
 // ============================================
+
+private def now(): Float = timeMod.time().asFloat
+
+private def round2(x: Float): Float = builtins.round(x, 2).asFloat
+
+// Append one JSON record per turn to the audit log under logs/.
+private def logTurn(entry: py.Dict): Unit =
+  os.makedirs("logs")
+  val f = py.open("logs/turns.jsonl", "a")
+  f.write(jsonMod.dumps(entry).asString + "\n")
+  f.close()
+
+// "sandbox/guest/jo.toml" -> "sandbox/guest/.build/*/jo-*/target/*.py"
+private def guestBuildGlob(guestSpec: String): String =
+  val dir = guestSpec.substring(0, guestSpec.size - "/jo.toml".size)
+  dir + "/.build/*/jo-*/target/*.py"
 
 private def runCode(code: String, guestSrc: String, guestSpec: String, skillsDir: String): String =
   writeFile(guestSrc, code)
 
-  val args = py.list("jo", "run", "--spec", guestSpec, "--", skillsDir)
-  val proc = subprocessMod.run(args, capture_output = true, text = true)
+  // 1. Compile — the security checkpoint — timed and error-captured.
+  val t0 = now()
+  val build = subprocessMod.run(py.list("jo", "build", "--spec", guestSpec), capture_output = true, text = true)
+  val compileSeconds = round2(now() - t0)
 
-  val rc  = attr(proc, "returncode").asInt
-  val out = attr(proc, "stdout").asString.trim
-  val err = stripAnsi(attr(proc, "stderr").asString).trim
+  if attr(build, "returncode").asInt != 0 then
+    val compileError = stripAnsi(attr(build, "stderr").asString).trim
+    logTurn(py.dict(
+      "time"           ~ now(),
+      "code"           ~ code,
+      "compiled"       ~ false,
+      "compileSeconds" ~ compileSeconds,
+      "compileError"   ~ compileError
+    ))
+    return "The program did not compile (\{compileSeconds}s):\n\{compileError}"
 
-  if rc != 0 then
-    "The program did not run:\n\{err}"
-  else if out == "" then
-    "(the program produced no output)"
-  else
-    out
+  // 2. Run the compiled program directly, timed.
+  val targets: py.List = globMod.glob(guestBuildGlob(guestSpec)).cast[py.List]
+  if targets.size == 0 then
+    return "The program compiled but no executable was found."
+
+  val targetPy = targets.get(0).asString
+  val t1 = now()
+  val run = subprocessMod.run(py.list("python3", targetPy, skillsDir), capture_output = true, text = true)
+  val runSeconds = round2(now() - t1)
+  val runRc  = attr(run, "returncode").asInt
+  val runOut = attr(run, "stdout").asString.trim
+  val runErr = stripAnsi(attr(run, "stderr").asString).trim
+
+  val result =
+    if runRc != 0 then "The program crashed:\n\{runErr}"
+    else if runOut == "" then "(the program produced no output)"
+    else runOut
+
+  logTurn(py.dict(
+    "time"           ~ now(),
+    "code"           ~ code,
+    "compiled"       ~ true,
+    "compileSeconds" ~ compileSeconds,
+    "runSeconds"     ~ runSeconds,
+    "exitCode"       ~ runRc,
+    "output"         ~ result
+  ))
+  result
 
 // ============================================
 // The chat loop
