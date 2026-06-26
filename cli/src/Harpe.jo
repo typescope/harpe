@@ -26,6 +26,9 @@ private def timeMod: py.Dynamic = py.module("time")
 private def jsonMod: py.Dynamic = py.module("json")
 private def globMod: py.Dynamic = py.module("glob")
 private def threadingMod: py.Dynamic = py.module("threading")
+private def termiosMod: py.Dynamic = py.module("termios")
+private def ttyMod: py.Dynamic = py.module("tty")
+private def selectMod: py.Dynamic = py.module("select")
 
 // ============================================
 // Small FFI helpers
@@ -243,6 +246,59 @@ private def startSpinner(message: String): Spinner =
   thread.start()
   new Spinner(stopEvent, thread)
 
+// ============================================
+// ESC-to-interrupt: watch stdin for the ESC key while the agent works
+// ============================================
+
+// True if stdin has a byte ready within `timeout` seconds.
+private def stdinReady(timeout: Float): Bool =
+  val res = selectMod.select(py.list(0), py.list(), py.list(), timeout)
+  res.cast[py.Tuple].get(0).cast[py.List].size > 0
+
+// Put the terminal in cbreak mode so a single keypress (ESC) is readable
+// without Enter. Returns the saved settings to restore later.
+private def enterCbreak(): py.Dynamic =
+  val saved = termiosMod.tcgetattr(0)
+  ttyMod.setcbreak(0)
+  saved
+
+private def restoreTerminal(saved: py.Dynamic): Unit =
+  termiosMod.tcsetattr(0, termiosMod.TCSADRAIN, saved)
+
+// Background thread: set `interrupt` when the user presses ESC (a lone ESC,
+// not an escape sequence like an arrow key). Stops when `stop` is set.
+private def startEscWatcher(interrupt: py.Dynamic, stop: py.Dynamic): Unit =
+  val watcher = () =>
+    while !stop.is_set().asBool && !interrupt.is_set().asBool do
+      if stdinReady(0.1) then
+        val ch = osMod.read(0, 1)
+        if builtins.len(ch).asInt == 1 && builtins.ord(ch).asInt == 27 then
+          // a lone ESC (no byte follows) — not part of an arrow-key sequence
+          if !stdinReady(0.02) then interrupt.set()
+  val thread = threadingMod.Thread(target = watcher, daemon = true)
+  thread.start()
+
+// Run `work` on a background thread; return Some(result), or None if
+// `interrupt` fires first (the abandoned worker finishes in the background).
+private def callInterruptible(interrupt: py.Dynamic, work: () => py.Dynamic): Option[py.Dynamic] =
+  val box  = py.list(py.none)
+  val done = threadingMod.Event()
+  val worker = () =>
+    box.set(0, work())
+    done.set()
+  val thread = threadingMod.Thread(target = worker, daemon = true)
+  thread.start()
+
+  var out: Option[py.Dynamic] = None
+  var waiting = true
+  while waiting do
+    if done.wait(0.05).asBool then
+      out = Some(box.get(0))
+      waiting = false
+    else if interrupt.is_set().asBool then
+      waiting = false
+  out
+
 private def historyFile: String = "data/chat_history"
 
 // Enable arrow-key line editing and load persistent history (up/down recalls
@@ -285,7 +341,7 @@ private def runChat(apiKey: String): Unit receives stdout =
   initReadline()
   println "Harpe agent — type a message to start. Ctrl-D or 'quit' to exit."
 
-  var messages: py.List = py.list()
+  val messages: py.List = py.list()
   var running = true
 
   while running do
@@ -304,73 +360,101 @@ private def runChat(apiKey: String): Unit receives stdout =
       if userInput == "quit" || userInput == "exit" then
         running = false
       else
+        val turnStart = messages.size
         messages.append(py.dict("role" ~ "user", "content" ~ userInput))
 
+        // Work loop — ESC cancels the turn and returns to the prompt.
+        val savedTerm = enterCbreak()
+        val interrupt = threadingMod.Event()
+        val stopWatch = threadingMod.Event()
+        startEscWatcher(interrupt, stopWatch)
+
         var turnDone = false
+        var ok       = true
         while !turnDone do
-          val llmSpin = startSpinner("thinking")
-          val response = client.messages.create(
+          val llmSpin = startSpinner("thinking · ESC to interrupt")
+          val maybe = callInterruptible(interrupt, () => client.messages.create(
             model = model,
             max_tokens = 8096,
             system = sys,
             messages = messages,
             tools = tools
-          )
+          ))
           llmSpin.stop()
 
-          val content: py.List = attr(response, "content").cast[py.List]
+          match maybe
+            case None =>
+              ok = false
+              turnDone = true
 
-          // Re-serialize the assistant message and collect tool calls.
-          var assistantContent: py.List = py.list()
-          var toolUses: py.List = py.list()
-          var i = 0
-          while i < content.size do
-            val block = content.get(i)
-            val btype = attr(block, "type").asString
-            if btype == "text" then
-              assistantContent.append(py.dict("type" ~ "text", "text" ~ attr(block, "text")))
-            else if btype == "tool_use" then
-              assistantContent.append(py.dict(
-                "type" ~ "tool_use",
-                "id" ~ attr(block, "id"),
-                "name" ~ attr(block, "name"),
-                "input" ~ attr(block, "input")
-              ))
-              toolUses.append(block)
-            i = i + 1
+            case Some(response) =>
+              val content: py.List = attr(response, "content").cast[py.List]
 
-          messages.append(py.dict("role" ~ "assistant", "content" ~ assistantContent))
+              // Re-serialize the assistant message and collect tool calls.
+              var assistantContent: py.List = py.list()
+              var toolUses: py.List = py.list()
+              var i = 0
+              while i < content.size do
+                val block = content.get(i)
+                val btype = attr(block, "type").asString
+                if btype == "text" then
+                  assistantContent.append(py.dict("type" ~ "text", "text" ~ attr(block, "text")))
+                else if btype == "tool_use" then
+                  assistantContent.append(py.dict(
+                    "type" ~ "tool_use",
+                    "id" ~ attr(block, "id"),
+                    "name" ~ attr(block, "name"),
+                    "input" ~ attr(block, "input")
+                  ))
+                  toolUses.append(block)
+                i = i + 1
 
-          if toolUses.size > 0 then
-            var toolResults: py.List = py.list()
-            var j = 0
-            while j < toolUses.size do
-              val tu = toolUses.get(j)
-              val code = attr(tu, "input").cast[py.Dict].get("code", "").asString
-              val runSpin = startSpinner("running")
-              val outcome = runCode(code, guestSrc, guestSpec, skillsDir)
-              runSpin.stop()
-              println "  · \{outcome.summary}"
-              toolResults.append(py.dict(
-                "type" ~ "tool_result",
-                "tool_use_id" ~ attr(tu, "id"),
-                "content" ~ outcome.result
-              ))
-              j = j + 1
+              messages.append(py.dict("role" ~ "assistant", "content" ~ assistantContent))
 
-            messages.append(py.dict("role" ~ "user", "content" ~ toolResults))
-          else
-            var text = ""
-            var k = 0
-            while k < content.size do
-              val block = content.get(k)
-              if attr(block, "type").asString == "text" then
-                text = text + attr(block, "text").asString
-              k = k + 1
+              if toolUses.size > 0 then
+                var toolResults: py.List = py.list()
+                var j = 0
+                while j < toolUses.size && !interrupt.is_set().asBool do
+                  val tu = toolUses.get(j)
+                  val code = attr(tu, "input").cast[py.Dict].get("code", "").asString
+                  val runSpin = startSpinner("running · ESC to interrupt")
+                  val outcome = runCode(code, guestSrc, guestSpec, skillsDir)
+                  runSpin.stop()
+                  println "  · \{outcome.summary}"
+                  toolResults.append(py.dict(
+                    "type" ~ "tool_result",
+                    "tool_use_id" ~ attr(tu, "id"),
+                    "content" ~ outcome.result
+                  ))
+                  j = j + 1
 
-            println ""
-            println "Agent ▸ \{text.trim}"
-            turnDone = true
+                if interrupt.is_set().asBool then
+                  ok = false
+                  turnDone = true
+                else
+                  messages.append(py.dict("role" ~ "user", "content" ~ toolResults))
+              else
+                var text = ""
+                var k = 0
+                while k < content.size do
+                  val block = content.get(k)
+                  if attr(block, "type").asString == "text" then
+                    text = text + attr(block, "text").asString
+                  k = k + 1
+
+                println ""
+                println "Agent ▸ \{text.trim}"
+                turnDone = true
+
+        stopWatch.set()
+        restoreTerminal(savedTerm)
+
+        if !ok then
+          // Discard the cancelled/failed turn so the conversation stays valid.
+          while messages.size > turnStart do
+            val _ = messages.pop()
+          if interrupt.is_set().asBool then println "  ⎋ interrupted"
+          else println "  · request failed"
 
   println "Goodbye."
 end
