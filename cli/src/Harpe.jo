@@ -24,6 +24,8 @@ namespace harpe.cli
 import jo.IO.stdout
 import harpe.ffi.*
 import harpe.tools.*
+import harpe.Workspace
+import harpe.workspace
 import os
 
 // Concatenate the agent's API contract (sandbox/api/src/*.jo) for the prompt.
@@ -204,9 +206,10 @@ private def banner(): Unit receives stdout =
   !
   ! Deferred hook for ADDING tools. The default is none; an agent overrides it
   ! in its jo.toml — `[main.links] "harpe.cli.extraTools" = "MyAgent.myTools"` —
-  ! to offer its own tools alongside the built-ins, without touching the loop.
+  ! to offer its own tools alongside the built-ins. Its impl `receives workspace`,
+  ! so it can resolve paths against the agent's working directory.
 //]
-defer def extraTools(): List[Tool] = []
+defer def extraTools(): List[Tool] receives workspace = []
 
 //[ defaultTools
   !
@@ -214,21 +217,34 @@ defer def extraTools(): List[Tool] = []
   ! agent that wants full control — including whether and how `runCode` exists —
   ! overrides it: `[main.links] "harpe.cli.defaultTools" = "MyAgent.myTools"`.
 //]
-defer def defaultTools(): List[Tool] =
-  builtinTools(defaultGuestSrc, defaultGuestSpec, defaultSkillsDir)
+defer def defaultTools(): List[Tool] receives workspace =
+  [runCodeTool(workspace.guestSrc, workspace.guestSpec)] ++ skillTools(workspace.skillsDir)
 
-//[ The entry point (`jo.main = harpe.cli.main`). The toolset offered to the
-  ! model is `defaultTools() ++ extraTools()` — both overridable by linking, so
-  ! an agent customizes the toolset purely through its jo.toml.
+//[ The agent's working directory is the CWD, and the runCode/skill tools resolve
+  ! their paths against it. It must hold the agent's own `jo.toml` and a
+  ! `sandbox/` — the driver checks this up front so a mislaunch fails with a clear
+  ! message instead of confusing path errors mid-run.
+//]
+private def inAgentDir(): Bool =
+  fileExists("jo.toml") && os.path.isdir("sandbox")
+
+//[ The entry point (`jo.main = harpe.cli.main`). After validating the working
+  ! directory, it provides the `workspace` context parameter and the toolset
+  ! `defaultTools() ++ extraTools()` — both overridable by linking, so an agent
+  ! customizes the toolset purely through its jo.toml.
 //]
 def main(): Unit receives stdout =
-  loadDotenv(".env")
-  val apiKey = getenv("ANTHROPIC_API_KEY", "")
-
-  if apiKey == "" then
-    println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
+  if !inAgentDir() then
+    println "Error: run this from an agent's working directory — a folder containing its jo.toml and a sandbox/ directory."
   else
-    with toolDefs = defaultTools() ++ extraTools() in runChat(apiKey)
+    loadDotenv(".env")
+    val apiKey = getenv("ANTHROPIC_API_KEY", "")
+
+    if apiKey == "" then
+      println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
+    else
+      with workspace = new Workspace(os.path.abspath(".")) in
+        with toolDefs = defaultTools() ++ extraTools() in runChat(apiKey)
 
 param toolDefs: List[Tool]
 

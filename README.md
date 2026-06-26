@@ -11,12 +11,12 @@ harpe/                   # a workspace: three framework packages + an example ag
   agent/                 # `harpe`: the shared base (runtime = python)
     jo.toml
     src/
+      Workspace.jo       #   `harpe`:       the agent working dir (context param)
       ffi/FFI.jo         #   `harpe.ffi`:   shared Python interop
       tools/             #   `harpe.tools`: the reusable tools layer
         Tool.jo          #     the Jo-modeled Tool abstraction (+ RunOutcome)
-        RunCode.jo       #     the runCode tool
-        Skills.jo        #     the read-only skill tools
-        Builtins.jo      #     default paths + builtinTools
+        RunCode.jo       #     the runCode tool (+ runCodeTool builder)
+        Skills.jo        #     the read-only skill tools (+ skillTools builder)
       os.jo
   sandbox/               # `harpe-sandbox`: the `Sandbox` abstraction (`harpe.sandbox`)
     jo.toml              #   self-contained (no deps)
@@ -142,14 +142,15 @@ harpe-cli = { path = "../cli" }
 namespace MyAgent
 import harpe.tools.*
 
+// Add `receives workspace` (and `import harpe.workspace`) if your tools need to
+// resolve paths against the agent's working directory.
 def extraTools(): List[Tool] = [ /* your Tool values */ ]
 ```
 
-`defaultTools` defaults to `runCode` + the read-only skill tools (via
-`builtinTools`); overriding it gives full control, including whether and how
-`runCode` exists. Compose with the `runCodeTool` / `skillTools` / `builtinTools`
-builders in `harpe.tools`, or supply entirely custom `Tool`s. A mismatched link
-signature is a compile-time error.
+`defaultTools` defaults to `runCode` + the read-only skill tools; overriding it
+gives full control, including whether and how `runCode` exists. Compose with the
+`runCodeTool` / `skillTools` builders in `harpe.tools`, or supply entirely custom
+`Tool`s. A mismatched link signature is a compile-time error.
 
 Host tools run in the loop process, outside the sandbox, so keep them narrow —
 the typed sandbox (widening `runTask`'s `receives`) remains the place to grant
