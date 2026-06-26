@@ -28,55 +28,17 @@ import harpe.Workspace
 import harpe.workspace
 import os
 
-// Concatenate the agent's API contract (sandbox/api/src/*.jo) for the prompt.
-private def readApiContract(): String =
-  var out = ""
-  val dir = "sandbox/api/src"
-  if os.path.isdir(dir) then
-    val names: py.List = os.listdir(dir)
-    var i = 0
-    while i < names.size do
-      val name = names.get(i).asString
-      if name.endsWith(".jo") then
-        out = out + readFile(os.path.join(dir, name)) + "\n"
-      i = i + 1
-  out
-
 // ============================================
 // Prompt
 // ============================================
 
-private def systemPrompt(): String =
-  val persona  = if fileExists("AGENT.md") then readFile("AGENT.md") + "\n\n" else ""
-  val contract = readApiContract()
-  """
-    \{persona}You are a Harpe agent. You act ONLY by writing Jo programs and running
-    them with your single tool, runCode(code). Every reply, computation, or
-    capability call must be a Jo program you submit — you cannot touch the host.
-
-    Your program is `namespace UserTask` and implements the deferred `runTask`
-    declared in the agent's API contract below. Match its `receives` list exactly,
-    importing the API namespace it defines. The text your program prints with
-    `println` comes back to you as the tool result.
-
-    --- agent API contract (sandbox/api) ---
-    \{contract}
-    --- end contract ---
-
-    You also have three read-only reference tools over your skills (knowledge
-    files), so you never need to write Jo just to consult them:
-        skillsList()        — list available skill files (names include extensions)
-        skillsRead(name)    — read one by its full name, e.g. "jo-cheat-sheet.md"
-        skillsSearch(query) — case-insensitive search across all skill files
-    These only let you READ your reference material; you still ACT on the world
-    ONLY through runCode.
-
-    Before writing Jo, read the cheat sheet for syntax:
-        skillsRead("jo-cheat-sheet.md")
-
-    Workflow: write Jo -> runCode -> if it fails to compile, read the error and
-    fix it -> once it runs, use the output to answer. Keep answers concise.
-    """
+//[ The system prompt is the agent's AGENT.md, used verbatim — fully visible and
+  ! editable by the agent author, who maintains all of it (framing, workflow, and
+  ! any capability/contract notes). The framework injects nothing; the model
+  ! learns the available tools from the `tools=` API, not from the prompt.
+//]
+private def systemPrompt(): String receives workspace =
+  if fileExists(workspace.agentMd) then readFile(workspace.agentMd) else ""
 
 // ============================================
 // Terminal UX: spinner + line-editing history
@@ -250,7 +212,7 @@ def main(): Unit receives stdout =
 
 param toolDefs: List[Tool]
 
-private def runChat(apiKey: String): Unit receives stdout, toolDefs =
+private def runChat(apiKey: String): Unit receives stdout, toolDefs, workspace =
   val client = py.module("anthropic").Anthropic(api_key = apiKey)
   val sysPrompt = systemPrompt()
 

@@ -26,7 +26,8 @@ harpe/                   # a workspace: three framework packages + an example ag
     src/Harpe.jo         #   the chat loop + main entry + defer hooks (default/extraTools)
   example/               # an example AGENT that depends on the framework
     jo.toml              #   the agent app: jo.main = harpe.cli.main
-    AGENT.md  skills/  .env.example
+    AGENT.md             #   the system prompt (used verbatim)
+    skills/  .env.example
     sandbox/
       api/               #   sandbox-api: the runTask contract (the granted capabilities)
       runtime/           #   sandbox-runtime: SandboxRuntime.main builds Sandbox + calls runTask
@@ -91,11 +92,12 @@ There are two ways to give an agent more power, and they are not the same:
 ## The turn loop (`harpe.cli`)
 
 1. read a line from the user
-2. ask the LLM, offering `runCode(code)` plus three read-only reference tools
-   over the skills dir — `skillsList()`, `skillsRead(name)`, `skillsSearch(query)`
-   — the prompt embeds the agent's `sandbox/api` contract so the LLM writes
-   against it. The skill tools only let the model read its own knowledge files
-   (any file type, named with their extension); it still *acts* only via `runCode`
+2. ask the LLM with the agent's `AGENT.md` as the system prompt (verbatim), and
+   `runCode(code)` plus three read-only reference tools over the skills dir —
+   `skillsList()`, `skillsRead(name)`, `skillsSearch(query)`. The model learns
+   each tool from the `tools=` API, so the prompt needn't describe them. The skill
+   tools only let it read its own knowledge files; it still *acts* only via
+   `runCode`
 3. on a `runCode` call: write the program to `sandbox/guest/src/Task.jo`, build
    it with `jo build --spec sandbox/guest/jo.toml`, run the compiled program, and
    feed its stdout (or the compile error) back to the LLM
