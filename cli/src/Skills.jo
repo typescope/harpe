@@ -1,0 +1,118 @@
+//[ Skills.jo
+  !
+  ! Direct read-only reference access to the skills directory: list, read, and
+  ! search the agent's knowledge files. Files may be any type (.md, .jo, source,
+  ! …); names carry their extension. These back the `skillsList` / `skillsRead`
+  ! / `skillsSearch` tools, which let the model READ its reference material
+  ! without writing Jo — it still ACTS only through `runCode`.
+  !
+  ! Path reads are confined to the skills directory and best-effort UTF-8, so a
+  ! binary or out-of-tree path can never crash a search.
+//]
+
+namespace Harpe
+
+//[ Collect (relativeName ~ fullPath) for every file under skillsDir.
+  !
+  ! Names carry their extension so .md/.jo/.py files with the same stem never collide.
+//]
+private def collectSkills(skillsDir: String): List[String ~ String] =
+  if !os.path.isdir(skillsDir) then return []
+
+  var files: List[String ~ String] = []
+  val walkIter = os.walk(skillsDir)
+  var nextEntry: py.Dynamic = builtins.next(walkIter, py.none)
+
+  while !py.isNone(nextEntry) do
+    val entry: os.WalkEntry = nextEntry.cast[os.WalkEntry]
+    val dirpath = entry.dirpath
+    val filenames = entry.filenames
+    var i = 0
+    while i < filenames.size do
+      val filename: String = filenames.get(i).asString
+      val fullPath = os.path.join(dirpath, filename)
+      val relPath = os.path.relpath(fullPath, skillsDir)
+      files = files + (relPath ~ fullPath)
+      i = i + 1
+    end
+    nextEntry = builtins.next(walkIter, py.none)
+
+  files.sortBy(pair => pair.fst)
+
+//[ Best-effort text read
+  !
+  ! return empty string if the file is not decodable as UTF-8.
+//]
+private def readTextOrEmpty(path: String): String =
+  match py.try(py.open(path, "r").read())
+    case Ok(c)  => c.asString
+    case Err(_) => ""
+
+private def skillsListText(skillsDir: String): String =
+  val names = collectSkills(skillsDir).map(pair => pair.fst)
+  if names.isEmpty then "(no skills found)" else names.join("\n")
+
+private def skillsReadOutcome(skillsDir: String, name: String): RunOutcome =
+  // Resolve and confine the path to the skills directory (no escaping via "..").
+  val absPath = os.path.abspath(os.path.normpath(os.path.join(skillsDir, name)))
+  val absDir  = os.path.abspath(skillsDir)
+  val isSafe =
+    if absPath.startsWith(absDir) then
+      if absPath.size == absDir.size then true
+      else absPath.get(absDir.size) == '/'
+    else false
+
+  if !isSafe then
+    return new RunOutcome("Access denied: path outside skills directory", "denied · \{name}")
+
+  if os.path.isfile(absPath) then
+    match py.try(py.open(absPath, "r").read())
+      case Ok(c)  => new RunOutcome(c.asString, "read · \{name}")
+      case Err(_) => new RunOutcome("Skill \{name} could not be read as text.", "unreadable · \{name}")
+  else
+    new RunOutcome("Skill not found: \{name}", "not found · \{name}")
+
+private def skillsSearchText(skillsDir: String, query: String): String =
+  val files = collectSkills(skillsDir)
+  val lowerQuery = query.toLower
+  val maxHits = 30
+  var out = ""
+  var hits = 0
+
+  for name ~ filePath in files do
+    if hits >= maxHits then return out
+
+    val lines = readTextOrEmpty(filePath).lines
+    var idx = 0
+    while idx < lines.size && hits < maxHits do
+      val line = lines[idx]
+      if line.toLower.contains(lowerQuery) then
+        out = out + "\{name}:\{idx + 1}: \{line.trim}\n"
+        hits = hits + 1
+      idx = idx + 1
+    end
+  end
+
+  if out == "" then "(no matches for '\{query}')" else out
+
+//[ The read-only reference tools over the skills directory. //]
+def skillTools(skillsDir: String): List[Tool] =
+  val listTool = Tool:
+    "skillsList"
+    "List the names of all available skill files (read-only reference docs). Each name includes its file extension (e.g. .md, .jo)."
+    []
+    input => new RunOutcome(skillsListText(skillsDir), "listed skills")
+
+  val readTool = Tool:
+    "skillsRead"
+    "Read a skill file by its full name including extension. Returns the file contents."
+    [strParam("name", "The full skill file name including extension, as returned by skillsList (e.g. \"jo-cheat-sheet.md\")")]
+    input => skillsReadOutcome(skillsDir, input.string("name"))
+
+  val searchTool = Tool:
+    "skillsSearch"
+    "Case-insensitive search across all skill files. Returns matching lines as 'name:lineNumber: text'."
+    [strParam("query", "Substring to search for (case-insensitive)")]
+    input => new RunOutcome(skillsSearchText(skillsDir, input.string("query")), "searched · \{input.string("query")}")
+
+  [listTool, readTool, searchTool]

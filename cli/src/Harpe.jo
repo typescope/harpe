@@ -1,47 +1,27 @@
 //[ Harpe.jo
   !
-  ! The CLI agent loop (the Harpe "conversational" trigger).
-  !
-  ! `jo.main = Harpe.cli` runs this. Each turn it:
+  ! The CLI agent loop (the Harpe "conversational" trigger) and its entry
+  ! points. Each turn it:
   !   1. reads a line from the user
-  !   2. asks the LLM, offering one tool: runCode(code)
-  !   3. on a runCode call: writes the program to sandbox/guest, builds & runs
-  !      it with `jo run`, and feeds stdout (or the compile error) back
+  !   2. asks the LLM, offering the configured tools (default: runCode plus the
+  !      read-only skill tools)
+  !   3. dispatches each tool call to its handler and feeds the result back
   !   4. repeats until the LLM replies with text, then prints the reply
   !
-  ! The LLM only ever acts by writing a Jo program compiled against the
-  ! agent's sandbox — never by touching Python directly.
+  ! The toolset is a `List[Tool]` (see Tool.jo). Three entry points layer it:
+  !   - `cli`       — the built-in toolset (`jo.main = Harpe.cli`)
+  !   - `cliWith`   — built-ins PLUS an agent's own extra tools
+  !   - `cliTools`  — EXACTLY the given tools (advanced: own everything, incl.
+  !                   whether/how runCode exists)
+  !
+  ! Companion files in this namespace: Tool.jo (the abstraction), RunCode.jo
+  ! (the runCode tool), Skills.jo (the read-only skill tools), FFI.jo (shared
+  ! Python interop).
 //]
 
 namespace Harpe
 
 import jo.IO.stdout
-
-private def builtins: py.Dynamic = py.module("builtins")
-private def osMod: py.Dynamic = py.module("os")
-private def sysMod: py.Dynamic = py.module("sys")
-private def subprocessMod: py.Dynamic = py.module("subprocess")
-private def reMod: py.Dynamic = py.module("re")
-private def timeMod: py.Dynamic = py.module("time")
-private def jsonMod: py.Dynamic = py.module("json")
-private def globMod: py.Dynamic = py.module("glob")
-private def threadingMod: py.Dynamic = py.module("threading")
-private def termiosMod: py.Dynamic = py.module("termios")
-private def ttyMod: py.Dynamic = py.module("tty")
-private def selectMod: py.Dynamic = py.module("select")
-
-// ============================================
-// Small FFI helpers
-// ============================================
-
-private def attr(obj: py.Dynamic, name: String): py.Dynamic = builtins.getattr(obj, name)
-
-private def getenv(name: String, fallback: String): String =
-  attr(osMod, "environ").cast[py.Dict].get(name, fallback).asString
-
-private def fileExists(path: String): Bool = os.path.isfile(path)
-
-private def readFile(path: String): String = py.open(path, "r").read().asString
 
 // Concatenate the agent's API contract (sandbox/api/src/*.jo) for the prompt.
 private def readApiContract(): String =
@@ -57,35 +37,8 @@ private def readApiContract(): String =
       i = i + 1
   out
 
-private def writeFile(path: String, content: String): Unit =
-  val f = py.open(path, "w")
-  f.write(content)
-  f.close()
-
-private def stripAnsi(s: String): String =
-  reMod.sub("\\[[0-9;]*m", "", s).asString
-
-private def indexOfChar(s: String, c: Char): Int =
-  var i = 0
-  while i < s.size do
-    if s.get(i) == c then return i
-    i = i + 1
-  -1
-
-// Load KEY=VALUE lines from a .env file into the process environment.
-private def loadDotenv(path: String): Unit =
-  if fileExists(path) then
-    val env = attr(osMod, "environ").cast[py.Dict]
-    for line in readFile(path).lines do
-      val t = line.trim
-      val eq = indexOfChar(t, '=')
-      if t.size > 0 && !t.startsWith("#") && eq > 0 then
-        val key = t.substring(0, eq).trim
-        val value = t.substring(eq + 1, t.size).trim
-        env.set(key, value)
-
 // ============================================
-// LLM prompt and tools
+// Prompt
 // ============================================
 
 private def systemPrompt(): String =
@@ -120,245 +73,25 @@ private def systemPrompt(): String =
     fix it -> once it runs, use the output to answer. Keep answers concise.
     """
 
-private def buildTools(): py.List =
-  val schema = py.dict(
-    "type" ~ "object",
-    "properties" ~ py.dict(
-      "code" ~ py.dict(
-        "type" ~ "string",
-        "description" ~ "The Jo source code to compile and run"
-      )
-    ),
-    "required" ~ py.list("code")
-  )
-  val tool = py.dict(
-    "name" ~ "runCode",
-    "description" ~ "Write a Jo program (namespace UserTask, def runTask), compile it against the agent sandbox, and run it. Returns the program's stdout, or the compile error if it does not build.",
-    "input_schema" ~ schema
-  )
-
-  val emptySchema = py.dict(
-    "type" ~ "object",
-    "properties" ~ py.dict(),
-    "required" ~ py.list()
-  )
-  val skillsListTool = py.dict(
-    "name" ~ "skillsList",
-    "description" ~ "List the names of all available skill files (read-only reference docs). Each name includes its file extension (e.g. .md, .jo).",
-    "input_schema" ~ emptySchema
-  )
-
-  val nameSchema = py.dict(
-    "type" ~ "object",
-    "properties" ~ py.dict(
-      "name" ~ py.dict(
-        "type" ~ "string",
-        "description" ~ "The full skill file name including extension, as returned by skillsList (e.g. \"jo-cheat-sheet.md\")"
-      )
-    ),
-    "required" ~ py.list("name")
-  )
-  val skillsReadTool = py.dict(
-    "name" ~ "skillsRead",
-    "description" ~ "Read a skill file by its full name including extension. Returns the file contents.",
-    "input_schema" ~ nameSchema
-  )
-
-  val querySchema = py.dict(
-    "type" ~ "object",
-    "properties" ~ py.dict(
-      "query" ~ py.dict(
-        "type" ~ "string",
-        "description" ~ "Substring to search for (case-insensitive)"
-      )
-    ),
-    "required" ~ py.list("query")
-  )
-  val skillsSearchTool = py.dict(
-    "name" ~ "skillsSearch",
-    "description" ~ "Case-insensitive search across all skill files. Returns matching lines as 'name:lineNumber: text'.",
-    "input_schema" ~ querySchema
-  )
-
-  py.list(tool, skillsListTool, skillsReadTool, skillsSearchTool)
-
 // ============================================
-// The runCode tool: write -> build -> run -> capture (timed + logged)
+// Default workspace paths (rebuild tools yourself to change them)
 // ============================================
 
-private def now(): Float = timeMod.time().asFloat
-
-private def round2(x: Float): Float = builtins.round(x, 2).asFloat
-
-// Append one JSON record per turn to the audit log under logs/.
-private def logTurn(entry: py.Dict): Unit =
-  os.makedirs("logs")
-  val f = py.open("logs/turns.jsonl", "a")
-  f.write(jsonMod.dumps(entry).asString + "\n")
-  f.close()
-
-// "sandbox/guest/jo.toml" -> "sandbox/guest/.build/*/jo-*/target/*.py"
-private def guestBuildGlob(guestSpec: String): String =
-  val dir = guestSpec.substring(0, guestSpec.size - "/jo.toml".size)
-  dir + "/.build/*/jo-*/target/*.py"
-
-// What runCode returns: `result` goes back to the LLM; `summary` is the
-// one-line status (with timing) shown in the console.
-class RunOutcome(result: String, summary: String)
-
-private def runCode(code: String, guestSrc: String, guestSpec: String): RunOutcome =
-  writeFile(guestSrc, code)
-
-  // 1. Compile — the security checkpoint — timed and error-captured.
-  val t0 = now()
-  val build = subprocessMod.run(py.list("jo", "build", "--spec", guestSpec), capture_output = true, text = true)
-  val compileSeconds = round2(now() - t0)
-
-  if attr(build, "returncode").asInt != 0 then
-    val compileError = stripAnsi(attr(build, "stderr").asString).trim
-    logTurn(py.dict(
-      "time"           ~ now(),
-      "code"           ~ code,
-      "compiled"       ~ false,
-      "compileSeconds" ~ compileSeconds,
-      "compileError"   ~ compileError
-    ))
-    return new RunOutcome(
-      "The program did not compile (\{compileSeconds}s):\n\{compileError}",
-      "did not compile · \{compileSeconds}s")
-
-  // 2. Run the compiled program directly, timed.
-  val targets: py.List = globMod.glob(guestBuildGlob(guestSpec)).cast[py.List]
-  if targets.size == 0 then
-    return new RunOutcome("The program compiled but no executable was found.", "no executable produced")
-
-  val targetPy = targets.get(0).asString
-  val t1 = now()
-  val run = subprocessMod.run(py.list("python3", targetPy), capture_output = true, text = true)
-  val runSeconds = round2(now() - t1)
-  val runRc  = attr(run, "returncode").asInt
-  val runOut = attr(run, "stdout").asString.trim
-  val runErr = stripAnsi(attr(run, "stderr").asString).trim
-
-  val result =
-    if runRc != 0 then "The program crashed:\n\{runErr}"
-    else if runOut == "" then "(the program produced no output)"
-    else runOut
-
-  val summary =
-    if runRc != 0 then "crashed · compiled \{compileSeconds}s, ran \{runSeconds}s"
-    else "ran · compiled \{compileSeconds}s, ran \{runSeconds}s"
-
-  logTurn(py.dict(
-    "time"           ~ now(),
-    "code"           ~ code,
-    "compiled"       ~ true,
-    "compileSeconds" ~ compileSeconds,
-    "runSeconds"     ~ runSeconds,
-    "exitCode"       ~ runRc,
-    "output"         ~ result
-  ))
-  new RunOutcome(result, summary)
+def defaultGuestSrc: String = "sandbox/guest/src/Task.jo"
+def defaultGuestSpec: String = "sandbox/guest/jo.toml"
+def defaultSkillsDir: String = "skills"
 
 // ============================================
-// Skills — direct read-only reference access for the LLM
+// Built-in tools (compose, extend, or replace these freely)
 // ============================================
 
-// Collect (relativeName ~ fullPath) for every file under skillsDir. Names carry
-// their extension so .md/.jo/.py files with the same stem never collide.
-private def collectSkills(skillsDir: String): List[String ~ String] =
-  if !os.path.isdir(skillsDir) then return []
-
-  var files: List[String ~ String] = []
-  val walkIter = os.walk(skillsDir)
-  var nextEntry: py.Dynamic = builtins.next(walkIter, py.none)
-
-  while !py.isNone(nextEntry) do
-    val entry: os.WalkEntry = nextEntry.cast[os.WalkEntry]
-    val dirpath = entry.dirpath
-    val filenames = entry.filenames
-    var i = 0
-    while i < filenames.size do
-      val filename: String = filenames.get(i).asString
-      val fullPath = os.path.join(dirpath, filename)
-      val relPath = os.path.relpath(fullPath, skillsDir)
-      files = files + (relPath ~ fullPath)
-      i = i + 1
-    end
-    nextEntry = builtins.next(walkIter, py.none)
-
-  files.sortBy(pair => pair.fst)
-
-// Best-effort text read; empty string if the file is not decodable as UTF-8.
-private def readTextOrEmpty(path: String): String =
-  match py.try(py.open(path, "r").read())
-    case Ok(c)  => c.asString
-    case Err(_) => ""
-
-private def skillsListText(skillsDir: String): String =
-  val names = collectSkills(skillsDir).map(pair => pair.fst)
-  if names.isEmpty then "(no skills found)" else names.join("\n")
-
-private def skillsReadOutcome(skillsDir: String, name: String): RunOutcome =
-  // Resolve and confine the path to the skills directory (no escaping via "..").
-  val absPath = os.path.abspath(os.path.normpath(os.path.join(skillsDir, name)))
-  val absDir  = os.path.abspath(skillsDir)
-  val isSafe =
-    if absPath.startsWith(absDir) then
-      if absPath.size == absDir.size then true
-      else absPath.get(absDir.size) == '/'
-    else false
-
-  if !isSafe then
-    return new RunOutcome("Access denied: path outside skills directory", "denied · \{name}")
-
-  if os.path.isfile(absPath) then
-    match py.try(py.open(absPath, "r").read())
-      case Ok(c)  => new RunOutcome(c.asString, "read · \{name}")
-      case Err(_) => new RunOutcome("Skill \{name} could not be read as text.", "unreadable · \{name}")
-  else
-    new RunOutcome("Skill not found: \{name}", "not found · \{name}")
-
-private def skillsSearchText(skillsDir: String, query: String): String =
-  val files = collectSkills(skillsDir)
-  val lowerQuery = query.toLower
-  val maxHits = 30
-  var out = ""
-  var hits = 0
-
-  for name ~ filePath in files do
-    if hits >= maxHits then return out
-
-    val lines = readTextOrEmpty(filePath).lines
-    var idx = 0
-    while idx < lines.size && hits < maxHits do
-      val line = lines[idx]
-      if line.toLower.contains(lowerQuery) then
-        out = out + "\{name}:\{idx + 1}: \{line.trim}\n"
-        hits = hits + 1
-      idx = idx + 1
-    end
-  end
-
-  if out == "" then "(no matches for '\{query}')" else out
-
-// Dispatch a non-runCode tool call to the matching skills helper.
-private def handleSkillTool(name: String, input: py.Dict, skillsDir: String): RunOutcome =
-  if name == "skillsList" then
-    new RunOutcome(skillsListText(skillsDir), "listed skills")
-  else if name == "skillsRead" then
-    skillsReadOutcome(skillsDir, input.get("name", "").asString)
-  else if name == "skillsSearch" then
-    val q = input.get("query", "").asString
-    new RunOutcome(skillsSearchText(skillsDir, q), "searched · \{q}")
-  else
-    new RunOutcome("Unknown tool: \{name}", "unknown tool · \{name}")
+//[ The default toolset: runCode plus the read-only skill tools. //]
+def builtinTools(guestSrc: String, guestSpec: String, skillsDir: String): List[Tool] =
+  [runCodeTool(guestSrc, guestSpec)] ++ skillTools(skillsDir)
 
 // ============================================
 // Terminal UX: spinner + line-editing history
 // ============================================
-
-private def round1(x: Float): Float = builtins.round(x, 1).asFloat
 
 // "\r" + ESC + "[2K" — return to start of line and clear it.
 private def clearLine(): String = "\r" + builtins.chr(27).asString + "[2K"
@@ -480,24 +213,42 @@ private def banner(): Unit receives stdout =
 // The chat loop
 // ============================================
 
+//[ Default entry: the built-in toolset (runCode + read-only skill tools).
+  ! `jo.main = Harpe.cli` wires a stock agent to this.
+//]
 def cli(): Unit receives stdout =
+  cliTools(builtinTools(defaultGuestSrc, defaultGuestSpec, defaultSkillsDir))
+end
+
+//[ Additive entry: the built-ins PLUS the agent's own tools. An agent links
+  ! `jo.main` to its own `main` that calls this with the extra tools it defines.
+//]
+def cliWith(extraTools: List[Tool]): Unit receives stdout =
+  cliTools(builtinTools(defaultGuestSrc, defaultGuestSpec, defaultSkillsDir) ++ extraTools)
+end
+
+//[ Full-control entry: run the chat with EXACTLY this toolset. The agent owns
+  ! everything, including whether and how `runCode` exists. Compose with the
+  ! `*Tool` builders, or supply entirely custom `Tool`s.
+//]
+def cliTools(tools: List[Tool]): Unit receives stdout =
   loadDotenv(".env")
   val apiKey = getenv("ANTHROPIC_API_KEY", "")
+
   if apiKey == "" then
     println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
   else
-    runChat(apiKey)
+    runChat(apiKey, tools)
 end
 
-private def runChat(apiKey: String): Unit receives stdout =
-  val model     = getenv("MODEL", "claude-opus-4-6")
-  val skillsDir = "skills"
-  val guestSpec = "sandbox/guest/jo.toml"
-  val guestSrc  = "sandbox/guest/src/Task.jo"
+private def runChat(apiKey: String, toolDefs: List[Tool]): Unit receives stdout =
+  val model  = getenv("MODEL", "claude-opus-4-6")
 
   val client = py.module("anthropic").Anthropic(api_key = apiKey)
   val sys    = systemPrompt()
-  val tools  = buildTools()
+
+  val tools: py.List = py.list()
+  for t in toolDefs do tools.append(t.spec)
 
   initReadline()
   banner()
@@ -581,13 +332,15 @@ private def runChat(apiKey: String): Unit receives stdout =
                   val toolName = attr(tu, "name").asString
                   val input = attr(tu, "input").cast[py.Dict]
                   val outcome =
-                    if toolName == "runCode" then
-                      val runSpin = startSpinner("running · ESC to interrupt")
-                      val o = runCode(input.get("code", "").asString, guestSrc, guestSpec)
-                      runSpin.stop()
-                      o
-                    else
-                      handleSkillTool(toolName, input, skillsDir)
+                    match toolDefs.find(t => t.name == toolName)
+                      case Some(t) =>
+                        val spin = startSpinner("\{toolName} · ESC to interrupt")
+                        val o = t.run(new ToolInput(input))
+                        spin.stop()
+                        o
+
+                      case None =>
+                        new RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}")
 
                   println "  · \{outcome.summary}"
                   toolResults.append(py.dict(

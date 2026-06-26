@@ -14,7 +14,14 @@ harpe/                   # three framework packages + an example agent
     HarpeCapsRuntime.jo  #   LoggerImpl
     os.jo
   cli/                   # `harpe-cli`: the LLM↔program chat loop
-    jo.toml  src/Harpe.jo  src/os.jo   #   Harpe.cli + its FFI
+    jo.toml
+    src/
+      Tool.jo            #   the Jo-modeled Tool abstraction (+ RunOutcome)
+      RunCode.jo         #   the runCode tool
+      Skills.jo          #   the read-only skill tools
+      FFI.jo             #   shared Python interop
+      Harpe.jo           #   the chat loop + cli / cliWith / cliTools entry points
+      os.jo
   example/               # an example AGENT that depends on the framework
     jo.toml              #   the agent app: jo.main = Harpe.cli
     AGENT.md  skills/  .env.example
@@ -78,6 +85,38 @@ and the guest's `UserTask`.)
 
 The compile step is the security checkpoint: a program that names a capability
 the agent didn't grant fails to compile, so it never runs.
+
+## Defining and customizing tools
+
+A tool is a `Tool` (`cli/src/Tool.jo`): a name, a description, typed parameters,
+and a host-side handler. Parameters are modeled in Jo (`ParamType` / `ToolParam`)
+— the `spec` method derives the Anthropic JSON schema, and handlers read
+arguments via a typed `ToolInput`, so tool authors never hand-write JSON:
+
+```scala
+new Tool(
+  "textLength",
+  "Return the number of characters in a string.",
+  [strParam("text", "The text to measure")],
+  input =>
+    val n = input.string("text").size
+    new RunOutcome("\{n}", "measured · \{n} chars")
+)
+```
+
+The loop runs whatever `List[Tool]` it is given. Three entry points layer this,
+so an agent links `jo.main` to whichever fits:
+
+- `Harpe.cli` — the built-in toolset (`runCode` + the read-only skill tools).
+- `Harpe.cliWith(extraTools)` — **add** your tools on top of the built-ins. The
+  agent owns a tiny `main` that builds its extra `Tool`s and calls this.
+- `Harpe.cliTools(tools)` — run **exactly** this toolset. Advanced agents own
+  everything, including whether and how `runCode` exists; compose with the
+  `runCodeTool` / `skillTools` / `builtinTools` builders or supply custom `Tool`s.
+
+Host tools run in the loop process, outside the sandbox, so keep them narrow —
+the typed sandbox (widening `runTask`'s `receives`) remains the place to grant
+the model new ways to *act* on the world.
 
 ## Run the example
 

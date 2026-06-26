@@ -1,8 +1,20 @@
 namespace UserTask
 
-import SandboxAPI.*
 import jo.IO.stdout
-import HarpeCaps.*
+import HarpeCaps.logger
+
+def isPrime(n: Int): Bool =
+  if n < 2 then false
+  else
+    var i = 2
+    var result = true
+    while i * i <= n && result do
+      if n % i == 0 then result = false
+      i = i + 1
+    result
 
 def runTask(): Unit receives stdout, logger =
-  println("Hello! I'm your cheerful Jo agent, ready to help you learn how Jo agents work! 😊")
+  var n = 9999
+  while n > 1 && !isPrime(n) do
+    n = n - 1
+  println "The largest prime under 10000 is \{n}"

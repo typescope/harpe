@@ -1,0 +1,71 @@
+//[ FFI.jo
+  !
+  ! Shared host interop for the Harpe CLI: handles to the Python modules used
+  ! across the package, plus small helpers (attribute access, env, file IO,
+  ! ANSI stripping, timing). Every file in `namespace Harpe` shares these, so
+  ! the tool/skills/runCode/loop files carry no raw `py.module` plumbing of
+  ! their own.
+//]
+
+namespace Harpe
+
+// --- Python module handles ---
+
+private def builtins: py.Dynamic = py.module("builtins")
+private def osMod: py.Dynamic = py.module("os")
+private def sysMod: py.Dynamic = py.module("sys")
+private def subprocessMod: py.Dynamic = py.module("subprocess")
+private def reMod: py.Dynamic = py.module("re")
+private def timeMod: py.Dynamic = py.module("time")
+private def jsonMod: py.Dynamic = py.module("json")
+private def globMod: py.Dynamic = py.module("glob")
+private def threadingMod: py.Dynamic = py.module("threading")
+private def termiosMod: py.Dynamic = py.module("termios")
+private def ttyMod: py.Dynamic = py.module("tty")
+private def selectMod: py.Dynamic = py.module("select")
+
+// --- attribute / env / file helpers ---
+
+private def attr(obj: py.Dynamic, name: String): py.Dynamic = builtins.getattr(obj, name)
+
+private def getenv(name: String, fallback: String): String =
+  attr(osMod, "environ").cast[py.Dict].get(name, fallback).asString
+
+private def fileExists(path: String): Bool = os.path.isfile(path)
+
+private def readFile(path: String): String = py.open(path, "r").read().asString
+
+private def writeFile(path: String, content: String): Unit =
+  val f = py.open(path, "w")
+  f.write(content)
+  f.close()
+
+private def stripAnsi(s: String): String =
+  reMod.sub("\\[[0-9;]*m", "", s).asString
+
+private def indexOfChar(s: String, c: Char): Int =
+  var i = 0
+  while i < s.size do
+    if s.get(i) == c then return i
+    i = i + 1
+  -1
+
+//[ Load KEY=VALUE lines from a .env file into the process environment. //]
+private def loadDotenv(path: String): Unit =
+  if fileExists(path) then
+    val env = attr(osMod, "environ").cast[py.Dict]
+    for line in readFile(path).lines do
+      val t = line.trim
+      val eq = indexOfChar(t, '=')
+      if t.size > 0 && !t.startsWith("#") && eq > 0 then
+        val key = t.substring(0, eq).trim
+        val value = t.substring(eq + 1, t.size).trim
+        env.set(key, value)
+
+// --- timing ---
+
+private def now(): Float = timeMod.time().asFloat
+
+private def round2(x: Float): Float = builtins.round(x, 2).asFloat
+
+private def round1(x: Float): Float = builtins.round(x, 1).asFloat
