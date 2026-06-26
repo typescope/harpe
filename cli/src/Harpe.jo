@@ -315,6 +315,21 @@ private def saveHistory(): Unit =
   os.makedirs("data")
   val _ = py.try(py.module("readline").write_history_file(historyFile))
 
+// A small harp, shown once when the chat starts.
+private def banner(): Unit receives stdout =
+  println """
+
+        .--.
+       /|  /|
+      / | / |
+     /  |/  |
+    /  /|   |
+   /  / |   |
+  |__/__|___|
+     H A R P E
+  """
+  println ""
+
 // ============================================
 // The chat loop
 // ============================================
@@ -339,7 +354,8 @@ private def runChat(apiKey: String): Unit receives stdout =
   val tools  = buildTools()
 
   initReadline()
-  println "Harpe agent — type a message to start. Ctrl-D or 'quit' to exit."
+  banner()
+  println "Type a message to start. Ctrl-D or 'quit' to exit."
 
   val messages: py.List = py.list()
   var running = true
