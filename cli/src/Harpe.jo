@@ -25,6 +25,7 @@ private def reMod: py.Dynamic = py.module("re")
 private def timeMod: py.Dynamic = py.module("time")
 private def jsonMod: py.Dynamic = py.module("json")
 private def globMod: py.Dynamic = py.module("glob")
+private def threadingMod: py.Dynamic = py.module("threading")
 
 // ============================================
 // Small FFI helpers
@@ -146,7 +147,11 @@ private def guestBuildGlob(guestSpec: String): String =
   val dir = guestSpec.substring(0, guestSpec.size - "/jo.toml".size)
   dir + "/.build/*/jo-*/target/*.py"
 
-private def runCode(code: String, guestSrc: String, guestSpec: String, skillsDir: String): String =
+// What runCode returns: `result` goes back to the LLM; `summary` is the
+// one-line status (with timing) shown in the console.
+class RunOutcome(result: String, summary: String)
+
+private def runCode(code: String, guestSrc: String, guestSpec: String, skillsDir: String): RunOutcome =
   writeFile(guestSrc, code)
 
   // 1. Compile — the security checkpoint — timed and error-captured.
@@ -163,12 +168,14 @@ private def runCode(code: String, guestSrc: String, guestSpec: String, skillsDir
       "compileSeconds" ~ compileSeconds,
       "compileError"   ~ compileError
     ))
-    return "The program did not compile (\{compileSeconds}s):\n\{compileError}"
+    return new RunOutcome(
+      "The program did not compile (\{compileSeconds}s):\n\{compileError}",
+      "did not compile · \{compileSeconds}s")
 
   // 2. Run the compiled program directly, timed.
   val targets: py.List = globMod.glob(guestBuildGlob(guestSpec)).cast[py.List]
   if targets.size == 0 then
-    return "The program compiled but no executable was found."
+    return new RunOutcome("The program compiled but no executable was found.", "no executable produced")
 
   val targetPy = targets.get(0).asString
   val t1 = now()
@@ -183,6 +190,10 @@ private def runCode(code: String, guestSrc: String, guestSpec: String, skillsDir
     else if runOut == "" then "(the program produced no output)"
     else runOut
 
+  val summary =
+    if runRc != 0 then "crashed · compiled \{compileSeconds}s, ran \{runSeconds}s"
+    else "ran · compiled \{compileSeconds}s, ran \{runSeconds}s"
+
   logTurn(py.dict(
     "time"           ~ now(),
     "code"           ~ code,
@@ -192,7 +203,61 @@ private def runCode(code: String, guestSrc: String, guestSpec: String, skillsDir
     "exitCode"       ~ runRc,
     "output"         ~ result
   ))
-  result
+  new RunOutcome(result, summary)
+
+// ============================================
+// Terminal UX: spinner + line-editing history
+// ============================================
+
+private def round1(x: Float): Float = builtins.round(x, 1).asFloat
+
+// "\r" + ESC + "[2K" — return to start of line and clear it.
+private def clearLine(): String = "\r" + builtins.chr(27).asString + "[2K"
+
+//[ A spinner running in a background thread, showing a message + elapsed
+  ! seconds while a blocking call (LLM request, compile, run) is in flight.
+//]
+class Spinner(stopEvent: py.Dynamic, thread: py.Dynamic)
+  def stop(): Unit =
+    stopEvent.set()
+    thread.join()
+end
+
+private def startSpinner(message: String): Spinner =
+  val stopEvent = threadingMod.Event()
+  val started   = now()
+  val animate = () =>
+    val frames = py.list("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+    var i = 0
+    while !stopEvent.is_set().asBool do
+      val frame = frames.get(i % 10).asString
+      val secs  = round1(now() - started)
+      sysMod.stdout.write("\r  " + frame + " " + message + " " + secs.toString + "s ")
+      sysMod.stdout.flush()
+      i = i + 1
+      stopEvent.wait(0.1)
+    sysMod.stdout.write(clearLine())
+    sysMod.stdout.flush()
+
+  val thread = threadingMod.Thread(target = animate, daemon = true)
+  thread.start()
+  new Spinner(stopEvent, thread)
+
+private def historyFile: String = "data/chat_history"
+
+// Enable arrow-key line editing and load persistent history (up/down recalls
+// previous messages). Importing `readline` is what wires it into `input()`.
+private def initReadline(): Unit =
+  os.makedirs("data")
+  val rl = py.module("readline")
+  if fileExists(historyFile) then rl.read_history_file(historyFile)
+
+// Persist history to disk. Called after every message so it survives any exit
+// (Ctrl-C, a crash, …) — not just a graceful one. Best-effort: ensure the
+// directory exists and never let a save failure crash the chat.
+private def saveHistory(): Unit =
+  os.makedirs("data")
+  val _ = py.try(py.module("readline").write_history_file(historyFile))
 
 // ============================================
 // The chat loop
@@ -217,6 +282,7 @@ private def runChat(apiKey: String): Unit receives stdout =
   val sys    = systemPrompt()
   val tools  = buildTools()
 
+  initReadline()
   println "Harpe agent — type a message to start. Ctrl-D or 'quit' to exit."
 
   var messages: py.List = py.list()
@@ -224,8 +290,13 @@ private def runChat(apiKey: String): Unit receives stdout =
 
   while running do
     var userInput = ""
-    match py.try(py.input("\nYou ▸ "))
-      case Ok(s)  => userInput = s.trim
+    println ""
+    // Keep the prompt a single line with no embedded newline, so readline can
+    // redraw it correctly when navigating history with the up/down arrows.
+    match py.try(py.input("You ▸ "))
+      case Ok(s)  =>
+        userInput = s.trim
+        saveHistory()
       case Err(_) =>
         running = false
 
@@ -237,6 +308,7 @@ private def runChat(apiKey: String): Unit receives stdout =
 
         var turnDone = false
         while !turnDone do
+          val llmSpin = startSpinner("thinking")
           val response = client.messages.create(
             model = model,
             max_tokens = 8096,
@@ -244,6 +316,7 @@ private def runChat(apiKey: String): Unit receives stdout =
             messages = messages,
             tools = tools
           )
+          llmSpin.stop()
 
           val content: py.List = attr(response, "content").cast[py.List]
 
@@ -274,12 +347,14 @@ private def runChat(apiKey: String): Unit receives stdout =
             while j < toolUses.size do
               val tu = toolUses.get(j)
               val code = attr(tu, "input").cast[py.Dict].get("code", "").asString
-              val result = runCode(code, guestSrc, guestSpec, skillsDir)
-              println "  ✓ ran"
+              val runSpin = startSpinner("running")
+              val outcome = runCode(code, guestSrc, guestSpec, skillsDir)
+              runSpin.stop()
+              println "  · \{outcome.summary}"
               toolResults.append(py.dict(
                 "type" ~ "tool_result",
                 "tool_use_id" ~ attr(tu, "id"),
-                "content" ~ result
+                "content" ~ outcome.result
               ))
               j = j + 1
 

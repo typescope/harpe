@@ -79,8 +79,8 @@ the agent didn't grant fails to compile, so it never runs.
 ## Run the example
 
 ```sh
-pip install anthropic                  # the loop calls the SDK via Jo's py FFI
 cd example
+pip install -r requirements.txt        # just `anthropic`; readline etc. are stdlib
 cp .env.example .env                   # set ANTHROPIC_API_KEY (and MODEL)
 jo run                                  # chat in your terminal
 ```
