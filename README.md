@@ -8,10 +8,10 @@ turn. This prototype covers **CLI (conversational) agents**.
 
 ```
 harpe/                   # three framework packages + an example agent
-  caps/                  # `harpe-caps`: reusable capability interfaces (Skills, Logger) + types
+  caps/                  # `harpe-caps`: reusable capability interfaces (Logger) + types
   jo.toml                # `harpe`: reusable capability IMPLS (runtime = python, dep harpe-caps)
   src/
-    HarpeCapsRuntime.jo  #   SkillsImpl, LoggerImpl
+    HarpeCapsRuntime.jo  #   LoggerImpl
     os.jo
   cli/                   # `harpe-cli`: the LLM↔program chat loop
     jo.toml  src/Harpe.jo  src/os.jo   #   Harpe.cli + its FFI
@@ -58,7 +58,7 @@ sandbox-runtime = { path = "../runtime", link = true }
 ```
 
 `SandboxRuntime.main` (in `sandbox/runtime`) builds the granted capabilities —
-reusing Harpe's `SkillsImpl` / `LoggerImpl` — and calls `runTask`. Granting more
+reusing Harpe's `LoggerImpl` — and calls `runTask`. Granting more
 is just widening `runTask`'s `receives` in `api` and instantiating the impl in
 `runtime`. (Namespaces follow the sandbox roles: `SandboxAPI`, `SandboxRuntime`,
 and the guest's `UserTask`.)
@@ -66,11 +66,14 @@ and the guest's `UserTask`.)
 ## The turn loop (`Harpe.cli`)
 
 1. read a line from the user
-2. ask the LLM, offering one tool: `runCode(code)` — the prompt embeds the
-   agent's `sandbox/api` contract so the LLM writes against it
+2. ask the LLM, offering `runCode(code)` plus three read-only reference tools
+   over the skills dir — `skillsList()`, `skillsRead(name)`, `skillsSearch(query)`
+   — the prompt embeds the agent's `sandbox/api` contract so the LLM writes
+   against it. The skill tools only let the model read its own knowledge files
+   (any file type, named with their extension); it still *acts* only via `runCode`
 3. on a `runCode` call: write the program to `sandbox/guest/src/Task.jo`, build
-   & run it with `jo run --spec sandbox/guest/jo.toml -- skills`, and feed the
-   program's stdout (or the compile error) back to the LLM
+   it with `jo build --spec sandbox/guest/jo.toml`, run the compiled program, and
+   feed its stdout (or the compile error) back to the LLM
 4. repeat until the LLM replies with text, then print the reply
 
 The compile step is the security checkpoint: a program that names a capability
@@ -91,7 +94,7 @@ Working and verified: the framework packages build; the example agent builds;
 the loop runs and the per-turn build+run pipeline works (`ready`).
 
 Next increments:
-- **More reusable capabilities** — `FS` alongside `Skills` / `Logger`.
+- **More reusable capabilities** — `FS` alongside `Logger`.
 - **Custom capabilities** — an agent adds an interface to its `sandbox/api` and
   an impl to its `sandbox/runtime`, and widens `runTask`'s `receives`; the loop
   already reads `sandbox/api` into the prompt, so the LLM sees the new contract.

@@ -13,21 +13,7 @@ import jo.IO.stdout
 // Shared result types
 // ============================================
 
-union ReadResult = FileContent(content: String) | NotFound | AccessDenied(message: String)
-
-class SearchHit(file: String, line: Int, lineContent: String, context: String)
-
 union Result = Success | Error(message: String)
-
-// ============================================
-// Skills — the agent's knowledge (read-only Markdown)
-// ============================================
-
-interface Skills
-  def list(): List[String]
-  def read(name: String): ReadResult
-  def grep(query: String, contextLines: Int = 0, maxHits: Int = 20): List[SearchHit]
-end
 
 // ============================================
 // Logger — structured notes into the audit log
@@ -42,5 +28,4 @@ end
 // Capability parameter declarations (an agent's runTask `receives` these)
 // ============================================
 
-param skills: Skills
 param logger: Logger

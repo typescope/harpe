@@ -105,8 +105,16 @@ private def systemPrompt(): String =
     \{contract}
     --- end contract ---
 
-    Before writing Jo, read the `jo-cheat-sheet` skill for syntax:
-        skills.read("jo-cheat-sheet")
+    You also have three read-only reference tools over your skills (knowledge
+    files), so you never need to write Jo just to consult them:
+        skillsList()        — list available skill files (names include extensions)
+        skillsRead(name)    — read one by its full name, e.g. "jo-cheat-sheet.md"
+        skillsSearch(query) — case-insensitive search across all skill files
+    These only let you READ your reference material; you still ACT on the world
+    ONLY through runCode.
+
+    Before writing Jo, read the cheat sheet for syntax:
+        skillsRead("jo-cheat-sheet.md")
 
     Workflow: write Jo -> runCode -> if it fails to compile, read the error and
     fix it -> once it runs, use the output to answer. Keep answers concise.
@@ -128,7 +136,51 @@ private def buildTools(): py.List =
     "description" ~ "Write a Jo program (namespace UserTask, def runTask), compile it against the agent sandbox, and run it. Returns the program's stdout, or the compile error if it does not build.",
     "input_schema" ~ schema
   )
-  py.list(tool)
+
+  val emptySchema = py.dict(
+    "type" ~ "object",
+    "properties" ~ py.dict(),
+    "required" ~ py.list()
+  )
+  val skillsListTool = py.dict(
+    "name" ~ "skillsList",
+    "description" ~ "List the names of all available skill files (read-only reference docs). Each name includes its file extension (e.g. .md, .jo).",
+    "input_schema" ~ emptySchema
+  )
+
+  val nameSchema = py.dict(
+    "type" ~ "object",
+    "properties" ~ py.dict(
+      "name" ~ py.dict(
+        "type" ~ "string",
+        "description" ~ "The full skill file name including extension, as returned by skillsList (e.g. \"jo-cheat-sheet.md\")"
+      )
+    ),
+    "required" ~ py.list("name")
+  )
+  val skillsReadTool = py.dict(
+    "name" ~ "skillsRead",
+    "description" ~ "Read a skill file by its full name including extension. Returns the file contents.",
+    "input_schema" ~ nameSchema
+  )
+
+  val querySchema = py.dict(
+    "type" ~ "object",
+    "properties" ~ py.dict(
+      "query" ~ py.dict(
+        "type" ~ "string",
+        "description" ~ "Substring to search for (case-insensitive)"
+      )
+    ),
+    "required" ~ py.list("query")
+  )
+  val skillsSearchTool = py.dict(
+    "name" ~ "skillsSearch",
+    "description" ~ "Case-insensitive search across all skill files. Returns matching lines as 'name:lineNumber: text'.",
+    "input_schema" ~ querySchema
+  )
+
+  py.list(tool, skillsListTool, skillsReadTool, skillsSearchTool)
 
 // ============================================
 // The runCode tool: write -> build -> run -> capture (timed + logged)
@@ -154,7 +206,7 @@ private def guestBuildGlob(guestSpec: String): String =
 // one-line status (with timing) shown in the console.
 class RunOutcome(result: String, summary: String)
 
-private def runCode(code: String, guestSrc: String, guestSpec: String, skillsDir: String): RunOutcome =
+private def runCode(code: String, guestSrc: String, guestSpec: String): RunOutcome =
   writeFile(guestSrc, code)
 
   // 1. Compile — the security checkpoint — timed and error-captured.
@@ -182,7 +234,7 @@ private def runCode(code: String, guestSrc: String, guestSpec: String, skillsDir
 
   val targetPy = targets.get(0).asString
   val t1 = now()
-  val run = subprocessMod.run(py.list("python3", targetPy, skillsDir), capture_output = true, text = true)
+  val run = subprocessMod.run(py.list("python3", targetPy), capture_output = true, text = true)
   val runSeconds = round2(now() - t1)
   val runRc  = attr(run, "returncode").asInt
   val runOut = attr(run, "stdout").asString.trim
@@ -207,6 +259,100 @@ private def runCode(code: String, guestSrc: String, guestSpec: String, skillsDir
     "output"         ~ result
   ))
   new RunOutcome(result, summary)
+
+// ============================================
+// Skills — direct read-only reference access for the LLM
+// ============================================
+
+// Collect (relativeName ~ fullPath) for every file under skillsDir. Names carry
+// their extension so .md/.jo/.py files with the same stem never collide.
+private def collectSkills(skillsDir: String): List[String ~ String] =
+  if !os.path.isdir(skillsDir) then return []
+
+  var files: List[String ~ String] = []
+  val walkIter = os.walk(skillsDir)
+  var nextEntry: py.Dynamic = builtins.next(walkIter, py.none)
+
+  while !py.isNone(nextEntry) do
+    val entry: os.WalkEntry = nextEntry.cast[os.WalkEntry]
+    val dirpath = entry.dirpath
+    val filenames = entry.filenames
+    var i = 0
+    while i < filenames.size do
+      val filename: String = filenames.get(i).asString
+      val fullPath = os.path.join(dirpath, filename)
+      val relPath = os.path.relpath(fullPath, skillsDir)
+      files = files + (relPath ~ fullPath)
+      i = i + 1
+    end
+    nextEntry = builtins.next(walkIter, py.none)
+
+  files.sortBy(pair => pair.fst)
+
+// Best-effort text read; empty string if the file is not decodable as UTF-8.
+private def readTextOrEmpty(path: String): String =
+  match py.try(py.open(path, "r").read())
+    case Ok(c)  => c.asString
+    case Err(_) => ""
+
+private def skillsListText(skillsDir: String): String =
+  val names = collectSkills(skillsDir).map(pair => pair.fst)
+  if names.isEmpty then "(no skills found)" else names.join("\n")
+
+private def skillsReadOutcome(skillsDir: String, name: String): RunOutcome =
+  // Resolve and confine the path to the skills directory (no escaping via "..").
+  val absPath = os.path.abspath(os.path.normpath(os.path.join(skillsDir, name)))
+  val absDir  = os.path.abspath(skillsDir)
+  val isSafe =
+    if absPath.startsWith(absDir) then
+      if absPath.size == absDir.size then true
+      else absPath.get(absDir.size) == '/'
+    else false
+
+  if !isSafe then
+    return new RunOutcome("Access denied: path outside skills directory", "denied · \{name}")
+
+  if os.path.isfile(absPath) then
+    match py.try(py.open(absPath, "r").read())
+      case Ok(c)  => new RunOutcome(c.asString, "read · \{name}")
+      case Err(_) => new RunOutcome("Skill \{name} could not be read as text.", "unreadable · \{name}")
+  else
+    new RunOutcome("Skill not found: \{name}", "not found · \{name}")
+
+private def skillsSearchText(skillsDir: String, query: String): String =
+  val files = collectSkills(skillsDir)
+  val lowerQuery = query.toLower
+  val maxHits = 30
+  var out = ""
+  var hits = 0
+
+  for name ~ filePath in files do
+    if hits >= maxHits then return out
+
+    val lines = readTextOrEmpty(filePath).lines
+    var idx = 0
+    while idx < lines.size && hits < maxHits do
+      val line = lines[idx]
+      if line.toLower.contains(lowerQuery) then
+        out = out + "\{name}:\{idx + 1}: \{line.trim}\n"
+        hits = hits + 1
+      idx = idx + 1
+    end
+  end
+
+  if out == "" then "(no matches for '\{query}')" else out
+
+// Dispatch a non-runCode tool call to the matching skills helper.
+private def handleSkillTool(name: String, input: py.Dict, skillsDir: String): RunOutcome =
+  if name == "skillsList" then
+    new RunOutcome(skillsListText(skillsDir), "listed skills")
+  else if name == "skillsRead" then
+    skillsReadOutcome(skillsDir, input.get("name", "").asString)
+  else if name == "skillsSearch" then
+    val q = input.get("query", "").asString
+    new RunOutcome(skillsSearchText(skillsDir, q), "searched · \{q}")
+  else
+    new RunOutcome("Unknown tool: \{name}", "unknown tool · \{name}")
 
 // ============================================
 // Terminal UX: spinner + line-editing history
@@ -432,10 +578,17 @@ private def runChat(apiKey: String): Unit receives stdout =
                 var j = 0
                 while j < toolUses.size && !interrupt.is_set().asBool do
                   val tu = toolUses.get(j)
-                  val code = attr(tu, "input").cast[py.Dict].get("code", "").asString
-                  val runSpin = startSpinner("running · ESC to interrupt")
-                  val outcome = runCode(code, guestSrc, guestSpec, skillsDir)
-                  runSpin.stop()
+                  val toolName = attr(tu, "name").asString
+                  val input = attr(tu, "input").cast[py.Dict]
+                  val outcome =
+                    if toolName == "runCode" then
+                      val runSpin = startSpinner("running · ESC to interrupt")
+                      val o = runCode(input.get("code", "").asString, guestSrc, guestSpec)
+                      runSpin.stop()
+                      o
+                    else
+                      handleSkillTool(toolName, input, skillsDir)
+
                   println "  · \{outcome.summary}"
                   toolResults.append(py.dict(
                     "type" ~ "tool_result",
