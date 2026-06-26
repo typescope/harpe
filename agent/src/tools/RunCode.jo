@@ -16,12 +16,13 @@ private def logTurn(entry: py.Dict): Unit =
   f.write(jsonMod.dumps(entry).asString + "\n")
   f.close()
 
-//[ "sandbox/guest/jo.toml" -> "sandbox/guest/.build/*/jo-*/target/*.py" //]
-private def guestBuildGlob(guestSpec: String): String =
-  val dir = guestSpec.substring(0, guestSpec.size - "/jo.toml".size)
-  dir + "/.build/*/jo-*/target/*.py"
+private def runCode(code: String, guestDir: String): RunOutcome =
+  // The guest package's layout: where to write the program, what to build, and
+  // where its compiled output lands.
+  val guestSrc  = os.path.join(guestDir, "src/Task.jo")
+  val guestSpec = os.path.join(guestDir, "jo.toml")
+  val buildGlob = os.path.join(guestDir, ".build/*/jo-*/target/*.py")
 
-private def runCode(code: String, guestSrc: String, guestSpec: String): RunOutcome =
   writeFile(guestSrc, code)
 
   // 1. Compile — the security checkpoint — timed and error-captured.
@@ -43,7 +44,7 @@ private def runCode(code: String, guestSrc: String, guestSpec: String): RunOutco
       "did not compile · \{compileSeconds}s")
 
   // 2. Run the compiled program directly, timed.
-  val targets: py.List = globMod.glob(guestBuildGlob(guestSpec)).cast[py.List]
+  val targets: py.List = globMod.glob(buildGlob).cast[py.List]
   if targets.size == 0 then
     return new RunOutcome("The program compiled but no executable was found.", "no executable produced")
 
@@ -76,10 +77,10 @@ private def runCode(code: String, guestSrc: String, guestSpec: String): RunOutco
   new RunOutcome(result, summary)
 
 //[ The core "act" tool: compile + run a Jo program against the agent sandbox. //]
-def runCodeTool(guestSrc: String, guestSpec: String): Tool =
+def runCodeTool(guestDir: String): Tool =
   new Tool(
     "runCode",
     "Write a Jo program (namespace UserTask, def runTask), compile it against the agent sandbox, and run it. Returns the program's stdout, or the compile error if it does not build.",
     [strParam("code", "The Jo source code to compile and run")],
-    input => runCode(input.string("code"), guestSrc, guestSpec)
+    input => runCode(input.string("code"), guestDir)
   )
