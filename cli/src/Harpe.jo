@@ -164,7 +164,7 @@ private def banner(): Unit receives stdout =
 // The chat loop
 // ============================================
 
-//[ extraTools
+//[ extra tools
   !
   ! Deferred hook for ADDING tools. The default is none; an agent overrides it
   ! in its jo.toml — `[main.links] "harpe.cli.extraTools" = "MyAgent.myTools"` —
@@ -236,45 +236,63 @@ private def runChat(apiKey: String): Unit receives stdout, toolDefs, workspace =
     saveHistory()
 
     if userInput != "" then
-      if userInput == "quit" || userInput == "exit" then
-        break
+      if userInput == "quit" || userInput == "exit" then break
+
+      val turnStart = messages.size
+      messages.append(py.dict("role" ~ "user", "content" ~ userInput))
+
+      // Work loop — ESC cancels the turn and returns to the prompt.
+      val savedTerm = enterCbreak()
+
+      val res = work(userInput, client, messages, tools, sysPrompt)
+
+      restoreTerminal(savedTerm)
+
+      if res is message: String then
+        println ""
+        println "Agent ▸ \{message}"
+
       else
-        work(userInput, client, messages, tools, sysPrompt)
+        // Discard the cancelled/failed turn so the conversation stays valid.
+        while messages.size > turnStart do
+          val _ = messages.pop()
+
+        if res is Cancelled then println "  ⎋ interrupted"
+        else println "  · request failed"
+
     end
   end
 
   println "Goodbye."
 end
 
-private def work(userInput: String, client: py.Dynamic, messages: py.List, tools: py.List, sysPrompt: String): Unit =
-  val turnStart = messages.size
-  messages.append(py.dict("role" ~ "user", "content" ~ userInput))
+union WorkError = Cancelled | NetworkError
 
+private def work(userInput: String, client: py.Dynamic, messages: py.List, tools: py.List, sysPrompt: String): String | WorkError  =
   val model  = getenv("MODEL", "claude-opus-4-6")
 
-  // Work loop — ESC cancels the turn and returns to the prompt.
-  val savedTerm = enterCbreak()
   val interrupt = threadingMod.Event()
   val stopWatch = threadingMod.Event()
   startEscWatcher(interrupt, stopWatch)
 
-  var turnDone = false
-  var ok       = true
-  while !turnDone do
+  var result: String | WorkError = NetworkError
+  while true do
     val llmSpin = startSpinner("thinking · ESC to interrupt")
-    val maybe = callInterruptible(interrupt, () => client.messages.create(
-      model = model,
-      max_tokens = 8096,
-      system = sysPrompt,
-      messages = messages,
-      tools = tools
-    ))
+    val maybe = callInterruptible: interrupt, () =>
+      client.messages.create:
+        model = model
+        max_tokens = 8096
+        system = sysPrompt
+        messages = messages
+        tools = tools
 
     llmSpin.stop()
 
     val response =  maybe rescue None =>
-      ok = false
-      turnDone = true
+      result =
+        if interrupt.is_set().asBool then Cancelled
+        else NetworkError
+
       break
 
     val content: py.List = response.content.cast[py.List]
@@ -282,83 +300,71 @@ private def work(userInput: String, client: py.Dynamic, messages: py.List, tools
     // Re-serialize the assistant message and collect tool calls.
     var assistantContent: py.List = py.list()
     var toolUses: py.List = py.list()
-    var i = 0
-    while i < content.size do
-      val block = content.get(i)
+
+    for block in content do
       val btype = attr(block, "type").asString
       if btype == "text" then
         assistantContent.append:
           py.dict:
             "type" ~ "text"
-            "text" ~ attr(block, "text")
+            "text" ~ block.text
 
       else if btype == "tool_use" then
         assistantContent.append:
           py.dict:
             "type" ~ "tool_use"
-            "id" ~ attr(block, "id")
-            "name" ~ attr(block, "name")
-            "input" ~ attr(block, "input")
+            "id" ~ block.id
+            "name" ~ block.name
+            "input" ~ block.input
 
         toolUses.append(block)
-      i = i + 1
 
     messages.append:
       py.dict: "role" ~ "assistant", "content" ~ assistantContent
 
     if toolUses.size > 0 then
       var toolResults: py.List = py.list()
-      var j = 0
-      while j < toolUses.size && !interrupt.is_set().asBool do
-        val tu = toolUses.get(j)
-        val toolName = attr(tu, "name").asString
-        val input = attr(tu, "input").cast[py.Dict]
-        val outcome =
-          match toolDefs.find(t => t.name == toolName)
-            case Some(t) =>
-              val spin = startSpinner("\{toolName} · ESC to interrupt")
-              val o = t.run(new ToolInput(input))
-              spin.stop()
-              o
 
-            case None =>
-              new RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}")
+      for tu in toolUses do
+        if interrupt.is_set().asBool then
+          result = Cancelled
+          break
+
+        val toolName = tu.name.asString
+        val input = tu.input.cast[py.Dict]
+        val outcome =
+          if toolDefs.find(t => t.name == toolName) is Some(t) then
+            val spin = startSpinner("\{toolName} · ESC to interrupt")
+            val o = t.run: new ToolInput(input)
+            spin.stop()
+            o
+
+          else
+            new RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}")
 
         println "  · \{outcome.summary}"
         toolResults.append:
           py.dict:
             "type" ~ "tool_result"
-            "tool_use_id" ~ attr(tu, "id")
+            "tool_use_id" ~ tu.id
             "content" ~ outcome.result
 
-        j = j + 1
-
       if interrupt.is_set().asBool then
-        ok = false
-        turnDone = true
+        result = Cancelled
+        break
+
       else
         messages.append: py.dict("role" ~ "user", "content" ~ toolResults)
     else
       var text = ""
-      var k = 0
-      while k < content.size do
-        val block = content.get(k)
-        if attr(block, "type").asString == "text" then
-          text = text + attr(block, "text").asString
-        k = k + 1
+      for block in content if attr(block, "type").asString == "text" do
+        text = text + block.text.asString
 
-      println ""
-      println "Agent ▸ \{text.trim}"
-      turnDone = true
+      result = text.trim
+      break
     end
   end // while
 
   stopWatch.set()
-  restoreTerminal(savedTerm)
 
-  if !ok then
-    // Discard the cancelled/failed turn so the conversation stays valid.
-    while messages.size > turnStart do
-      val _ = messages.pop()
-    if interrupt.is_set().asBool then println "  ⎋ interrupted"
-    else println "  · request failed"
+  result
