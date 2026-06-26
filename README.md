@@ -7,21 +7,22 @@ turn. This prototype covers **CLI (conversational) agents**.
 ## Layout
 
 ```
-harpe/                   # three framework packages + an example agent
-  jo.toml                # `harpe`: the shared framework (runtime = python)
-  src/
-    ffi/FFI.jo           #   `harpe.ffi`:   shared Python interop
-    tools/               #   `harpe.tools`: the reusable tools layer
-      Tool.jo            #     the Jo-modeled Tool abstraction (+ RunOutcome)
-      RunCode.jo         #     the runCode tool
-      Skills.jo          #     the read-only skill tools
-      Builtins.jo        #     default paths + builtinTools
-    os.jo
+harpe/                   # a workspace: three framework packages + an example agent
+  agent/                 # `harpe`: the shared base (runtime = python)
+    jo.toml
+    src/
+      ffi/FFI.jo         #   `harpe.ffi`:   shared Python interop
+      tools/             #   `harpe.tools`: the reusable tools layer
+        Tool.jo          #     the Jo-modeled Tool abstraction (+ RunOutcome)
+        RunCode.jo       #     the runCode tool
+        Skills.jo        #     the read-only skill tools
+        Builtins.jo      #     default paths + builtinTools
+      os.jo
   sandbox/               # `harpe-sandbox`: the `Sandbox` abstraction (`harpe.sandbox`)
-    jo.toml              #   dep harpe
+    jo.toml              #   self-contained (no deps)
     src/Sandbox.jo       #   Sandbox interface + factory (impl hidden)
   cli/                   # `harpe-cli`: the conversational loop (`harpe.cli`)
-    jo.toml              #   dep harpe
+    jo.toml              #   dep harpe (../agent)
     src/Harpe.jo         #   the chat loop + main entry + defer hooks (default/extraTools)
   example/               # an example AGENT that depends on the framework
     jo.toml              #   the agent app: jo.main = harpe.cli.main
@@ -32,15 +33,16 @@ harpe/                   # three framework packages + an example agent
       guest/             #   sandbox-guest: the model's per-turn program
 ```
 
-The framework is three packages. `harpe` is the shared base: the `harpe.ffi`
-interop and the `harpe.tools` layer (the `Tool` abstraction + `runCode`/skill
-tools). `harpe-sandbox` provides the `Sandbox` abstraction — host-side facilities
-(logging, env, future agent↔sandbox comms) for the sandbox runtime and capability
-implementations, **never** the LLM. `harpe-cli` is one agent type — the
-conversational loop (`harpe.cli`). None of them owns `runTask` or the per-turn
-entry — each agent owns its `sandbox/`: `api` declares `runTask`, `runtime` has
-its own `main` (`SandboxRuntime.main`) where `jo.main` is rewired, and `guest` is
-what the LLM writes.
+The framework is three packages. `harpe` (in `agent/`) is the shared base: the
+`harpe.ffi` interop and the `harpe.tools` layer (the `Tool` abstraction +
+`runCode`/skill tools). `harpe-sandbox` is a self-contained foundational package
+providing the `Sandbox` abstraction — host-side facilities (logging, env, future
+agent↔sandbox comms) for the sandbox runtime and capability implementations,
+**never** the LLM. `harpe-cli` is one agent type — the conversational loop
+(`harpe.cli`). None of them owns `runTask` or the per-turn entry — each agent owns
+its `sandbox/`: `api` declares `runTask`, `runtime` has its own `main`
+(`SandboxRuntime.main`) where `jo.main` is rewired, and `guest` is what the LLM
+writes.
 
 ## How an agent is wired
 

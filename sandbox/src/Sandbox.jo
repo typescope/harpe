@@ -12,7 +12,10 @@
 
 namespace harpe.sandbox
 
-import harpe.ffi.*
+// `harpe.sandbox` is a foundational package — it owns its small interop rather
+// than depending on `harpe`, so the agent's sandbox runtime can pull it alone.
+private def sysMod: py.Dynamic = py.module("sys")
+private def osMod: py.Dynamic = py.module("os")
 
 //[ Sandbox
   !
@@ -46,9 +49,9 @@ private class SandboxImpl
     sysMod.stderr.flush()
 
   def env(key: String): Option[String] =
-    val v = attr(osMod, "environ").cast[py.Dict].get(key, py.none)
+    val v = osMod.environ.cast[py.Dict].get(key, py.none)
     if py.isNone(v) then None else Some(v.asString)
 
   def envOr(key: String, fallback: String): String =
-    getenv(key, fallback)
+    osMod.environ.cast[py.Dict].get(key, fallback).asString
 end
