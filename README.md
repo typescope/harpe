@@ -11,9 +11,13 @@ harpe/                   # a workspace: three framework packages + an example ag
   agent/                 # `harpe`: the shared base (runtime = python)
     jo.toml
     src/
-      Workspace.jo       #   `harpe`:       the agent working dir (context param)
-      ffi/FFI.jo         #   `harpe.ffi`:   shared Python interop
-      tools/             #   `harpe.tools`: the reusable tools layer
+      Workspace.jo       #   `harpe`:        the agent working dir (context param)
+      ffi/FFI.jo         #   `harpe.ffi`:    shared Python interop
+      models/            #   `harpe.models`: the provider-agnostic Model layer
+        Model.jo         #     the Model interface + Jo conversation model
+        Anthropic.jo     #     the Anthropic-backed Model (`anthropic`)
+        Echo.jo          #     a dummy Model for tests (`echo`)
+      tools/             #   `harpe.tools`:  the reusable tools layer
         Tool.jo          #     the Jo-modeled Tool abstraction (+ RunOutcome)
         RunCode.jo       #     the runCode tool (+ runCodeTool builder)
         Skills.jo        #     the read-only skill tools (+ skillTools builder)
@@ -158,6 +162,25 @@ gives full control, including whether and how `runCode` exists. Compose with the
 Host tools run in the loop process, outside the sandbox, so keep them narrow —
 the typed sandbox (widening `runTask`'s `receives`) remains the place to grant
 the model new ways to *act* on the world.
+
+## Choosing the model
+
+The chat model is a provider-agnostic `harpe.models.Model` — `reply(system,
+history, tools)` returning the assistant's next message. The loop owns the
+conversation (a Jo `List[Message]`) and runs the tools; each provider impl only
+translates to/from its own wire format, so swapping providers touches nothing
+else. The loop selects one through a `defer def model(): Model` hook (default:
+Anthropic from the environment), overridden like the tool hooks:
+
+```toml
+[main.links]
+"harpe.cli.model" = "harpe.models.echo"   # dummy model — test the cli, no API key
+# "harpe.cli.model" = "MyAgent.openai"    # or your own OpenAI / local Model
+```
+
+`harpe.models.echo` replies with the last user message, so the whole loop can be
+driven in a test without a provider or key. A new provider is one file: a class
+that `view Model` plus a factory `def <name>(...): Model`.
 
 ## Run the example
 

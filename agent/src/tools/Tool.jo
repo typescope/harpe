@@ -2,13 +2,10 @@
   !
   ! The Jo-modeled tool abstraction: a `Tool` is a name + prose + typed
   ! parameters + a host-side handler. Tool authors describe inputs in Jo
-  ! (`ParamType` / `ToolParam`) and the `spec` method derives the Anthropic
-  ! JSON schema — callers never hand-write JSON. Handlers read arguments via
-  ! the typed `ToolInput` and return a `RunOutcome`.
-  !
-  ! This file owns no FFI of its own beyond `py.dict`/`py.list`; the built-in
-  ! tools live in their own files of the same namespace, and agent-type loops
-  ! (e.g. `harpe.cli`) assemble tools from here.
+  ! (`ParamType` / `ToolParam`); each `harpe.models` provider renders its own wire
+  ! spec from this model, so `Tool` stays provider-neutral and authors never
+  ! hand-write JSON. Handlers read arguments via the typed `ToolInput` and
+  ! return a `RunOutcome`.
 //]
 
 namespace harpe.tools
@@ -26,13 +23,6 @@ class RunOutcome(result: String, summary: String)
   ! authors never hand-write JSON schema.
 //]
 union ParamType = StrParam | IntParam | BoolParam | NumParam
-
-private def jsonType(t: ParamType): String =
-  match t
-  case StrParam  => "string"
-  case IntParam  => "integer"
-  case BoolParam => "boolean"
-  case NumParam  => "number"
 
 //[ Tool parameter
   !
@@ -65,23 +55,6 @@ class Tool(
   params: List[ToolParam],
   run: ToolInput => RunOutcome
 )
-  //[ The Anthropic tool spec sent in the request's `tools` array, derived from
-    ! the Jo parameter model — callers never touch JSON schema directly.
-  //]
-  def spec: py.Dict =
-    val properties = py.dict()
-    val required = py.list()
-    for p in params do
-      properties.set(p.name, py.dict("type" ~ jsonType(p.paramType), "description" ~ p.description))
-      if p.required then required.append(p.name)
-    end
-
-    py.dict(
-      "name" ~ name,
-      "description" ~ description,
-      "input_schema" ~ py.dict("type" ~ "object", "properties" ~ properties, "required" ~ required)
-    )
-end
 
 //[ A required string parameter — the common case when defining a tool. //]
 def strParam(name: String, description: String): ToolParam =

@@ -24,6 +24,7 @@ namespace harpe.cli
 import jo.IO.stdout
 import harpe.ffi.*
 import harpe.tools.*
+import harpe.models.*
 import harpe.Workspace
 import harpe.workspace
 import os
@@ -110,7 +111,7 @@ private def startEscWatcher(interrupt: py.Dynamic, stop: py.Dynamic): Unit =
 
 // Run `work` on a background thread; return Some(result), or None if
 // `interrupt` fires first (the abandoned worker finishes in the background).
-private def callInterruptible(interrupt: py.Dynamic, work: () => py.Dynamic): Option[py.Dynamic] =
+private def callInterruptible[T](interrupt: py.Dynamic, work: () => T): Option[T] =
   val box  = py.list(py.none)
   val done = threadingMod.Event()
   val worker = () =>
@@ -119,11 +120,11 @@ private def callInterruptible(interrupt: py.Dynamic, work: () => py.Dynamic): Op
   val thread = threadingMod.Thread(target = worker, daemon = true)
   thread.start()
 
-  var out: Option[py.Dynamic] = None
+  var out: Option[T] = None
   var waiting = true
   while waiting do
     if done.wait(0.05).asBool then
-      out = Some(box.get(0))
+      out = Some(box.get(0).cast[T])
       waiting = false
     else if interrupt.is_set().asBool then
       waiting = false
@@ -200,171 +201,136 @@ def main(): Unit receives stdout =
     println "Error: run this from an agent's working directory — a folder containing its jo.toml and a sandbox/ directory."
   else
     loadDotenv(".env")
-    val apiKey = getenv("ANTHROPIC_API_KEY", "")
+    val wspace = new Workspace(os.path.abspath("."))
+    val tools = with workspace = wspace in defaultTools() ++ extraTools()
 
-    if apiKey == "" then
-      println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
-    else
-      val wspace = new Workspace(os.path.abspath("."))
-      val tools = with workspace = wspace in defaultTools() ++ extraTools()
-
-      with workspace = wspace, toolDefs = tools in runChat(apiKey)
+    with workspace = wspace, toolDefs = tools in runChat()
 
 param toolDefs: List[Tool]
 
-private def runChat(apiKey: String): Unit receives stdout, toolDefs, workspace =
-  val client = py.module("anthropic").Anthropic(api_key = apiKey)
-  val sysPrompt = systemPrompt()
+//[ model
+  !
+  ! Deferred hook selecting the chat model. The default is Anthropic from the
+  ! environment; override it in jo.toml — `[main.links] "harpe.cli.model" =
+  ! "MyAgent.model"` — to use OpenAI, a local model, or `harpe.models.echo` for
+  ! tests.
+//]
+defer def model(): Model receives stdout =
+  val key = getenv("ANTHROPIC_API_KEY", "")
+  if key == "" then
+    println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
+    sysMod.exit(1)
+  anthropic(key, getenv("MODEL", "claude-opus-4-6"))
 
-  val tools: py.List = py.list()
-  for t in toolDefs do tools.append(t.spec)
+//[ The outcome of one user turn: an answer (with the updated history), an ESC
+  ! interruption, or a failed request.
+//]
+union TurnResult =
+    Answered(history: List[Message], text: String)
+  | Interrupted
+  | Failed
+
+private def runChat(): Unit receives stdout, toolDefs, workspace =
+  val brain = model()
+  val sysPrompt = systemPrompt()
 
   initReadline()
   banner()
   println "Type a message to start. Ctrl-D or 'quit' to exit."
 
-  val messages: py.List = py.list()
+  var history: List[Message] = []
 
   while true do
-    var userInput = ""
     println ""
     // Keep the prompt a single line with no embedded newline, so readline can
     // redraw it correctly when navigating history with the up/down arrows.
-    val message = py.input("You ▸ ")
-
-    userInput = message.trim
+    val line = py.input("You ▸ ")
+    val userInput = line.trim
     saveHistory()
 
-    if userInput != "" then
-      if userInput == "quit" || userInput == "exit" then break
+    if userInput == "quit" || userInput == "exit" then break
 
-      val turnStart = messages.size
-      messages.append(py.dict("role" ~ "user", "content" ~ userInput))
+    if userInput != "" then
+      val turnStart = history.size
+      history = history + new UserText(userInput)
 
       // Work loop — ESC cancels the turn and returns to the prompt.
       val savedTerm = enterCbreak()
-
-      val res = work(userInput, client, messages, tools, sysPrompt)
-
+      val res = runTurn(brain, sysPrompt, history)
       restoreTerminal(savedTerm)
 
-      if res is message: String then
+      if res is Answered(updated, text) then
+        history = updated
         println ""
-        println "Agent ▸ \{message}"
+        println "Agent ▸ \{text}"
 
       else
         // Discard the cancelled/failed turn so the conversation stays valid.
-        while messages.size > turnStart do
-          val _ = messages.pop()
-
-        if res is Cancelled then println "  ⎋ interrupted"
+        history = history.take(turnStart)
+        if res is Interrupted then println "  ⎋ interrupted"
         else println "  · request failed"
-
     end
   end
 
   println "Goodbye."
 end
 
-union WorkError = Cancelled | NetworkError
-
-private def work(userInput: String, client: py.Dynamic, messages: py.List, tools: py.List, sysPrompt: String): String | WorkError  =
-  val model  = getenv("MODEL", "claude-opus-4-6")
+//[ Drive one turn: call the model, run any tool calls it requests, and repeat
+  ! until it replies with plain text. ESC cancels and rolls the turn back.
+//]
+private def runTurn(brain: Model, sysPrompt: String, start: List[Message]): TurnResult receives stdout, toolDefs =
+  var history = start
 
   val interrupt = threadingMod.Event()
   val stopWatch = threadingMod.Event()
   startEscWatcher(interrupt, stopWatch)
 
-  var result: String | WorkError = NetworkError
+  var result: TurnResult = Failed
   while true do
+    val sofar = history
     val llmSpin = startSpinner("thinking · ESC to interrupt")
-    val maybe = callInterruptible: interrupt, () =>
-      client.messages.create:
-        model = model
-        max_tokens = 8096
-        system = sysPrompt
-        messages = messages
-        tools = tools
-
+    val maybe = callInterruptible(interrupt, () => brain.reply(sysPrompt, sofar, toolDefs))
     llmSpin.stop()
 
-    val response =  maybe rescue None =>
-      result =
-        if interrupt.is_set().asBool then Cancelled
-        else NetworkError
-
+    val reply = maybe rescue None =>
+      result = if interrupt.is_set().asBool then Interrupted else Failed
       break
 
-    val content: py.List = response.content.cast[py.List]
+    history = history + reply
 
-    // Re-serialize the assistant message and collect tool calls.
-    var assistantContent: py.List = py.list()
-    var toolUses: py.List = py.list()
+    if reply.calls.isEmpty then
+      result = new Answered(history, reply.text.trim)
+      break
 
-    for block in content do
-      val btype = attr(block, "type").asString
-      if btype == "text" then
-        assistantContent.append:
-          py.dict:
-            "type" ~ "text"
-            "text" ~ block.text
+    var toolResults: List[ToolResult] = []
+    var cancelled = false
 
-      else if btype == "tool_use" then
-        assistantContent.append:
-          py.dict:
-            "type" ~ "tool_use"
-            "id" ~ block.id
-            "name" ~ block.name
-            "input" ~ block.input
-
-        toolUses.append(block)
-
-    messages.append:
-      py.dict: "role" ~ "assistant", "content" ~ assistantContent
-
-    if toolUses.size > 0 then
-      var toolResults: py.List = py.list()
-
-      for tu in toolUses do
-        if interrupt.is_set().asBool then
-          result = Cancelled
-          break
-
-        val toolName = tu.name.asString
-        val input = tu.input.cast[py.Dict]
-        val outcome =
-          if toolDefs.find(t => t.name == toolName) is Some(t) then
-            val spin = startSpinner("\{toolName} · ESC to interrupt")
-            val o = t.run: new ToolInput(input)
-            spin.stop()
-            o
-
-          else
-            new RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}")
-
-        println "  · \{outcome.summary}"
-        toolResults.append:
-          py.dict:
-            "type" ~ "tool_result"
-            "tool_use_id" ~ tu.id
-            "content" ~ outcome.result
-
+    for call in reply.calls do
       if interrupt.is_set().asBool then
-        result = Cancelled
+        cancelled = true
         break
 
-      else
-        messages.append: py.dict("role" ~ "user", "content" ~ toolResults)
-    else
-      var text = ""
-      for block in content if attr(block, "type").asString == "text" do
-        text = text + block.text.asString
+      val toolName = call.name
+      val outcome =
+        if toolDefs.find(t => t.name == toolName) is Some(t) then
+          val spin = startSpinner("\{toolName} · ESC to interrupt")
+          val o = t.run(call.input)
+          spin.stop()
+          o
 
-      result = text.trim
+        else
+          new RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}")
+
+      println "  · \{outcome.summary}"
+      toolResults = toolResults + new ToolResult(call.id, outcome.result)
+
+    if cancelled || interrupt.is_set().asBool then
+      result = Interrupted
       break
-    end
+
+    else
+      history = history + new ToolResults(toolResults)
   end // while
 
   stopWatch.set()
-
   result
