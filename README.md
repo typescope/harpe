@@ -8,8 +8,7 @@ turn. This prototype covers **CLI (conversational) agents**.
 
 ```
 harpe/                   # three framework packages + an example agent
-  caps/                  # `harpe-caps`: reusable capability interfaces (Logger) + types
-  jo.toml                # `harpe`: the shared framework (runtime = python, dep harpe-caps)
+  jo.toml                # `harpe`: the shared framework (runtime = python)
   src/
     ffi/FFI.jo           #   `harpe.ffi`:   shared Python interop
     tools/               #   `harpe.tools`: the reusable tools layer
@@ -17,8 +16,10 @@ harpe/                   # three framework packages + an example agent
       RunCode.jo         #     the runCode tool
       Skills.jo          #     the read-only skill tools
       Builtins.jo        #     default paths + builtinTools
-    HarpeCapsRuntime.jo  #   `HarpeCapsRuntime`: LoggerImpl
     os.jo
+  sandbox/               # `harpe-sandbox`: the `Sandbox` abstraction (`harpe.sandbox`)
+    jo.toml              #   dep harpe
+    src/Sandbox.jo       #   Sandbox interface + factory (impl hidden)
   cli/                   # `harpe-cli`: the conversational loop (`harpe.cli`)
     jo.toml              #   dep harpe
     src/Harpe.jo         #   the chat loop + main entry + defer hooks (default/extraTools)
@@ -26,19 +27,20 @@ harpe/                   # three framework packages + an example agent
     jo.toml              #   the agent app: jo.main = harpe.cli.main
     AGENT.md  skills/  .env.example
     sandbox/
-      api/               #   sandbox-api: the runTask contract (imports HarpeCaps)
-      runtime/           #   sandbox-runtime: SandboxRuntime.main builds caps + calls runTask
+      api/               #   sandbox-api: the runTask contract (the granted capabilities)
+      runtime/           #   sandbox-runtime: SandboxRuntime.main builds Sandbox + calls runTask
       guest/             #   sandbox-guest: the model's per-turn program
 ```
 
-The framework is three packages. `harpe-caps` (interfaces) and `harpe` are the
-reusable layers: `harpe` holds the shared `harpe.ffi` interop and the `harpe.tools`
-layer (the `Tool` abstraction + `runCode`/skill tools), so any agent type can
-reuse them. `harpe-cli` is one agent type — the conversational loop (`harpe.cli`),
-which depends on `harpe`. None of them owns `runTask` or the per-turn entry —
-each agent owns its `sandbox/`: `api` declares `runTask`, `runtime` has its own
-`main` (`SandboxRuntime.main`) where `jo.main` is rewired, and `guest` is what
-the LLM writes.
+The framework is three packages. `harpe` is the shared base: the `harpe.ffi`
+interop and the `harpe.tools` layer (the `Tool` abstraction + `runCode`/skill
+tools). `harpe-sandbox` provides the `Sandbox` abstraction — host-side facilities
+(logging, env, future agent↔sandbox comms) for the sandbox runtime and capability
+implementations, **never** the LLM. `harpe-cli` is one agent type — the
+conversational loop (`harpe.cli`). None of them owns `runTask` or the per-turn
+entry — each agent owns its `sandbox/`: `api` declares `runTask`, `runtime` has
+its own `main` (`SandboxRuntime.main`) where `jo.main` is rewired, and `guest` is
+what the LLM writes.
 
 ## How an agent is wired
 
@@ -58,7 +60,6 @@ The guest is the per-turn program. It depends on the agent's `api` (check) and
 ```toml
 # example/sandbox/guest/jo.toml
 [main.dependencies]
-harpe-caps      = { path = "../../../caps" }
 sandbox-api     = { path = "../api" }
 sandbox-runtime = { path = "../runtime", link = true }
 [main.links]
@@ -66,11 +67,24 @@ sandbox-runtime = { path = "../runtime", link = true }
 "SandboxAPI.runTask" = "UserTask.runTask"
 ```
 
-`SandboxRuntime.main` (in `sandbox/runtime`) builds the granted capabilities —
-reusing Harpe's `LoggerImpl` — and calls `runTask`. Granting more
-is just widening `runTask`'s `receives` in `api` and instantiating the impl in
-`runtime`. (Namespaces follow the sandbox roles: `SandboxAPI`, `SandboxRuntime`,
-and the guest's `UserTask`.)
+`SandboxRuntime.main` (in `sandbox/runtime`) builds the host-side `Sandbox`,
+constructs the granted capability implementations (passing them the `Sandbox`),
+and calls `runTask`. The `Sandbox` gives impls logging / env / (future) comms but
+is **never** passed to `runTask`, so the model can't name it. (Namespaces follow
+the sandbox roles: `SandboxAPI`, `SandboxRuntime`, and the guest's `UserTask`.)
+
+## Extending an agent: capabilities vs. tools
+
+There are two ways to give an agent more power, and they are not the same:
+
+- **Capabilities (the usual path).** Grant the *LLM* a new typed ability inside
+  the sandbox: declare a capability interface, widen `runTask`'s `receives` in
+  `sandbox/api`, and construct its implementation in `sandbox/runtime` (the impl
+  gets the `Sandbox` for logging/env/comms). The model invokes it from the Jo it
+  writes, and the compile-time check keeps ungranted abilities unreachable.
+- **Tools (advanced).** Change the *host-side* tools the loop offers the model
+  (`runCode`, the skill tools, …). These run outside the sandbox, so reach for
+  them rarely — see "Defining and customizing tools" below.
 
 ## The turn loop (`harpe.cli`)
 
@@ -154,10 +168,9 @@ Working and verified: the framework packages build; the example agent builds;
 the loop runs and the per-turn build+run pipeline works (`ready`).
 
 Next increments:
-- **More reusable capabilities** — `FS` alongside `Logger`.
-- **Custom capabilities** — an agent adds an interface to its `sandbox/api` and
-  an impl to its `sandbox/runtime`, and widens `runTask`'s `receives`; the loop
-  already reads `sandbox/api` into the prompt, so the LLM sees the new contract.
+- **More `Sandbox` facilities** — agent↔sandbox messaging alongside logging/env.
+- **Reusable capabilities** — e.g. an `FS` capability an agent can grant the LLM,
+  with an impl backed by the `Sandbox`.
 - request-driven / monitoring triggers; audit log to `logs/`; sessions under
   `data/`; confirmation for irreversible actions; polish (clean exit on missing
   key, spinner, markdown rendering).

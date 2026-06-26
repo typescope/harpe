@@ -1,0 +1,54 @@
+//[ Sandbox.jo
+  !
+  ! The `Sandbox` abstraction: host-side facilities the sandbox runtime and
+  ! capability implementations use — never the LLM/guest code. An agent's
+  ! `SandboxRuntime.main` builds one and threads it into its capability impls;
+  ! it is deliberately kept out of `runTask`'s `receives`, so the compile-time
+  ! capability check prevents the model from ever naming it.
+  !
+  ! Facilities: structured logging, the runtime environment (string key/values),
+  ! and (future) agent <-> sandbox communication.
+//]
+
+namespace harpe.sandbox
+
+import harpe.ffi.*
+
+//[ Sandbox
+  !
+  ! Host-side facilities for the sandbox runtime and capability implementations.
+  ! Not an LLM capability: pass it to impl constructors, never to `runTask`.
+//]
+interface Sandbox
+  //[ Append a tagged line to the host audit stream (stderr, not the tool result). //]
+  def log(level: String, message: String): Unit
+
+  //[ A runtime environment value (process env / loaded .env), if present. //]
+  def env(key: String): Option[String]
+
+  //[ A runtime environment value, or `fallback` when unset. //]
+  def envOr(key: String, fallback: String): String
+end
+
+//[ Build the default Sandbox: logs to stderr, reads env from the process
+  ! environment. Agents wanting different logging/transport supply their own
+  ! `view Sandbox` instead of calling this.
+//]
+section Sandbox
+  def create(): Sandbox = new SandboxImpl
+end
+
+private class SandboxImpl
+  view Sandbox
+
+  def log(level: String, message: String): Unit =
+    sysMod.stderr.write("[\{level}] \{message}\n")
+    sysMod.stderr.flush()
+
+  def env(key: String): Option[String] =
+    val v = attr(osMod, "environ").cast[py.Dict].get(key, py.none)
+    if py.isNone(v) then None else Some(v.asString)
+
+  def envOr(key: String, fallback: String): String =
+    getenv(key, fallback)
+end
