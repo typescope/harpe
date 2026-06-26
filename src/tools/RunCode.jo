@@ -2,13 +2,12 @@
   !
   ! The `runCode` tool: write the model's program to the guest sandbox, compile
   ! it (the security checkpoint), run the compiled program, and capture the
-  ! result — timed and appended to the audit log.
-  !
-  ! Shared FFI helpers (`writeFile`, `stripAnsi`, `now`, `round2`, `attr`, the
-  ! py module handles) live in Harpe.jo, same namespace.
+  ! result — timed and appended to the audit log. Reusable across agent types.
 //]
 
-namespace Harpe
+namespace harpe.tools
+
+import harpe.ffi.*
 
 //[ Append one JSON record per turn to the audit log under logs/. //]
 private def logTurn(entry: py.Dict): Unit =

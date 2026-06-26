@@ -1,0 +1,72 @@
+//[ FFI.jo
+  !
+  ! Shared host interop for the Harpe framework: handles to the Python modules
+  ! used across the packages, plus small helpers (attribute access, env, file
+  ! IO, ANSI stripping, timing). This is the one place that touches raw
+  ! `py.module`; `harpe.tools` and the agent-type loops (e.g. `harpe.cli`)
+  ! import it so they carry no plumbing of their own.
+//]
+
+namespace harpe.ffi
+
+// --- Python module handles ---
+
+def builtins: py.Dynamic = py.module("builtins")
+def sysMod: py.Dynamic = py.module("sys")
+def subprocessMod: py.Dynamic = py.module("subprocess")
+def jsonMod: py.Dynamic = py.module("json")
+def globMod: py.Dynamic = py.module("glob")
+def threadingMod: py.Dynamic = py.module("threading")
+def termiosMod: py.Dynamic = py.module("termios")
+def ttyMod: py.Dynamic = py.module("tty")
+def selectMod: py.Dynamic = py.module("select")
+def osMod: py.Dynamic = py.module("os")
+
+private def reMod: py.Dynamic = py.module("re")
+private def timeMod: py.Dynamic = py.module("time")
+
+// --- attribute / env / file helpers ---
+
+def attr(obj: py.Dynamic, name: String): py.Dynamic = builtins.getattr(obj, name)
+
+def getenv(name: String, fallback: String): String =
+  attr(osMod, "environ").cast[py.Dict].get(name, fallback).asString
+
+def fileExists(path: String): Bool = os.path.isfile(path)
+
+def readFile(path: String): String = py.open(path, "r").read().asString
+
+def writeFile(path: String, content: String): Unit =
+  val f = py.open(path, "w")
+  f.write(content)
+  f.close()
+
+def stripAnsi(s: String): String =
+  reMod.sub("\\[[0-9;]*m", "", s).asString
+
+private def indexOfChar(s: String, c: Char): Int =
+  var i = 0
+  while i < s.size do
+    if s.get(i) == c then return i
+    i = i + 1
+  -1
+
+//[ Load KEY=VALUE lines from a .env file into the process environment. //]
+def loadDotenv(path: String): Unit =
+  if fileExists(path) then
+    val env = attr(osMod, "environ").cast[py.Dict]
+    for line in readFile(path).lines do
+      val t = line.trim
+      val eq = indexOfChar(t, '=')
+      if t.size > 0 && !t.startsWith("#") && eq > 0 then
+        val key = t.substring(0, eq).trim
+        val value = t.substring(eq + 1, t.size).trim
+        env.set(key, value)
+
+// --- timing ---
+
+def now(): Float = timeMod.time().asFloat
+
+def round2(x: Float): Float = builtins.round(x, 2).asFloat
+
+def round1(x: Float): Float = builtins.round(x, 1).asFloat

@@ -9,21 +9,21 @@ turn. This prototype covers **CLI (conversational) agents**.
 ```
 harpe/                   # three framework packages + an example agent
   caps/                  # `harpe-caps`: reusable capability interfaces (Logger) + types
-  jo.toml                # `harpe`: reusable capability IMPLS (runtime = python, dep harpe-caps)
+  jo.toml                # `harpe`: the shared framework (runtime = python, dep harpe-caps)
   src/
-    HarpeCapsRuntime.jo  #   LoggerImpl
+    ffi/FFI.jo           #   `harpe.ffi`:   shared Python interop
+    tools/               #   `harpe.tools`: the reusable tools layer
+      Tool.jo            #     the Jo-modeled Tool abstraction (+ RunOutcome)
+      RunCode.jo         #     the runCode tool
+      Skills.jo          #     the read-only skill tools
+      Builtins.jo        #     default paths + builtinTools
+    HarpeCapsRuntime.jo  #   `HarpeCapsRuntime`: LoggerImpl
     os.jo
-  cli/                   # `harpe-cli`: the LLM↔program chat loop
-    jo.toml
-    src/
-      Tool.jo            #   the Jo-modeled Tool abstraction (+ RunOutcome)
-      RunCode.jo         #   the runCode tool
-      Skills.jo          #   the read-only skill tools
-      FFI.jo             #   shared Python interop
-      Harpe.jo           #   the chat loop + cli / cliWith / cliTools entry points
-      os.jo
+  cli/                   # `harpe-cli`: the conversational loop (`harpe.cli`)
+    jo.toml              #   dep harpe
+    src/Harpe.jo         #   the chat loop + main entry + defer hooks (default/extraTools)
   example/               # an example AGENT that depends on the framework
-    jo.toml              #   the agent app: jo.main = Harpe.cli
+    jo.toml              #   the agent app: jo.main = harpe.cli.main
     AGENT.md  skills/  .env.example
     sandbox/
       api/               #   sandbox-api: the runTask contract (imports HarpeCaps)
@@ -31,9 +31,11 @@ harpe/                   # three framework packages + an example agent
       guest/             #   sandbox-guest: the model's per-turn program
 ```
 
-The framework is three packages, each pulled in only where it's needed:
-`harpe-caps` (interfaces) and `harpe` (impls) are the reusable capabilities;
-`harpe-cli` is the loop. None of them owns `runTask` or the per-turn entry —
+The framework is three packages. `harpe-caps` (interfaces) and `harpe` are the
+reusable layers: `harpe` holds the shared `harpe.ffi` interop and the `harpe.tools`
+layer (the `Tool` abstraction + `runCode`/skill tools), so any agent type can
+reuse them. `harpe-cli` is one agent type — the conversational loop (`harpe.cli`),
+which depends on `harpe`. None of them owns `runTask` or the per-turn entry —
 each agent owns its `sandbox/`: `api` declares `runTask`, `runtime` has its own
 `main` (`SandboxRuntime.main`) where `jo.main` is rewired, and `guest` is what
 the LLM writes.
@@ -47,7 +49,7 @@ The agent app links its `main` to the loop package:
 [main.dependencies]
 harpe-cli = { path = "../cli" }
 [main.links]
-"jo.main" = "Harpe.cli"
+"jo.main" = "harpe.cli.main"
 ```
 
 The guest is the per-turn program. It depends on the agent's `api` (check) and
@@ -70,7 +72,7 @@ is just widening `runTask`'s `receives` in `api` and instantiating the impl in
 `runtime`. (Namespaces follow the sandbox roles: `SandboxAPI`, `SandboxRuntime`,
 and the guest's `UserTask`.)
 
-## The turn loop (`Harpe.cli`)
+## The turn loop (`harpe.cli`)
 
 1. read a line from the user
 2. ask the LLM, offering `runCode(code)` plus three read-only reference tools
@@ -88,31 +90,50 @@ the agent didn't grant fails to compile, so it never runs.
 
 ## Defining and customizing tools
 
-A tool is a `Tool` (`cli/src/Tool.jo`): a name, a description, typed parameters,
-and a host-side handler. Parameters are modeled in Jo (`ParamType` / `ToolParam`)
-— the `spec` method derives the Anthropic JSON schema, and handlers read
-arguments via a typed `ToolInput`, so tool authors never hand-write JSON:
+A tool is a `harpe.tools.Tool` (`harpe/src/tools/Tool.jo`): a name, a description,
+typed parameters, and a host-side handler. Parameters are modeled in Jo
+(`ParamType` / `ToolParam`) — the `spec` method derives the Anthropic JSON schema,
+and handlers read arguments via a typed `ToolInput`, so tool authors never
+hand-write JSON:
 
 ```scala
-new Tool(
-  "textLength",
-  "Return the number of characters in a string.",
-  [strParam("text", "The text to measure")],
+Tool:
+  "textLength"
+  "Return the number of characters in a string."
+  [strParam("text", "The text to measure")]
   input =>
     val n = input.string("text").size
     new RunOutcome("\{n}", "measured · \{n} chars")
-)
 ```
 
-The loop runs whatever `List[Tool]` it is given. Three entry points layer this,
-so an agent links `jo.main` to whichever fits:
+The toolset offered to the model is `defaultTools() ++ extraTools()`. Both are
+`defer def` hooks in `harpe.cli` with sensible defaults, so an agent customizes
+the toolset **purely through its `jo.toml`** — the same compile-time linking that
+wires `jo.main` and the sandbox's `runTask`, no custom `main` required:
 
-- `Harpe.cli` — the built-in toolset (`runCode` + the read-only skill tools).
-- `Harpe.cliWith(extraTools)` — **add** your tools on top of the built-ins. The
-  agent owns a tiny `main` that builds its extra `Tool`s and calls this.
-- `Harpe.cliTools(tools)` — run **exactly** this toolset. Advanced agents own
-  everything, including whether and how `runCode` exists; compose with the
-  `runCodeTool` / `skillTools` / `builtinTools` builders or supply custom `Tool`s.
+```toml
+# my-agent/jo.toml
+[main.dependencies]
+harpe-cli = { path = "../cli" }
+[main.links]
+"jo.main"              = "harpe.cli.main"
+"harpe.cli.extraTools" = "MyAgent.extraTools"   # ADD tools to the built-ins
+# "harpe.cli.defaultTools" = "MyAgent.allTools" # or REPLACE the base set entirely
+```
+
+```jo
+// my-agent/src/MyAgent.jo
+namespace MyAgent
+import harpe.tools.*
+
+def extraTools(): List[Tool] = [ /* your Tool values */ ]
+```
+
+`defaultTools` defaults to `runCode` + the read-only skill tools (via
+`builtinTools`); overriding it gives full control, including whether and how
+`runCode` exists. Compose with the `runCodeTool` / `skillTools` / `builtinTools`
+builders in `harpe.tools`, or supply entirely custom `Tool`s. A mismatched link
+signature is a compile-time error.
 
 Host tools run in the loop process, outside the sandbox, so keep them narrow —
 the typed sandbox (widening `runTask`'s `receives`) remains the place to grant

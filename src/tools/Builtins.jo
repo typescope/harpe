@@ -1,0 +1,18 @@
+//[ Builtins.jo
+  !
+  ! The default toolset and the workspace paths it assumes. Any agent type can
+  ! call `builtinTools(...)` to offer the model `runCode` plus the read-only
+  ! skill tools, or compose `runCodeTool` / `skillTools` directly.
+//]
+
+namespace harpe.tools
+
+// --- default workspace paths (rebuild tools yourself to change them) ---
+
+def defaultGuestSrc: String = "sandbox/guest/src/Task.jo"
+def defaultGuestSpec: String = "sandbox/guest/jo.toml"
+def defaultSkillsDir: String = "skills"
+
+//[ The default toolset: runCode plus the read-only skill tools. //]
+def builtinTools(guestSrc: String, guestSpec: String, skillsDir: String): List[Tool] =
+  [runCodeTool(guestSrc, guestSpec)] ++ skillTools(skillsDir)

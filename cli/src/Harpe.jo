@@ -8,20 +8,23 @@
   !   3. dispatches each tool call to its handler and feeds the result back
   !   4. repeats until the LLM replies with text, then prints the reply
   !
-  ! The toolset is a `List[Tool]` (see Tool.jo). Three entry points layer it:
-  !   - `cli`       — the built-in toolset (`jo.main = Harpe.cli`)
-  !   - `cliWith`   — built-ins PLUS an agent's own extra tools
-  !   - `cliTools`  — EXACTLY the given tools (advanced: own everything, incl.
-  !                   whether/how runCode exists)
+  ! `jo.main = harpe.cli.main` wires an agent to the loop. The toolset offered
+  ! to the model is `defaultTools() ++ extraTools()` — both are `defer def`
+  ! hooks an agent overrides through its jo.toml `[main.links]`, the same way
+  ! the sandbox links `runTask`:
+  !   - link `harpe.cli.extraTools`   to ADD tools alongside the built-ins
+  !   - link `harpe.cli.defaultTools` to REPLACE the base toolset entirely
   !
-  ! Companion files in this namespace: Tool.jo (the abstraction), RunCode.jo
-  ! (the runCode tool), Skills.jo (the read-only skill tools), FFI.jo (shared
-  ! Python interop).
+  ! The reusable pieces live in the `harpe` package: `harpe.tools` (the Tool
+  ! abstraction + runCode/skill tools) and `harpe.ffi` (shared Python interop).
 //]
 
-namespace Harpe
+namespace harpe.cli
 
 import jo.IO.stdout
+import harpe.ffi.*
+import harpe.tools.*
+import os
 
 // Concatenate the agent's API contract (sandbox/api/src/*.jo) for the prompt.
 private def readApiContract(): String =
@@ -72,22 +75,6 @@ private def systemPrompt(): String =
     Workflow: write Jo -> runCode -> if it fails to compile, read the error and
     fix it -> once it runs, use the output to answer. Keep answers concise.
     """
-
-// ============================================
-// Default workspace paths (rebuild tools yourself to change them)
-// ============================================
-
-def defaultGuestSrc: String = "sandbox/guest/src/Task.jo"
-def defaultGuestSpec: String = "sandbox/guest/jo.toml"
-def defaultSkillsDir: String = "skills"
-
-// ============================================
-// Built-in tools (compose, extend, or replace these freely)
-// ============================================
-
-//[ The default toolset: runCode plus the read-only skill tools. //]
-def builtinTools(guestSrc: String, guestSpec: String, skillsDir: String): List[Tool] =
-  [runCodeTool(guestSrc, guestSpec)] ++ skillTools(skillsDir)
 
 // ============================================
 // Terminal UX: spinner + line-editing history
@@ -213,33 +200,35 @@ private def banner(): Unit receives stdout =
 // The chat loop
 // ============================================
 
-//[ Default entry: the built-in toolset (runCode + read-only skill tools).
-  ! `jo.main = Harpe.cli` wires a stock agent to this.
+//[ extraTools
+  !
+  ! Deferred hook for ADDING tools. The default is none; an agent overrides it
+  ! in its jo.toml — `[main.links] "harpe.cli.extraTools" = "MyAgent.myTools"` —
+  ! to offer its own tools alongside the built-ins, without touching the loop.
 //]
-def cli(): Unit receives stdout =
-  cliTools(builtinTools(defaultGuestSrc, defaultGuestSpec, defaultSkillsDir))
-end
+defer def extraTools(): List[Tool] = []
 
-//[ Additive entry: the built-ins PLUS the agent's own tools. An agent links
-  ! `jo.main` to its own `main` that calls this with the extra tools it defines.
+//[ defaultTools
+  !
+  ! Deferred hook for the BASE toolset (runCode + the read-only skill tools). An
+  ! agent that wants full control — including whether and how `runCode` exists —
+  ! overrides it: `[main.links] "harpe.cli.defaultTools" = "MyAgent.myTools"`.
 //]
-def cliWith(extraTools: List[Tool]): Unit receives stdout =
-  cliTools(builtinTools(defaultGuestSrc, defaultGuestSpec, defaultSkillsDir) ++ extraTools)
-end
+defer def defaultTools(): List[Tool] =
+  builtinTools(defaultGuestSrc, defaultGuestSpec, defaultSkillsDir)
 
-//[ Full-control entry: run the chat with EXACTLY this toolset. The agent owns
-  ! everything, including whether and how `runCode` exists. Compose with the
-  ! `*Tool` builders, or supply entirely custom `Tool`s.
+//[ The entry point (`jo.main = harpe.cli.main`). The toolset offered to the
+  ! model is `defaultTools() ++ extraTools()` — both overridable by linking, so
+  ! an agent customizes the toolset purely through its jo.toml.
 //]
-def cliTools(tools: List[Tool]): Unit receives stdout =
+def main(): Unit receives stdout =
   loadDotenv(".env")
   val apiKey = getenv("ANTHROPIC_API_KEY", "")
 
   if apiKey == "" then
     println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
   else
-    runChat(apiKey, tools)
-end
+    runChat(apiKey, defaultTools() ++ extraTools())
 
 private def runChat(apiKey: String, toolDefs: List[Tool]): Unit receives stdout =
   val model  = getenv("MODEL", "claude-opus-4-6")
