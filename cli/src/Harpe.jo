@@ -243,8 +243,10 @@ def main(): Unit receives stdout =
     if apiKey == "" then
       println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
     else
-      with workspace = new Workspace(os.path.abspath(".")) in
-        with toolDefs = defaultTools() ++ extraTools() in runChat(apiKey)
+      val wspace = new Workspace(os.path.abspath("."))
+      val tools = with workspace = wspace in defaultTools() ++ extraTools()
+
+      with workspace = wspace, toolDefs = tools in runChat(apiKey)
 
 param toolDefs: List[Tool]
 
@@ -260,24 +262,20 @@ private def runChat(apiKey: String): Unit receives stdout, toolDefs =
   println "Type a message to start. Ctrl-D or 'quit' to exit."
 
   val messages: py.List = py.list()
-  var running = true
 
-  while running do
+  while true do
     var userInput = ""
     println ""
     // Keep the prompt a single line with no embedded newline, so readline can
     // redraw it correctly when navigating history with the up/down arrows.
-    match py.try(py.input("You ▸ "))
-    case Ok(s)  =>
-      userInput = s.trim
-      saveHistory()
+    val message = py.input("You ▸ ")
 
-    case Err(_) =>
-      running = false
+    userInput = message.trim
+    saveHistory()
 
-    if running && userInput != "" then
+    if userInput != "" then
       if userInput == "quit" || userInput == "exit" then
-        running = false
+        break
       else
         work(userInput, client, messages, tools, sysPrompt)
     end
