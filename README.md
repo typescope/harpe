@@ -12,7 +12,9 @@ harpe/                   # a workspace: three framework packages + an example ag
     jo.toml
     src/
       Workspace.jo       #   `harpe`:        the agent working dir (context param)
-      ffi/FFI.jo         #   `harpe.ffi`:    shared Python interop
+      ffi/               #   `harpe.ffi` + `os`: Python interop
+        FFI.jo           #     module handles + helpers (`harpe.ffi`)
+        os.jo            #     the `os` namespace
       models/            #   `harpe.models`: the provider-agnostic Model layer
         Model.jo         #     the Model interface + Jo conversation model
         Anthropic.jo     #     the Anthropic-backed Model (`anthropic`)
@@ -21,7 +23,6 @@ harpe/                   # a workspace: three framework packages + an example ag
         Tool.jo          #     the Jo-modeled Tool abstraction (+ RunOutcome)
         RunCode.jo       #     the runCode tool (+ runCodeTool builder)
         Skills.jo        #     the read-only skill tools (+ skillTools builder)
-      os.jo
   sandbox/               # `harpe-sandbox`: the `Sandbox` abstraction (`harpe.sandbox`)
     jo.toml              #   self-contained (no deps)
     src/Sandbox.jo       #   Sandbox interface + factory (impl hidden)

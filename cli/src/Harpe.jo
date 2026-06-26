@@ -102,7 +102,7 @@ private def startEscWatcher(interrupt: py.Dynamic, stop: py.Dynamic): Unit =
   val watcher = () =>
     while !stop.is_set().asBool && !interrupt.is_set().asBool do
       if stdinReady(0.1) then
-        val ch = osMod.read(0, 1)
+        val ch = os.read(0, 1)
         if builtins.len(ch).asInt == 1 && builtins.ord(ch).asInt == 27 then
           // a lone ESC (no byte follows) — not part of an arrow-key sequence
           if !stdinReady(0.02) then interrupt.set()

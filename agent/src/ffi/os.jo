@@ -3,6 +3,12 @@ namespace os
 private def module: py.Dynamic = py.module("os")
 def path: PathApi = module.path.cast[PathApi]
 
+// The process environment as a mutable string map.
+def environ: py.Dict = module.environ.cast[py.Dict]
+
+// Read up to `count` bytes from file descriptor `fd` (raw os.read).
+def read(fd: Int, count: Int): py.Dynamic = module.read(fd, count)
+
 interface WalkEntry
   def dirpath: String = py.dynamic(this)[0].asString
 
