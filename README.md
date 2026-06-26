@@ -27,7 +27,8 @@ harpe/                   # a workspace: three framework packages + an example ag
   example/               # an example AGENT that depends on the framework
     jo.toml              #   the agent app: jo.main = harpe.cli.main
     AGENT.md             #   the system prompt (used verbatim)
-    skills/  .env.example
+    skills/
+    .env.example
     sandbox/
       api/               #   sandbox-api: the runTask contract (the granted capabilities)
       runtime/           #   sandbox-runtime: SandboxRuntime.main builds Sandbox + calls runTask
