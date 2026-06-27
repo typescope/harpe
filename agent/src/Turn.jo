@@ -18,7 +18,6 @@
 
 namespace harpe.turn
 
-import harpe.ffi.*
 import harpe.models.*
 import harpe.tools.*
 
@@ -64,34 +63,23 @@ private def backoffSeconds(attempt: Int): Float =
 
   if d > 30.0 then 30.0 else d
 
-// Run `work` on a background thread; return Some(result), or None if `interrupt`
-// fires first (the abandoned worker finishes in the background). This is what
-// lets a long model call be cancelled cooperatively.
-private def callInterruptible[T](interrupt: py.Dynamic, work: () => T): Option[T] =
-  val box  = py.list(py.none)
-  val done = threadingMod.Event()
-  val worker = () =>
-    box.set(0, work())
-    done.set()
-  val thread = threadingMod.Thread(target = worker, daemon = true)
-  thread.start()
-
-  var out: Option[T] = None
-  var waiting = true
-  while waiting do
-    if done.wait(0.05).asBool then
-      out = Some(box.get(0).cast[T])
-      waiting = false
-    else if interrupt.is_set().asBool then
-      waiting = false
-  out
+//[ Responder
+  !
+  ! A cancellable model call: maps `(systemPrompt, history, tools)` to the
+  ! model's reply (or a typed error) as `Some(ReplyResult)`, or `None` if the
+  ! request was cancelled. The caller owns how the call is issued and cancelled
+  ! (e.g. running it on a background thread), keeping that machinery — threads,
+  ! interrupt polling — out of the engine.
+//]
+type Responder = (String, List[Message], List[Tool]) => Option[ReplyResult]
 
 //[ Ask the model for one reply, retrying transient errors with exponential
-  ! backoff up to `maxRetries`. `interrupt` cancels both the request and any
-  ! backoff wait. Progress and errors are reported through `emit`.
+  ! backoff up to `maxRetries`. A `None` from `ask` (a cancelled request), or
+  ! `interrupt` firing during a backoff wait, ends the attempt. Progress and
+  ! errors are reported through `emit`.
 //]
 private def fetchReply(
-    brain: Model, sysPrompt: String, history: List[Message], tools: List[Tool],
+    ask: Responder, sysPrompt: String, history: List[Message], tools: List[Tool],
     maxRetries: Int, interrupt: py.Dynamic, emit: TurnEvent => Unit)
 : Fetched =
 
@@ -100,11 +88,11 @@ private def fetchReply(
 
   while true do
     emit(new ModelRequestStarted(attempt, maxRetries))
-    val maybe = callInterruptible(interrupt, () => brain.reply(sysPrompt, history, tools))
+    val maybe = ask(sysPrompt, history, tools)
     emit(ModelRequestEnded)
 
     val res = maybe rescue None =>
-      outcome = if interrupt.is_set().asBool then Stopped else GaveUp
+      outcome = Stopped
       break
 
     match res
@@ -141,7 +129,7 @@ private def fetchReply(
   ! with no tools, forcing a final answer. `interrupt` cancels and rolls back.
 //]
 def runTurn(
-    brain: Model, sysPrompt: String, start: List[Message], tools: List[Tool],
+    ask: Responder, sysPrompt: String, start: List[Message], tools: List[Tool],
     maxToolRounds: Int, maxRetries: Int, interrupt: py.Dynamic, emit: TurnEvent => Unit)
 : TurnResult =
 
@@ -158,7 +146,7 @@ def runTurn(
     if rounds == maxToolRounds then
       emit(new ToolBudgetReached(maxToolRounds))
 
-    match fetchReply(brain, sysPrompt, sofar, offer, maxRetries, interrupt, emit)
+    match fetchReply(ask, sysPrompt, sofar, offer, maxRetries, interrupt, emit)
       case Stopped =>
         result = Interrupted
         break

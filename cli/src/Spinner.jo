@@ -1,0 +1,56 @@
+//[ Spinner.jo
+  !
+  ! A reusable terminal spinner for the CLI: an animated status line shown while
+  ! a blocking step (model request, tool run) is in flight. One instance is
+  ! created per session (`newSpinner`) and driven by the event handler — see
+  ! `consoleEmit` in Harpe.jo. It writes straight to `sys.stdout` (not the
+  ! `stdout` capability), so it carries no tracked effect.
+//]
+
+namespace harpe.cli
+
+import harpe.ffi.*
+
+// "\r" + ESC + "[2K" — return to start of line and clear it.
+private def clearLine(): String = "\r" + builtins.chr(27).asString + "[2K"
+
+//[ A reusable spinner resource. `start(message)` animates a status line on a
+  ! background thread (message + elapsed seconds) until `stop()`; starting again
+  ! replaces any running animation, and `stop()` with nothing running is a no-op.
+  ! So one instance — created once per session with `new Spinner` — can be
+  ! started and stopped across many turns. The live animation (its stop event and
+  ! thread) is held in the fields, cleared back to none while idle.
+//]
+class Spinner
+  var stopEvent: Option[py.Dynamic] = None
+  var thread: Option[py.Dynamic] = None
+
+  def start(message: String): Unit =
+    stop()
+    val event   = threadingMod.Event()
+    val started = now()
+    val animate = () =>
+      val frames = py.list("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+      var i = 0
+      while !event.is_set().asBool do
+        val frame = frames.get(i % 10).asString
+        val secs  = round1(now() - started)
+        sysMod.stdout.write("\r  " + frame + " " + message + " " + secs.toString + "s ")
+        sysMod.stdout.flush()
+        i = i + 1
+        event.wait(0.1)
+      sysMod.stdout.write(clearLine())
+      sysMod.stdout.flush()
+
+    val t = threadingMod.Thread(target = animate, daemon = true)
+    stopEvent = Some(event)
+    thread = Some(t)
+    t.start()
+
+  def stop(): Unit =
+    if stopEvent is Some(event) then
+      event.set()
+      if thread is Some(t) then t.join()
+      stopEvent = None
+      thread = None
+end

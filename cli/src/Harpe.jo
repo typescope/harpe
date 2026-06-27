@@ -43,42 +43,6 @@ private def systemPrompt(): String receives workspace =
   if fileExists(workspace.agentMd) then readFile(workspace.agentMd) else ""
 
 // ============================================
-// Terminal UX: spinner + line-editing history
-// ============================================
-
-// "\r" + ESC + "[2K" — return to start of line and clear it.
-private def clearLine(): String = "\r" + builtins.chr(27).asString + "[2K"
-
-//[ A spinner running in a background thread, showing a message + elapsed
-  ! seconds while a blocking call (LLM request, compile, run) is in flight.
-//]
-class Spinner(stopEvent: py.Dynamic, thread: py.Dynamic)
-  def stop(): Unit =
-    stopEvent.set()
-    thread.join()
-end
-
-private def startSpinner(message: String): Spinner =
-  val stopEvent = threadingMod.Event()
-  val started   = now()
-  val animate = () =>
-    val frames = py.list("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
-    var i = 0
-    while !stopEvent.is_set().asBool do
-      val frame = frames.get(i % 10).asString
-      val secs  = round1(now() - started)
-      sysMod.stdout.write("\r  " + frame + " " + message + " " + secs.toString + "s ")
-      sysMod.stdout.flush()
-      i = i + 1
-      stopEvent.wait(0.1)
-    sysMod.stdout.write(clearLine())
-    sysMod.stdout.flush()
-
-  val thread = threadingMod.Thread(target = animate, daemon = true)
-  thread.start()
-  new Spinner(stopEvent, thread)
-
-// ============================================
 // ESC-to-interrupt: watch stdin for the ESC key while the agent works
 // ============================================
 
@@ -109,6 +73,28 @@ private def startEscWatcher(interrupt: py.Dynamic, stop: py.Dynamic): Unit =
           if !stdinReady(0.02) then interrupt.set()
   val thread = threadingMod.Thread(target = watcher, daemon = true)
   thread.start()
+
+// Run `work` on a background thread; return Some(result), or None if `interrupt`
+// fires first (the abandoned worker finishes in the background). This is what
+// lets a long model call be cancelled by ESC — the engine just sees the Option.
+private def callInterruptible[T](interrupt: py.Dynamic, work: () => T): Option[T] =
+  val box  = py.list(py.none)
+  val done = threadingMod.Event()
+  val worker = () =>
+    box.set(0, work())
+    done.set()
+  val thread = threadingMod.Thread(target = worker, daemon = true)
+  thread.start()
+
+  var out: Option[T] = None
+  var waiting = true
+  while waiting do
+    if done.wait(0.05).asBool then
+      out = Some(box.get(0).cast[T])
+      waiting = false
+    else if interrupt.is_set().asBool then
+      waiting = false
+  out
 
 private def historyFile: String = "data/chat_history"
 
@@ -219,29 +205,22 @@ defer def maxToolRounds(): Int = 50
 //]
 defer def maxRetries(): Int = 4
 
-//[ Build the CLI event handler: render the engine's `TurnEvent`s as a spinner
-  ! plus console lines. It writes through a concrete `sysMod`-backed `stdout`
-  ! binding, so the closure captures it and stays a pure `TurnEvent => Unit` —
-  ! the engine never needs an IO capability, which is what keeps it reusable
-  ! outside the CLI.
+//[ Render one engine `TurnEvent` as spinner + console output, driving the
+  ! session's single `spinner` resource (start on a blocking step, stop when it
+  ! ends). `runChat` wraps this in a closure that binds a concrete `stdout`, so
+  ! the resulting `emit` is a pure `TurnEvent => Unit` and the engine needs no IO
+  ! capability — which is what keeps the engine reusable outside the CLI.
 //]
-private def consoleEmit(event: TurnEvent): Unit receives stdout =
-  val spinBox: py.List = py.list(py.none)
-
-  val stopSpin = () =>
-    val cur = spinBox.get(0)
-    if !py.isNone(cur) then cur.cast[Spinner].stop()
-    spinBox.set(0, py.none)
-
+private def consoleEmit(event: TurnEvent, spinner: Spinner): Unit receives stdout =
   match event
   case ModelRequestStarted(attempt, maxAttempts) =>
     val label =
       if attempt == 0 then "thinking · ESC to interrupt"
       else "retrying \{attempt}/\{maxAttempts} · ESC to interrupt"
-    spinBox.set(0, startSpinner(label))
+    spinner.start(label)
 
   case ModelRequestEnded =>
-    stopSpin()
+    spinner.stop()
 
   case TransientError(detail, delaySeconds) =>
     println "  · transient error (\{detail}); retrying in \{delaySeconds}s"
@@ -256,16 +235,19 @@ private def consoleEmit(event: TurnEvent): Unit receives stdout =
     println "  · tool budget reached (\{budget}); requesting final answer"
 
   case ToolCallStarted(name) =>
-    spinBox.set(0, startSpinner("\{name} · ESC to interrupt"))
+    spinner.start("\{name} · ESC to interrupt")
 
   case ToolCallEnded(name, summary) =>
-    stopSpin()
+    spinner.stop()
     println "  · \{summary}"
 
 private def runChat(): Unit receives stdout, toolDefs, workspace =
   val brain = model()
   val sysPrompt = systemPrompt()
-  val emit = event => consoleEmit(event)
+
+  // One spinner resource for the whole session.
+  val spinner = new Spinner
+  val emit = event => consoleEmit(event, spinner)
 
   initReadline()
   banner()
@@ -294,7 +276,12 @@ private def runChat(): Unit receives stdout, toolDefs, workspace =
       val stopWatch = threadingMod.Event()
       startEscWatcher(interrupt, stopWatch)
 
-      val res = runTurn(brain, sysPrompt, history, toolDefs, maxToolRounds(), maxRetries(), interrupt, emit)
+      // Issue the model call on a background thread so ESC can cancel it; the
+      // engine just sees a (sysPrompt, history, tools) => Option[ReplyResult].
+      val ask: Responder = (sys, hist, tools) =>
+        callInterruptible(interrupt, () => brain.reply(sys, hist, tools))
+
+      val res = runTurn(ask, sysPrompt, history, toolDefs, maxToolRounds(), maxRetries(), interrupt, emit)
 
       stopWatch.set()
       restoreTerminal(savedTerm)
