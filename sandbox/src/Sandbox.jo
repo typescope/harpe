@@ -35,11 +35,13 @@ interface Sandbox
   def envOr(key: String, fallback: String): String
 
   //[ Cap the address space (virtual memory) of this process to `mb` megabytes.
+    !
     ! POSIX rlimit: once lowered it cannot be raised, so guest code running
     ! afterwards cannot escape it. `mb` must be positive. //]
   def limitMemoryMb(mb: Int): Unit
 
   //[ Cap the CPU time (seconds) this process may consume; the kernel kills it on
+    !
     ! overrun (SIGXCPU). Irreversible once set, like `limitMemoryMb`. Pair it with
     ! the host's wall-clock timeout: this catches CPU-bound loops, the host
     ! catches hangs. `seconds` must be positive. //]

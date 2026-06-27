@@ -12,12 +12,6 @@ import SandboxAPI
 def main(): Unit receives stdout =
   val sandbox: Sandbox = Sandbox.create()
 
-  // Cap the guest's resources before running its code. These are set on this
-  // process and cannot be raised, so the LLM's `runTask` can neither exceed nor
-  // undo them. Tune per agent; the host's wall-clock timeout is the outer bound.
-  sandbox.limitMemoryMb(512)    // 512 MB address space
-  sandbox.limitCpuSeconds(10)   // 10s of CPU time
-
   sandbox.log("info", "sandbox runtime ready")
 
   SandboxAPI.runTask()
