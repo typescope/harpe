@@ -23,6 +23,8 @@ def selectMod: py.Dynamic = py.module("select")
 
 private def reMod: py.Dynamic = py.module("re")
 private def timeMod: py.Dynamic = py.module("time")
+private def osMod: py.Dynamic = py.module("os")
+private def signalMod: py.Dynamic = py.module("signal")
 
 // --- attribute / env / file helpers ---
 
@@ -61,6 +63,39 @@ def loadDotenv(path: String): Unit =
         val key = t.substring(0, eq).trim
         val value = t.substring(eq + 1, t.size).trim
         env.set(key, value)
+
+// --- subprocess with a wall-clock timeout ---
+
+//[ The outcome of `runCapped`: process exit code, captured stdout/stderr, and
+  ! whether the wall-clock timeout fired (in which case `rc` is -1 and the
+  ! captured streams are empty).
+//]
+class Capped(returnCode: Int, out: String, err: String, timedOut: Bool)
+
+//[ Run a subprocess with a wall-clock timeout. The child is started in its own
+  ! session, so on expiry the whole process group is SIGKILLed — a spinning or
+  ! forking guest cannot outlive the timeout. This is the host-side backstop a
+  ! stuck guest cannot disable; in-guest memory/CPU caps live in the sandbox
+  ! runtime (`harpe.sandbox`), which the guest also cannot raise.
+//]
+def runCapped(args: py.List, timeoutSecs: Float): Capped =
+  val proc = subprocessMod.Popen(
+    args,
+    stdout = subprocessMod.PIPE,
+    stderr = subprocessMod.PIPE,
+    text = true,
+    start_new_session = true
+  )
+
+  match py.try(proc.communicate(timeout = timeoutSecs))
+    case Ok(pair) =>
+      new Capped(proc.returncode.asInt, pair[0].asString, pair[1].asString, false)
+
+    case Err(_) =>
+      // Timed out: kill the whole process group, then reap so no zombie lingers.
+      val _ = py.try: osMod.killpg(osMod.getpgid(proc.pid), signalMod.SIGKILL)
+      val _ = py.try: proc.communicate()
+      new Capped(-1, "", "", true)
 
 // --- timing ---
 

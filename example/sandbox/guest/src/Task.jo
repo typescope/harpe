@@ -2,21 +2,21 @@ namespace UserTask
 
 import SandboxAPI.*
 
-def runTask(): Unit =
-  var n = 999
-  while n > 1 do
-    if isPrime(n) then
-      println("The biggest prime less than 1000 is " + n.toString)
-      return
+def runTask(): Unit receives IO.stdout =
+  var sum = 0
+  var n = 2
+  while n < 80 do
+    var isPrime = true
+    var d = 2
+    while d * d <= n do
+      if n % d == 0 then
+        isPrime = false
+      end
+      d = d + 1
     end
-    n = n - 1
+    if isPrime then
+      sum = sum + n
+    end
+    n = n + 1
   end
-
-def isPrime(n: Int): Bool =
-  if n < 2 then return false
-  var i = 2
-  while i * i <= n do
-    if n % i == 0 then return false
-    i = i + 1
-  end
-  true
+  println sum

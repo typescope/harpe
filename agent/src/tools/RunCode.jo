@@ -16,7 +16,7 @@ private def logTurn(entry: py.Dict): Unit =
   f.write(jsonMod.dumps(entry).asString + "\n")
   f.close()
 
-private def runCode(code: String, guestDir: String): RunOutcome =
+private def runCode(code: String, guestDir: String, buildTimeout: Float, runTimeout: Float): RunOutcome =
   // The guest package's layout: where to write the program, what to build, and
   // where its compiled output lands.
   val guestSrc  = os.path.join(guestDir, "src/Task.jo")
@@ -25,13 +25,26 @@ private def runCode(code: String, guestDir: String): RunOutcome =
 
   writeFile(guestSrc, code)
 
-  // 1. Compile — the security checkpoint — timed and error-captured.
+  // 1. Compile — the security checkpoint — timed, bounded, and error-captured.
   val t0 = now()
-  val build = subprocessMod.run(py.list("jo", "build", "--spec", guestSpec), capture_output = true, text = true)
+  val build = runCapped(py.list("jo", "build", "--spec", guestSpec), buildTimeout)
   val compileSeconds = round2(now() - t0)
 
-  if attr(build, "returncode").asInt != 0 then
-    val compileError = stripAnsi(attr(build, "stderr").asString).trim
+  if build.timedOut then
+    logTurn(py.dict(
+      "time"           ~ now(),
+      "code"           ~ code,
+      "compiled"       ~ false,
+      "compileSeconds" ~ compileSeconds,
+      "timedOut"       ~ true,
+      "phase"          ~ "compile"
+    ))
+    return new RunOutcome(
+      "The build timed out after \{buildTimeout}s.",
+      "build timed out · \{buildTimeout}s")
+
+  if build.returnCode != 0 then
+    val compileError = stripAnsi(build.err).trim
     logTurn(py.dict(
       "time"           ~ now(),
       "code"           ~ code,
@@ -43,26 +56,41 @@ private def runCode(code: String, guestDir: String): RunOutcome =
       "The program did not compile (\{compileSeconds}s):\n\{compileError}",
       "did not compile · \{compileSeconds}s")
 
-  // 2. Run the compiled program directly, timed.
+  // 2. Run the compiled program directly, timed and bounded.
   val targets: py.List = globMod.glob(buildGlob).cast[py.List]
   if targets.size == 0 then
     return new RunOutcome("The program compiled but no executable was found.", "no executable produced")
 
   val targetPy = targets.get(0).asString
   val t1 = now()
-  val run = subprocessMod.run(py.list("python3", targetPy), capture_output = true, text = true)
+  val run = runCapped(py.list("python3", targetPy), runTimeout)
   val runSeconds = round2(now() - t1)
-  val runRc  = attr(run, "returncode").asInt
-  val runOut = attr(run, "stdout").asString.trim
-  val runErr = stripAnsi(attr(run, "stderr").asString).trim
+
+  if run.timedOut then
+    logTurn(py.dict(
+      "time"           ~ now(),
+      "code"           ~ code,
+      "compiled"       ~ true,
+      "compileSeconds" ~ compileSeconds,
+      "runSeconds"     ~ runSeconds,
+      "timedOut"       ~ true,
+      "phase"          ~ "run"
+    ))
+    return new RunOutcome(
+      "The program ran too long and was stopped after \{runTimeout}s (possible infinite loop).",
+      "timed out · ran \{runSeconds}s")
+
+  val runReturnCode = run.returnCode
+  val runOut = run.out.trim
+  val runErr = stripAnsi(run.err).trim
 
   val result =
-    if runRc != 0 then "The program crashed:\n\{runErr}"
+    if runReturnCode != 0 then "The program crashed:\n\{runErr}"
     else if runOut == "" then "(the program produced no output)"
     else runOut
 
   val summary =
-    if runRc != 0 then "crashed · compiled \{compileSeconds}s, ran \{runSeconds}s"
+    if runReturnCode != 0 then "crashed · compiled \{compileSeconds}s, ran \{runSeconds}s"
     else "ran · compiled \{compileSeconds}s, ran \{runSeconds}s"
 
   logTurn(py.dict(
@@ -71,16 +99,23 @@ private def runCode(code: String, guestDir: String): RunOutcome =
     "compiled"       ~ true,
     "compileSeconds" ~ compileSeconds,
     "runSeconds"     ~ runSeconds,
-    "exitCode"       ~ runRc,
+    "exitCode"       ~ runReturnCode,
     "output"         ~ result
   ))
   new RunOutcome(result, summary)
 
-//[ The core "act" tool: compile + run a Jo program against the agent sandbox. //]
-def runCodeTool(guestDir: String): Tool =
+//[ The core "act" tool: compile + run a Jo program against the agent sandbox.
+  !
+  ! `buildTimeout` / `runTimeout` are host-side wall-clock backstops (seconds): a
+  ! guest stuck compiling or in an infinite loop is killed (process group and
+  ! all) rather than hanging the loop. They are the outer bound; finer in-guest
+  ! memory/CPU caps belong in the sandbox runtime (`harpe.sandbox`). An agent that
+  ! overrides `defaultTools` can pass its own values.
+//]
+def runCodeTool(guestDir: String, buildTimeout: Float = 120.0, runTimeout: Float = 30.0): Tool =
   new Tool(
     "runCode",
     "Write a Jo program (namespace UserTask, def runTask), compile it against the agent sandbox, and run it. Returns the program's stdout, or the compile error if it does not build.",
     [strParam("code", "The Jo source code to compile and run")],
-    input => runCode(input.string("code"), guestDir)
+    input => runCode(input.string("code"), guestDir, buildTimeout, runTimeout)
   )

@@ -29,12 +29,24 @@ union Message =
   | Assistant(text: String, calls: List[ToolCall])
   | ToolResults(results: List[ToolResult])
 
+//[ ReplyResult
+  !
+  ! The outcome of asking the model for a reply: the assistant message, or a
+  ! typed error. `Transient` errors (rate limits, 5xx, connection blips) are
+  ! worth retrying with backoff; `Fatal` ones (auth, bad request) are not. The
+  ! provider classifies the failure; the loop owns the retry policy.
+//]
+union ReplyResult =
+    Reply(message: Assistant)
+  | Transient(detail: String)
+  | Fatal(detail: String)
+
 //[ Model
   !
   ! A chat model. `reply` is a pure function of the system prompt, the
   ! conversation so far, and the offered tools — returning the assistant's next
-  ! message (text plus any tool calls). Stateless: the loop keeps the history.
+  ! message (or a typed error). Stateless: the loop keeps the history.
 //]
 interface Model
-  def reply(system: String, history: List[Message], tools: List[Tool]): Assistant
+  def reply(system: String, history: List[Message], tools: List[Tool]): ReplyResult
 end

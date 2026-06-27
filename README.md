@@ -78,8 +78,11 @@ sandbox-runtime = { path = "../runtime", link = true }
 
 `SandboxRuntime.main` (in `sandbox/runtime`) builds the host-side `Sandbox`,
 constructs the granted capability implementations (passing them the `Sandbox`),
-and calls `runTask`. The `Sandbox` gives impls logging / env / (future) comms but
-is **never** passed to `runTask`, so the model can't name it. (Namespaces follow
+and calls `runTask`. The `Sandbox` gives impls logging / env / resource caps
+(`limitMemoryMb`, `limitCpuSeconds`) / (future) comms but is **never** passed to
+`runTask`, so the model can't name it. Setting the caps before `runTask` is how
+an agent bounds the guest's memory and CPU from inside the runtime — irreversible
+limits the model's own code cannot raise. (Namespaces follow
 the sandbox roles: `SandboxAPI`, `SandboxRuntime`, and the guest's `UserTask`.)
 
 ## Extending an agent: capabilities vs. tools
@@ -105,12 +108,20 @@ There are two ways to give an agent more power, and they are not the same:
    tools only let it read its own knowledge files; it still *acts* only via
    `runCode`
 3. on a `runCode` call: write the program to `sandbox/guest/src/Task.jo`, build
-   it with `jo build --spec sandbox/guest/jo.toml`, run the compiled program, and
-   feed its stdout (or the compile error) back to the LLM
+   it with `jo build --spec sandbox/guest/jo.toml`, run the compiled program
+   under a wall-clock timeout (a stuck build or infinite loop is killed —
+   process group and all), and feed its stdout (or the compile/timeout error)
+   back to the LLM
 4. repeat until the LLM replies with text, then print the reply
 
 The compile step is the security checkpoint: a program that names a capability
 the agent didn't grant fails to compile, so it never runs.
+
+The loop is bounded and resilient: a transient model error (rate limit, 5xx,
+connection blip) is retried with exponential backoff (`maxRetries`), and each
+turn is capped at `maxToolRounds` tool-call rounds — once spent, the model is
+asked once more with no tools, forcing a final answer. Both are `defer def`
+hooks an agent can override through its `jo.toml`.
 
 ## Defining and customizing tools
 
@@ -197,11 +208,19 @@ jo run                                  # chat in your terminal
 Working and verified: the framework packages build; the example agent builds;
 the loop runs and the per-turn build+run pipeline works (`ready`).
 
+Robustness (done): host-side wall-clock timeout + process-group kill on the
+guest build/run; in-guest memory/CPU caps via the `Sandbox` runtime
+(`limitMemoryMb` / `limitCpuSeconds`); transient-error retries with backoff; a
+per-turn tool-call budget.
+
 Next increments:
+- **Context-window management** — token budget + pluggable compaction
+  (drop-oldest / summarize / tool-output elision) between the loop and the model.
+- **Streaming + token/usage accounting** — widen the `Model` return; surface
+  per-turn tokens/cost.
 - **More `Sandbox` facilities** — agent↔sandbox messaging alongside logging/env.
 - **Reusable capabilities** — e.g. an `FS` capability an agent can grant the LLM,
   with an impl backed by the `Sandbox`.
-- request-driven / monitoring triggers; audit log to `logs/`; sessions under
-  `data/`; confirmation for irreversible actions; polish (clean exit on missing
-  key, spinner, markdown rendering).
+- request-driven / monitoring triggers; sessions under `data/` (resume/replay);
+  confirmation for irreversible actions; polish (markdown rendering).
 ```

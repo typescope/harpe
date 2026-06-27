@@ -222,6 +222,23 @@ defer def model(): Model receives stdout =
     sysMod.exit(1)
   anthropic(key, getenv("MODEL", "claude-opus-4-6"))
 
+//[ maxToolRounds
+  !
+  ! Cap on tool-call rounds in a single turn. Once spent, the model is asked once
+  ! more with NO tools, so it must answer with text — bounding runaway turns (and
+  ! API spend) from a model that keeps calling tools forever. Override in jo.toml:
+  ! `[main.links] "harpe.cli.maxToolRounds" = "MyAgent.maxToolRounds"`.
+//]
+defer def maxToolRounds(): Int = 50
+
+//[ maxRetries
+  !
+  ! How many times to retry a transient model error (rate limit, 5xx, connection
+  ! blip) before giving up the turn, with exponential backoff between attempts.
+  ! Override in jo.toml like `maxToolRounds`.
+//]
+defer def maxRetries(): Int = 4
+
 //[ The outcome of one user turn: an answer (with the updated history), an ESC
   ! interruption, or a failed request.
 //]
@@ -275,8 +292,75 @@ private def runChat(): Unit receives stdout, toolDefs, workspace =
   println "Goodbye."
 end
 
-//[ Drive one turn: call the model, run any tool calls it requests, and repeat
-  ! until it replies with plain text. ESC cancels and rolls the turn back.
+// Exponential backoff between retries: 1s, 2s, 4s, … capped at 30s.
+private def backoffSeconds(attempt: Int): Float =
+  var d = 1.0
+  var i = 1
+  while i < attempt do
+    d = d * 2.0
+    i = i + 1
+
+  if d > 30.0 then 30.0 else d
+
+//[ The result of fetching one model reply (after any retries): the assistant
+  ! message, a give-up (fatal error or retries exhausted), or an ESC stop.
+//]
+union Fetched =
+    Got(message: Assistant)
+  | GaveUp
+  | Stopped
+
+//[ Ask the model for one reply, retrying transient errors (rate limits, 5xx,
+  ! connection blips) with exponential backoff up to `maxRetries`. ESC interrupts
+  ! both the request and any backoff wait. The spinner reflects whether this is
+  ! the first attempt or a retry.
+//]
+private def fetchReply(brain: Model, sysPrompt: String, history: List[Message], tools: List[Tool], interrupt: py.Dynamic): Fetched receives stdout =
+  var attempt = 0
+  var outcome: Fetched = GaveUp
+
+  while true do
+    val label = if attempt == 0 then "thinking · ESC to interrupt" else "retrying \{attempt}/\{maxRetries()} · ESC to interrupt"
+    val spin = startSpinner(label)
+    val maybe = callInterruptible(interrupt, () => brain.reply(sysPrompt, history, tools))
+    spin.stop()
+
+    val res = maybe rescue None =>
+      outcome = if interrupt.is_set().asBool then Stopped else GaveUp
+      break
+
+    match res
+      case Reply(message) =>
+        outcome = new Got(message)
+        break
+
+      case Fatal(detail) =>
+        println "  · request failed: \{detail}"
+        outcome = GaveUp
+        break
+
+      case Transient(detail) =>
+        attempt = attempt + 1
+        if attempt > maxRetries() then
+          println "  · giving up after \{maxRetries()} retries: \{detail}"
+          outcome = GaveUp
+          break
+
+        else
+          val delay = backoffSeconds(attempt)
+          println "  · transient error (\{detail}); retrying in \{delay}s"
+          // interrupt.wait returns true if ESC fires during the backoff.
+          if interrupt.wait(delay).asBool then
+            outcome = Stopped
+            break
+  end // while
+
+  outcome
+
+//[ Drive one turn: call the model (with retries), run any tool calls it
+  ! requests, and repeat until it replies with plain text. A turn is bounded to
+  ! `maxToolRounds` tool-call rounds; once spent the model is asked once more with
+  ! no tools, forcing a final answer. ESC cancels and rolls the turn back.
 //]
 private def runTurn(brain: Model, sysPrompt: String, start: List[Message]): TurnResult receives stdout, toolDefs =
   var history = start
@@ -285,51 +369,64 @@ private def runTurn(brain: Model, sysPrompt: String, start: List[Message]): Turn
   val stopWatch = threadingMod.Event()
   startEscWatcher(interrupt, stopWatch)
 
+  val budget = maxToolRounds()
+  var rounds = 0
   var result: TurnResult = Failed
+
   while true do
     val sofar = history
-    val llmSpin = startSpinner("thinking · ESC to interrupt")
-    val maybe = callInterruptible(interrupt, () => brain.reply(sysPrompt, sofar, toolDefs))
-    llmSpin.stop()
+    // Once the tool budget is spent, offer no tools so the model must reply
+    // with a final text answer rather than calling another tool.
+    val offer = if rounds >= budget then List.empty[Tool] else toolDefs
 
-    val reply = maybe rescue None =>
-      result = if interrupt.is_set().asBool then Interrupted else Failed
-      break
+    if rounds == budget then
+      println "  · tool budget reached (\{budget}); requesting final answer"
 
-    history = history + reply
-
-    if reply.calls.isEmpty then
-      result = new Answered(history, reply.text.trim)
-      break
-
-    var toolResults: List[ToolResult] = []
-    var cancelled = false
-
-    for call in reply.calls do
-      if interrupt.is_set().asBool then
-        cancelled = true
+    match fetchReply(brain, sysPrompt, sofar, offer, interrupt)
+      case Stopped =>
+        result = Interrupted
         break
 
-      val toolName = call.name
-      val outcome =
-        if toolDefs.find(t => t.name == toolName) is Some(t) then
-          val spin = startSpinner("\{toolName} · ESC to interrupt")
-          val o = t.run(call.input)
-          spin.stop()
-          o
+      case GaveUp =>
+        result = Failed
+        break
+
+      case Got(reply) =>
+        history = history + reply
+
+        if reply.calls.isEmpty then
+          result = new Answered(history, reply.text.trim)
+          break
+
+        var toolResults: List[ToolResult] = []
+        var cancelled = false
+
+        for call in reply.calls do
+          if interrupt.is_set().asBool then
+            cancelled = true
+            break
+
+          val toolName = call.name
+          val outcome =
+            if toolDefs.find(t => t.name == toolName) is Some(t) then
+              val spin = startSpinner("\{toolName} · ESC to interrupt")
+              val o = t.run(call.input)
+              spin.stop()
+              o
+
+            else
+              new RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}")
+
+          println "  · \{outcome.summary}"
+          toolResults = toolResults + new ToolResult(call.id, outcome.result)
+
+        if cancelled || interrupt.is_set().asBool then
+          result = Interrupted
+          break
 
         else
-          new RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}")
-
-      println "  · \{outcome.summary}"
-      toolResults = toolResults + new ToolResult(call.id, outcome.result)
-
-    if cancelled || interrupt.is_set().asBool then
-      result = Interrupted
-      break
-
-    else
-      history = history + new ToolResults(toolResults)
+          history = history + new ToolResults(toolResults)
+          rounds = rounds + 1
   end // while
 
   stopWatch.set()

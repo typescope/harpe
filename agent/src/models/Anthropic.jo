@@ -42,16 +42,22 @@ private def toMessages(history: List[Message]): py.List =
 
     else if m is Assistant(text, calls) then
       val content = py.list()
+
       if text != "" then content.append(py.dict("type" ~ "text", "text" ~ text))
+
       for c in calls do
-        content.append(py.dict("type" ~ "tool_use", "id" ~ c.id, "name" ~ c.name, "input" ~ c.input.raw))
+        content.append:
+          py.dict("type" ~ "tool_use", "id" ~ c.id, "name" ~ c.name, "input" ~ c.input.raw)
+
       msgs.append(py.dict("role" ~ "assistant", "content" ~ content))
 
     else if m is ToolResults(results) then
       val content = py.list()
       for r in results do
-        content.append(py.dict("type" ~ "tool_result", "tool_use_id" ~ r.id, "content" ~ r.content))
-      msgs.append(py.dict("role" ~ "user", "content" ~ content))
+        content.append:
+          py.dict("type" ~ "tool_result", "tool_use_id" ~ r.id, "content" ~ r.content)
+      end
+      msgs.append: py.dict("role" ~ "user", "content" ~ content)
   msgs
 
 //[ Parse an Anthropic response's content blocks into an `Assistant` reply. //]
@@ -59,29 +65,52 @@ private def parseReply(response: py.Dynamic): Assistant =
   val content: py.List = response.content.cast[py.List]
   var text = ""
   var calls: List[ToolCall] = []
+
   for block in content do
     val btype = attr(block, "type").asString
     if btype == "text" then
       text = text + block.text.asString
     else if btype == "tool_use" then
-      calls = calls + new ToolCall(block.id.asString, block.name.asString, new ToolInput(block.input.cast[py.Dict]))
+      calls = calls + ToolCall(block.id.asString, block.name.asString, ToolInput(block.input.cast[py.Dict]))
+
   new Assistant(text.trim, calls)
+
+//[ Classify a failed `messages.create` into a retryable or fatal `ReplyResult`,
+  ! by the Anthropic SDK's exception class name. Rate limits, server errors, and
+  ! connection/timeout blips are transient; everything else (auth, bad request)
+  ! is fatal.
+//]
+private def classify(err: py.Error): ReplyResult =
+  val name = err.typeName
+  val transient =
+    name == "RateLimitError"
+    || name == "InternalServerError"
+    || name == "APIConnectionError"
+    || name == "APITimeoutError"
+    || name.contains("Connection")
+    || name.contains("Timeout")
+    || name.contains("Overloaded")
+  if transient then Transient("\{name}: \{err.message}")
+  else Fatal("\{name}: \{err.message}")
 
 private class AnthropicModel(client: py.Dynamic, model: String)
   view Model
 
-  def reply(system: String, history: List[Message], tools: List[Tool]): Assistant =
+  def reply(system: String, history: List[Message], tools: List[Tool]): ReplyResult =
     val toolSpecs = py.list()
     for t in tools do toolSpecs.append(toolSpec(t))
 
-    val response = client.messages.create:
-      model = model
-      max_tokens = 8096
-      system = system
-      messages = toMessages(history)
-      tools = toolSpecs
+    val attempt = py.try:
+      client.messages.create:
+        model = model
+        max_tokens = 8096
+        system = system
+        messages = toMessages(history)
+        tools = toolSpecs
 
-    parseReply(response)
+    match attempt
+    case Ok(response) => Reply: parseReply(response)
+    case Err(err)     => classify(err)
 end
 
 //[ Build an Anthropic-backed model from an API key and model id. //]

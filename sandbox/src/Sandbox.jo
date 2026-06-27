@@ -7,7 +7,8 @@
   ! capability check prevents the model from ever naming it.
   !
   ! Facilities: structured logging, the runtime environment (string key/values),
-  ! and (future) agent <-> sandbox communication.
+  ! in-process resource caps (memory / CPU) the runtime sets before running guest
+  ! code, and (future) agent <-> sandbox communication.
 //]
 
 namespace harpe.sandbox
@@ -16,6 +17,7 @@ namespace harpe.sandbox
 // than depending on `harpe`, so the agent's sandbox runtime can pull it alone.
 private def sysMod: py.Dynamic = py.module("sys")
 private def osMod: py.Dynamic = py.module("os")
+private def resourceMod: py.Dynamic = py.module("resource")
 
 //[ Sandbox
   !
@@ -31,6 +33,17 @@ interface Sandbox
 
   //[ A runtime environment value, or `fallback` when unset. //]
   def envOr(key: String, fallback: String): String
+
+  //[ Cap the address space (virtual memory) of this process to `mb` megabytes.
+    ! POSIX rlimit: once lowered it cannot be raised, so guest code running
+    ! afterwards cannot escape it. `mb` must be positive. //]
+  def limitMemoryMb(mb: Int): Unit
+
+  //[ Cap the CPU time (seconds) this process may consume; the kernel kills it on
+    ! overrun (SIGXCPU). Irreversible once set, like `limitMemoryMb`. Pair it with
+    ! the host's wall-clock timeout: this catches CPU-bound loops, the host
+    ! catches hangs. `seconds` must be positive. //]
+  def limitCpuSeconds(seconds: Int): Unit
 end
 
 //[ Build the default Sandbox: logs to stderr, reads env from the process
@@ -54,4 +67,13 @@ private class SandboxImpl
 
   def envOr(key: String, fallback: String): String =
     osMod.environ.cast[py.Dict].get(key, fallback).asString
+
+  def limitMemoryMb(mb: Int): Unit =
+    assert: mb > 0, "limitMemoryMb: mb must be positive"
+    val bytes = mb * 1024 * 1024
+    resourceMod.setrlimit(resourceMod.RLIMIT_AS, py.list(bytes, bytes))
+
+  def limitCpuSeconds(seconds: Int): Unit =
+    assert: seconds > 0, "limitCpuSeconds: seconds must be positive"
+    resourceMod.setrlimit(resourceMod.RLIMIT_CPU, py.list(seconds, seconds))
 end
