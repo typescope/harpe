@@ -2,7 +2,7 @@
 
 A reusable agent framework for Jo. An agent is an LLM that acts **only** by
 writing Jo programs, compiled against a typed capability sandbox and run each
-turn. This prototype covers **CLI (conversational) agents**.
+turn. This prototype covers **CLI** and **web (browser) conversational agents**.
 
 ## Layout
 
@@ -29,7 +29,14 @@ harpe/                   # a workspace: three framework packages + an example ag
   cli/                   # `harpe-cli`: the conversational loop (`harpe.cli`)
     jo.toml              #   dep harpe (../agent)
     src/Harpe.jo         #   the chat loop + main entry + defer hooks (default/extraTools)
-  example/               # an example AGENT that depends on the framework
+  web/                   # `harpe-web`: the same loop, served in a browser (`harpe.web`)
+    jo.toml              #   dep harpe (../agent)
+    src/Web.jo           #   main entry: starts a local HTTP server
+    src/Server.jo        #   WSGI routing + the turn-running ChatServer
+    src/WebInteract.jo   #   Interact impl: streams TurnEvents as NDJSON to the page
+    src/Assets.jo        #   the self-contained chat page (markup + styles + script)
+    src/Config.jo        #   defer hooks (model/tools/bounds), keyed `harpe.web.*`
+  example/               # an example CLI AGENT that depends on the framework
     jo.toml              #   the agent app: jo.main = harpe.cli.main
     AGENT.md             #   the system prompt (used verbatim)
     skills/
@@ -38,7 +45,18 @@ harpe/                   # a workspace: three framework packages + an example ag
       api/               #   sandbox-api: the runTask contract (the granted capabilities)
       runtime/           #   sandbox-runtime: SandboxRuntime.main builds Sandbox + calls runTask
       guest/             #   sandbox-guest: the model's per-turn program
+  example-web/           # the same agent, served in the browser (jo.main = harpe.web.main)
+    jo.toml              #   links harpe.web.Config.model to the keyless echo model
+    src/WebExample.jo    #   the echo-model override (drop the link to use Anthropic)
 ```
+
+The web agent reuses the entire engine unchanged — `harpe.turn`, `harpe.models`,
+`harpe.tools`, `Workspace`, `SessionLog`. Only the driver differs: `harpe.web`
+serves a browser chat over HTTP and implements `Interact` by streaming each
+`TurnEvent` as one NDJSON line, so the page shows live progress (the browser
+counterpart of the CLI spinner). Switching an agent from terminal to browser is
+one line — `jo.main = harpe.web.main`. Run `example-web/` with `jo run` and open
+`http://127.0.0.1:8765`.
 
 The framework is three packages. `harpe` (in `agent/`) is the shared base: the
 `harpe.ffi` interop and the `harpe.tools` layer (the `Tool` abstraction +
