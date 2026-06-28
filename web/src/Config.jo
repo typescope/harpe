@@ -1,0 +1,87 @@
+//[ Config.jo
+  !
+  ! Configuration for the web agent. Mirrors `harpe.cli.Config`: the same agent
+  ! knobs (system prompt, model, toolset, turn bounds), exposed as `defer` hooks
+  ! an agent overrides in its `jo.toml` — only the link prefix differs
+  ! (`harpe.web.*` instead of `harpe.cli.*`).
+//]
+
+namespace harpe.web
+
+import harpe.ffi.getenv
+import harpe.ffi.sysMod
+import harpe.ffi.readFile
+import harpe.ffi.fileExists
+import harpe.ffi.jsonMod
+import harpe.models.*
+import harpe.tools.*
+import harpe.Workspace
+import harpe.workspace
+
+
+section Config
+  //[ The system prompt is the agent's AGENT.md, used verbatim — fully visible and
+    ! editable by the agent author.
+    !
+    ! The framework injects nothing.
+  //]
+  def systemPrompt(): String receives workspace =
+    if fileExists(workspace.agentMd) then readFile(workspace.agentMd) else ""
+
+  //[ extra tools
+    !
+    ! Deferred hook for ADDING tools. The default is none; an agent overrides it
+    ! in its jo.toml — `[main.links] "harpe.web.extraTools" = "MyAgent.myTools"` —
+    ! to offer its own tools alongside the built-ins. Its impl `receives workspace`,
+    ! so it can resolve paths against the agent's working directory.
+  //]
+  defer def extraTools(): List[Tool] receives workspace = []
+
+  //[ default tools
+    !
+    ! Deferred hook for the BASE toolset (runCode + the read-only skill tools). An
+    ! agent that wants full control — including whether and how `runCode` exists —
+    ! overrides it: `[main.links] "harpe.web.defaultTools" = "MyAgent.myTools"`.
+  //]
+  defer def defaultTools(): List[Tool] receives workspace =
+    val runTool = runCodeTool: workspace.guestDir, entry =>
+      os.makedirs(workspace.relative("logs"))
+      val f = py.open(workspace.relative("logs/runs.jsonl"), "a")
+      f.write(jsonMod.dumps(entry).asString + "\n")
+      f.close()
+
+    [runTool] ++ skillTools(workspace.skillsDir)
+
+
+  //[ All tools including extra tools and default tools  //]
+  def tools: List[Tool] receives workspace = defaultTools ++ extraTools
+
+  //[ The LLM model
+    !
+    ! Deferred hook selecting the chat model. The default is Anthropic from the
+    ! environment.
+  //]
+  defer def model(): Model receives IO.stdout =
+    val key = getenv("ANTHROPIC_API_KEY", "")
+    if key == "" then
+      println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
+      sysMod.exit(1)
+    anthropic(key, getenv("MODEL", "claude-opus-4-6"))
+
+  //[ maxToolRounds
+    !
+    ! Cap on tool-call rounds in a single turn. Once spent, the model is asked once
+    ! more with NO tools, so it must answer with text — bounding runaway turns (and
+    ! API spend) from a model that keeps calling tools forever. Override in jo.toml:
+    ! `[main.links] "harpe.web.maxToolRounds" = "MyAgent.maxToolRounds"`.
+  //]
+  defer def maxToolRounds(): Int = 50
+
+  //[ maxRetries
+    !
+    ! How many times to retry a transient model error (rate limit, 5xx, connection
+    ! blip) before giving up the turn, with exponential backoff between attempts.
+    ! Override in jo.toml like `maxToolRounds`.
+  //]
+  defer def maxRetries(): Int = 4
+end

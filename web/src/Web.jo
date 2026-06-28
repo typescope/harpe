@@ -1,0 +1,73 @@
+//[ Web.jo
+  !
+  ! The web agent loop (the Harpe "conversational" trigger, served in a browser)
+  ! and its entry point. `jo run` with `jo.main = harpe.web.main` starts a local
+  ! HTTP server; the chat page talks to it over HTTP. Each user message is one
+  ! turn of the shared engine (`harpe.turn.runTurn`), driven by `WebInteract` so
+  ! the browser sees progress live.
+  !
+  ! The skeleton is single-session and single-threaded — fine for a local
+  ! `jo run` dev chat. Sessions, cancellation, and the transparency/confirmation
+  ! UI are later phases.
+//]
+
+namespace harpe.web
+
+import jo.IO.stdout
+import harpe.ffi.fileExists
+import harpe.ffi.loadDotenv
+import harpe.ffi.getenv
+import harpe.ffi.readFile
+import harpe.ffi.builtins
+import harpe.Workspace
+import harpe.workspace
+import harpe.SessionLog
+import os
+
+//[ The agent's working directory is the CWD; tools resolve paths against it. It
+  ! must hold the agent's own `jo.toml` and a `sandbox/`, checked up front so a
+  ! mislaunch fails clearly instead of with confusing path errors mid-run.
+//]
+private def inAgentDir(): Bool =
+  fileExists("jo.toml") && os.path.isdir("sandbox")
+
+//[ The entry point //]
+def main(): Unit receives stdout =
+  if !inAgentDir() then
+    println "Error: run this from an agent's working directory — a folder containing its jo.toml and a sandbox/ directory."
+  else
+    loadDotenv(".env")
+    val wspace = new Workspace(os.path.abspath("."))
+    with workspace = wspace in serve()
+
+private def serve(): Unit receives stdout, workspace =
+  val brain = Config.model()
+  val sysPrompt = Config.systemPrompt()
+  val tools = Config.tools
+  val name = agentName()
+
+  val server = new ChatServer(brain, sysPrompt, tools, name, SessionLog.newLog())
+
+  val host = getenv("HOST", "127.0.0.1")
+  val port = builtins.int(getenv("PORT", "8765")).asInt
+
+  // The WSGI app is a thin adapter onto the server; the runtime calls it with
+  // (environ, start_response) per request.
+  val app = (environ: py.Dynamic, startResp: py.Dynamic) =>
+    server.handle(environ, startResp)
+
+  val wsgi = py.module("wsgiref.simple_server")
+  val httpd = wsgi.make_server(host, port, app)
+
+  println "Harpe ▸ \{name} is live at http://\{host}:\{port}  (Ctrl-C to stop)"
+  httpd.serve_forever()
+
+//[ The agent's display name: the first Markdown H1 in AGENT.md, else a default. //]
+private def agentName(): String receives workspace =
+  if fileExists(workspace.agentMd) then
+    for line in readFile(workspace.agentMd).lines do
+      val t = line.trim
+      if t.startsWith("# ") then return t.substring(2, t.size).trim
+    "Harpe Agent"
+  else
+    "Harpe Agent"

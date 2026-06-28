@@ -1,0 +1,107 @@
+//[ Server.jo
+  !
+  ! The chat server: a WSGI application that routes browser requests and drives
+  ! the shared turn engine. One `ChatServer` is built per process and serves:
+  !
+  !   GET  /            the chat page (a single self-contained HTML document)
+  !   GET  /api/info    the agent's name (its AGENT.md heading)
+  !   POST /api/message run one turn, STREAMING progress then the answer as NDJSON
+  !
+  ! `/api/message` is the heart of it: each `TurnEvent` the engine emits is written
+  ! as one JSON line on the open response, so the browser sees progress live. A
+  ! single lock serializes turns, keeping the one conversation's history consistent
+  ! (the skeleton is single-session; per-session state is a later phase).
+//]
+
+namespace harpe.web
+
+import harpe.ffi.*
+import harpe.turn.*
+import harpe.models.*
+import harpe.tools.Tool
+import harpe.SessionLog
+import time
+
+class ChatServer(brain: Model, sysPrompt: String, tools: List[Tool], name: String, sessionLog: SessionLog)
+  private val lock = threadingMod.Lock()
+  private var history: List[Message] = []
+  private var saved = 0   // messages already written to the session file
+
+  //[ The WSGI application: route one request to a response. //]
+  def handle(environ: py.Dynamic, startResp: py.Dynamic): py.List =
+    val method = environ.get("REQUEST_METHOD", "GET").asString
+    val path = environ.get("PATH_INFO", "/").asString
+
+    if path == "/" then
+      respond(startResp, "200 OK", "text/html; charset=utf-8", Assets.indexHtml)
+
+    else if path == "/api/info" then
+      respond(startResp, "200 OK", "application/json", jsonMod.dumps(py.dict("name" ~ name)).asString)
+
+    else if path == "/api/message" && method == "POST" then
+      handleMessage(environ, startResp)
+
+    else
+      respond(startResp, "404 Not Found", "text/plain", "not found")
+
+  //[ Run one turn, streaming its progress and final answer as NDJSON.
+    !
+    ! The WSGI `write` callable returned by `start_response` is the push sink: each
+    ! `TurnEvent` (via `WebInteract`) and the final answer become one JSON line,
+    ! flushed as it is produced. The whole turn runs under the lock so the single
+    ! conversation's history stays consistent.
+  //]
+  private def handleMessage(environ: py.Dynamic, startResp: py.Dynamic): py.List =
+    val text = jsonMod.loads(readBody(environ)).get("text", "").asString
+
+    val headers = py.list(
+      py.tuple("Content-Type", "application/x-ndjson"),
+      py.tuple("Cache-Control", "no-cache"))
+    val write = py.call(startResp, "200 OK", headers)
+
+    val sink: Sink = (obj: py.Dict) =>
+      py.call(write, py.dynamic(jsonMod.dumps(obj).asString + "\n").encode())
+
+    if text.trim == "" then
+      sink(py.dict("type" ~ "error", "detail" ~ "empty message"))
+
+    else
+      lock.acquire()
+      runOneTurn(text, sink)
+      lock.release()
+
+    py.list()
+
+  private def runOneTurn(text: String, sink: Sink): Unit =
+    val interact = new WebInteract(brain, sysPrompt, sink)
+    val snapshot = history
+    history = history + UserText(text)
+
+    match runTurn(history, tools, Config.maxToolRounds, Config.maxRetries, interact)
+    case Answered(updated, answer) =>
+      history = updated
+      sessionLog.append(time.now(), history.drop(saved))
+      saved = history.size
+      sink(py.dict("type" ~ "answer", "text" ~ answer))
+
+    case Interrupted =>
+      // Discard the cancelled turn so the conversation stays valid.
+      history = snapshot
+      sink(py.dict("type" ~ "interrupted"))
+
+    case Failed =>
+      history = snapshot
+      sink(py.dict("type" ~ "failed"))
+  end
+
+  //[ Read and decode a request body using its CONTENT_LENGTH. //]
+  private def readBody(environ: py.Dynamic): String =
+    val raw = environ.get("CONTENT_LENGTH", "").asString
+    val length = if raw == "" then 0 else builtins.int(raw).asInt
+    environ.get("wsgi.input").read(length).decode().asString
+
+  //[ A complete, non-streamed response from a string body. //]
+  private def respond(startResp: py.Dynamic, status: String, ctype: String, body: String): py.List =
+    val _ = py.call(startResp, status, py.list(py.tuple("Content-Type", ctype)))
+    py.list(py.dynamic(body).encode())
+end

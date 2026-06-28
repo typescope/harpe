@@ -1,0 +1,71 @@
+//[ WebInteract.jo
+  !
+  ! The web driver's `Interact` implementation — the seam between the shared turn
+  ! engine and the browser. Where the CLI's `ConsoleInteract` drives a terminal
+  ! spinner, this one turns every `TurnEvent` into a small JSON object and hands
+  ! it to a `sink`, which the server writes as one line of the streamed HTTP
+  ! response. The browser reads those lines as they arrive, so the page shows live
+  ! progress (the web equivalent of the spinner).
+  !
+  ! The skeleton has no cancellation yet: `cancelled` is always false and `pause`
+  ! simply waits out a retry backoff. A later phase wires a per-session "stop" to
+  ! these.
+//]
+
+namespace harpe.web
+
+import harpe.turn.*
+import harpe.models.*
+import harpe.tools.Tool
+
+//[ A sink for one turn's progress: each call emits one JSON object, which the
+  ! server serializes and writes as a line of the NDJSON response stream.
+//]
+type Sink = py.Dict => Unit
+
+private class WebInteract(brain: Model, sysPrompt: String, sink: Sink)
+  view Interact
+
+  //[ A plain (non-cancellable) model call; the turn engine retries transient
+    ! errors itself.
+  //]
+  def ask(history: List[Message], tools: List[Tool]): Option[ReplyResult] =
+    Some(brain.reply(sysPrompt, history, tools))
+
+  def cancelled: Bool = false
+
+  def pause(seconds: Float): Bool =
+    py.module("time").sleep(seconds)
+    false
+
+  //[ Translate one engine event into a UI event on the stream. `ModelRequestEnded`
+    ! carries no UI meaning on its own — the next `status`/`answer` supersedes it.
+  //]
+  def emit(event: TurnEvent): Unit =
+    match event
+    case ModelRequestStarted(attempt, maxAttempts) =>
+      val label = if attempt == 0 then "thinking" else "retrying \{attempt}/\{maxAttempts}"
+      sink(py.dict("type" ~ "status", "label" ~ label))
+
+    case ModelRequestEnded =>
+      pass
+
+    case TransientError(detail, delaySeconds) =>
+      sink(py.dict("type" ~ "status", "label" ~ "transient error; retrying in \{delaySeconds}s"))
+
+    case RequestFailed(detail) =>
+      sink(py.dict("type" ~ "error", "detail" ~ detail))
+
+    case RetriesExhausted(detail, attempts) =>
+      sink(py.dict("type" ~ "error", "detail" ~ "giving up after \{attempts} retries: \{detail}"))
+
+    case ToolBudgetReached(budget) =>
+      sink(py.dict("type" ~ "status", "label" ~ "tool budget reached (\{budget})"))
+
+    case ToolCallStarted(name) =>
+      sink(py.dict("type" ~ "status", "label" ~ name))
+
+    case ToolCallEnded(name, summary) =>
+      sink(py.dict("type" ~ "tool", "name" ~ name, "summary" ~ summary))
+  end
+end

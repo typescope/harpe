@@ -1,0 +1,246 @@
+//[ Assets.jo
+  !
+  ! The chat web page: a single self-contained HTML document (markup + styles +
+  ! script) served at `/`. It is embedded as a string so it ships with the
+  ! compiled agent — there are no static files to locate at runtime.
+  !
+  ! The script POSTs each message to `/api/message` and reads the streamed NDJSON
+  ! response line by line, rendering live status, tool chips, and the final
+  ! answer — the browser counterpart of the CLI spinner.
+//]
+
+namespace harpe.web
+
+section Assets
+  def indexHtml: String =
+    """
+    <!doctype html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title id="doctitle">Harpe</title>
+      <style>
+        :root {
+          --bg: #f6f7f9;
+          --panel: #ffffff;
+          --ink: #1c2024;
+          --muted: #8a9099;
+          --line: #e6e8eb;
+          --user: #2f6df6;
+          --agent: #f1f3f5;
+          --accent: #2f6df6;
+          --error: #c0392b;
+        }
+        * { box-sizing: border-box; }
+        html, body { height: 100%; margin: 0; }
+        body {
+          font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          color: var(--ink); background: var(--bg);
+          display: flex; flex-direction: column; height: 100vh;
+        }
+        header {
+          display: flex; align-items: center; gap: 10px;
+          padding: 14px 20px; background: var(--panel);
+          border-bottom: 1px solid var(--line);
+        }
+        header .mark {
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          font-weight: 700; color: var(--accent); letter-spacing: 1px;
+        }
+        header #title { font-weight: 600; }
+        header .sub { color: var(--muted); font-size: 13px; margin-left: auto; }
+        main {
+          flex: 1; overflow-y: auto; padding: 24px 0;
+        }
+        #messages { max-width: 760px; margin: 0 auto; padding: 0 20px; }
+        .msg { display: flex; margin: 14px 0; }
+        .msg.user { justify-content: flex-end; }
+        .row { max-width: 80%; }
+        .bubble {
+          padding: 10px 14px; border-radius: 14px; white-space: pre-wrap;
+          word-wrap: break-word;
+        }
+        .msg.user .bubble { background: var(--user); color: #fff; border-bottom-right-radius: 4px; }
+        .msg.agent .bubble { background: var(--agent); color: var(--ink); border-bottom-left-radius: 4px; }
+        .bubble.error { background: #fdecea; color: var(--error); }
+        .status {
+          font-size: 12px; color: var(--muted); margin: 6px 2px 0;
+          display: flex; align-items: center; gap: 6px;
+        }
+        .status .dot {
+          width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+          animation: pulse 1s infinite ease-in-out;
+        }
+        @keyframes pulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+        .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 2px 0; }
+        .chip {
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          font-size: 12px; color: #3a5; background: #eef7f0;
+          border: 1px solid #d4ebda; border-radius: 8px; padding: 2px 8px;
+        }
+        footer {
+          background: var(--panel); border-top: 1px solid var(--line); padding: 14px 20px;
+        }
+        .composer { max-width: 760px; margin: 0 auto; display: flex; gap: 10px; align-items: flex-end; }
+        textarea {
+          flex: 1; resize: none; border: 1px solid var(--line); border-radius: 12px;
+          padding: 10px 14px; font: inherit; max-height: 160px; outline: none;
+        }
+        textarea:focus { border-color: var(--accent); }
+        button {
+          border: none; background: var(--accent); color: #fff; font: inherit; font-weight: 600;
+          padding: 10px 18px; border-radius: 12px; cursor: pointer;
+        }
+        button:disabled { opacity: .5; cursor: default; }
+        .hint { max-width: 760px; margin: 6px auto 0; color: var(--muted); font-size: 12px; }
+      </style>
+    </head>
+    <body>
+      <header>
+        <span class="mark">HARPE</span>
+        <span id="title">Agent</span>
+        <span class="sub">type a message to start</span>
+      </header>
+      <main>
+        <div id="messages"></div>
+      </main>
+      <footer>
+        <div class="composer">
+          <textarea id="input" rows="1" placeholder="Message the agent..."></textarea>
+          <button id="send">Send</button>
+        </div>
+        <div class="hint">Enter to send, Shift+Enter for a new line.</div>
+      </footer>
+
+      <script>
+        var msgs = document.getElementById('messages');
+        var input = document.getElementById('input');
+        var sendBtn = document.getElementById('send');
+        var NL = String.fromCharCode(10);
+        var busy = false;
+
+        function el(tag, cls, text) {
+          var e = document.createElement(tag);
+          if (cls) e.className = cls;
+          if (text !== undefined) e.textContent = text;
+          return e;
+        }
+
+        function addMessage(role, text) {
+          var wrap = el('div', 'msg ' + role);
+          var row = el('div', 'row');
+          var bubble = el('div', 'bubble', text);
+          row.appendChild(bubble);
+          wrap.appendChild(row);
+          msgs.appendChild(wrap);
+          scrollDown();
+          return row;
+        }
+
+        function scrollDown() {
+          var main = document.querySelector('main');
+          main.scrollTop = main.scrollHeight;
+        }
+
+        function loadInfo() {
+          fetch('/api/info').then(function (r) { return r.json(); }).then(function (d) {
+            document.getElementById('title').textContent = d.name;
+            document.getElementById('doctitle').textContent = d.name;
+          }).catch(function () {});
+        }
+
+        function autoGrow() {
+          input.style.height = 'auto';
+          input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+        }
+
+        function send() {
+          if (busy) return;
+          var text = input.value.trim();
+          if (!text) return;
+          input.value = '';
+          autoGrow();
+          addMessage('user', text);
+
+          busy = true;
+          sendBtn.disabled = true;
+
+          var row = addMessage('agent', '');
+          var bubble = row.querySelector('.bubble');
+          var status = el('div', 'status');
+          status.appendChild(el('span', 'dot'));
+          var statusText = el('span', null, 'thinking');
+          status.appendChild(statusText);
+          row.appendChild(status);
+          var chips = el('div', 'chips');
+          row.appendChild(chips);
+          scrollDown();
+
+          fetch('/api/message', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: text })
+          }).then(function (resp) {
+            var reader = resp.body.getReader();
+            var decoder = new TextDecoder();
+            var buf = '';
+            function finish() {
+              status.remove();
+              busy = false;
+              sendBtn.disabled = false;
+              input.focus();
+              scrollDown();
+            }
+            function pump() {
+              return reader.read().then(function (res) {
+                if (res.done) { finish(); return; }
+                buf += decoder.decode(res.value, { stream: true });
+                var idx;
+                while ((idx = buf.indexOf(NL)) >= 0) {
+                  var line = buf.slice(0, idx).trim();
+                  buf = buf.slice(idx + 1);
+                  if (line) handle(JSON.parse(line), bubble, statusText, chips);
+                }
+                return pump();
+              });
+            }
+            return pump();
+          }).catch(function () {
+            statusText.textContent = 'connection error';
+            busy = false;
+            sendBtn.disabled = false;
+          });
+        }
+
+        function handle(ev, bubble, statusText, chips) {
+          if (ev.type === 'status') {
+            statusText.textContent = ev.label;
+          } else if (ev.type === 'tool') {
+            chips.appendChild(el('span', 'chip', ev.summary));
+          } else if (ev.type === 'answer') {
+            bubble.textContent = ev.text;
+          } else if (ev.type === 'error') {
+            bubble.classList.add('error');
+            bubble.textContent = ev.detail;
+          } else if (ev.type === 'interrupted') {
+            statusText.textContent = 'stopped';
+          } else if (ev.type === 'failed') {
+            bubble.classList.add('error');
+            bubble.textContent = 'request failed';
+          }
+          scrollDown();
+        }
+
+        sendBtn.addEventListener('click', send);
+        input.addEventListener('input', autoGrow);
+        input.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+        });
+        loadInfo();
+        input.focus();
+      </script>
+    </body>
+    </html>
+    """
+end
