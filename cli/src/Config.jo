@@ -9,6 +9,7 @@ import harpe.ffi.getenv
 import harpe.ffi.sysMod
 import harpe.ffi.readFile
 import harpe.ffi.fileExists
+import harpe.ffi.jsonMod
 import harpe.models.*
 import harpe.tools.*
 import harpe.Workspace
@@ -40,7 +41,13 @@ section Config
     ! overrides it: `[main.links] "harpe.cli.defaultTools" = "MyAgent.myTools"`.
   //]
   defer def defaultTools(): List[Tool] receives workspace =
-    [runCodeTool(workspace.guestDir)] ++ skillTools(workspace.skillsDir)
+    val runTool = runCodeTool: workspace.guestDir, entry =>
+      os.makedirs(workspace.relative("logs"))
+      val f = py.open(workspace.relative("logs/runs.jsonl"), "a")
+      f.write(jsonMod.dumps(entry).asString + "\n")
+      f.close()
+
+    [runTool] ++ skillTools(workspace.skillsDir)
 
 
   //[ All tools including extra tools and default tools  //]

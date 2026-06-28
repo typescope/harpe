@@ -2,21 +2,32 @@
   !
   ! The `runCode` tool: write the model's program to the guest sandbox, compile
   ! it (the security checkpoint), run the compiled program, and capture the
-  ! result — timed and appended to the audit log. Reusable across agent types.
+  ! result — timed and reported to the caller's run-log sink. Reusable across
+  ! agent types. This audit trail is the program-execution log, distinct from the
+  ! conversational session history; the concrete logging policy is injected, not
+  ! hard-coded here.
 //]
 
 namespace harpe.tools
 
 import harpe.ffi.*
 
-//[ Append one JSON record per turn to the audit log under logs/. //]
-private def logTurn(entry: py.Dict): Unit =
-  os.makedirs("logs")
-  val f = py.open("logs/turns.jsonl", "a")
-  f.write(jsonMod.dumps(entry).asString + "\n")
-  f.close()
+private def runCode(
+    code: String,
+    guestDir: String,
+    logRun: py.Dict => Unit,
+    buildTimeout: Float,
+    runTimeout: Float)
+: RunOutcome =
+  // Build one structured record per run — the time and the program under test,
+  // plus the fields specific to how the run ended — and hand it to the injected
+  // sink. What becomes of the record (a file, some other store, the network, or
+  // nothing at all) is the caller's policy, not this tool's concern.
+  def log(fields: ..(Any ~ Any)): Unit =
+    val entry = py.dict("time" ~ now(), "code" ~ code)
+    for k ~ v in fields do entry.set(k, v)
+    logRun(entry)
 
-private def runCode(code: String, guestDir: String, buildTimeout: Float, runTimeout: Float): RunOutcome =
   // The guest package's layout: where to write the program, what to build, and
   // where its compiled output lands.
   val guestSrc  = os.path.join(guestDir, "src/Task.jo")
@@ -31,27 +42,23 @@ private def runCode(code: String, guestDir: String, buildTimeout: Float, runTime
   val compileSeconds = round2(now() - t0)
 
   if build.timedOut then
-    logTurn(py.dict(
-      "time"           ~ now(),
-      "code"           ~ code,
+    log(
       "compiled"       ~ false,
       "compileSeconds" ~ compileSeconds,
       "timedOut"       ~ true,
       "phase"          ~ "compile"
-    ))
+    )
     return new RunOutcome(
       "The build timed out after \{buildTimeout}s.",
       "build timed out · \{buildTimeout}s")
 
   if build.returnCode != 0 then
     val compileError = stripAnsi(build.err).trim
-    logTurn(py.dict(
-      "time"           ~ now(),
-      "code"           ~ code,
+    log(
       "compiled"       ~ false,
       "compileSeconds" ~ compileSeconds,
       "compileError"   ~ compileError
-    ))
+    )
     return new RunOutcome(
       "The program did not compile (\{compileSeconds}s):\n\{compileError}",
       "did not compile · \{compileSeconds}s")
@@ -67,15 +74,13 @@ private def runCode(code: String, guestDir: String, buildTimeout: Float, runTime
   val runSeconds = round2(now() - t1)
 
   if run.timedOut then
-    logTurn(py.dict(
-      "time"           ~ now(),
-      "code"           ~ code,
+    log(
       "compiled"       ~ true,
       "compileSeconds" ~ compileSeconds,
       "runSeconds"     ~ runSeconds,
       "timedOut"       ~ true,
       "phase"          ~ "run"
-    ))
+    )
     return new RunOutcome(
       "The program ran too long and was stopped after \{runTimeout}s (possible infinite loop).",
       "timed out · ran \{runSeconds}s")
@@ -93,15 +98,13 @@ private def runCode(code: String, guestDir: String, buildTimeout: Float, runTime
     if runReturnCode != 0 then "crashed · compiled \{compileSeconds}s, ran \{runSeconds}s"
     else "ran · compiled \{compileSeconds}s, ran \{runSeconds}s"
 
-  logTurn(py.dict(
-    "time"           ~ now(),
-    "code"           ~ code,
+  log(
     "compiled"       ~ true,
     "compileSeconds" ~ compileSeconds,
     "runSeconds"     ~ runSeconds,
     "exitCode"       ~ runReturnCode,
     "output"         ~ result
-  ))
+  )
   new RunOutcome(result, summary)
 
 //[ The core "act" tool: compile + run a Jo program against the agent sandbox.
@@ -111,11 +114,19 @@ private def runCode(code: String, guestDir: String, buildTimeout: Float, runTime
   ! all) rather than hanging the loop. They are the outer bound; finer in-guest
   ! memory/CPU caps belong in the sandbox runtime (`harpe.sandbox`). An agent that
   ! overrides `defaultTools` can pass its own values.
+  !
+  ! `logRun` is the injected audit sink: it receives one structured record per
+  ! run (time, code, compile/run timings, output or error). The tool does not
+  ! decide where that goes — the caller supplies the policy.
 //]
-def runCodeTool(guestDir: String, buildTimeout: Float = 120.0, runTimeout: Float = 30.0): Tool =
+def runCodeTool(
+    guestDir: String,
+    logRun: py.Dict => Unit,
+    buildTimeout: Float = 120.0,
+    runTimeout: Float = 30.0): Tool =
   new Tool(
     "runCode",
     "Write a Jo program (namespace UserTask, def runTask), compile it against the agent sandbox, and run it. Returns the program's stdout, or the compile error if it does not build.",
     [strParam("code", "The Jo source code to compile and run")],
-    input => runCode(input.string("code"), guestDir, buildTimeout, runTimeout)
+    input => runCode(input.string("code"), guestDir, logRun, buildTimeout, runTimeout)
   )

@@ -51,8 +51,11 @@ private def check(label: String, actual: String, expected: String): Unit receive
 
 def run(): Unit receives stdout =
   val guestDir = fixtureGuestDir()
-  val fast  = runCodeTool(guestDir, 120.0, 5.0)   // 5s run backstop
-  val quick = runCodeTool(guestDir, 120.0, 2.0)   // 2s run backstop
+  // These tests assert on outcomes, not the audit trail, so inject a no-op sink
+  // — the logging policy is the caller's to supply, and here we want none.
+  val noLog: py.Dict => Unit = _ => pass
+  val fast  = runCodeTool(guestDir, noLog, 120.0, 5.0)   // 5s run backstop
+  val quick = runCodeTool(guestDir, noLog, 120.0, 2.0)   // 2s run backstop
 
   // Generous caps for the well-behaved cases.
   os.environ.set("HARPE_TEST_MEM_MB", "512")
