@@ -155,7 +155,6 @@ def runTurn(
   var result: TurnResult = Failed
 
   while true do
-    val sofar = history
     // Once the tool budget is spent, offer no tools so the model must reply with
     // a final text answer rather than calling another tool.
     val offer = if rounds >= maxToolRounds then List.empty[Tool] else tools
@@ -163,7 +162,7 @@ def runTurn(
     if rounds == maxToolRounds then
       emit(new ToolBudgetReached(maxToolRounds))
 
-    match fetchReply(ask, sysPrompt, sofar, offer, maxRetries, interrupt, emit)
+    match fetchReply(ask, sysPrompt, history, offer, maxRetries, interrupt, emit)
       case Stopped =>
         result = Interrupted
         break
