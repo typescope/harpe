@@ -25,48 +25,16 @@
 namespace harpe.cli
 
 import jo.IO.stdout
-import harpe.ffi.*
-import harpe.tools.*
-import harpe.models.*
+import harpe.ffi.fileExists
+import harpe.ffi.loadDotenv
 import harpe.turn.*
+import harpe.models.*
+import harpe.tools.Tool
 import harpe.Workspace
 import harpe.workspace
 import os
 
-// ============================================
-// Prompt
-// ============================================
 
-//[ The system prompt is the agent's AGENT.md, used verbatim — fully visible and
-  ! editable by the agent author, who maintains all of it (framing, workflow, and
-  ! any capability/contract notes). The framework injects nothing; the model
-  ! learns the available tools from the `tools=` API, not from the prompt.
-//]
-private def systemPrompt(): String receives workspace =
-  if fileExists(workspace.agentMd) then readFile(workspace.agentMd) else ""
-
-
-// ============================================
-// The chat loop
-// ============================================
-
-//[ extra tools
-  !
-  ! Deferred hook for ADDING tools. The default is none; an agent overrides it
-  ! in its jo.toml — `[main.links] "harpe.cli.extraTools" = "MyAgent.myTools"` —
-  ! to offer its own tools alongside the built-ins. Its impl `receives workspace`,
-  ! so it can resolve paths against the agent's working directory.
-//]
-defer def extraTools(): List[Tool] receives workspace = []
-
-//[ defaultTools
-  !
-  ! Deferred hook for the BASE toolset (runCode + the read-only skill tools). An
-  ! agent that wants full control — including whether and how `runCode` exists —
-  ! overrides it: `[main.links] "harpe.cli.defaultTools" = "MyAgent.myTools"`.
-//]
-defer def defaultTools(): List[Tool] receives workspace =
-  [runCodeTool(workspace.guestDir)] ++ skillTools(workspace.skillsDir)
 
 //[ The agent's working directory is the CWD, and the runCode/skill tools resolve
   ! their paths against it. It must hold the agent's own `jo.toml` and a
@@ -83,44 +51,15 @@ def main(): Unit receives stdout =
   else
     loadDotenv(".env")
     val wspace = new Workspace(os.path.abspath("."))
-    val tools = with workspace = wspace in defaultTools() ++ extraTools()
+    val tools = with workspace = wspace in Config.defaultTools ++ Config.extraTools
 
     with workspace = wspace, toolDefs = tools in runChat()
 
 param toolDefs: List[Tool]
 
-//[ The LLM model
-  !
-  ! Deferred hook selecting the chat model. The default is Anthropic from the
-  ! environment.
-//]
-defer def model(): Model receives stdout =
-  val key = getenv("ANTHROPIC_API_KEY", "")
-  if key == "" then
-    println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
-    sysMod.exit(1)
-  anthropic(key, getenv("MODEL", "claude-opus-4-6"))
-
-//[ maxToolRounds
-  !
-  ! Cap on tool-call rounds in a single turn. Once spent, the model is asked once
-  ! more with NO tools, so it must answer with text — bounding runaway turns (and
-  ! API spend) from a model that keeps calling tools forever. Override in jo.toml:
-  ! `[main.links] "harpe.cli.maxToolRounds" = "MyAgent.maxToolRounds"`.
-//]
-defer def maxToolRounds(): Int = 50
-
-//[ maxRetries
-  !
-  ! How many times to retry a transient model error (rate limit, 5xx, connection
-  ! blip) before giving up the turn, with exponential backoff between attempts.
-  ! Override in jo.toml like `maxToolRounds`.
-//]
-defer def maxRetries(): Int = 4
-
 private def runChat(): Unit receives stdout, toolDefs, workspace =
-  val brain = model()
-  val sysPrompt = systemPrompt()
+  val brain = Config.model()
+  val sysPrompt = Config.systemPrompt()
 
   val historyFile = workspace.relative("data/chat_history")
   val interact = new ConsoleInteract(brain, sysPrompt, stdout, historyFile)
@@ -140,7 +79,7 @@ private def runChat(): Unit receives stdout, toolDefs, workspace =
 
       val sofar = history
       val res = interact.turn: () =>
-        runTurn(sofar, toolDefs, maxToolRounds(), maxRetries(), interact)
+        runTurn(sofar, toolDefs, Config.maxToolRounds, Config.maxRetries, interact)
 
       if res is Answered(updated, text) then
         history = updated
