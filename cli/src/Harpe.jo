@@ -73,24 +73,24 @@ private def runChat(): Unit receives stdout, toolDefs, workspace =
 
     if userInput == "quit" || userInput == "exit" then break
 
-    if userInput != "" then
-      val snapshot = history
-      history = history + UserText(userInput)
+    if userInput == "" then continue
 
-      val sofar = history
-      val res = interact.turn: () =>
-        runTurn(sofar, toolDefs, Config.maxToolRounds, Config.maxRetries, interact)
+    val snapshot = history
+    history = history + UserText(userInput)
 
-      if res is Answered(updated, text) then
-        history = updated
-        interact.agentResponse(text)
+    val sofar = history
+    val res = interact.turn: () =>
+      runTurn(sofar, toolDefs, Config.maxToolRounds, Config.maxRetries, interact)
 
-      else
-        // Discard the cancelled/failed turn so the conversation stays valid.
-        history = snapshot
-        if res is Interrupted then println "  ⎋ interrupted"
-        else println "  · request failed"
-    end
+    if res is Answered(updated, text) then
+      history = updated
+      interact.agentResponse(text)
+
+    else
+      // Discard the cancelled/failed turn so the conversation stays valid.
+      history = snapshot
+      if res is Interrupted then println "  ⎋ interrupted"
+      else println "  · request failed"
   end
 
   println "Goodbye."
