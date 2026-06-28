@@ -1,0 +1,124 @@
+//[ TurnTest.jo
+  !
+  ! Unit tests for the `harpe.turn` engine (`runTurn`). The engine is pure — its
+  ! model call is an injected `Responder`, its output an injected `emit`, and its
+  ! cancellation a plain event — so each scenario scripts a `Responder`, records
+  ! the emitted `TurnEvent`s, and asserts the resulting `TurnResult` + event
+  ! sequence. No model, no network, no tty.
+  !
+  ! Each scenario is summarized as "<result> | <event,tags>" so the expectation
+  ! is a single deterministic string (no timings).
+//]
+
+import jo.IO.stdout
+import harpe.turn.*
+import harpe.models.*
+import harpe.tools.*
+import harpe.ffi.*
+
+// A reply carrying only text (no tool calls).
+private def textReply(s: String): Option[ReplyResult] =
+  Some(new Reply(new Assistant(s, List.empty[ToolCall])))
+
+// A reply asking to call the named tool once.
+private def toolReply(name: String): Option[ReplyResult] =
+  val call = new ToolCall("id", name, new ToolInput(py.dict()))
+  Some(new Reply(new Assistant("", [call])))
+
+private def eventTag(e: TurnEvent): String =
+  match e
+  case ModelRequestStarted(_, _) => "start"
+  case ModelRequestEnded         => "end"
+  case TransientError(_, _)      => "transient"
+  case RequestFailed(_)          => "failed"
+  case RetriesExhausted(_, _)    => "exhausted"
+  case ToolBudgetReached(_)      => "budget"
+  case ToolCallStarted(n)        => "tool+\{n}"
+  case ToolCallEnded(n, _)       => "tool-\{n}"
+
+private def resultTag(r: TurnResult): String =
+  match r
+  case Answered(_, text) => "Answered(\{text})"
+  case Interrupted       => "Interrupted"
+  case Failed            => "Failed"
+
+private def joinPy(xs: py.List): String =
+  var s = ""
+  var i = 0
+  while i < xs.size do
+    if i > 0 then s = s + ","
+    s = s + xs.get(i).asString
+    i = i + 1
+  s
+
+// A trivial tool that always succeeds, for exercising the tool-call path.
+private def echoTool(): Tool =
+  new Tool("echo", "echo tool", List.empty[ToolParam], input => new RunOutcome("echoed", "echo · ran"))
+
+// Drive one turn and summarize it as "<result> | <events>".
+private def scenario(ask: Responder, tools: List[Tool], maxToolRounds: Int, maxRetries: Int): String =
+  val log = py.list()
+  val emit = (e: TurnEvent) =>
+    val _ = log.append(eventTag(e))
+  val interrupt = threadingMod.Event()
+  val res = runTurn(ask, "sys", List.empty[Message], tools, maxToolRounds, maxRetries, interrupt, emit)
+  "\{resultTag(res)} | \{joinPy(log)}"
+
+private def check(label: String, actual: String, expected: String): Unit receives stdout =
+  assert: actual == expected, "\{label}: expected [\{expected}] but got [\{actual}]"
+  println "  ok \{label}"
+
+def main(): Unit receives stdout =
+  val tools = [echoTool()]
+
+  // A plain text reply ends the turn immediately.
+  check("A text-answer",
+    scenario((s, h, t) => textReply("hi"), tools, 50, 4),
+    "Answered(hi) | start,end")
+
+  // One tool call is run, then the next reply (text) ends the turn.
+  val stepB = py.list(0)
+  val askB: Responder = (s, h, t) =>
+    val n = stepB.get(0).asInt
+    stepB.set(0, n + 1)
+    if n == 0 then toolReply("echo") else textReply("done")
+  check("B tool-then-text",
+    scenario(askB, tools, 50, 4),
+    "Answered(done) | start,end,tool+echo,tool-echo,start,end")
+
+  // Tool budget: once spent (maxToolRounds=1) the model is re-asked with no
+  // tools and must answer with text. The scripted model returns text only when
+  // offered no tools.
+  val askC: Responder = (s, h, t) =>
+    if t.isEmpty then textReply("final") else toolReply("echo")
+  check("C tool-budget",
+    scenario(askC, tools, 1, 4),
+    "Answered(final) | start,end,tool+echo,tool-echo,budget,start,end")
+
+  // A fatal error loses the turn.
+  check("D fatal",
+    scenario((s, h, t) => Some(new Fatal("bad key")), tools, 50, 4),
+    "Failed | start,end,failed")
+
+  // A cancelled request (None from the responder) interrupts the turn.
+  check("E cancelled",
+    scenario((s, h, t) => None, tools, 50, 4),
+    "Interrupted | start,end")
+
+  // Transient with no retry budget (maxRetries=0) gives up immediately — no
+  // backoff wait.
+  check("F retries-exhausted",
+    scenario((s, h, t) => Some(new Transient("rate limited")), tools, 50, 0),
+    "Failed | start,end,exhausted")
+
+  // Transient once, then success: exercises the backoff + retry path.
+  val stepG = py.list(0)
+  val askG: Responder = (s, h, t) =>
+    val n = stepG.get(0).asInt
+    stepG.set(0, n + 1)
+    if n == 0 then Some(new Transient("blip")) else textReply("recovered")
+  check("G transient-then-success",
+    scenario(askG, tools, 50, 2),
+    "Answered(recovered) | start,end,transient,start,end")
+
+  println "turn engine: all scenarios passed"
