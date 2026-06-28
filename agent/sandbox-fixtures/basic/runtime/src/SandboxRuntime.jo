@@ -1,0 +1,17 @@
+namespace SandboxRuntime
+
+import jo.IO.stdout
+import harpe.sandbox.*
+import SandboxAPI
+
+// Test variant of the per-turn runtime: the resource caps are read from the
+// environment so a single test driver can exercise the cap behavior with
+// different limits per runCode invocation (the guest inherits the driver's env
+// at spawn). Defaults are generous so the "normal" cases are unaffected.
+def main(): Unit receives stdout =
+  val sandbox: Sandbox = Sandbox.create()
+
+  sandbox.limitMemoryMb(sandbox.envOr("HARPE_TEST_MEM_MB", "512").toInt)
+  sandbox.limitCpuSeconds(sandbox.envOr("HARPE_TEST_CPU_SECONDS", "30").toInt)
+
+  SandboxAPI.runTask()

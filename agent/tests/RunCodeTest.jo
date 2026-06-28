@@ -1,0 +1,74 @@
+//[ RunCodeTest.jo
+  !
+  ! Integration tests for the `runCode` tool (`harpe.tools`). Unlike the pure
+  ! `runTurn` tests, `runCode` actually compiles and runs a guest program, so
+  ! these drive `runCodeTool` against an on-disk sandbox fixture
+  ! (`agent/sandbox-fixtures/basic/`, kept outside the `tests/` source glob) and assert a
+  ! normalized outcome tag — covering the host wall-clock timeout and the sandbox
+  ! resource caps end to end. They shell out to `jo build` + `python3`, so they
+  ! are slower than the unit tests.
+  !
+  ! The fixture's `SandboxRuntime` reads its memory/CPU caps from the environment
+  ! (`HARPE_TEST_MEM_MB` / `HARPE_TEST_CPU_SECONDS`), which the guest inherits at
+  ! spawn, so one driver can vary the caps per scenario.
+//]
+
+namespace RunCodeTest
+
+import jo.IO.stdout
+import harpe.tools.*
+import harpe.ffi.*
+import os
+
+// Locate the sandbox fixture regardless of where `jo test` is invoked from
+// (the package dir or the repo root).
+private def fixtureGuestDir(): String =
+  var found = ""
+  for c in ["sandbox-fixtures/basic/guest", "agent/sandbox-fixtures/basic/guest"] do
+    if found == "" && os.path.isdir(c) then found = c
+
+  assert: found != "", "runCode tests: sandbox fixture not found under sandbox-fixtures/basic/"
+  os.path.abspath(found)
+
+// Map an outcome to a stable tag (raw summaries carry nondeterministic timings).
+private def tag(o: RunOutcome): String =
+  if o.summary.contains("timed out") then "timeout"
+  else if o.summary.contains("did not compile") then "compile-error"
+  else if o.summary.contains("crashed") then "crash"
+  else if o.summary.contains("ran") then "ran"
+  else "other"
+
+private def exec(tool: Tool, code: String): RunOutcome =
+  tool.run(ToolInput(py.dict("code" ~ code)))
+
+// Wrap a runTask body in a minimal guest program.
+private def guest(body: String): String =
+  "namespace UserTask\nimport SandboxAPI.*\n\ndef runTask(): Unit receives IO.stdout =\n" + body
+
+private def check(label: String, actual: String, expected: String): Unit receives stdout =
+  assert: actual == expected, "\{label}: expected [\{expected}] but got [\{actual}]"
+  println "  ok \{label}"
+
+def run(): Unit receives stdout =
+  val guestDir = fixtureGuestDir()
+  val fast  = runCodeTool(guestDir, 120.0, 5.0)   // 5s run backstop
+  val quick = runCodeTool(guestDir, 120.0, 2.0)   // 2s run backstop
+
+  // Generous caps for the well-behaved cases.
+  os.environ.set("HARPE_TEST_MEM_MB", "512")
+  os.environ.set("HARPE_TEST_CPU_SECONDS", "30")
+
+  // A well-formed program runs and produces output.
+  check("normal", tag(exec(fast, guest("  println 42\n"))), "ran")
+
+  // A program that does not type-check is caught at the compile checkpoint.
+  check("compile-error", tag(exec(fast, guest("  println undefinedThing\n"))), "compile-error")
+
+  // An infinite loop is killed by the host wall-clock timeout (CPU cap is high,
+  // so the host backstop is what fires).
+  check("host-timeout", tag(exec(quick, guest("  var i = 0\n  while i >= 0 do i = i + 1\n"))), "timeout")
+
+  // A memory hog trips the sandbox runtime's address-space cap and crashes.
+  os.environ.set("HARPE_TEST_MEM_MB", "256")
+  val memHog = guest("  var s = \"x\"\n  while s.size < 500000000 do s = s + s\n  println s.size\n")
+  check("sandbox-memcap", tag(exec(fast, memHog)), "crash")

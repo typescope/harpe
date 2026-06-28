@@ -10,6 +10,8 @@
   ! is a single deterministic string (no timings).
 //]
 
+namespace TurnTest
+
 import jo.IO.stdout
 import harpe.turn.*
 import harpe.models.*
@@ -68,7 +70,7 @@ private def check(label: String, actual: String, expected: String): Unit receive
   assert: actual == expected, "\{label}: expected [\{expected}] but got [\{actual}]"
   println "  ok \{label}"
 
-def main(): Unit receives stdout =
+def run(): Unit receives stdout =
   val tools = [echoTool()]
 
   // A plain text reply ends the turn immediately.
@@ -120,5 +122,3 @@ def main(): Unit receives stdout =
   check("G transient-then-success",
     scenario(askG, tools, 50, 2),
     "Answered(recovered) | start,end,transient,start,end")
-
-  println "turn engine: all scenarios passed"

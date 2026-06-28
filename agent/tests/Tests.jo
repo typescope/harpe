@@ -1,0 +1,20 @@
+//[ Tests.jo
+  !
+  ! The `jo test` entry point for the `harpe` package. The [test] module is a
+  ! single app, so all suites are aggregated here: fast unit tests first
+  ! (`TurnTest`), then the slower integration tests that shell out
+  ! (`RunCodeTest`).
+//]
+
+import jo.IO.stdout
+import TurnTest
+import RunCodeTest
+
+def main(): Unit receives stdout =
+  println "turn engine (unit):"
+  TurnTest.run()
+
+  println "runCode tool (integration):"
+  RunCodeTest.run()
+
+  println "all harpe tests passed"
