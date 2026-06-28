@@ -67,17 +67,15 @@ private section openai
   //]
   def parseReply(response: py.Dynamic): Assistant =
     val msg = response.choices[0].message
+    // msg.content or msg.tool_calls can be None
     val text = if !msg.content.isNone then msg.content.asString else ""
 
     var calls: List[ToolCall] = []
-
-    match py.try(msg.tool_calls.cast[py.List])
-      case Ok(tcList) =>
-        for tc in tcList do
-          val argsJson = tc.function.arguments.asString
-          val argsDict = jsonMod.loads(argsJson).cast[py.Dict]
-          calls = calls + ToolCall(tc.id.asString, tc.function.name.asString, ToolInput(argsDict))
-      case Err(_) => pass
+    if !msg.tool_calls.isNone then
+      for tc in msg.tool_calls.cast[py.List] do
+        val argsJson = tc.function.arguments.asString
+        val argsDict = jsonMod.loads(argsJson).cast[py.Dict]
+        calls = calls + ToolCall(tc.id.asString, tc.function.name.asString, ToolInput(argsDict))
 
     new Assistant(text.trim, calls)
 
