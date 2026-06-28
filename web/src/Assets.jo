@@ -77,12 +77,44 @@ section Assets
         .msg.user { justify-content: flex-end; }
         .row { max-width: 80%; }
         .bubble {
-          padding: 10px 14px; border-radius: 14px; white-space: pre-wrap;
-          word-wrap: break-word;
+          padding: 10px 14px; border-radius: 14px; word-wrap: break-word;
+          overflow-wrap: anywhere;
         }
-        .msg.user .bubble { background: var(--user); color: #fff; border-bottom-right-radius: 4px; }
+        .msg.user .bubble {
+          background: var(--user); color: #fff; border-bottom-right-radius: 4px;
+          white-space: pre-wrap;
+        }
         .msg.agent .bubble { background: var(--agent); color: var(--ink); border-bottom-left-radius: 4px; }
-        .bubble.error { background: #fdecea; color: var(--error); }
+        .bubble.error { background: #fdecea; color: var(--error); white-space: pre-wrap; }
+        /* rendered markdown inside agent bubbles */
+        .bubble > :first-child { margin-top: 0; }
+        .bubble > :last-child { margin-bottom: 0; }
+        .bubble p { margin: 0 0 8px; }
+        .bubble h1, .bubble h2, .bubble h3, .bubble h4 { margin: 12px 0 6px; line-height: 1.3; }
+        .bubble h1 { font-size: 1.3em; }
+        .bubble h2 { font-size: 1.18em; }
+        .bubble h3 { font-size: 1.05em; }
+        .bubble ul, .bubble ol { margin: 6px 0; padding-left: 22px; }
+        .bubble li { margin: 2px 0; }
+        .bubble blockquote {
+          margin: 8px 0; padding-left: 12px;
+          border-left: 3px solid var(--line); color: var(--muted);
+        }
+        .bubble a { color: var(--accent); }
+        .bubble code {
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
+          background: rgba(20, 30, 50, .07); padding: 1px 5px; border-radius: 5px;
+        }
+        .bubble pre {
+          background: #0d1117; color: #e6edf3; padding: 12px 14px;
+          border-radius: 8px; overflow-x: auto; margin: 8px 0;
+        }
+        .bubble pre code {
+          background: none; color: inherit; padding: 0; white-space: pre;
+        }
+        .bubble table { border-collapse: collapse; margin: 8px 0; font-size: 14px; }
+        .bubble th, .bubble td { border: 1px solid var(--line); padding: 5px 10px; text-align: left; }
+        .bubble th { background: rgba(20, 30, 50, .04); font-weight: 600; }
         .status {
           font-size: 12px; color: var(--muted); margin: 6px 2px 0;
           display: flex; align-items: center; gap: 6px;
@@ -131,6 +163,7 @@ section Assets
         #send svg { width: 19px; height: 19px; display: block; }
         .hint { max-width: 760px; margin: 8px auto 0; color: var(--muted); font-size: 12px; text-align: center; }
       </style>
+      <script src="https://cdn.jsdelivr.net/npm/markdown-it@14/dist/markdown-it.min.js"></script>
     </head>
     <body>
       <aside id="sidebar">
@@ -174,6 +207,18 @@ section Assets
           if (cls) e.className = cls;
           if (text !== undefined) e.textContent = text;
           return e;
+        }
+
+        // Markdown via markdown-it (loaded from CDN in <head>). Default options
+        // keep html:false, so raw HTML in the model's reply is escaped, not run
+        // (XSS-safe without a separate sanitizer). Returns null if the library
+        // failed to load (e.g. offline), so the caller can fall back to plain text.
+        var md = (typeof markdownit !== 'undefined')
+          ? markdownit({ linkify: true, breaks: true })
+          : null;
+
+        function renderMarkdown(src) {
+          return md ? md.render(src) : null;
         }
 
         function addMessage(role, text) {
@@ -270,7 +315,9 @@ section Assets
           } else if (ev.type === 'tool') {
             chips.appendChild(el('span', 'chip', ev.summary));
           } else if (ev.type === 'answer') {
-            bubble.textContent = ev.text;
+            var html = renderMarkdown(ev.text);
+            if (html === null) bubble.textContent = ev.text;
+            else bubble.innerHTML = html;
           } else if (ev.type === 'error') {
             bubble.classList.add('error');
             bubble.textContent = ev.detail;
