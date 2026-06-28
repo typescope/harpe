@@ -18,6 +18,7 @@ harpe/                   # a workspace: three framework packages + an example ag
       models/            #   `harpe.models`: the provider-agnostic Model layer
         Model.jo         #     the Model interface + Jo conversation model
         Anthropic.jo     #     the Anthropic-backed Model (`anthropic`)
+        OpenAI.jo        #     an OpenAI-compatible Model (`openai`)
         Echo.jo          #     a dummy Model for tests (`echo`)
       tools/             #   `harpe.tools`:  the reusable tools layer
         Tool.jo          #     the Jo-modeled Tool abstraction (+ RunOutcome)
@@ -199,13 +200,25 @@ The chat model is a provider-agnostic `harpe.models.Model` — `reply(system,
 history, tools)` returning the assistant's next message. The loop owns the
 conversation (a Jo `List[Message]`) and runs the tools; each provider impl only
 translates to/from its own wire format, so swapping providers touches nothing
-else. The loop selects one through a `defer def model(): Model` hook (default:
-Anthropic from the environment), overridden like the tool hooks:
+else.
+
+The default `model()` hook reads env vars to select a provider at runtime:
+
+| `PROVIDER`    | Key needed          | `MODEL` default    | Extra vars             |
+|---------------|---------------------|--------------------|------------------------|
+| `anthropic` (default) | `ANTHROPIC_API_KEY` | `claude-opus-4-6` | —                 |
+| `openai`      | `OPENAI_API_KEY`    | `gpt-4o`           | `OPENAI_BASE_URL` (optional) |
+
+`OPENAI_BASE_URL` lets you point the OpenAI provider at any compatible endpoint —
+Groq, Together AI, a local llama.cpp server, etc. Leave it unset for the default
+OpenAI API.
+
+The hook itself is a `defer def` and can be replaced entirely through `jo.toml`:
 
 ```toml
 [main.links]
 "harpe.cli.model" = "harpe.models.echo"   # dummy model — test the cli, no API key
-# "harpe.cli.model" = "MyAgent.openai"    # or your own OpenAI / local Model
+# "harpe.cli.model" = "MyAgent.model"     # or your own custom Model factory
 ```
 
 `harpe.models.echo` replies with the last user message, so the whole loop can be
@@ -216,9 +229,19 @@ that `view Model` plus a factory `def <name>(...): Model`.
 
 ```sh
 cd example
-pip install -r requirements.txt        # just `anthropic`; readline etc. are stdlib
-cp .env.example .env                   # set ANTHROPIC_API_KEY (and MODEL)
+pip install -r requirements.txt        # anthropic + openai; readline etc. are stdlib
+cp .env.example .env                   # set ANTHROPIC_API_KEY (or OPENAI_API_KEY)
 jo run                                  # chat in your terminal
+```
+
+To use OpenAI or a compatible endpoint instead of Anthropic:
+
+```sh
+# .env
+PROVIDER=openai
+OPENAI_API_KEY=sk-...
+MODEL=gpt-4o
+# OPENAI_BASE_URL=https://api.groq.com/openai/v1   # optional
 ```
 
 ## Status / next

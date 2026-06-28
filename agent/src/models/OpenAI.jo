@@ -1,0 +1,134 @@
+//[ OpenAI.jo
+  !
+  ! An OpenAI-compatible `Model`: renders the Jo tool model into OpenAI function
+  ! specs, converts the provider-agnostic history into OpenAI chat messages
+  ! (system as a leading message, tool results as `role: "tool"` entries), calls
+  ! `chat.completions.create`, and parses the response back into an `Assistant`.
+  ! Accepts a `baseUrl` so any OpenAI-compatible endpoint (Groq, Together, local
+  ! llama.cpp, etc.) can be used — pass `""` for the default OpenAI API.
+  ! All OpenAI-specific shape lives here; the loop never sees it.
+//]
+
+namespace harpe.models
+
+import harpe.ffi.*
+import harpe.tools.*
+
+private section openai
+  //[ One tool's OpenAI function spec, derived from the Jo `Tool` model. //]
+  def toolSpec(t: Tool): py.Dict =
+    val properties = py.dict()
+    val required = py.list()
+    for p in t.params do
+      properties.set(p.name, py.dict("type" ~ jsonType(p.paramType), "description" ~ p.description))
+      if p.required then required.append(p.name)
+    end
+
+    val parameters = py.dict("type" ~ "object", "properties" ~ properties, "required" ~ required)
+    val fn = py.dict("name" ~ t.name, "description" ~ t.description, "parameters" ~ parameters)
+    py.dict("type" ~ "function", "function" ~ fn)
+
+  //[ The conversation as OpenAI's `messages` array.
+    !
+    ! The system prompt becomes a leading `role: "system"` message. Tool results
+    ! each get their own `role: "tool"` message (one per result), which is how
+    ! the OpenAI API expects them — unlike Anthropic's single user-turn content
+    ! block array.
+  //]
+  def toMessages(system: String, history: List[Message]): py.List =
+    val msgs = py.list()
+    msgs.append(py.dict("role" ~ "system", "content" ~ system))
+
+    for m in history do
+      if m is UserText(text) then
+        msgs.append(py.dict("role" ~ "user", "content" ~ text))
+
+      else if m is Assistant(text, calls) then
+        val tcList = py.list()
+        for c in calls do
+          val fn = py.dict("name" ~ c.name, "arguments" ~ jsonMod.dumps(c.input.raw))
+          tcList.append(py.dict("id" ~ c.id, "type" ~ "function", "function" ~ fn))
+        end
+
+        val msg = py.dict("role" ~ "assistant", "content" ~ text, "tool_calls" ~ tcList)
+        msgs.append(msg)
+
+      else if m is ToolResults(results) then
+        for r in results do
+          msgs.append(py.dict("role" ~ "tool", "tool_call_id" ~ r.id, "content" ~ r.content))
+
+    msgs
+
+  //[ Parse an OpenAI response into an `Assistant` reply.
+    !
+    ! `content` may be null when the model only returns tool calls; `tool_calls`
+    ! may be null when the model only returns text. Both are handled with
+    ! `py.try` so null-to-String conversion errors are caught gracefully.
+  //]
+  def parseReply(response: py.Dynamic): Assistant =
+    val msg = response.choices[0].message
+    val text = if !msg.content.isNone then msg.content.asString else ""
+
+    var calls: List[ToolCall] = []
+
+    match py.try(msg.tool_calls.cast[py.List])
+      case Ok(tcList) =>
+        for tc in tcList do
+          val argsJson = tc.function.arguments.asString
+          val argsDict = jsonMod.loads(argsJson).cast[py.Dict]
+          calls = calls + ToolCall(tc.id.asString, tc.function.name.asString, ToolInput(argsDict))
+      case Err(_) => pass
+
+    new Assistant(text.trim, calls)
+
+  //[ Classify a failed `chat.completions.create` into a retryable or fatal
+    ! `ReplyResult`. Rate limits (429), server errors (5xx), and connection /
+    ! timeout blips are transient; auth, bad request, and other client errors
+    ! are fatal. Note: there is no "Overloaded" case here — OpenAI-compatible
+    ! providers surface overload as RateLimitError or InternalServerError.
+  //]
+  def classify(err: py.Error): ReplyResult =
+    val name = err.typeName
+    val transient =
+      name == "RateLimitError"
+      || name == "InternalServerError"
+      || name == "APIConnectionError"
+      || name == "APITimeoutError"
+      || name.contains("Connection")
+      || name.contains("Timeout")
+    if transient then Transient("\{name}: \{err.message}")
+    else Fatal("\{name}: \{err.message}")
+end
+
+private class OpenAIModel(client: py.Dynamic, model: String)
+  view Model
+
+  def reply(system: String, history: List[Message], tools: List[Tool]): ReplyResult =
+    val toolSpecs = py.list()
+    for t in tools do toolSpecs.append(openai.toolSpec(t))
+
+    val attempt = py.try:
+      client.chat.completions.create:
+        model = model
+        max_tokens = 8096
+        messages = openai.toMessages(system, history)
+        tools = toolSpecs
+
+    match attempt
+    case Ok(response) => Reply: openai.parseReply(response)
+    case Err(err)     => openai.classify(err)
+end
+
+//[ Build an OpenAI-compatible model from an API key, model id, and base URL.
+  !
+  ! Pass `baseUrl = ""` to use the default OpenAI API endpoint. Any
+  ! OpenAI-compatible provider (Groq, Together AI, local llama.cpp, etc.) can
+  ! be reached by setting `baseUrl` to the provider's `/v1` root.
+//]
+def openai(apiKey: String, model: String, baseUrl: String): Model =
+  val client =
+    if baseUrl == "" then
+      py.module("openai").OpenAI(api_key = apiKey)
+    else
+      py.module("openai").OpenAI(api_key = apiKey, base_url = baseUrl)
+  new OpenAIModel(client, model)

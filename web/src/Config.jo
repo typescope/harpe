@@ -58,15 +58,31 @@ section Config
 
   //[ The LLM model
     !
-    ! Deferred hook selecting the chat model. The default is Anthropic from the
-    ! environment.
+    ! Deferred hook selecting the chat model. Controlled by env vars:
+    !
+    !   PROVIDER          "anthropic" (default) or "openai"
+    !   MODEL             model id — defaults to "claude-opus-4-6" for Anthropic,
+    !                     "gpt-4o" for OpenAI
+    !   ANTHROPIC_API_KEY required when PROVIDER=anthropic
+    !   OPENAI_API_KEY    required when PROVIDER=openai
+    !   OPENAI_BASE_URL   optional base URL for OpenAI-compatible endpoints
+    !                     (Groq, Together AI, local llama.cpp, …); leave unset
+    !                     for the default OpenAI API
   //]
   defer def model(): Model receives IO.stdout =
-    val key = getenv("ANTHROPIC_API_KEY", "")
-    if key == "" then
-      println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
-      sysMod.exit(1)
-    anthropic(key, getenv("MODEL", "claude-opus-4-6"))
+    val provider = getenv("PROVIDER", "anthropic")
+    if provider == "openai" then
+      val key = getenv("OPENAI_API_KEY", "")
+      if key == "" then
+        println "Error: OPENAI_API_KEY is not set (put it in .env or the environment)."
+        sysMod.exit(1)
+      openai(key, getenv("MODEL", "gpt-4o"), getenv("OPENAI_BASE_URL", ""))
+    else
+      val key = getenv("ANTHROPIC_API_KEY", "")
+      if key == "" then
+        println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
+        sysMod.exit(1)
+      anthropic(key, getenv("MODEL", "claude-opus-4-6"))
 
   //[ maxToolRounds
     !
