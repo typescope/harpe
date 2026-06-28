@@ -1,26 +1,24 @@
 //[ SessionLog.jo
   !
-  ! Serializing a CLI conversation to disk. Each session is one JSONL file under
-  ! `logs/sessions/<yyyy>/<mm>/<hh-mm-ss>.jsonl` — the path fixed at session start
-  ! — holding one JSON record per `Message`, in the order the loop committed them.
+  ! Serializing an agent conversation to disk. Each session is one JSONL file
+  ! under `logs/sessions/<yyyy>/<mm>/<hh-mm-ss>.jsonl` — the path fixed at session
+  ! start — holding one JSON record per `Message`, in the order the loop committed
+  ! them.
   !
   ! Records are appended (not rewritten) as turns commit, so each carries its own
   ! wall-clock `time`, stamped once and never disturbed by later turns.
   !
   ! This is the conversational audit trail, distinct from the per-`runCode`
-  ! execution log (`logs/runs.jsonl`). Serializing is the first step: it is the
-  ! foundation for later auditing a past run, or letting the user pick a saved
-  ! session to load and resume.
+  ! execution log (`logs/runs.jsonl`). It lives at the package root (not under a
+  ! single agent type) because any agent — not just the CLI — can persist its
+  ! conversation. Serializing is the first step: it is the foundation for later
+  ! auditing a past run, or letting the user pick a saved session to load.
 //]
 
-namespace harpe.cli
+namespace harpe
 
 import harpe.ffi.jsonMod
 import harpe.models.*
-import harpe.Workspace
-import harpe.workspace
-import os
-import time
 
 class SessionLog
   private val logFile: py.Dynamic
@@ -57,7 +55,7 @@ section SessionLog
   //[ One conversation message as a JSON-able dict: a wall-clock `time`, a `role`
     ! tag, and that variant's payload (mirroring `Message`).
   //]
-  private[cli] def messageToDict(time: Float, m: Message): py.Dict =
+  private[harpe] def messageToDict(time: Float, m: Message): py.Dict =
     match m
     case UserText(text) =>
       py.dict("time" ~ time, "role" ~ "user", "text" ~ text)
