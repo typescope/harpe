@@ -1,0 +1,77 @@
+//[ SessionLog.jo
+  !
+  ! Serializing a CLI conversation to disk. Each session is one JSONL file under
+  ! `logs/sessions/<yyyy>/<mm>/<hh-mm-ss>.jsonl` — the path fixed at session start
+  ! — holding one JSON record per `Message`, in the order the loop committed them.
+  !
+  ! Records are appended (not rewritten) as turns commit, so each carries its own
+  ! wall-clock `time`, stamped once and never disturbed by later turns.
+  !
+  ! This is the conversational audit trail, distinct from the per-`runCode`
+  ! execution log (`logs/runs.jsonl`). Serializing is the first step: it is the
+  ! foundation for later auditing a past run, or letting the user pick a saved
+  ! session to load and resume.
+//]
+
+namespace harpe.cli
+
+import harpe.ffi.jsonMod
+import harpe.models.*
+import harpe.Workspace
+import harpe.workspace
+import os
+import time
+
+class SessionLog
+  private val logFile: py.Dynamic
+
+  def SessionLog(path: String) =
+    os.makedirs(os.path.dirname(path))
+    this.logFile = py.open(path, "a")
+
+  //[ Append `messages` to the session file as JSONL
+    !
+    ! One record per message, each stamped with `time`.
+  //]
+  def append(time: Float, messages: List[Message]): Unit =
+    for m in messages do
+      val line = jsonMod.dumps(SessionLog.messageToDict(time, m)).asString + "\n"
+      logFile.write(line)
+
+    logFile.flush()
+
+  def close(): Unit = logFile.close()
+end
+
+section SessionLog
+  //[ The path for a new session's log, fixed at session start.
+    !
+    ! `logs/sessions/<yyyy>/<mm>/<hh-mm-ss>.jsonl`, resolved against the workspace
+    ! root. The single `strftime` call keeps the date directories and the time
+    ! filename drawn from one instant.
+  //]
+  def newLog(): SessionLog receives workspace =
+    val path = workspace.relative(time.strftime("logs/sessions/%Y/%m/%H-%M-%S") + ".jsonl")
+    new SessionLog(path)
+
+  //[ One conversation message as a JSON-able dict: a wall-clock `time`, a `role`
+    ! tag, and that variant's payload (mirroring `Message`).
+  //]
+  private[cli] def messageToDict(time: Float, m: Message): py.Dict =
+    match m
+    case UserText(text) =>
+      py.dict("time" ~ time, "role" ~ "user", "text" ~ text)
+
+    case Assistant(text, calls) =>
+      val callList = py.list()
+      for c in calls do
+        callList.append: py.dict("id" ~ c.id, "name" ~ c.name, "input" ~ c.input.raw)
+      py.dict("time" ~ time, "role" ~ "assistant", "text" ~ text, "calls" ~ callList)
+
+    case ToolResults(results) =>
+      val resultList = py.list()
+      for r in results do
+        resultList.append: py.dict("id" ~ r.id, "content" ~ r.content)
+      py.dict("time" ~ time, "role" ~ "tool_results", "results" ~ resultList)
+  end
+end

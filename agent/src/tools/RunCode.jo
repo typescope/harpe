@@ -24,7 +24,7 @@ private def runCode(
   // sink. What becomes of the record (a file, some other store, the network, or
   // nothing at all) is the caller's policy, not this tool's concern.
   def log(fields: ..(Any ~ Any)): Unit =
-    val entry = py.dict("time" ~ now(), "code" ~ code)
+    val entry = py.dict("time" ~ time.now(), "code" ~ code)
     for k ~ v in fields do entry.set(k, v)
     logRun(entry)
 
@@ -37,9 +37,9 @@ private def runCode(
   writeFile(guestSrc, code)
 
   // 1. Compile — the security checkpoint — timed, bounded, and error-captured.
-  val t0 = now()
+  val t0 = time.now()
   val build = runCapped(py.list("jo", "build", "--spec", guestSpec), buildTimeout)
-  val compileSeconds = round2(now() - t0)
+  val compileSeconds = round2(time.now() - t0)
 
   if build.timedOut then
     log(
@@ -69,9 +69,9 @@ private def runCode(
     return new RunOutcome("The program compiled but no executable was found.", "no executable produced")
 
   val targetPy = targets.get(0).asString
-  val t1 = now()
+  val t1 = time.now()
   val run = runCapped(py.list("python3", targetPy), runTimeout)
-  val runSeconds = round2(now() - t1)
+  val runSeconds = round2(time.now() - t1)
 
   if run.timedOut then
     log(
@@ -123,7 +123,8 @@ def runCodeTool(
     guestDir: String,
     logRun: py.Dict => Unit,
     buildTimeout: Float = 120.0,
-    runTimeout: Float = 30.0): Tool =
+    runTimeout: Float = 30.0)
+: Tool =
   new Tool(
     "runCode",
     "Write a Jo program (namespace UserTask, def runTask), compile it against the agent sandbox, and run it. Returns the program's stdout, or the compile error if it does not build.",

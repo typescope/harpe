@@ -22,7 +22,6 @@ def ttyMod: py.Dynamic = py.module("tty")
 def selectMod: py.Dynamic = py.module("select")
 
 private def reMod: py.Dynamic = py.module("re")
-private def timeMod: py.Dynamic = py.module("time")
 private def osMod: py.Dynamic = py.module("os")
 private def signalMod: py.Dynamic = py.module("signal")
 
@@ -97,9 +96,7 @@ def runCapped(args: py.List, timeoutSecs: Float): Capped =
       val _ = py.try: proc.communicate()
       new Capped(-1, "", "", true)
 
-// --- timing ---
-
-def now(): Float = timeMod.time().asFloat
+// --- rounding ---
 
 def round2(x: Float): Float = builtins.round(x, 2).asFloat
 

@@ -9,6 +9,7 @@
 namespace harpe.cli
 
 import harpe.ffi.*
+import time
 
 // "\r" + ESC + "[2K" — return to start of line and clear it.
 private def clearLine(): String = "\r" + builtins.chr(27).asString + "[2K"
@@ -21,13 +22,13 @@ class Spinner
   def start(message: String): Unit =
     stop()
     val event   = threadingMod.Event()
-    val started = now()
+    val started = time.now()
     val animate = () =>
       val frames = py.list("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
       var i = 0
       while !event.is_set().asBool do
         val frame = frames.get(i % 10).asString
-        val secs  = round1(now() - started)
+        val secs  = round1(time.now() - started)
         sysMod.stdout.write("\r  " + frame + " " + message + " " + secs.toString + "s ")
         sysMod.stdout.flush()
         i = i + 1

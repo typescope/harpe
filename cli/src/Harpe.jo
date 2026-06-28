@@ -24,6 +24,7 @@ import harpe.tools.Tool
 import harpe.Workspace
 import harpe.workspace
 import os
+import time
 
 //[ The agent's working directory is the CWD, and the runCode/skill tools resolve
   ! their paths against it. It must hold the agent's own `jo.toml` and a
@@ -51,7 +52,11 @@ private def runChat(): Unit receives stdout, workspace =
 
   interact.init()
 
+  // Where this session's conversation is serialized; fixed at session start.
+  val sessionLog = SessionLog.newLog()
+
   var history: List[Message] = []
+  var saved = 0   // count of messages already appended to the session file
 
   while true do
     val userInput = interact.userInput()
@@ -69,6 +74,8 @@ private def runChat(): Unit receives stdout, workspace =
 
     if res is Answered(updated, text) then
       history = updated
+      sessionLog.append(time.now(), history.drop(saved))
+      saved = history.size
       interact.agentResponse(text)
 
     else
@@ -77,6 +84,8 @@ private def runChat(): Unit receives stdout, workspace =
       if res is Interrupted then println "  ⎋ interrupted"
       else println "  · request failed"
   end
+
+  sessionLog.close()
 
   println "Goodbye."
 end

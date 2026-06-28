@@ -1,0 +1,84 @@
+//[ SessionLogTest.jo
+  !
+  ! Tests for session serialization (`harpe.cli.SessionLog`): append a small
+  ! conversation covering every `Message` variant, read it back, and assert the
+  ! JSONL is one well-formed, timestamped record per message — and that a second
+  ! append accumulates rather than rewriting.
+//]
+
+namespace SessionLogTest
+
+import jo.IO.stdout
+import harpe.cli.*
+import harpe.models.*
+import harpe.tools.*
+import harpe.ffi.*
+import os
+import time
+
+private def check(label: String, cond: Bool): Unit receives stdout =
+  assert: cond, "\{label} failed"
+  println "  ok \{label}"
+
+// Read a session file back as one parsed dict per non-empty line.
+private def readRecords(path: String): List[py.Dict] =
+  var records: List[py.Dict] = []
+  for line in readFile(path).lines do
+    if line.trim != "" then records = records + jsonMod.loads(line).cast[py.Dict]
+
+  records
+
+def run(): Unit receives stdout =
+  val call = ToolCall("c1", "runCode", ToolInput(py.dict("code" ~ "println 1")))
+
+  // Write into a fresh nested path to also exercise on-demand dir creation.
+  val path = os.path.abspath(".build/session-log-test/sub/session.jsonl")
+  if os.path.exists(path) then os.unlink(path)
+
+  val sessionLog = new SessionLog(path)
+
+  // First committed turn: user message + the model's reply and tool result.
+  val t0 = time.now()
+  sessionLog.append: t0, [
+    UserText("hi"),
+    Assistant("on it", [call]),
+    ToolResults([ToolResult("c1", "42")])
+  ]
+
+  val first = readRecords(path)
+  check("one record per message", first.size == 3)
+
+  val user = first.get(0)
+  check("user role", user.get("role", "").asString == "user")
+  check("user text", user.get("text", "").asString == "hi")
+  check("user has timestamp", user.get("time", 0.0).asFloat == t0)
+
+  val asst = first.get(1)
+  check("assistant role", asst.get("role", "").asString == "assistant")
+  check("assistant text", asst.get("text", "").asString == "on it")
+  val calls = asst.get("calls").cast[py.List]
+  check("one call", calls.size == 1)
+  val c0 = calls.get(0).cast[py.Dict]
+  check("call name", c0.get("name", "").asString == "runCode")
+  check("call id", c0.get("id", "").asString == "c1")
+  check("call input", c0.get("input").cast[py.Dict].get("code", "").asString == "println 1")
+
+  val tr = first.get(2)
+  check("tool_results role", tr.get("role", "").asString == "tool_results")
+  val results = tr.get("results").cast[py.List]
+  check("one result", results.size == 1)
+  val r0 = results.get(0).cast[py.Dict]
+  check("result id", r0.get("id", "").asString == "c1")
+  check("result content", r0.get("content", "").asString == "42")
+
+  // A second committed turn appends with its own timestamp, leaving the first
+  // turn's records (and timestamps) intact.
+  val t1 = t0 + 5.0
+  sessionLog.append(t1, [UserText("again"), Assistant("done", [])])
+
+  val second = readRecords(path)
+  check("appends, not rewrites", second.size == 5)
+  check("earlier timestamp preserved", second.get(0).get("time", 0.0).asFloat == t0)
+  check("later record timestamp", second.get(3).get("time", 0.0).asFloat == t1)
+
+  os.unlink(path)

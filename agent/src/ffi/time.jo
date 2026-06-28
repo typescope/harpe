@@ -1,0 +1,20 @@
+//[ time.jo
+  !
+  ! Host wall-clock time, wrapping Python's `time` module — the one place that
+  ! touches it, mirroring `os`. Referenced as `time.now()` / `time.strftime(...)`.
+//]
+
+namespace time
+
+private def module: py.Dynamic = py.module("time")
+
+//[ Seconds since the epoch, as a float (Python `time.time`). //]
+def now(): Float = module.time().asFloat
+
+//[ Format the current local time with a Python `strftime` pattern.
+  !
+  ! One call captures a single instant, so a pattern that spans both directory
+  ! and file parts (e.g. `"logs/sessions/%Y/%m/%H-%M-%S"`) stays internally
+  ! consistent — no risk of the date and time straddling a tick.
+//]
+def strftime(fmt: String): String = module.strftime(fmt).asString
