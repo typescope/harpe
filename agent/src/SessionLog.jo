@@ -18,7 +18,10 @@
 namespace harpe
 
 import harpe.ffi.jsonMod
+import harpe.ffi.fileExists
+import harpe.ffi.readFile
 import harpe.models.*
+import harpe.tools.*
 
 class SessionLog
   private val logFile: py.Dynamic
@@ -51,6 +54,43 @@ section SessionLog
   def newLog(): SessionLog receives workspace =
     val path = workspace.relative(time.strftime("logs/sessions/%Y/%m/%d/%H-%M-%S") + ".jsonl")
     new SessionLog(path)
+
+  //[ Reconstruct a conversation from a JSONL session file at `path`, in order.
+    !
+    ! The inverse of `append` (`messageToDict`), and deliberately layout-agnostic:
+    ! the caller supplies the file path, so where sessions live on disk is the
+    ! driver's policy, not this serializer's. Returns `[]` if the file is absent.
+  //]
+  def loadFile(path: String): List[Message] =
+    if !fileExists(path) then []
+    else
+      var msgs: List[Message] = []
+      for line in readFile(path).lines do
+        if line.trim != "" then
+          msgs = msgs + dictToMessage(jsonMod.loads(line).cast[py.Dict])
+      msgs
+
+  //[ The inverse of `messageToDict`: one stored record back into a `Message`. //]
+  private def dictToMessage(d: py.Dict): Message =
+    val role = d.get("role", "").asString
+
+    if role == "user" then
+      UserText(d.get("text", "").asString)
+
+    else if role == "assistant" then
+      var calls: List[ToolCall] = []
+      for cDyn in d.get("calls", py.list()).cast[py.List] do
+        val c = cDyn.cast[py.Dict]
+        calls = calls + ToolCall(c.get("id", "").asString, c.get("name", "").asString,
+                                 ToolInput(c.get("input", py.dict()).cast[py.Dict]))
+      Assistant(d.get("text", "").asString, calls)
+
+    else
+      var results: List[ToolResult] = []
+      for rDyn in d.get("results", py.list()).cast[py.List] do
+        val r = rDyn.cast[py.Dict]
+        results = results + ToolResult(r.get("id", "").asString, r.get("content", "").asString)
+      ToolResults(results)
 
   //[ One conversation message as a JSON-able dict: a wall-clock `time`, a `role`
     ! tag, and that variant's payload (mirroring `Message`).

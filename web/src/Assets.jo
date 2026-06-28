@@ -56,6 +56,19 @@ section Assets
           margin-top: 2px; font-size: 12px; text-transform: uppercase;
           letter-spacing: .5px; color: var(--muted);
         }
+        .newchat {
+          border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+          font: inherit; font-weight: 600; padding: 8px 12px; border-radius: 10px;
+          cursor: pointer; text-align: left;
+        }
+        .newchat:hover { background: var(--agent); }
+        .sessions { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+        .session-item {
+          padding: 7px 10px; border-radius: 8px; cursor: pointer; color: var(--ink);
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px;
+        }
+        .session-item:hover { background: var(--agent); }
+        .session-item.active { background: var(--agent); font-weight: 600; }
         .icon-btn {
           width: 32px; height: 32px; display: grid; place-items: center; padding: 0;
           border: none; background: transparent; color: var(--muted);
@@ -174,7 +187,9 @@ section Assets
           </button>
         </div>
         <div class="agent-name" id="title">Agent</div>
-        <div class="panel-section">Sessions</div>
+        <button id="newchat" class="newchat">+ New chat</button>
+        <div class="panel-section">Recent</div>
+        <div id="sessions" class="sessions"></div>
       </aside>
       <button id="opener" class="icon-btn opener" aria-label="Open panel" title="Open panel">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
@@ -201,6 +216,8 @@ section Assets
         var sendBtn = document.getElementById('send');
         var NL = String.fromCharCode(10);
         var busy = false;
+        var currentSession = null;
+        var sessionList = [];
 
         function el(tag, cls, text) {
           var e = document.createElement(tag);
@@ -246,6 +263,81 @@ section Assets
           }).catch(function () {});
         }
 
+        // --- sessions: URL <-> conversation ---
+
+        function appendMessage(role, text) {
+          var row = addMessage(role, '');
+          var bubble = row.querySelector('.bubble');
+          if (role === 'agent') {
+            var html = renderMarkdown(text);
+            if (html === null) bubble.textContent = text; else bubble.innerHTML = html;
+          } else {
+            bubble.textContent = text;
+          }
+          return row;
+        }
+
+        function showEmpty(on) {
+          var empty = document.getElementById('empty');
+          if (empty) empty.style.display = on ? '' : 'none';
+        }
+
+        function clearMessages() {
+          msgs.innerHTML = '';
+          showEmpty(true);
+        }
+
+        function sessionFromPath() {
+          var m = location.pathname.match(/^\/c\/(.+)$/);
+          return m ? decodeURIComponent(m[1]) : null;
+        }
+
+        function renderSessions() {
+          var c = document.getElementById('sessions');
+          c.innerHTML = '';
+          sessionList.forEach(function (s) {
+            var item = el('div', 'session-item' + (s.id === currentSession ? ' active' : ''), s.title || 'New chat');
+            item.title = s.title || '';
+            item.addEventListener('click', function () { openSession(s.id); });
+            c.appendChild(item);
+          });
+        }
+
+        function loadSessions() {
+          fetch('/api/sessions').then(function (r) { return r.json(); }).then(function (d) {
+            sessionList = d.sessions || [];
+            renderSessions();
+          }).catch(function () {});
+        }
+
+        function loadHistory(id) {
+          return fetch('/api/history?session=' + encodeURIComponent(id))
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              msgs.innerHTML = '';
+              var list = d.messages || [];
+              if (list.length === 0) { showEmpty(true); }
+              else { showEmpty(false); list.forEach(function (m) { appendMessage(m.role, m.text); }); }
+              scrollDown();
+            }).catch(function () {});
+        }
+
+        function openSession(id) {
+          if (id === currentSession) return;
+          currentSession = id;
+          history.pushState({}, '', '/c/' + id);
+          renderSessions();
+          loadHistory(id);
+        }
+
+        function newChat() {
+          currentSession = null;
+          history.pushState({}, '', '/');
+          clearMessages();
+          renderSessions();
+          input.focus();
+        }
+
         function autoGrow() {
           input.style.height = 'auto';
           input.style.height = Math.min(input.scrollHeight, 160) + 'px';
@@ -276,7 +368,7 @@ section Assets
           fetch('/api/message', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: text })
+            body: JSON.stringify(currentSession ? { session: currentSession, text: text } : { text: text })
           }).then(function (resp) {
             var reader = resp.body.getReader();
             var decoder = new TextDecoder();
@@ -287,6 +379,7 @@ section Assets
               sendBtn.disabled = false;
               input.focus();
               scrollDown();
+              loadSessions();
             }
             function pump() {
               return reader.read().then(function (res) {
@@ -310,7 +403,10 @@ section Assets
         }
 
         function handle(ev, bubble, statusText, chips) {
-          if (ev.type === 'status') {
+          if (ev.type === 'session') {
+            currentSession = ev.id;
+            history.pushState({}, '', '/c/' + ev.id);
+          } else if (ev.type === 'status') {
             statusText.textContent = ev.label;
           } else if (ev.type === 'tool') {
             chips.appendChild(el('span', 'chip', ev.summary));
@@ -341,7 +437,17 @@ section Assets
         document.getElementById('opener').addEventListener('click', function () {
           document.body.classList.remove('collapsed');
         });
+        document.getElementById('newchat').addEventListener('click', newChat);
+        window.addEventListener('popstate', function () {
+          currentSession = sessionFromPath();
+          renderSessions();
+          if (currentSession) loadHistory(currentSession); else clearMessages();
+        });
+
+        currentSession = sessionFromPath();
         loadInfo();
+        loadSessions();
+        if (currentSession) loadHistory(currentSession);
         input.focus();
       </script>
     </body>

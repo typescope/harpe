@@ -1,0 +1,79 @@
+//[ Sessions.jo
+  !
+  ! The web driver's session-storage layout: conversations live as
+  ! `logs/sessions/<id>.jsonl` under the workspace, one file per session, keyed by
+  ! the id that also appears in its `/c/<id>` URL.
+  !
+  ! This layout is a *driver* decision, kept out of the shared `harpe.SessionLog`
+  ! (which only owns the per-message record schema). Here we map an id to its file
+  ! (`forSession` to append, `load` to read back via `SessionLog.loadFile`) and
+  ! scan the directory to list past sessions for the picker. Ids are time-sortable,
+  ! so newest-first is just a reverse id sort.
+//]
+
+namespace harpe.web
+
+import harpe.ffi.jsonMod
+import harpe.ffi.readFile
+import harpe.models.*
+import harpe.SessionLog
+import harpe.workspace
+import os
+
+//[ Lightweight metadata for one persisted session, used to populate the session
+  ! picker without loading the whole conversation: the id (also its URL), a human
+  ! title (the first user message), and the start time.
+//]
+class SessionMeta(id: String, title: String, time: Float)
+
+section Sessions
+  //[ The file backing the session with this id. //]
+  def sessionPath(id: String): String receives workspace =
+    workspace.relative("logs/sessions/" + id + ".jsonl")
+
+  //[ An append log for this id's session (its file is created lazily). //]
+  def forSession(id: String): SessionLog receives workspace =
+    new SessionLog(sessionPath(id))
+
+  //[ Reconstruct this id's conversation from disk; `[]` if it has no file yet,
+    ! so a freshly-minted (or unknown) id loads as an empty conversation.
+  //]
+  def load(id: String): List[Message] receives workspace =
+    SessionLog.loadFile(sessionPath(id))
+
+  //[ The persisted sessions, newest first — id, title, and start time.
+    !
+    ! Scans the sessions directory and reads each file's head for a title (its
+    ! first user message) and start time, without loading whole conversations.
+  //]
+  def listSessions(): List[SessionMeta] receives workspace =
+    val dir = workspace.relative("logs/sessions")
+    var metas: List[SessionMeta] = []
+
+    if os.path.isdir(dir) then
+      for nameDyn in os.listdir(dir) do
+        val name = nameDyn.asString
+        if name.endsWith(".jsonl") then
+          metas = metas + readMeta(os.path.join(dir, name), name.substring(0, name.size - 6))
+
+    metas.sortBy(m => m.id).reverse
+
+  //[ One session's metadata, read from the head of its file. //]
+  private def readMeta(path: String, id: String): SessionMeta =
+    var title = ""
+    var startTime = 0.0
+    var sawFirst = false
+
+    for line in readFile(path).lines do
+      val s = line.trim
+      if s != "" then
+        val d = jsonMod.loads(s).cast[py.Dict]
+        if !sawFirst then
+          startTime = d.get("time", 0.0).asFloat
+          sawFirst = true
+
+        if title == "" && d.get("role", "").asString == "user" then
+          title = d.get("text", "").asString
+
+    new SessionMeta(id, if title == "" then "New chat" else title, startTime)
+end

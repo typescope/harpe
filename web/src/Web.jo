@@ -21,7 +21,6 @@ import harpe.ffi.readFile
 import harpe.ffi.builtins
 import harpe.Workspace
 import harpe.workspace
-import harpe.SessionLog
 import os
 
 //[ The agent's working directory is the CWD; tools resolve paths against it. It
@@ -46,7 +45,7 @@ private def serve(): Unit receives stdout, workspace =
   val tools = Config.tools
   val name = agentName()
 
-  val server = new ChatServer(brain, sysPrompt, tools, name, SessionLog.newLog())
+  val server = new ChatServer(brain, sysPrompt, tools, name, workspace)
 
   val host = getenv("HOST", "127.0.0.1")
   val port = builtins.int(getenv("PORT", "8765")).asInt
