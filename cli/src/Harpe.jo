@@ -2,16 +2,19 @@
   !
   ! The CLI agent loop (the Harpe "conversational" trigger) and its entry
   ! points. Each turn it:
+  !
   !   1. reads a line from the user
   !   2. asks the LLM, offering the configured tools (default: runCode plus the
   !      read-only skill tools)
   !   3. dispatches each tool call to its handler and feeds the result back
   !   4. repeats until the LLM replies with text, then prints the reply
   !
-  ! `jo.main = harpe.cli.main` wires an agent to the loop. The toolset offered
-  ! to the model is `defaultTools() ++ extraTools()` — both are `defer def`
-  ! hooks an agent overrides through its jo.toml `[main.links]`, the same way
-  ! the sandbox links `runTask`:
+  ! `jo.main = harpe.cli.main` wires an agent to the loop.
+  !
+  ! The toolset offered to the model is `defaultTools() ++ extraTools()`. Both
+  ! are `defer def` hooks an agent overrides through its jo.toml `[main.links]`,
+  ! the same way the sandbox links `runTask`:
+  !
   !   - link `harpe.cli.extraTools`   to ADD tools alongside the built-ins
   !   - link `harpe.cli.defaultTools` to REPLACE the base toolset entirely
   !
@@ -42,102 +45,6 @@ import os
 private def systemPrompt(): String receives workspace =
   if fileExists(workspace.agentMd) then readFile(workspace.agentMd) else ""
 
-// ============================================
-// ESC-to-interrupt: watch stdin for the ESC key while the agent works
-// ============================================
-
-// True if stdin has a byte ready within `timeout` seconds.
-private def stdinReady(timeout: Float): Bool =
-  val res = selectMod.select(py.list(0), py.list(), py.list(), timeout)
-  res.cast[py.Tuple].get(0).cast[py.List].size > 0
-
-// Put the terminal in cbreak mode so a single keypress (ESC) is readable
-// without Enter. Returns the saved settings to restore later.
-private def enterCbreak(): py.Dynamic =
-  val saved = termiosMod.tcgetattr(0)
-  ttyMod.setcbreak(0)
-  saved
-
-private def restoreTerminal(saved: py.Dynamic): Unit =
-  termiosMod.tcsetattr(0, termiosMod.TCSADRAIN, saved)
-
-// Background thread: set `interrupt` when the user presses ESC (a lone ESC,
-// not an escape sequence like an arrow key). Stops when `stop` is set.
-private def startEscWatcher(interrupt: py.Dynamic, stop: py.Dynamic): Unit =
-  val watcher = () =>
-    while !stop.is_set().asBool && !interrupt.is_set().asBool do
-      if stdinReady(0.1) then
-        val ch = os.read(0, 1)
-        if builtins.len(ch).asInt == 1 && builtins.ord(ch).asInt == 27 then
-          // a lone ESC (no byte follows) — not part of an arrow-key sequence
-          if !stdinReady(0.02) then interrupt.set()
-  val thread = threadingMod.Thread(target = watcher, daemon = true)
-  thread.start()
-
-//[ The CLI's `Interrupt`: an ESC-driven thread event. `startEscWatcher` sets the
-  ! event on a lone ESC; `cancelled` reflects it, and `pause` is an interruptible
-  ! wait on it (so backoff wakes immediately on ESC).
-//]
-private class EventInterrupt(event: py.Dynamic)
-  view Interrupt
-
-  def cancelled: Bool = event.is_set().asBool
-
-  def pause(seconds: Float): Bool = event.wait(seconds).asBool
-end
-
-// Run `work` on a background thread; return Some(result), or None if `interrupt`
-// fires first (the abandoned worker finishes in the background). This is what
-// lets a long model call be cancelled by ESC — the engine just sees the Option.
-private def callInterruptible[T](interrupt: Interrupt, work: () => T): Option[T] =
-  val box  = py.list(py.none)
-  val done = threadingMod.Event()
-  val worker = () =>
-    box.set(0, work())
-    done.set()
-  val thread = threadingMod.Thread(target = worker, daemon = true)
-  thread.start()
-
-  var out: Option[T] = None
-  var waiting = true
-  while waiting do
-    if done.wait(0.05).asBool then
-      out = Some(box.get(0).cast[T])
-      waiting = false
-    else if interrupt.cancelled then
-      waiting = false
-  out
-
-private def historyFile: String = "data/chat_history"
-
-// Enable arrow-key line editing and load persistent history (up/down recalls
-// previous messages). Importing `readline` is what wires it into `input()`.
-private def initReadline(): Unit =
-  os.makedirs("data")
-  val rl = py.module("readline")
-  if fileExists(historyFile) then rl.read_history_file(historyFile)
-
-// Persist history to disk. Called after every message so it survives any exit
-// (Ctrl-C, a crash, …) — not just a graceful one. Best-effort: ensure the
-// directory exists and never let a save failure crash the chat.
-private def saveHistory(): Unit =
-  os.makedirs("data")
-  val _ = py.try(py.module("readline").write_history_file(historyFile))
-
-// A small harp, shown once when the chat starts.
-private def banner(): Unit receives stdout =
-  println """
-
-        .--.
-       /|  /|
-      / | / |
-     /  |/  |
-    /  /|   |
-   /  / |   |
-  |__/__|___|
-     H A R P E
-  """
-  println ""
 
 // ============================================
 // The chat loop
@@ -169,11 +76,7 @@ defer def defaultTools(): List[Tool] receives workspace =
 private def inAgentDir(): Bool =
   fileExists("jo.toml") && os.path.isdir("sandbox")
 
-//[ The entry point (`jo.main = harpe.cli.main`). After validating the working
-  ! directory, it provides the `workspace` context parameter and the toolset
-  ! `defaultTools() ++ extraTools()` — both overridable by linking, so an agent
-  ! customizes the toolset purely through its jo.toml.
-//]
+//[ The entry point   //]
 def main(): Unit receives stdout =
   if !inAgentDir() then
     println "Error: run this from an agent's working directory — a folder containing its jo.toml and a sandbox/ directory."
@@ -186,12 +89,10 @@ def main(): Unit receives stdout =
 
 param toolDefs: List[Tool]
 
-//[ model
+//[ The LLM model
   !
   ! Deferred hook selecting the chat model. The default is Anthropic from the
-  ! environment; override it in jo.toml — `[main.links] "harpe.cli.model" =
-  ! "MyAgent.model"` — to use OpenAI, a local model, or `harpe.models.echo` for
-  ! tests.
+  ! environment.
 //]
 defer def model(): Model receives stdout =
   val key = getenv("ANTHROPIC_API_KEY", "")
@@ -217,96 +118,37 @@ defer def maxToolRounds(): Int = 50
 //]
 defer def maxRetries(): Int = 4
 
-//[ Render one engine `TurnEvent` as spinner + console output, driving the
-  ! session's single `spinner` resource (start on a blocking step, stop when it
-  ! ends). `runChat` wraps this in a closure that binds a concrete `stdout`, so
-  ! the resulting `emit` is a pure `TurnEvent => Unit` and the engine needs no IO
-  ! capability — which is what keeps the engine reusable outside the CLI.
-//]
-private def consoleEmit(event: TurnEvent, spinner: Spinner): Unit receives stdout =
-  match event
-  case ModelRequestStarted(attempt, maxAttempts) =>
-    val label =
-      if attempt == 0 then "thinking · ESC to interrupt"
-      else "retrying \{attempt}/\{maxAttempts} · ESC to interrupt"
-    spinner.start(label)
-
-  case ModelRequestEnded =>
-    spinner.stop()
-
-  case TransientError(detail, delaySeconds) =>
-    println "  · transient error (\{detail}); retrying in \{delaySeconds}s"
-
-  case RequestFailed(detail) =>
-    println "  · request failed: \{detail}"
-
-  case RetriesExhausted(detail, attempts) =>
-    println "  · giving up after \{attempts} retries: \{detail}"
-
-  case ToolBudgetReached(budget) =>
-    println "  · tool budget reached (\{budget}); requesting final answer"
-
-  case ToolCallStarted(name) =>
-    spinner.start("\{name} · ESC to interrupt")
-
-  case ToolCallEnded(name, summary) =>
-    spinner.stop()
-    println "  · \{summary}"
-
 private def runChat(): Unit receives stdout, toolDefs, workspace =
   val brain = model()
   val sysPrompt = systemPrompt()
 
-  // One spinner resource for the whole session.
-  val spinner = new Spinner
-  val emit = event => consoleEmit(event, spinner)
+  val historyFile = workspace.relative("data/chat_history")
+  val interact = new ConsoleInteract(brain, sysPrompt, stdout, historyFile)
 
-  initReadline()
-  banner()
-  println "Type a message to start. Ctrl-D or 'quit' to exit."
+  interact.init()
 
   var history: List[Message] = []
 
   while true do
-    println ""
-    // Keep the prompt a single line with no embedded newline, so readline can
-    // redraw it correctly when navigating history with the up/down arrows.
-    val line = py.input("You ▸ ")
-    val userInput = line.trim
-    saveHistory()
+    val userInput = interact.userInput()
 
     if userInput == "quit" || userInput == "exit" then break
 
     if userInput != "" then
-      val turnStart = history.size
-      history = history + new UserText(userInput)
+      val snapshot = history
+      history = history + UserText(userInput)
 
-      // The cbreak terminal and ESC watcher are the CLI's; the engine sees only
-      // the cooperative `Interrupt` we hand it.
-      val savedTerm = enterCbreak()
-      val event     = threadingMod.Event()
-      val stopWatch = threadingMod.Event()
-      startEscWatcher(event, stopWatch)
-      val interrupt: Interrupt = new EventInterrupt(event)
-
-      // Issue the model call on a background thread so ESC can cancel it; the
-      // engine just sees a (sysPrompt, history, tools) => Option[ReplyResult].
-      val ask: Responder = (sys, hist, tools) =>
-        callInterruptible(interrupt, () => brain.reply(sys, hist, tools))
-
-      val res = runTurn(ask, sysPrompt, history, toolDefs, maxToolRounds(), maxRetries(), interrupt, emit)
-
-      stopWatch.set()
-      restoreTerminal(savedTerm)
+      val sofar = history
+      val res = interact.turn: () =>
+        runTurn(sofar, toolDefs, maxToolRounds(), maxRetries(), interact)
 
       if res is Answered(updated, text) then
         history = updated
-        println ""
-        println "Agent ▸ \{text}"
+        interact.agentResponse(text)
 
       else
         // Discard the cancelled/failed turn so the conversation stays valid.
-        history = history.take(turnStart)
+        history = snapshot
         if res is Interrupted then println "  ⎋ interrupted"
         else println "  · request failed"
     end

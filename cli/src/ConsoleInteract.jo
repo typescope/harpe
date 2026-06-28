@@ -1,0 +1,174 @@
+//[ ConsoleInteract.jo
+  !
+  ! Handle console interaction events during an agent turn.
+//]
+
+namespace harpe.cli
+
+import jo.IO.stdout
+import harpe.ffi.*
+import harpe.tools.*
+import harpe.models.*
+import harpe.turn.*
+import harpe.Workspace
+import harpe.workspace
+
+//[ The CLI's interaction //]
+private class ConsoleInteract(brain: Model, sysPrompt: String, out: String => Unit, historyFile: String)
+  view Interact
+
+  private val interrupt = threadingMod.Event()
+  private val stopWatch = threadingMod.Event()
+
+  // One spinner resource for the whole session.
+  private val spinner = new Spinner
+
+  //[ Init console interaction
+    !
+    ! Enable `readline`.
+  //]
+  def init(): Unit =
+    os.makedirs("data")
+    val rl = py.module("readline")
+    if fileExists(historyFile) then rl.read_history_file(historyFile)
+
+    println """
+
+          .--.
+         /|  /|
+        / | / |
+       /  |/  |
+      /  /|   |
+     /  / |   |
+    |__/__|___|
+       H A R P E
+
+    """
+
+    println "Type a message to start. Ctrl-D or 'quit' to exit."
+
+  def userInput(): String =
+    println ""
+    // Keep the prompt a single line with no embedded newline, so readline can
+    // redraw it correctly when navigating history with the up/down arrows.
+    val line = py.input("You ▸ ")
+    saveInputHistory()
+    line.trim
+
+  def agentResponse(text: String): Unit =
+    println ""
+    println "Agent ▸ \{text}"
+
+  //[ Persist history to disk
+    !
+    ! Called after every message so it survives any exit (Ctrl-C, a crash, …)
+  //]
+  private def saveInputHistory(): Unit =
+    os.makedirs("data")
+    val _ = py.try(py.module("readline").write_history_file(historyFile))
+
+  def turn[T](f: () => T): T =
+    val savedTerm = ConsoleInteract.enterCbreak()
+    ConsoleInteract.startEscWatcher(interrupt, stopWatch)
+
+    val res = f()
+
+    ConsoleInteract.restoreTerminal(savedTerm)
+    stopWatch.set()
+
+    res
+
+  def ask(history: List[Message], tools: List[Tool]): Option[ReplyResult] =
+    ConsoleInteract.callInterruptible: this, () =>
+      brain.reply(sysPrompt, history, tools)
+
+  def emit(event: TurnEvent): Unit = with IO.stdout = out in
+    match event
+    case ModelRequestStarted(attempt, maxAttempts) =>
+      val label =
+        if attempt == 0 then "thinking · ESC to interrupt"
+        else "retrying \{attempt}/\{maxAttempts} · ESC to interrupt"
+      spinner.start(label)
+
+    case ModelRequestEnded =>
+      spinner.stop()
+
+    case TransientError(detail, delaySeconds) =>
+      println "  · transient error (\{detail}); retrying in \{delaySeconds}s"
+
+    case RequestFailed(detail) =>
+      println "  · request failed: \{detail}"
+
+    case RetriesExhausted(detail, attempts) =>
+      println "  · giving up after \{attempts} retries: \{detail}"
+
+    case ToolBudgetReached(budget) =>
+      println "  · tool budget reached (\{budget}); requesting final answer"
+
+    case ToolCallStarted(name) =>
+      spinner.start("\{name} · ESC to interrupt")
+
+    case ToolCallEnded(name, summary) =>
+      spinner.stop()
+      println "  · \{summary}"
+
+  def cancelled: Bool = interrupt.is_set().asBool
+
+  def pause(seconds: Float): Bool = interrupt.wait(seconds).asBool
+end
+
+private section ConsoleInteract
+  // Put the terminal in cbreak mode so a single keypress (ESC) is readable
+  // without Enter. Returns the saved settings to restore later.
+  private[cli] def enterCbreak(): py.Dynamic =
+    val saved = termiosMod.tcgetattr(0)
+    ttyMod.setcbreak(0)
+    saved
+
+  private[cli] def restoreTerminal(saved: py.Dynamic): Unit =
+    termiosMod.tcsetattr(0, termiosMod.TCSADRAIN, saved)
+
+  // ============================================
+  // ESC-to-interrupt: watch stdin for the ESC key while the agent works
+  // ============================================
+
+  // True if stdin has a byte ready within `timeout` seconds.
+  private[cli] def stdinReady(timeout: Float): Bool =
+    val res = selectMod.select(py.list(0), py.list(), py.list(), timeout)
+    res[0].cast[py.List].size > 0
+
+  // Background thread: set `interrupt` when the user presses ESC (a lone ESC,
+  // not an escape sequence like an arrow key). Stops when `stop` is set.
+  private[cli] def startEscWatcher(interrupt: py.Dynamic, stop: py.Dynamic): Unit =
+    val watcher = () =>
+      while !stop.is_set().asBool && !interrupt.is_set().asBool do
+        if stdinReady(0.1) then
+          val ch = os.read(0, 1)
+          if builtins.len(ch).asInt == 1 && builtins.ord(ch).asInt == 27 then
+            // a lone ESC (no byte follows) — not part of an arrow-key sequence
+            if !stdinReady(0.02) then interrupt.set()
+    val thread = threadingMod.Thread(target = watcher, daemon = true)
+    thread.start()
+
+  // Run `work` on a background thread; return Some(result), or None if `interrupt`
+  // fires first (the abandoned worker finishes in the background). This is what
+  // lets a long model call be cancelled by ESC — the engine just sees the Option.
+  private[cli] def callInterruptible[T](interact: Interact, work: () => T): Option[T] =
+    val box  = py.list(py.none)
+    val done = threadingMod.Event()
+    val worker = () =>
+      box.set(0, work())
+      done.set()
+    val thread = threadingMod.Thread(target = worker, daemon = true)
+    thread.start()
+
+    var out: Option[T] = None
+    var waiting = true
+    while waiting do
+      if done.wait(0.05).asBool then
+        out = Some(box.get(0).cast[T])
+        waiting = false
+      else if interact.cancelled then
+        waiting = false
+    out
+end

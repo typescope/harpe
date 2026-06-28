@@ -4,16 +4,13 @@
   !
   ! `runTurn` drives one user turn:
   !
-  ! it calls the model (retrying transient errors with backoff), runs any
-  ! tool calls, and repeats until the model replies with plain text, bounding the
+  ! It calls the model (retrying transient errors with backoff), runs any tool
+  ! calls, and repeats until the model replies with plain text, bounding the
   ! turn to `maxToolRounds` tool-call rounds. `fetchReply` is the single-reply
   ! step with the retry policy.
   !
   ! The engine performs no I/O of its own: every user-visible moment is reported
-  ! through an injected `emit: TurnEvent => Unit` handler, and cancellation is a
-  ! cooperative `interrupt` event the caller owns. So the same engine drives the
-  ! CLI (which renders events as a spinner + console lines) or any other agent
-  ! shape (a server, a test harness, a no-op handler) without change.
+  ! through an injected `interact` handler.
 //]
 
 namespace harpe.turn
@@ -21,21 +18,34 @@ namespace harpe.turn
 import harpe.models.*
 import harpe.tools.*
 
-//[ Interrupt
+//[ Interact
   !
-  ! Cooperative cancellation for a turn. The engine only asks two things — "has
-  ! cancellation been requested?" and "pause for a backoff, but wake early if it
-  ! is" — and the implementation owns the mechanism (a CLI ESC watcher over a
-  ! thread event, a deadline, a no-op for tests). This keeps the engine free of
-  ! any real waiting or `py` interop.
+  ! Cooperative interaction for a turn.
 //]
-interface Interrupt
-  //[ Has cancellation been requested? Checked between steps. //]
+interface Interact
+  //[ Ask for LLM reply
+    !
+    ! A cancellable model call: maps `(history, tools)` to the model's reply
+    ! (or a typed error) as `Some(ReplyResult)`, or `None` if the request was
+    ! cancelled.
+    !
+    ! The caller owns how the call is issued and cancelled, keeping that
+    ! machinery — threads, interrupt polling — out of the engine.
+  //]
+  def ask(history: List[Message], tools: List[Tool]): Option[ReplyResult]
+
+  //[ Has cancellation been requested? //]
   def cancelled: Bool
 
-  //[ Pause for up to `seconds`, returning true if cancellation fires during the
-    ! wait (so a long backoff can be abandoned promptly). //]
+  //[ Pause for up to `seconds`
+    !
+    ! return true if cancellation fires during the wait, so a long backoff can
+    ! be abandoned promptly.
+  //]
   def pause(seconds: Float): Bool
+
+  //[ Handle a turn event   //]
+  def emit(event: TurnEvent): Unit
 end
 
 //[ TurnEvent
@@ -54,23 +64,25 @@ union TurnEvent =
   | ToolCallStarted(name: String)
   | ToolCallEnded(name: String, summary: String)
 
-//[ The outcome of one user turn: an answer (with the updated history), an
-  ! interruption, or a failed request.
+//[ The outcome of one user turn
+  !
+  ! An answer (with the updated history), an interruption, or a failed request.
 //]
 union TurnResult =
     Answered(history: List[Message], text: String)
   | Interrupted
   | Failed
 
-//[ The result of fetching one model reply (after any retries): the assistant
-  ! message, a give-up (fatal error or retries exhausted), or an interruption.
+//[ The result of fetching one model reply (after any retries)
+  !
+  ! The assistant message, a give-up (fatal error or retries exhausted), or an interruption.
 //]
 private union Fetched =
     Got(message: Assistant)
   | GaveUp
   | Stopped
 
-// Exponential backoff between retries: 1s, 2s, 4s, … capped at 30s.
+//[ Exponential backoff between retries: 1s, 2s, 4s, … capped at 30s.  //]
 private def backoffSeconds(attempt: Int): Float =
   var d = 1.0
   var i = 1
@@ -80,33 +92,28 @@ private def backoffSeconds(attempt: Int): Float =
 
   if d > 30.0 then 30.0 else d
 
-//[ Responder
+//[ Ask the model for one reply
   !
-  ! A cancellable model call: maps `(systemPrompt, history, tools)` to the
-  ! model's reply (or a typed error) as `Some(ReplyResult)`, or `None` if the
-  ! request was cancelled. The caller owns how the call is issued and cancelled
-  ! (e.g. running it on a background thread), keeping that machinery — threads,
-  ! interrupt polling — out of the engine.
-//]
-type Responder = (String, List[Message], List[Tool]) => Option[ReplyResult]
-
-//[ Ask the model for one reply, retrying transient errors with exponential
-  ! backoff up to `maxRetries`. A `None` from `ask` (a cancelled request), or
-  ! `interrupt` firing during a backoff wait, ends the attempt. Progress and
-  ! errors are reported through `emit`.
+  ! Retry transient errors with exponential backoff up to `maxRetries`.
+  !
+  ! A `None` from `ask` (a cancelled request), or interrupt firing during a
+  ! backoff wait, ends the attempt.
+  !
+  ! Progress and errors are reported through `interact.emit`.
 //]
 private def fetchReply(
-    ask: Responder, sysPrompt: String, history: List[Message], tools: List[Tool],
-    maxRetries: Int, interrupt: Interrupt, emit: TurnEvent => Unit)
+    history: List[Message], tools: List[Tool], maxRetries: Int, interact: Interact)
 : Fetched =
 
   var attempt = 0
   var outcome: Fetched = GaveUp
 
   while true do
-    emit(new ModelRequestStarted(attempt, maxRetries))
-    val maybe = ask(sysPrompt, history, tools)
-    emit(ModelRequestEnded)
+    interact.emit: ModelRequestStarted(attempt, maxRetries)
+
+    val maybe = interact.ask(history, tools)
+
+    interact.emit: ModelRequestEnded
 
     val res = maybe rescue None =>
       outcome = Stopped
@@ -114,40 +121,43 @@ private def fetchReply(
 
     match res
       case Reply(message) =>
-        outcome = new Got(message)
+        outcome = Got(message)
         break
 
       case Fatal(detail) =>
-        emit(new RequestFailed(detail))
+        interact.emit: RequestFailed(detail)
         outcome = GaveUp
         break
 
       case Transient(detail) =>
         attempt = attempt + 1
         if attempt > maxRetries then
-          emit(new RetriesExhausted(detail, maxRetries))
+          interact.emit: RetriesExhausted(detail, maxRetries)
           outcome = GaveUp
           break
 
         else
           val delay = backoffSeconds(attempt)
-          emit(new TransientError(detail, delay))
+          interact.emit: TransientError(detail, delay)
           // pause returns true if cancellation fired during the backoff.
-          if interrupt.pause(delay) then
+          if interact.pause(delay) then
             outcome = Stopped
             break
   end // while
 
   outcome
 
-//[ Drive one turn: call the model (with retries), run any tool calls it
-  ! requests, and repeat until it replies with plain text. A turn is bounded to
-  ! `maxToolRounds` tool-call rounds; once spent the model is asked once more
-  ! with no tools, forcing a final answer. `interrupt` cancels and rolls back.
+//[ Drive one turn
+  !
+  ! Call the model (with retries), run any tool calls it requests, and repeat
+  ! until it replies with plain text.
+  !
+  ! A turn is bounded to `maxToolRounds` tool-call rounds; once spent the model
+  ! is asked once more with no tools, forcing a final answer.
 //]
 def runTurn(
-    ask: Responder, sysPrompt: String, start: List[Message], tools: List[Tool],
-    maxToolRounds: Int, maxRetries: Int, interrupt: Interrupt, emit: TurnEvent => Unit)
+    start: List[Message], tools: List[Tool],
+    maxToolRounds: Int, maxRetries: Int, interact: Interact)
 : TurnResult =
 
   var history = start
@@ -157,12 +167,12 @@ def runTurn(
   while true do
     // Once the tool budget is spent, offer no tools so the model must reply with
     // a final text answer rather than calling another tool.
-    val offer = if rounds >= maxToolRounds then List.empty[Tool] else tools
+    val offer: List[Tool] = if rounds >= maxToolRounds then [] else tools
 
     if rounds == maxToolRounds then
-      emit(new ToolBudgetReached(maxToolRounds))
+      interact.emit: ToolBudgetReached(maxToolRounds)
 
-    match fetchReply(ask, sysPrompt, history, offer, maxRetries, interrupt, emit)
+    match fetchReply(history, offer, maxRetries, interact)
       case Stopped =>
         result = Interrupted
         break
@@ -175,32 +185,36 @@ def runTurn(
         history = history + reply
 
         if reply.calls.isEmpty then
-          result = new Answered(history, reply.text.trim)
+          result = Answered(history, reply.text.trim)
           break
 
         var toolResults: List[ToolResult] = []
         var cancelled = false
 
         for call in reply.calls do
-          if interrupt.cancelled then
+          if interact.cancelled then
             cancelled = true
             break
 
           val toolName = call.name
-          emit(new ToolCallStarted(toolName))
+          interact.emit: ToolCallStarted(toolName)
+
           val outcome =
-            if tools.find(t => t.name == toolName) is Some(t) then t.run(call.input)
-            else new RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}")
-          emit(new ToolCallEnded(toolName, outcome.summary))
+            if tools.find(t => t.name == toolName) is Some(t) then
+              t.run(call.input)
+            else
+              RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}")
 
-          toolResults = toolResults + new ToolResult(call.id, outcome.result)
+          interact.emit: ToolCallEnded(toolName, outcome.summary)
 
-        if cancelled || interrupt.cancelled then
+          toolResults = toolResults + ToolResult(call.id, outcome.result)
+
+        if cancelled || interact.cancelled then
           result = Interrupted
           break
 
         else
-          history = history + new ToolResults(toolResults)
+          history = history + ToolResults(toolResults)
           rounds = rounds + 1
   end // while
 

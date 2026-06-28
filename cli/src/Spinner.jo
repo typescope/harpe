@@ -1,10 +1,9 @@
 //[ Spinner.jo
   !
   ! A reusable terminal spinner for the CLI: an animated status line shown while
-  ! a blocking step (model request, tool run) is in flight. One instance is
-  ! created per session (`newSpinner`) and driven by the event handler — see
-  ! `consoleEmit` in Harpe.jo. It writes straight to `sys.stdout` (not the
-  ! `stdout` capability), so it carries no tracked effect.
+  ! a blocking step (model request, tool run) is in flight.
+  !
+  ! One instance is created per session and driven by the event handler.
 //]
 
 namespace harpe.cli
@@ -14,13 +13,7 @@ import harpe.ffi.*
 // "\r" + ESC + "[2K" — return to start of line and clear it.
 private def clearLine(): String = "\r" + builtins.chr(27).asString + "[2K"
 
-//[ A reusable spinner resource. `start(message)` animates a status line on a
-  ! background thread (message + elapsed seconds) until `stop()`; starting again
-  ! replaces any running animation, and `stop()` with nothing running is a no-op.
-  ! So one instance — created once per session with `new Spinner` — can be
-  ! started and stopped across many turns. The live animation (its stop event and
-  ! thread) is held in the fields, cleared back to none while idle.
-//]
+//[ A reusable spinner resource   //]
 class Spinner
   var stopEvent: Option[py.Dynamic] = None
   var thread: Option[py.Dynamic] = None
