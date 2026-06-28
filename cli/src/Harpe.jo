@@ -74,10 +74,22 @@ private def startEscWatcher(interrupt: py.Dynamic, stop: py.Dynamic): Unit =
   val thread = threadingMod.Thread(target = watcher, daemon = true)
   thread.start()
 
+//[ The CLI's `Interrupt`: an ESC-driven thread event. `startEscWatcher` sets the
+  ! event on a lone ESC; `cancelled` reflects it, and `pause` is an interruptible
+  ! wait on it (so backoff wakes immediately on ESC).
+//]
+private class EventInterrupt(event: py.Dynamic)
+  view Interrupt
+
+  def cancelled: Bool = event.is_set().asBool
+
+  def pause(seconds: Float): Bool = event.wait(seconds).asBool
+end
+
 // Run `work` on a background thread; return Some(result), or None if `interrupt`
 // fires first (the abandoned worker finishes in the background). This is what
 // lets a long model call be cancelled by ESC — the engine just sees the Option.
-private def callInterruptible[T](interrupt: py.Dynamic, work: () => T): Option[T] =
+private def callInterruptible[T](interrupt: Interrupt, work: () => T): Option[T] =
   val box  = py.list(py.none)
   val done = threadingMod.Event()
   val worker = () =>
@@ -92,7 +104,7 @@ private def callInterruptible[T](interrupt: py.Dynamic, work: () => T): Option[T
     if done.wait(0.05).asBool then
       out = Some(box.get(0).cast[T])
       waiting = false
-    else if interrupt.is_set().asBool then
+    else if interrupt.cancelled then
       waiting = false
   out
 
@@ -270,11 +282,12 @@ private def runChat(): Unit receives stdout, toolDefs, workspace =
       history = history + new UserText(userInput)
 
       // The cbreak terminal and ESC watcher are the CLI's; the engine sees only
-      // the cooperative `interrupt` event we hand it.
+      // the cooperative `Interrupt` we hand it.
       val savedTerm = enterCbreak()
-      val interrupt = threadingMod.Event()
+      val event     = threadingMod.Event()
       val stopWatch = threadingMod.Event()
-      startEscWatcher(interrupt, stopWatch)
+      startEscWatcher(event, stopWatch)
+      val interrupt: Interrupt = new EventInterrupt(event)
 
       // Issue the model call on a background thread so ESC can cancel it; the
       // engine just sees a (sysPrompt, history, tools) => Option[ReplyResult].

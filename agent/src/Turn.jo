@@ -21,6 +21,23 @@ namespace harpe.turn
 import harpe.models.*
 import harpe.tools.*
 
+//[ Interrupt
+  !
+  ! Cooperative cancellation for a turn. The engine only asks two things — "has
+  ! cancellation been requested?" and "pause for a backoff, but wake early if it
+  ! is" — and the implementation owns the mechanism (a CLI ESC watcher over a
+  ! thread event, a deadline, a no-op for tests). This keeps the engine free of
+  ! any real waiting or `py` interop.
+//]
+interface Interrupt
+  //[ Has cancellation been requested? Checked between steps. //]
+  def cancelled: Bool
+
+  //[ Pause for up to `seconds`, returning true if cancellation fires during the
+    ! wait (so a long backoff can be abandoned promptly). //]
+  def pause(seconds: Float): Bool
+end
+
 //[ TurnEvent
   !
   ! Everything the engine wants to surface during a turn, as data — the handler
@@ -80,7 +97,7 @@ type Responder = (String, List[Message], List[Tool]) => Option[ReplyResult]
 //]
 private def fetchReply(
     ask: Responder, sysPrompt: String, history: List[Message], tools: List[Tool],
-    maxRetries: Int, interrupt: py.Dynamic, emit: TurnEvent => Unit)
+    maxRetries: Int, interrupt: Interrupt, emit: TurnEvent => Unit)
 : Fetched =
 
   var attempt = 0
@@ -115,8 +132,8 @@ private def fetchReply(
         else
           val delay = backoffSeconds(attempt)
           emit(new TransientError(detail, delay))
-          // interrupt.wait returns true if cancelled during the backoff.
-          if interrupt.wait(delay).asBool then
+          // pause returns true if cancellation fired during the backoff.
+          if interrupt.pause(delay) then
             outcome = Stopped
             break
   end // while
@@ -130,7 +147,7 @@ private def fetchReply(
 //]
 def runTurn(
     ask: Responder, sysPrompt: String, start: List[Message], tools: List[Tool],
-    maxToolRounds: Int, maxRetries: Int, interrupt: py.Dynamic, emit: TurnEvent => Unit)
+    maxToolRounds: Int, maxRetries: Int, interrupt: Interrupt, emit: TurnEvent => Unit)
 : TurnResult =
 
   var history = start
@@ -166,7 +183,7 @@ def runTurn(
         var cancelled = false
 
         for call in reply.calls do
-          if interrupt.is_set().asBool then
+          if interrupt.cancelled then
             cancelled = true
             break
 
@@ -179,7 +196,7 @@ def runTurn(
 
           toolResults = toolResults + new ToolResult(call.id, outcome.result)
 
-        if cancelled || interrupt.is_set().asBool then
+        if cancelled || interrupt.cancelled then
           result = Interrupted
           break
 

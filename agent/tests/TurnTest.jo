@@ -16,7 +16,6 @@ import jo.IO.stdout
 import harpe.turn.*
 import harpe.models.*
 import harpe.tools.*
-import harpe.ffi.*
 
 // A reply carrying only text (no tool calls).
 private def textReply(s: String): Option[ReplyResult] =
@@ -57,12 +56,39 @@ private def joinPy(xs: py.List): String =
 private def echoTool(): Tool =
   new Tool("echo", "echo tool", List.empty[ToolParam], input => new RunOutcome("echoed", "echo · ran"))
 
+// Interrupt fakes — no threads, no real sleeping, so the engine's cancellation
+// paths are testable deterministically.
+private class NoInterrupt
+  view Interrupt
+
+  def cancelled: Bool = false
+
+  def pause(seconds: Float): Bool = false
+end
+
+// Already cancelled before the turn starts (exercises the between-tool check).
+private class Cancelled
+  view Interrupt
+
+  def cancelled: Bool = true
+
+  def pause(seconds: Float): Bool = true
+end
+
+// Not cancelled up front, but cancellation "fires" during a backoff pause.
+private class CancelDuringPause
+  view Interrupt
+
+  def cancelled: Bool = false
+
+  def pause(seconds: Float): Bool = true
+end
+
 // Drive one turn and summarize it as "<result> | <events>".
-private def scenario(ask: Responder, tools: List[Tool], maxToolRounds: Int, maxRetries: Int): String =
+private def scenario(ask: Responder, tools: List[Tool], maxToolRounds: Int, maxRetries: Int, interrupt: Interrupt): String =
   val log = py.list()
   val emit = (e: TurnEvent) =>
     val _ = log.append(eventTag(e))
-  val interrupt = threadingMod.Event()
   val res = runTurn(ask, "sys", List.empty[Message], tools, maxToolRounds, maxRetries, interrupt, emit)
   "\{resultTag(res)} | \{joinPy(log)}"
 
@@ -72,10 +98,11 @@ private def check(label: String, actual: String, expected: String): Unit receive
 
 def run(): Unit receives stdout =
   val tools = [echoTool()]
+  val live = new NoInterrupt   // the default: never cancels
 
   // A plain text reply ends the turn immediately.
   check("A text-answer",
-    scenario((s, h, t) => textReply("hi"), tools, 50, 4),
+    scenario((s, h, t) => textReply("hi"), tools, 50, 4, live),
     "Answered(hi) | start,end")
 
   // One tool call is run, then the next reply (text) ends the turn.
@@ -85,7 +112,7 @@ def run(): Unit receives stdout =
     stepB.set(0, n + 1)
     if n == 0 then toolReply("echo") else textReply("done")
   check("B tool-then-text",
-    scenario(askB, tools, 50, 4),
+    scenario(askB, tools, 50, 4, live),
     "Answered(done) | start,end,tool+echo,tool-echo,start,end")
 
   // Tool budget: once spent (maxToolRounds=1) the model is re-asked with no
@@ -94,31 +121,42 @@ def run(): Unit receives stdout =
   val askC: Responder = (s, h, t) =>
     if t.isEmpty then textReply("final") else toolReply("echo")
   check("C tool-budget",
-    scenario(askC, tools, 1, 4),
+    scenario(askC, tools, 1, 4, live),
     "Answered(final) | start,end,tool+echo,tool-echo,budget,start,end")
 
   // A fatal error loses the turn.
   check("D fatal",
-    scenario((s, h, t) => Some(new Fatal("bad key")), tools, 50, 4),
+    scenario((s, h, t) => Some(new Fatal("bad key")), tools, 50, 4, live),
     "Failed | start,end,failed")
 
   // A cancelled request (None from the responder) interrupts the turn.
   check("E cancelled",
-    scenario((s, h, t) => None, tools, 50, 4),
+    scenario((s, h, t) => None, tools, 50, 4, live),
     "Interrupted | start,end")
 
   // Transient with no retry budget (maxRetries=0) gives up immediately — no
   // backoff wait.
   check("F retries-exhausted",
-    scenario((s, h, t) => Some(new Transient("rate limited")), tools, 50, 0),
+    scenario((s, h, t) => Some(new Transient("rate limited")), tools, 50, 0, live),
     "Failed | start,end,exhausted")
 
-  // Transient once, then success: exercises the backoff + retry path.
+  // Transient once, then success: exercises the backoff + retry path. With a
+  // fake Interrupt, `pause` returns instantly — no real 1s wait.
   val stepG = py.list(0)
   val askG: Responder = (s, h, t) =>
     val n = stepG.get(0).asInt
     stepG.set(0, n + 1)
     if n == 0 then Some(new Transient("blip")) else textReply("recovered")
   check("G transient-then-success",
-    scenario(askG, tools, 50, 2),
+    scenario(askG, tools, 50, 2, live),
     "Answered(recovered) | start,end,transient,start,end")
+
+  // Cancellation already requested → the turn bails before running the tool.
+  check("H cancelled-before-tool",
+    scenario((s, h, t) => toolReply("echo"), tools, 50, 4, new Cancelled),
+    "Interrupted | start,end")
+
+  // Cancellation fires during the backoff pause → the retry is abandoned.
+  check("I cancelled-during-backoff",
+    scenario((s, h, t) => Some(new Transient("blip")), tools, 50, 4, new CancelDuringPause),
+    "Interrupted | start,end,transient")
