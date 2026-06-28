@@ -33,7 +33,7 @@ section Config
   //]
   defer def extraTools(): List[Tool] receives workspace = []
 
-  //[ defaultTools
+  //[ default tools
     !
     ! Deferred hook for the BASE toolset (runCode + the read-only skill tools). An
     ! agent that wants full control — including whether and how `runCode` exists —
@@ -41,6 +41,10 @@ section Config
   //]
   defer def defaultTools(): List[Tool] receives workspace =
     [runCodeTool(workspace.guestDir)] ++ skillTools(workspace.skillsDir)
+
+
+  //[ All tools including extra tools and default tools  //]
+  def tools: List[Tool] receives workspace = defaultTools ++ extraTools
 
   //[ The LLM model
     !

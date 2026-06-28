@@ -11,15 +11,6 @@
   !
   ! `jo.main = harpe.cli.main` wires an agent to the loop.
   !
-  ! The toolset offered to the model is `defaultTools() ++ extraTools()`. Both
-  ! are `defer def` hooks an agent overrides through its jo.toml `[main.links]`,
-  ! the same way the sandbox links `runTask`:
-  !
-  !   - link `harpe.cli.extraTools`   to ADD tools alongside the built-ins
-  !   - link `harpe.cli.defaultTools` to REPLACE the base toolset entirely
-  !
-  ! The reusable pieces live in the `harpe` package: `harpe.tools` (the Tool
-  ! abstraction + runCode/skill tools) and `harpe.ffi` (shared Python interop).
 //]
 
 namespace harpe.cli
@@ -33,8 +24,6 @@ import harpe.tools.Tool
 import harpe.Workspace
 import harpe.workspace
 import os
-
-
 
 //[ The agent's working directory is the CWD, and the runCode/skill tools resolve
   ! their paths against it. It must hold the agent's own `jo.toml` and a
@@ -51,13 +40,9 @@ def main(): Unit receives stdout =
   else
     loadDotenv(".env")
     val wspace = new Workspace(os.path.abspath("."))
-    val tools = with workspace = wspace in Config.defaultTools ++ Config.extraTools
+    with workspace = wspace in runChat()
 
-    with workspace = wspace, toolDefs = tools in runChat()
-
-param toolDefs: List[Tool]
-
-private def runChat(): Unit receives stdout, toolDefs, workspace =
+private def runChat(): Unit receives stdout, workspace =
   val brain = Config.model()
   val sysPrompt = Config.systemPrompt()
 
@@ -80,7 +65,7 @@ private def runChat(): Unit receives stdout, toolDefs, workspace =
 
     val sofar = history
     val res = interact.turn: () =>
-      runTurn(sofar, toolDefs, Config.maxToolRounds, Config.maxRetries, interact)
+      runTurn(sofar, Config.tools, Config.maxToolRounds, Config.maxRetries, interact)
 
     if res is Answered(updated, text) then
       history = updated
