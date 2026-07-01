@@ -20,6 +20,14 @@ import harpe.ffi.*
 //]
 private def maxMessageChars: Int = 4000
 
+//[ The outcome of one `getUpdates` poll: the updates array, or a human-readable
+  ! failure (a 409 conflict from a second poller, a bad token, a network blip, …)
+  ! that the loop can report instead of silently retrying.
+//]
+union PollResult =
+    Polled(updates: py.List)
+  | PollFailed(detail: String)
+
 private class TelegramClient(token: String)
   private def base: String = "https://api.telegram.org/bot" + token
   private def urllibReq: py.Dynamic = py.module("urllib.request")
@@ -42,22 +50,33 @@ private class TelegramClient(token: String)
     case Err(e) =>
       py.dict("ok" ~ false, "error" ~ e.message)
 
+  //[ A human-readable reason from a non-ok reply: the network error we caught, or
+    ! Telegram's own `description` (e.g. "Conflict: terminated by other
+    ! getUpdates request" for a 409), falling back to a generic string.
+  //]
+  def detail(resp: py.Dict): String =
+    if resp.contains("error") then resp.get("error").asString
+    else resp.get("description", "unknown error").asString
+
+  //[ Identify the bot behind the token (`getMe`). The caller uses this at startup
+    ! to confirm the token works and show which bot is live.
+  //]
+  def getMe(): py.Dict = apiCall("getMe", py.dict(), 15.0)
+
   //[ Long-poll for updates newer than `offset`, waiting up to `pollSeconds`.
     !
-    ! Returns the `result` array (empty on any error). On failure it pauses
-    ! briefly first, so a persistent outage becomes a slow retry loop rather than
-    ! a hot one.
+    ! Surfaces a failure to the caller (rather than swallowing it) so a 409
+    ! conflict, bad token, or outage is visible instead of a silent dead loop.
   //]
-  def getUpdates(offset: Int, pollSeconds: Int): py.List =
+  def getUpdates(offset: Int, pollSeconds: Int): PollResult =
     val params = py.dict("offset" ~ offset, "timeout" ~ pollSeconds)
     val resp = apiCall("getUpdates", params, py.dynamic(pollSeconds).asFloat + 15.0)
 
     if resp.get("ok", false).asBool then
-      resp.get("result").cast[py.List]
+      Polled(resp.get("result").cast[py.List])
 
     else
-      py.module("time").sleep(3.0)
-      py.list()
+      PollFailed(detail(resp))
 
   //[ Send `text` to `chatId`, split across as many messages as the 4096-char
     ! limit requires. An empty body is replaced with a placeholder so the send

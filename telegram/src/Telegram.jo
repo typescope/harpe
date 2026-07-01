@@ -58,9 +58,20 @@ private def serve(): Unit receives stdout, workspace =
   val tools = Config.tools
   val allowed = Config.allowedChatIds()
   val client = new TelegramClient(token)
+
+  // Startup identity check: confirm the token works and show which bot is live,
+  // so a bad/duplicate token fails here with a clear message rather than a
+  // silent, unresponsive poll loop.
+  val me = client.getMe()
+  if !me.get("ok", false).asBool then
+    println "Error: Telegram getMe failed — check TELEGRAM_BOT_TOKEN."
+    println "  \{client.detail(me)}"
+    sysMod.exit(1)
+
+  val username = me.get("result").cast[py.Dict].get("username").asString
   val bot = new TelegramBot(brain, sysPrompt, tools, client, allowed)
 
-  println "Harpe ▸ \{agentName()} is live on Telegram (Ctrl-C to stop)"
+  println "Harpe ▸ \{agentName()} is live on Telegram as @\{username} (Ctrl-C to stop)"
 
   if allowed.isEmpty then
     println "  ⚠ TELEGRAM_ALLOWED_CHAT_IDS is empty — all messages are rejected until you add chat ids."
@@ -97,10 +108,19 @@ private class TelegramBot(
     var offset = 0
 
     while true do
-      for updateDyn in client.getUpdates(offset, Config.pollSeconds()) do
-        val update = updateDyn.cast[py.Dict]
-        offset = update.get("update_id").asInt + 1
-        handleUpdate(update)
+      match client.getUpdates(offset, Config.pollSeconds())
+      case Polled(updates) =>
+        for updateDyn in updates do
+          val update = updateDyn.cast[py.Dict]
+          offset = update.get("update_id").asInt + 1
+          handleUpdate(update)
+
+      case PollFailed(reason) =>
+        // Surface the reason (a 409 usually means a second poller or a webhook)
+        // and back off, so a persistent failure is a slow, visible retry rather
+        // than a silent hot loop.
+        println "  · getUpdates failed: \{reason} (retrying in 3s)"
+        py.module("time").sleep(3.0)
     end
 
   //[ Handle one update: ignore anything that is not a plain text message
