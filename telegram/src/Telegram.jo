@@ -6,10 +6,10 @@
   ! turn of the shared engine (`harpe.turn.runTurn`), driven by `TelegramInteract`.
   !
   ! Unlike the web driver there is no HTTP server — Telegram lets the bot pull
-  ! updates, so nothing needs to be publicly reachable. The loop is single-flow:
-  ! it processes one message at a time; while a turn runs, further messages queue
-  ! at Telegram and are delivered on the next poll. Concurrent per-chat turns are a
-  ! later increment (the per-session lock is already in place for it).
+  ! updates, so nothing needs to be publicly reachable. The poll thread only
+  ! filters and dispatches: each chat has its own FIFO queue drained by a
+  ! dedicated worker thread, so turns for different chats run concurrently while a
+  ! single chat's turns stay ordered. The poll loop never blocks on a turn.
 //]
 
 namespace harpe.telegram
@@ -26,11 +26,15 @@ import os
 import time
 
 //[ One live conversation: its chat id, its append log, the running history, and
-  ! how much of that history is already persisted. The lock serializes turns
-  ! within a chat (single-flow today, but ready for concurrent dispatch).
+  ! how much of that history is already persisted.
+  !
+  ! Each session has a FIFO `queue` drained by its own dedicated worker thread, so
+  ! turns for different chats run concurrently while turns within one chat stay
+  ! ordered and serialized. Only that worker mutates `history`/`saved`, so no lock
+  ! is needed around them.
 //]
 private class Session(id: String, log: SessionLog, initial: List[Message])
-  val lock = threadingMod.Lock()
+  val queue = py.module("queue").Queue()
   var history: List[Message] = initial
   var saved: Int = initial.size
 end
@@ -172,7 +176,9 @@ private class TelegramBot(
       println "  · rejected message from unlisted sender \{senderId} in \{chatType} \{chatId}"
       return
 
-    runOneTurn(chatId, effectiveText)
+    // Hand the message to the chat's own worker queue and return immediately, so
+    // the poll loop keeps fetching updates while the turn runs.
+    openSession(chatId).queue.put(py.dynamic(effectiveText))
 
   //[ For a group message, the text to act on if the bot is addressed — a reply to
     ! the bot, an @mention, or a /command (not aimed at another bot) — with that
@@ -224,14 +230,27 @@ private class TelegramBot(
 
   private def lower(s: String): String = py.dynamic(s).lower().asString
 
-  //[ Run one turn for a chat and send its answer. On a failed request the chat is
-    ! told plainly; a cancelled/failed turn is rolled back so history stays valid.
+  //[ The chat's worker: drain its queue forever, running one turn per message in
+    ! arrival order. Runs on a dedicated daemon thread, so a long turn blocks only
+    ! this chat, not the poll loop or other chats. A crashing turn is contained —
+    ! the chat is told, and the worker keeps serving — rather than killing the
+    ! thread and leaving the chat silently dead.
   //]
-  private def runOneTurn(chatId: String, text: String): Unit receives stdout, workspace =
-    val session = openSession(chatId)
-    session.lock.acquire()
+  private def workerLoop(session: Session): Unit =
+    while true do
+      val text = session.queue.get().asString
 
-    val interact = new TelegramInteract(brain, sysPrompt, client, chatId)
+      match py.try(processTurn(session, text))
+      case Ok(_)  => pass
+      case Err(_) =>
+        val _ = py.try(client.sendMessage(session.id, "Sorry — an internal error occurred."))
+
+  //[ Run one turn and send its answer. On a failed request the chat is told
+    ! plainly; a cancelled/failed turn is rolled back so history stays valid. Only
+    ! the session's own worker calls this, so its `history` needs no lock.
+  //]
+  private def processTurn(session: Session, text: String): Unit =
+    val interact = new TelegramInteract(brain, sysPrompt, client, session.id)
     val snapshot = session.history
     session.history = session.history + UserText(text)
 
@@ -240,19 +259,20 @@ private class TelegramBot(
       session.history = updated
       session.log.append(time.now(), session.history.drop(session.saved))
       session.saved = session.history.size
-      client.sendMessage(chatId, answer)
+      client.sendMessage(session.id, answer)
 
     case Interrupted =>
       session.history = snapshot
 
     case Failed =>
       session.history = snapshot
-      client.sendMessage(chatId, "Sorry — the request failed. Please try again.")
-
-    session.lock.release()
+      client.sendMessage(session.id, "Sorry — the request failed. Please try again.")
 
   //[ The session for `chatId` — resident if seen this run, otherwise loaded from
-    ! disk (an unknown chat loads as an empty conversation).
+    ! disk (an unknown chat loads as an empty conversation) and given its worker.
+    !
+    ! Called only from the single poll thread, so the check-then-create on the
+    ! registry is race-free without a lock.
   //]
   private def openSession(chatId: String): Session receives workspace =
     if registry.contains(chatId) then
@@ -261,7 +281,14 @@ private class TelegramBot(
     else
       val session = new Session(chatId, Sessions.forSession(chatId), Sessions.load(chatId))
       registry.set(chatId, session)
+      startWorker(session)
       session
+
+  //[ Start a chat's dedicated worker on a daemon thread (dies with the process). //]
+  private def startWorker(session: Session): Unit =
+    val loop = () => workerLoop(session)
+    val thread = threadingMod.Thread(target = loop, daemon = true)
+    thread.start()
 
   //[ Is this sender permitted? An empty allowlist admits no one. //]
   private def isAllowed(senderId: String): Bool =
