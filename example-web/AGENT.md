@@ -24,7 +24,7 @@ def runTask(): Unit =
   println(primes.join(", "))
 ```
 
-read the jo language syntax with `skillsRead("jo-syntax.md")` for detail reference.
+for detailed Jo syntax, use `skillsRead` tool to read `jo-syntax.md`.
 
 Workflow: write Jo → `runCode` → if it fails to compile, read the error and fix
 it → once it runs, use the output to answer. Keep answers concise.

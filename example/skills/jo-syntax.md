@@ -5,15 +5,11 @@ syntax.
 
 ## Example
 ```jo
-import jo.IO.*
 def main = 
-  // Read a single line from stdin (returns String, strips trailing newline)
-  val line = stdin()
-  
   // Print with newline
   println("hello")
   // must use parentheses when parameters are complex expression
-  println("hello" + line) 
+  println("hello" + "world") 
 ```
 
 ## Variables
@@ -62,8 +58,6 @@ x >= y
 !cond
 cond && cond2
 cond || cond2
-(cond ||
- cond2)
 ```
 
 ## Control Flow
@@ -113,13 +107,13 @@ x => x + 1
 ```
 
 
-## Immutable ADT
+## Types in Standard Library
 
 String, List, Map, and Set are all immutable data types. 
 
-### String Operations
+### String
 
-most string common operations are listed below, there's no `reverse`, `take`, `drop` method defined on string.
+Most string common operations are listed below, there's no `reverse`, `take`, `drop` method defined on string.
 
 ```jo
 // concatenation
@@ -153,7 +147,6 @@ line[0]
 ```
 
 String interpolation:
-unlike other languages, Jo use `\{}` to mark interpolation
 ```jo
 "Hello, \{name}!"
 "Result: \{x + y}"
@@ -235,7 +228,6 @@ m.values()                       // List[Int]
 ```
 
 ### Set
-
 ```jo
 val s: Set[Int] = Set()         // explicit type annotation is required for empty set literal
 Set(1, 2, 3)                    // literal Int Set
@@ -247,6 +239,21 @@ n.contains('A')                 // check element exists
 n.select(x => x > 'a')          // filter element
 n ++ {'B', 'C'}                 // add two set
 n & {'A', 'C'}                  // intersections of two sets
+```
+
+### Tuples
+```jo
+val pair = 4 ~ "Four"
+val triple = x ~ y ~ z
+val i ~ n = pair
+val a ~ b ~ c = triple
+```
+
+### Range
+```jo
+val x = (1 to 5).toList
+val y = (1 until 5).toList
+val z = (2 to 10 step 2).toList
 ```
 
 ## Union Type
@@ -296,6 +303,6 @@ class Counter
   def get(): Int = count
 end
 
-val p = new Point(1, 2) // class instantiation always requires `new`
+val p = new Point(1, 2)
 println(p.x)
 ```
