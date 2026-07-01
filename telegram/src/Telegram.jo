@@ -105,8 +105,11 @@ private class TelegramBot(
     botUsername: String, botId: Int)
 
   // Resident sessions, chatId -> Session. A chat not yet touched this run is
-  // loaded from disk on first message.
+  // loaded from disk on first message. Guarded by `registryLock` for the one
+  // genuinely concurrent interaction: the poll thread enqueuing to a session
+  // versus a worker reaping its idle session (see `dispatch`/`workerLoop`).
   private val registry = py.dict()
+  private val registryLock = threadingMod.Lock()
 
   //[ The long-poll loop: fetch updates, advance the offset past each one, and
     ! dispatch text messages. `getUpdates` blocks until messages arrive or the
@@ -178,7 +181,7 @@ private class TelegramBot(
 
     // Hand the message to the chat's own worker queue and return immediately, so
     // the poll loop keeps fetching updates while the turn runs.
-    openSession(chatId).queue.put(py.dynamic(effectiveText))
+    dispatch(chatId, effectiveText)
 
   //[ For a group message, the text to act on if the bot is addressed — a reply to
     ! the bot, an @mention, or a /command (not aimed at another bot) — with that
@@ -230,20 +233,56 @@ private class TelegramBot(
 
   private def lower(s: String): String = py.dynamic(s).lower().asString
 
-  //[ The chat's worker: drain its queue forever, running one turn per message in
-    ! arrival order. Runs on a dedicated daemon thread, so a long turn blocks only
-    ! this chat, not the poll loop or other chats. A crashing turn is contained —
-    ! the chat is told, and the worker keeps serving — rather than killing the
-    ! thread and leaving the chat silently dead.
+  //[ Enqueue a message for its chat, creating the session (and its worker) on
+    ! first contact. Under `registryLock` so the enqueue is atomic with a worker's
+    ! reap decision: either the message lands in a live session's queue, or the
+    ! session was reaped and we build a fresh one — never a message dropped into a
+    ! dead queue. Session load (disk) happens outside the lock; only the poll
+    ! thread creates, so the check-then-create needs no extra guard.
   //]
-  private def workerLoop(session: Session): Unit =
-    while true do
-      val text = session.queue.get().asString
+  private def dispatch(chatId: String, text: String): Unit receives workspace =
+    registryLock.acquire()
+    val live = registry.contains(chatId)
+    if live then
+      registry.get(chatId).cast[Session].queue.put(py.dynamic(text))
+    registryLock.release()
 
-      match py.try(processTurn(session, text))
-      case Ok(_)  => pass
+    if !live then
+      val session = new Session(chatId, Sessions.forSession(chatId), Sessions.load(chatId))
+      registryLock.acquire()
+      registry.set(chatId, session)
+      session.queue.put(py.dynamic(text))
+      registryLock.release()
+      startWorker(chatId, session)
+
+  //[ The chat's worker: drain its queue, running one turn per message in arrival
+    ! order. Runs on a dedicated daemon thread, so a long turn blocks only this
+    ! chat, not the poll loop or other chats. A crashing turn is contained — the
+    ! chat is told, and the worker keeps serving — rather than killing the thread.
+    !
+    ! When no message arrives for `idleSeconds`, the worker reaps itself: under
+    ! `registryLock` it re-checks the queue is still empty (guarding against a
+    ! message enqueued in the race window), removes the session, and exits. The
+    ! next message from this chat recreates the session from disk.
+  //]
+  private def workerLoop(chatId: String, session: Session): Unit =
+    var running = true
+    while running do
+      match py.try(session.queue.get(timeout = Config.idleSeconds()))
+      case Ok(item) =>
+        match py.try(processTurn(session, item.asString))
+        case Ok(_)  => pass
+        case Err(_) =>
+          val _ = py.try(client.sendMessage(session.id, "Sorry — an internal error occurred."))
+
       case Err(_) =>
-        val _ = py.try(client.sendMessage(session.id, "Sorry — an internal error occurred."))
+        // get() timed out (queue empty for idleSeconds): try to reap.
+        registryLock.acquire()
+        val reap = session.queue.empty().asBool
+        if reap then registry.pop(chatId)
+        registryLock.release()
+
+        if reap then running = false
 
   //[ Run one turn and send its answer. On a failed request the chat is told
     ! plainly; a cancelled/failed turn is rolled back so history stays valid. Only
@@ -268,25 +307,9 @@ private class TelegramBot(
       session.history = snapshot
       client.sendMessage(session.id, "Sorry — the request failed. Please try again.")
 
-  //[ The session for `chatId` — resident if seen this run, otherwise loaded from
-    ! disk (an unknown chat loads as an empty conversation) and given its worker.
-    !
-    ! Called only from the single poll thread, so the check-then-create on the
-    ! registry is race-free without a lock.
-  //]
-  private def openSession(chatId: String): Session receives workspace =
-    if registry.contains(chatId) then
-      registry.get(chatId).cast[Session]
-
-    else
-      val session = new Session(chatId, Sessions.forSession(chatId), Sessions.load(chatId))
-      registry.set(chatId, session)
-      startWorker(session)
-      session
-
   //[ Start a chat's dedicated worker on a daemon thread (dies with the process). //]
-  private def startWorker(session: Session): Unit =
-    val loop = () => workerLoop(session)
+  private def startWorker(chatId: String, session: Session): Unit =
+    val loop = () => workerLoop(chatId, session)
     val thread = threadingMod.Thread(target = loop, daemon = true)
     thread.start()
 

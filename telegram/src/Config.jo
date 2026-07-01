@@ -117,6 +117,14 @@ section Config
   //]
   defer def pollSeconds(): Int = 50
 
+  //[ How long a chat's worker thread sits idle (no new messages) before it is
+    ! reaped — its thread exits and the session leaves the resident registry. The
+    ! next message from that chat simply recreates it, reloading history from disk.
+    ! This bounds threads/memory to *active* chats rather than every chat seen
+    ! since startup. Default 15 minutes.
+  //]
+  defer def idleSeconds(): Float = 900.0
+
   //[ maxToolRounds
     !
     ! Cap on tool-call rounds in a single turn. Once spent, the model is asked once
