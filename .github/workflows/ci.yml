@@ -15,10 +15,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Scala CLI
+        uses: VirtusLab/scala-cli-setup@main
+        with:
+          jvm: liberica:17
+
       - name: Install Jo
         run: |
           git clone https://github.com/typescope/jo.git /tmp/jo
-          /tmp/jo/bin/install
+          cd /tmp/jo
+          bin/install
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Verify Jo install
