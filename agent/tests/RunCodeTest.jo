@@ -49,11 +49,52 @@ private def check(label: String, actual: String, expected: String): Unit receive
   assert: actual == expected, "\{label}: expected [\{expected}] but got [\{actual}]"
   println "  ok \{label}"
 
+// Fire `n` runCode calls in parallel, each printing a distinct number, and assert
+// every call gets back its OWN output. If concurrent runs shared one guest source
+// or build dir, outputs would clobber and this would fail.
+private def concurrentCheck(tool: Tool, n: Int): Unit receives stdout =
+  val results = py.list()
+  var i = 0
+  while i < n do
+    results.append(py.dynamic(""))
+    i = i + 1
+
+  val threads = py.list()
+  var k = 0
+  while k < n do
+    val idx = k
+    val worker = () => results.set(idx, py.dynamic(exec(tool, guest("  println \{idx}\n")).result))
+    val t = threadingMod.Thread(target = worker, daemon = true)
+    threads.append(t)
+    t.start()
+    k = k + 1
+
+  for t in threads do t.join()
+
+  var j = 0
+  var allOk = true
+  while j < n do
+    if results.get(j).asString != "\{j}" then allOk = false
+    j = j + 1
+
+  assert: allOk, "concurrent-isolation: parallel runs clobbered each other's output"
+  println "  ok concurrent-isolation"
+
 def run(): Unit receives stdout =
   val guestDir = fixtureGuestDir()
   // These tests assert on outcomes, not the audit trail, so inject a no-op sink
   // — the logging policy is the caller's to supply, and here we want none.
   val noLog: py.Dict => Unit = _ => pass
+
+  // The tool replays the invocation recorded by `jo build`, so the fixture must be
+  // built once up front (the user's normal one-time prep).
+  val prep = runCapped(py.list("jo", "build", "--spec", os.path.join(guestDir, "jo.toml")), 180.0)
+  assert: !prep.timedOut && prep.returnCode == 0, "runCode tests: failed to pre-build the sandbox fixture:\n\{prep.err}"
+
+  // An unbuilt sandbox reports clearly instead of building or running anything.
+  val unbuilt = py.module("tempfile").mkdtemp().asString
+  check("not-built", exec(runCodeTool(unbuilt, noLog), guest("  println 1\n")).summary, "sandbox not built")
+
   val fast  = runCodeTool(guestDir, noLog, 120.0, 5.0)   // 5s run backstop
   val quick = runCodeTool(guestDir, noLog, 120.0, 2.0)   // 2s run backstop
 
@@ -63,6 +104,10 @@ def run(): Unit receives stdout =
 
   // A well-formed program runs and produces output.
   check("normal", tag(exec(fast, guest("  println 42\n"))), "ran")
+
+  // Concurrent runs are isolated: 4 parallel programs, 2 building at a time,
+  // each must get back its own output (no shared Task.jo / .build clobbering).
+  concurrentCheck(runCodeTool(guestDir, noLog, 120.0, 5.0, 2), 4)
 
   // A program that does not type-check is caught at the compile checkpoint.
   check("compile-error", tag(exec(fast, guest("  println undefinedThing\n"))), "compile-error")
