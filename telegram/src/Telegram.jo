@@ -1,0 +1,168 @@
+//[ Telegram.jo
+  !
+  ! The Telegram agent loop (the Harpe "conversational" trigger, over a Telegram
+  ! bot) and its entry point. `jo run` with `jo.main = harpe.telegram.main` starts
+  ! an outbound long-poll against the Bot API: each incoming text message is one
+  ! turn of the shared engine (`harpe.turn.runTurn`), driven by `TelegramInteract`.
+  !
+  ! Unlike the web driver there is no HTTP server — Telegram lets the bot pull
+  ! updates, so nothing needs to be publicly reachable. The loop is single-flow:
+  ! it processes one message at a time; while a turn runs, further messages queue
+  ! at Telegram and are delivered on the next poll. Concurrent per-chat turns are a
+  ! later increment (the per-session lock is already in place for it).
+//]
+
+namespace harpe.telegram
+
+import jo.IO.stdout
+import harpe.ffi.*
+import harpe.turn.*
+import harpe.models.*
+import harpe.tools.Tool
+import harpe.SessionLog
+import harpe.Workspace
+import harpe.workspace
+import os
+import time
+
+//[ One live conversation: its chat id, its append log, the running history, and
+  ! how much of that history is already persisted. The lock serializes turns
+  ! within a chat (single-flow today, but ready for concurrent dispatch).
+//]
+private class Session(id: String, log: SessionLog, initial: List[Message])
+  val lock = threadingMod.Lock()
+  var history: List[Message] = initial
+  var saved: Int = initial.size
+end
+
+//[ The agent's working directory is the CWD; tools resolve paths against it. It
+  ! must hold the agent's own `jo.toml` and a `sandbox/`, checked up front so a
+  ! mislaunch fails clearly instead of with confusing path errors mid-run.
+//]
+private def inAgentDir(): Bool =
+  fileExists("jo.toml") && os.path.isdir("sandbox")
+
+//[ The entry point //]
+def main(): Unit receives stdout =
+  if !inAgentDir() then
+    println "Error: run this from an agent's working directory — a folder containing its jo.toml and a sandbox/ directory."
+  else
+    loadDotenv(".env")
+    val wspace = new Workspace(os.path.abspath("."))
+    with workspace = wspace in serve()
+
+private def serve(): Unit receives stdout, workspace =
+  val token = Config.botToken()
+  val brain = Config.model()
+  val sysPrompt = Config.systemPrompt()
+  val tools = Config.tools
+  val allowed = Config.allowedChatIds()
+  val client = new TelegramClient(token)
+  val bot = new TelegramBot(brain, sysPrompt, tools, client, allowed)
+
+  println "Harpe ▸ \{agentName()} is live on Telegram (Ctrl-C to stop)"
+
+  if allowed.isEmpty then
+    println "  ⚠ TELEGRAM_ALLOWED_CHAT_IDS is empty — all messages are rejected until you add chat ids."
+
+  bot.run()
+
+//[ The agent's display name: the first Markdown H1 in AGENT.md, else a default. //]
+private def agentName(): String receives workspace =
+  if fileExists(workspace.agentMd) then
+    for line in readFile(workspace.agentMd).lines do
+      val t = line.trim
+      if t.startsWith("# ") then return t.substring(2, t.size).trim
+    "Harpe Agent"
+  else
+    "Harpe Agent"
+
+//[ The bot: holds the model, prompt, toolset, the network client, and the
+  ! allowlist, plus a registry of resident sessions keyed by chat id. It polls for
+  ! updates and drives one turn per incoming message.
+//]
+private class TelegramBot(
+    brain: Model, sysPrompt: String, tools: List[Tool],
+    client: TelegramClient, allowed: List[String])
+
+  // Resident sessions, chatId -> Session. A chat not yet touched this run is
+  // loaded from disk on first message.
+  private val registry = py.dict()
+
+  //[ The long-poll loop: fetch updates, advance the offset past each one, and
+    ! dispatch text messages. `getUpdates` blocks until messages arrive or the
+    ! poll times out, so this loop idles cheaply.
+  //]
+  def run(): Unit receives stdout, workspace =
+    var offset = 0
+
+    while true do
+      for updateDyn in client.getUpdates(offset, Config.pollSeconds()) do
+        val update = updateDyn.cast[py.Dict]
+        offset = update.get("update_id").asInt + 1
+        handleUpdate(update)
+    end
+
+  //[ Handle one update: ignore anything that is not a plain text message
+    ! (edits, joins, callbacks, photos, …); enforce the allowlist; then run a turn.
+  //]
+  private def handleUpdate(update: py.Dict): Unit receives stdout, workspace =
+    if !update.contains("message") then return
+
+    val message = update.get("message").cast[py.Dict]
+    if !message.contains("text") then return
+
+    val chatId = "\{message.get("chat").cast[py.Dict].get("id").asInt}"
+    val text = message.get("text").asString
+
+    if !isAllowed(chatId) then
+      client.sendMessage(chatId,
+        "You are not authorized to use this agent.\nYour chat id is \{chatId} — ask the operator to add it to TELEGRAM_ALLOWED_CHAT_IDS.")
+      println "  · rejected message from unlisted chat \{chatId}"
+      return
+
+    runOneTurn(chatId, text)
+
+  //[ Run one turn for a chat and send its answer. On a failed request the chat is
+    ! told plainly; a cancelled/failed turn is rolled back so history stays valid.
+  //]
+  private def runOneTurn(chatId: String, text: String): Unit receives stdout, workspace =
+    val session = openSession(chatId)
+    session.lock.acquire()
+
+    val interact = new TelegramInteract(brain, sysPrompt, client, chatId)
+    val snapshot = session.history
+    session.history = session.history + UserText(text)
+
+    match runTurn(session.history, tools, Config.maxToolRounds, Config.maxRetries, interact)
+    case Answered(updated, answer) =>
+      session.history = updated
+      session.log.append(time.now(), session.history.drop(session.saved))
+      session.saved = session.history.size
+      client.sendMessage(chatId, answer)
+
+    case Interrupted =>
+      session.history = snapshot
+
+    case Failed =>
+      session.history = snapshot
+      client.sendMessage(chatId, "Sorry — the request failed. Please try again.")
+
+    session.lock.release()
+
+  //[ The session for `chatId` — resident if seen this run, otherwise loaded from
+    ! disk (an unknown chat loads as an empty conversation).
+  //]
+  private def openSession(chatId: String): Session receives workspace =
+    if registry.contains(chatId) then
+      registry.get(chatId).cast[Session]
+
+    else
+      val session = new Session(chatId, Sessions.forSession(chatId), Sessions.load(chatId))
+      registry.set(chatId, session)
+      session
+
+  //[ Is this chat permitted? An empty allowlist admits no one. //]
+  private def isAllowed(chatId: String): Bool =
+    allowed.find(x => x == chatId) is Some(_)
+end

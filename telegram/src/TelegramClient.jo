@@ -1,0 +1,87 @@
+//[ TelegramClient.jo
+  !
+  ! A thin client over the Telegram Bot API — the one place that touches the
+  ! network. Unlike the WhatsApp Cloud API (webhook in / REST out), Telegram lets
+  ! the bot *pull* updates over an outbound long-poll connection, so there is no
+  ! public endpoint, no TLS, and no signature to verify: `getUpdates` blocks until
+  ! messages arrive (or the poll times out), and `sendMessage` posts the reply.
+  !
+  ! Everything is a JSON POST to `https://api.telegram.org/bot<token>/<method>`.
+  ! `apiCall` is the single request primitive; the higher-level methods are
+  ! phrased in terms of it.
+//]
+
+namespace harpe.telegram
+
+import harpe.ffi.*
+
+//[ Telegram caps a message at 4096 characters; keep a margin so multi-byte
+  ! escapes never push a chunk over the limit.
+//]
+private def maxMessageChars: Int = 4000
+
+private class TelegramClient(token: String)
+  private def base: String = "https://api.telegram.org/bot" + token
+  private def urllibReq: py.Dynamic = py.module("urllib.request")
+
+  //[ One Bot API call: POST `params` as JSON, parse the JSON reply.
+    !
+    ! `timeout` is the socket timeout in seconds — for a long poll it must exceed
+    ! the poll's own `timeout` so the read outlives the wait. A network/HTTP
+    ! failure is swallowed into `{ok: false}` so callers never see a raw error.
+  //]
+  private def apiCall(method: String, params: py.Dict, timeout: Float): py.Dict =
+    val data = py.dynamic(jsonMod.dumps(params).asString).encode()
+    val headers = py.dict("Content-Type" ~ "application/json")
+    val req = urllibReq.Request(base + "/" + method, data = data, headers = headers, method = "POST")
+
+    match py.try(urllibReq.urlopen(req, timeout = timeout))
+    case Ok(resp) =>
+      jsonMod.loads(resp.read().decode().asString).cast[py.Dict]
+
+    case Err(e) =>
+      py.dict("ok" ~ false, "error" ~ e.message)
+
+  //[ Long-poll for updates newer than `offset`, waiting up to `pollSeconds`.
+    !
+    ! Returns the `result` array (empty on any error). On failure it pauses
+    ! briefly first, so a persistent outage becomes a slow retry loop rather than
+    ! a hot one.
+  //]
+  def getUpdates(offset: Int, pollSeconds: Int): py.List =
+    val params = py.dict("offset" ~ offset, "timeout" ~ pollSeconds)
+    val resp = apiCall("getUpdates", params, py.dynamic(pollSeconds).asFloat + 15.0)
+
+    if resp.get("ok", false).asBool then
+      resp.get("result").cast[py.List]
+
+    else
+      py.module("time").sleep(3.0)
+      py.list()
+
+  //[ Send `text` to `chatId`, split across as many messages as the 4096-char
+    ! limit requires. An empty body is replaced with a placeholder so the send
+    ! never fails on an empty string.
+  //]
+  def sendMessage(chatId: String, text: String): Unit =
+    val body = if text.trim == "" then "(no output)" else text
+
+    for chunk in chunk(body, maxMessageChars) do
+      val _ = apiCall("sendMessage", py.dict("chat_id" ~ chatId, "text" ~ chunk), 30.0)
+
+  //[ Show a transient status in the chat (e.g. "typing"); best-effort. //]
+  def sendChatAction(chatId: String, action: String): Unit =
+    val _ = apiCall("sendChatAction", py.dict("chat_id" ~ chatId, "action" ~ action), 15.0)
+
+  //[ Split `s` into pieces of at most `size` characters (at least one piece). //]
+  private def chunk(s: String, size: Int): List[String] =
+    var out: List[String] = []
+    var i = 0
+
+    while i < s.size do
+      val stop = if i + size < s.size then i + size else s.size
+      out = out + s.substring(i, stop)
+      i = stop
+
+    if out.isEmpty then [s] else out
+end

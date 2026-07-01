@@ -1,0 +1,34 @@
+//[ Sessions.jo
+  !
+  ! The Telegram driver's session-storage layout: one conversation per Telegram
+  ! chat, keyed by its numeric `chat.id`, persisted as
+  ! `logs/sessions/<chatId>.jsonl` under the workspace. The chat id is the natural
+  ! session key — it is stable across messages and survives restarts, so a chat
+  ! resumes its history simply by reappearing.
+  !
+  ! Like the web driver, this layout is a *driver* decision kept out of the shared
+  ! `harpe.SessionLog` (which owns only the per-message record schema): here we map
+  ! a chat id to its file (`forSession` to append, `load` to read back).
+//]
+
+namespace harpe.telegram
+
+import harpe.models.*
+import harpe.SessionLog
+import harpe.workspace
+
+section Sessions
+  //[ The file backing this chat's session. //]
+  def sessionPath(chatId: String): String receives workspace =
+    workspace.relative("logs/sessions/" + chatId + ".jsonl")
+
+  //[ An append log for this chat's session (its file is created lazily). //]
+  def forSession(chatId: String): SessionLog receives workspace =
+    new SessionLog(sessionPath(chatId))
+
+  //[ Reconstruct this chat's conversation from disk; `[]` if it has no file yet,
+    ! so a chat seen for the first time starts empty.
+  //]
+  def load(chatId: String): List[Message] receives workspace =
+    SessionLog.loadFile(sessionPath(chatId))
+end

@@ -1,0 +1,129 @@
+//[ Config.jo
+  !
+  ! Configuration for the Telegram agent. Mirrors `harpe.web.Config`: the same
+  ! agent knobs (system prompt, model, toolset, turn bounds) as `defer` hooks an
+  ! agent overrides in its `jo.toml` (link prefix `harpe.telegram.Config.*`), plus
+  ! two Telegram-specific settings read from the environment — the bot token and
+  ! the chat-id allowlist.
+//]
+
+namespace harpe.telegram
+
+import harpe.ffi.getenv
+import harpe.ffi.sysMod
+import harpe.ffi.readFile
+import harpe.ffi.fileExists
+import harpe.ffi.jsonMod
+import harpe.models.*
+import harpe.tools.*
+import harpe.Workspace
+import harpe.workspace
+import os
+
+
+section Config
+  //[ The system prompt is the agent's AGENT.md, used verbatim — fully visible and
+    ! editable by the agent author. The framework injects nothing.
+  //]
+  def systemPrompt(): String receives workspace =
+    if fileExists(workspace.agentMd) then readFile(workspace.agentMd) else ""
+
+  //[ extra tools
+    !
+    ! Deferred hook for ADDING tools. The default is none; an agent overrides it in
+    ! its jo.toml — `[main.links] "harpe.telegram.Config.extraTools" = "MyAgent.myTools"`
+    ! — to offer its own tools alongside the built-ins.
+  //]
+  defer def extraTools(): List[Tool] receives workspace = []
+
+  //[ default tools
+    !
+    ! Deferred hook for the BASE toolset (runCode + the read-only skill tools). An
+    ! agent that wants full control — including whether and how `runCode` exists —
+    ! overrides it: `"harpe.telegram.Config.defaultTools" = "MyAgent.myTools"`.
+  //]
+  defer def defaultTools(): List[Tool] receives workspace =
+    val runTool = runCodeTool: workspace.guestDir, entry =>
+      os.makedirs(workspace.relative("logs"))
+      val f = py.open(workspace.relative("logs/runs.jsonl"), "a")
+      f.write(jsonMod.dumps(entry).asString + "\n")
+      f.close()
+
+    [runTool] ++ skillTools(workspace.skillsDir)
+
+  //[ All tools including extra tools and default tools  //]
+  def tools: List[Tool] receives workspace = defaultTools ++ extraTools
+
+  //[ The LLM model
+    !
+    ! Deferred hook selecting the chat model. Controlled by env vars:
+    !
+    !   PROVIDER          "anthropic" (default) or "openai"
+    !   MODEL             model id — defaults to "claude-opus-4-6" for Anthropic,
+    !                     "gpt-4o" for OpenAI
+    !   ANTHROPIC_API_KEY required when PROVIDER=anthropic
+    !   OPENAI_API_KEY    required when PROVIDER=openai
+    !   OPENAI_BASE_URL   optional base URL for OpenAI-compatible endpoints
+  //]
+  defer def model(): Model receives IO.stdout =
+    val provider = getenv("PROVIDER", "anthropic")
+    if provider == "openai" then
+      val key = getenv("OPENAI_API_KEY", "")
+      if key == "" then
+        println "Error: OPENAI_API_KEY is not set (put it in .env or the environment)."
+        sysMod.exit(1)
+      openai(key, getenv("MODEL", "gpt-4o"), getenv("OPENAI_BASE_URL", ""))
+    else
+      val key = getenv("ANTHROPIC_API_KEY", "")
+      if key == "" then
+        println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
+        sysMod.exit(1)
+      anthropic(key, getenv("MODEL", "claude-opus-4-6"))
+
+  //[ The Telegram bot token, from `TELEGRAM_BOT_TOKEN` (obtained from @BotFather).
+    ! Required — the driver exits with a clear message if it is unset.
+  //]
+  def botToken(): String receives IO.stdout =
+    val token = getenv("TELEGRAM_BOT_TOKEN", "")
+    if token == "" then
+      println "Error: TELEGRAM_BOT_TOKEN is not set (get one from @BotFather, put it in .env)."
+      sysMod.exit(1)
+    token
+
+  //[ The allowlist of chat ids permitted to use the agent, from
+    ! `TELEGRAM_ALLOWED_CHAT_IDS` — a comma-separated list (e.g. "12345,-100999").
+    !
+    ! A bot is publicly reachable and this agent runs code, so access is
+    ! closed by default: an EMPTY list rejects everyone. The driver tells an
+    ! unrecognised chat its own id, so the operator can add it here.
+  //]
+  def allowedChatIds(): List[String] =
+    val raw = getenv("TELEGRAM_ALLOWED_CHAT_IDS", "")
+    var out: List[String] = []
+
+    if raw.trim != "" then
+      for partDyn in py.dynamic(raw).split(",").cast[py.List] do
+        val part = partDyn.asString.trim
+        if part != "" then out = out + part
+
+    out
+
+  //[ How long a single `getUpdates` long poll waits (seconds) before returning
+    ! empty and looping again.
+  //]
+  defer def pollSeconds(): Int = 50
+
+  //[ maxToolRounds
+    !
+    ! Cap on tool-call rounds in a single turn. Once spent, the model is asked once
+    ! more with NO tools, so it must answer with text — bounding runaway turns.
+  //]
+  defer def maxToolRounds(): Int = 50
+
+  //[ maxRetries
+    !
+    ! How many times to retry a transient model error before giving up the turn,
+    ! with exponential backoff between attempts.
+  //]
+  defer def maxRetries(): Int = 4
+end
