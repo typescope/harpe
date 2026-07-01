@@ -68,20 +68,26 @@ The web agent reuses the entire engine unchanged — `harpe.turn`, `harpe.models
 serves a browser chat over HTTP and implements `Interact` by streaming each
 `TurnEvent` as one NDJSON line, so the page shows live progress (the browser
 counterpart of the CLI spinner). Switching an agent from terminal to browser is
-one line — `jo.main = harpe.web.main`. Run `example-web/` with `jo run` and open
+one line — `jo.main = harpe.web.main`. Run `example-web/` with `jo start` and open
 `http://127.0.0.1:8765`.
 
 The Telegram agent reuses the same engine, and needs no public endpoint: instead
 of a webhook it *long-polls* the Bot API (`getUpdates`), so nothing has to be
-reachable from the internet — a plain `jo run` on your machine works. Each chat
+reachable from the internet — a plain `jo start` on your machine works. Each chat
 is a session keyed by its `chat.id` (resumed from disk on the next message), and
 `TelegramInteract` shows a "typing…" action while the model or a tool works (the
 Telegram counterpart of the CLI spinner / web NDJSON stream). Because a bot is
 publicly reachable and the agent runs code, access is closed by default: only
 chat ids in `TELEGRAM_ALLOWED_CHAT_IDS` are served, and an unlisted chat is told
 its own id so the operator can add it. Switching an agent to Telegram is again
-one line — `jo.main = harpe.telegram.main`. Run `example-telegram/` with a
-`TELEGRAM_BOT_TOKEN` from [@BotFather](https://t.me/BotFather) in `.env`.
+one line — `jo.main = harpe.telegram.main`. Run `example-telegram/` with `jo start`
+and a `TELEGRAM_BOT_TOKEN` from [@BotFather](https://t.me/BotFather) in `.env`.
+
+Each agent defines a `start` command in its `jo.toml`
+(`start = "jo build --spec sandbox/guest/jo.toml && jo run"`), so `jo start`
+builds the sandbox guest — which `runCode` compiles the model's programs against —
+and then launches the agent. (Running `jo run` directly skips the guest build; if
+the sandbox isn't built, `runCode` reports "sandbox not built".)
 
 The framework is three packages. `harpe` (in `agent/`) is the shared base: the
 `harpe.ffi` interop and the `harpe.tools` layer (the `Tool` abstraction +
@@ -255,8 +261,12 @@ that `view Model` plus a factory `def <name>(...): Model`.
 cd example
 pip install -r requirements.txt        # anthropic + openai; readline etc. are stdlib
 cp .env.example .env                   # set ANTHROPIC_API_KEY (or OPENAI_API_KEY)
-jo run                                  # chat in your terminal
+jo start                                # build the sandbox guest, then chat in your terminal
 ```
+
+`jo start` is a `[commands]` entry in the agent's `jo.toml` — `jo build --spec
+sandbox/guest/jo.toml && jo run` — so it builds the sandbox the model compiles
+against, then launches the agent. (Requires Jo 0.11.3+ for `[commands]`.)
 
 To use OpenAI or a compatible endpoint instead of Anthropic:
 
