@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  jo:
+    name: Jo
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The installed `jo` launcher runs jo.jar on the JVM, so a JDK is required
+      # (but not scala-cli — we install a released build rather than compile one).
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: liberica
+          java-version: 17
+
+      - name: Install Jo
+        run: |
+          curl -sSf https://jo-lang.org/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Jo install
+        run: jo --version
+
+      - name: Build example
+        working-directory: example
+        run: jo build
+
+      - name: Build example-web
+        working-directory: example-web
+        run: jo build
+
+      - name: Test agent
+        working-directory: agent
+        run: jo test

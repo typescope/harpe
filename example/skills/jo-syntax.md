@@ -5,11 +5,11 @@ syntax.
 
 ## Example
 ```jo
-def main = 
+def main =
   // Print with newline
   println("hello")
   // must use parentheses when parameters are complex expression
-  println("hello" + "world") 
+  println("hello" + "world")
 ```
 
 ## Variables
@@ -109,7 +109,7 @@ x => x + 1
 
 ## Types in Standard Library
 
-String, List, Map, and Set are all immutable data types. 
+String, List, Map, and Set are all immutable data types.
 
 ### String
 
@@ -176,9 +176,9 @@ var xs = List.fill(3, 5)
 xs.length()
 // check if list is empty
 xs.isEmpty()
-// get the third element 
+// get the third element
 xs.get(3)
-// update first element to 9, returns a new list 
+// update first element to 9, returns a new list
 xs = xs.updated(0, 9)
 // return new list by taking first n elements
 xs.take(n)
@@ -254,6 +254,8 @@ val a ~ b ~ c = triple
 val x = (1 to 5).toList
 val y = (1 until 5).toList
 val z = (2 to 10 step 2).toList
+
+for i in 1 to 5 do println(i)
 ```
 
 ## Union Type
