@@ -56,7 +56,7 @@ private def serve(): Unit receives stdout, workspace =
   val brain = Config.model()
   val sysPrompt = Config.systemPrompt()
   val tools = Config.tools
-  val allowed = Config.allowedChatIds()
+  val allowed = Config.allowedSenders()
   val client = new TelegramClient(token)
 
   // Startup identity check: confirm the token works and show which bot is live,
@@ -74,7 +74,7 @@ private def serve(): Unit receives stdout, workspace =
   println "Harpe ▸ \{agentName()} is live on Telegram as @\{username} (Ctrl-C to stop)"
 
   if allowed.isEmpty then
-    println "  ⚠ TELEGRAM_ALLOWED_CHAT_IDS is empty — all messages are rejected until you add chat ids."
+    println "  ⚠ TELEGRAM_ALLOWED_SENDERS is empty — all messages are rejected until you add sender ids."
 
   bot.run()
 
@@ -89,8 +89,9 @@ private def agentName(): String receives workspace =
     "Harpe Agent"
 
 //[ The bot: holds the model, prompt, toolset, the network client, and the
-  ! allowlist, plus a registry of resident sessions keyed by chat id. It polls for
-  ! updates and drives one turn per incoming message.
+  ! sender allowlist, plus a registry of resident sessions keyed by chat id. It
+  ! polls for updates and drives one turn per incoming message. `allowed` is the
+  ! set of permitted sender (user) ids — authorization is by who sends, not where.
 //]
 private class TelegramBot(
     brain: Model, sysPrompt: String, tools: List[Tool],
@@ -123,22 +124,35 @@ private class TelegramBot(
         py.module("time").sleep(3.0)
     end
 
-  //[ Handle one update: ignore anything that is not a plain text message
-    ! (edits, joins, callbacks, photos, …); enforce the allowlist; then run a turn.
+  //[ Handle one update: ignore anything that is not a plain text message with an
+    ! identifiable sender (edits, joins, callbacks, photos, anonymous-admin and
+    ! channel posts with no `from`, …); enforce the sender allowlist; then run a
+    ! turn.
+    !
+    ! Authorization is by sender id. An unlisted sender is told their id only in a
+    ! private chat — in a group the bot may see many strangers' messages, so it
+    ! ignores them silently (logging to the console) rather than spamming a
+    ! rejection into the group.
   //]
   private def handleUpdate(update: py.Dict): Unit receives stdout, workspace =
     if !update.contains("message") then return
 
     val message = update.get("message").cast[py.Dict]
     if !message.contains("text") then return
+    if !message.contains("from") then return
 
-    val chatId = "\{message.get("chat").cast[py.Dict].get("id").asInt}"
+    val chat = message.get("chat").cast[py.Dict]
+    val chatId = "\{chat.get("id").asInt}"
+    val chatType = chat.get("type", "private").asString
+    val senderId = "\{message.get("from").cast[py.Dict].get("id").asInt}"
     val text = message.get("text").asString
 
-    if !isAllowed(chatId) then
-      client.sendMessage(chatId,
-        "You are not authorized to use this agent.\nYour chat id is \{chatId} — ask the operator to add it to TELEGRAM_ALLOWED_CHAT_IDS.")
-      println "  · rejected message from unlisted chat \{chatId}"
+    if !isAllowed(senderId) then
+      if chatType == "private" then
+        client.sendMessage(chatId,
+          "You are not authorized to use this agent.\nYour user id is \{senderId} — ask the operator to add it to TELEGRAM_ALLOWED_SENDERS.")
+
+      println "  · rejected message from unlisted sender \{senderId} in \{chatType} \{chatId}"
       return
 
     runOneTurn(chatId, text)
@@ -182,7 +196,7 @@ private class TelegramBot(
       registry.set(chatId, session)
       session
 
-  //[ Is this chat permitted? An empty allowlist admits no one. //]
-  private def isAllowed(chatId: String): Bool =
-    allowed.find(x => x == chatId) is Some(_)
+  //[ Is this sender permitted? An empty allowlist admits no one. //]
+  private def isAllowed(senderId: String): Bool =
+    allowed.find(x => x == senderId) is Some(_)
 end

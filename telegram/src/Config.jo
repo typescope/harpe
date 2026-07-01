@@ -90,15 +90,19 @@ section Config
       sysMod.exit(1)
     token
 
-  //[ The allowlist of chat ids permitted to use the agent, from
-    ! `TELEGRAM_ALLOWED_CHAT_IDS` — a comma-separated list (e.g. "12345,-100999").
+  //[ The allowlist of SENDER (user) ids permitted to use the agent, from
+    ! `TELEGRAM_ALLOWED_SENDERS` — a comma-separated list of numeric user ids
+    ! (e.g. "12345678,98765432").
     !
-    ! A bot is publicly reachable and this agent runs code, so access is
-    ! closed by default: an EMPTY list rejects everyone. The driver tells an
-    ! unrecognised chat its own id, so the operator can add it here.
+    ! Authorization is by who sends the message (`message.from.id`), not by which
+    ! chat it arrives in — so an allowed user is served in a DM or in any group,
+    ! and no one else is, even inside a group the bot can see. A bot is publicly
+    ! reachable and this agent runs code, so access is closed by default: an EMPTY
+    ! list rejects everyone. In a private chat the driver tells an unrecognised
+    ! user their own id so the operator can add it here.
   //]
-  def allowedChatIds(): List[String] =
-    val raw = getenv("TELEGRAM_ALLOWED_CHAT_IDS", "")
+  def allowedSenders(): List[String] =
+    val raw = getenv("TELEGRAM_ALLOWED_SENDERS", "")
     var out: List[String] = []
 
     if raw.trim != "" then
