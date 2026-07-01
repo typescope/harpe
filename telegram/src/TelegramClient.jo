@@ -79,14 +79,21 @@ private class TelegramClient(token: String)
       PollFailed(detail(resp))
 
   //[ Send `text` to `chatId`, split across as many messages as the 4096-char
-    ! limit requires. An empty body is replaced with a placeholder so the send
-    ! never fails on an empty string.
+    ! limit requires. Each chunk is rendered as Telegram HTML (so the model's
+    ! Markdown — bold, code, links — displays); if Telegram rejects the markup,
+    ! that chunk is resent as plain text so the content always gets through. An
+    ! empty body is replaced with a placeholder so the send never fails on it.
   //]
   def sendMessage(chatId: String, text: String): Unit =
     val body = if text.trim == "" then "(no output)" else text
 
-    for chunk in chunk(body, maxMessageChars) do
-      val _ = apiCall("sendMessage", py.dict("chat_id" ~ chatId, "text" ~ chunk), 30.0)
+    for piece in chunk(body, maxMessageChars) do
+      val html = Markdown.toHtml(piece)
+      val resp = apiCall("sendMessage",
+        py.dict("chat_id" ~ chatId, "text" ~ html, "parse_mode" ~ "HTML"), 30.0)
+
+      if !resp.get("ok", false).asBool then
+        val _ = apiCall("sendMessage", py.dict("chat_id" ~ chatId, "text" ~ piece), 30.0)
 
   //[ Show a transient status in the chat (e.g. "typing"); best-effort. //]
   def sendChatAction(chatId: String, action: String): Unit =

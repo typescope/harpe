@@ -1,0 +1,69 @@
+//[ Markdown.jo
+  !
+  ! A small, self-contained converter from the Markdown the model writes into the
+  ! safe subset of Telegram HTML — code blocks, inline code, bold, and links.
+  !
+  ! HTML (not MarkdownV2) is the render target on purpose: in HTML mode only
+  ! `& < >` are special, so escaping is deterministic and arbitrary model output
+  ! rarely produces the malformed markup that makes Telegram reject a MarkdownV2
+  ! message with 400. Anything this converter doesn't recognise is left as escaped
+  ! literal text — it never emits an unbalanced tag — and the client still falls
+  ! back to plain text if a send is rejected anyway.
+  !
+  ! Strategy: pull code out first into placeholders (control chars that survive
+  ! escaping and match no other rule), escape and format the remaining prose, then
+  ! splice the code back. That keeps the inline rules from ever touching code.
+//]
+
+namespace harpe.telegram
+
+import harpe.ffi.builtins
+
+section Markdown
+  private def reMod: py.Dynamic = py.module("re")
+
+  //[ Escape the three characters that are special in Telegram HTML. //]
+  private def htmlEscape(s: py.Dynamic): py.Dynamic =
+    s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+  //[ A placeholder for extracted code, using STX/ETX control chars so it survives
+    ! HTML-escaping and cannot appear in normal text or match a formatting rule.
+  //]
+  private def placeholder(i: Int): String =
+    builtins.chr(2).asString + "\{i}" + builtins.chr(3).asString
+
+  //[ Render Markdown as Telegram HTML. //]
+  def toHtml(md: String): String =
+    // Extracted code, already wrapped in its final <pre>/<code> HTML.
+    val store = py.list()
+
+    val fenceRepl = (m: py.Dynamic) =>
+      val code = htmlEscape(m.group(1)).asString
+      store.append(py.dynamic("<pre>" + code + "</pre>"))
+      py.dynamic(placeholder(store.size - 1))
+
+    val inlineRepl = (m: py.Dynamic) =>
+      val code = htmlEscape(m.group(1)).asString
+      store.append(py.dynamic("<code>" + code + "</code>"))
+      py.dynamic(placeholder(store.size - 1))
+
+    // 1. Extract fenced code blocks (optionally tagged with a language), then
+    //    inline code — both replaced by a placeholder.
+    var s = reMod.sub("```[a-zA-Z0-9]*\n?(.*?)```", fenceRepl, py.dynamic(md), flags = reMod.DOTALL)
+    s = reMod.sub("`([^`\n]+)`", inlineRepl, s)
+
+    // 2. Escape the prose, then apply the inline formatting rules.
+    s = htmlEscape(s)
+    s = reMod.sub("\\*\\*([^*]+)\\*\\*", "<b>\\1</b>", s)
+    s = reMod.sub("__([^_]+)__", "<b>\\1</b>", s)
+    s = reMod.sub("\\[([^\\]]+)\\]\\(([^)\\s]+)\\)", "<a href=\"\\2\">\\1</a>", s)
+
+    // 3. Splice the code back in.
+    var out = s.asString
+    var i = 0
+    while i < store.size do
+      out = py.dynamic(out).replace(placeholder(i), store.get(i).asString).asString
+      i = i + 1
+
+    out
+end
