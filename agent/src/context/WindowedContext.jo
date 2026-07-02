@@ -7,10 +7,9 @@
 
 namespace harpe.context
 
-import harpe.models.*
+import harpe.*
 import harpe.util.truncate
 import harpe.turn.Interact
-import harpe.Memory
 
 //[ Budget (characters) for the recent transcript window (~4 chars/token); older
   ! whole turns are dropped to fit, and memory carries longer-term context.
@@ -48,3 +47,14 @@ class WindowedContext(baseSystem: String, memory: Memory, initial: List[Message]
   def rollback(): Unit =
     transcript = marked
 end
+
+//[ The volatile memory block, appended after the stable base prompt by both
+  ! provided strategies (namespace-private, shared across the strategy files).
+  ! One section per key; the keys are the agent's own (steered by AGENT.md, no
+  ! fixed schema).
+//]
+private def memoryBlock(memory: Map[String, String]): String =
+  var s = "# Working memory\n\n(You maintain this with the memory tools; it persists across turns.)\n"
+  for k ~ v in memory.toList do
+    s = s + "\n## \{k}\n\{v}\n"
+  s

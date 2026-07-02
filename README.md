@@ -11,20 +11,30 @@ conversational agents.
 harpe/                   # a workspace: three framework packages + an example agent
   agent/                 # `harpe`: the shared base (runtime = python)
     jo.toml
-    src/
-      Workspace.jo       #   `harpe`:        the agent working dir (context param)
+    src/               #   `harpe`: the core abstractions, one file per type
+      Agent.jo           #     the Agent bundle + the turn engine (runTurn)
+      Model.jo           #     the Model interface + the Jo conversation model
+      Tool.jo            #     the Jo-modeled Tool abstraction (+ RunOutcome)
+      Context.jo         #     the pluggable context-engineering interface
+      Memory.jo          #     the agent-curated working-memory store
+      SessionLog.jo      #     the append-only transcript archive
+      Workspace.jo       #     the agent working dir (context param)
+      Interact.jo        #   `harpe.turn`: the turn protocol (Interact + events + result)
+      util.jo            #   `harpe.util`: transcript windowing (truncate)
       ffi/               #   `harpe.ffi` + `os`: Python interop
         FFI.jo           #     module handles + helpers (`harpe.ffi`)
         os.jo            #     the `os` namespace
-      models/            #   `harpe.models`: the provider-agnostic Model layer
-        Model.jo         #     the Model interface + Jo conversation model
+      models/            #   `harpe.models`: the provider Model impls
         Anthropic.jo     #     the Anthropic-backed Model (`anthropic`)
         OpenAI.jo        #     an OpenAI-compatible Model (`openai`)
         Echo.jo          #     a dummy Model for tests (`echo`)
-      tools/             #   `harpe.tools`:  the reusable tools layer
-        Tool.jo          #     the Jo-modeled Tool abstraction (+ RunOutcome)
+      tools/             #   `harpe.tools`: the concrete tools
         RunCode.jo       #     the runCode tool (+ runCodeTool builder)
         Skills.jo        #     the read-only skill tools (+ skillTools builder)
+        MemoryTools.jo   #     the memory read/write/list tools (memoryTools)
+      context/           #   `harpe.context`: the Context strategies
+        WindowedContext.jo    # the default sliding-window strategy
+        SummarizingContext.jo # model-assisted distillation of old turns
   sandbox/               # `harpe-sandbox`: the `Sandbox` abstraction (`harpe.sandbox`)
     jo.toml              #   self-contained (no deps)
     src/Sandbox.jo       #   Sandbox interface + factory (impl hidden)
@@ -43,7 +53,7 @@ harpe/                   # a workspace: three framework packages + an example ag
     src/Telegram.jo      #   main entry: long-poll loop + the turn-running TelegramBot
     src/TelegramClient.jo#   the Bot API client (getUpdates / sendMessage / typing)
     src/TelegramInteract.jo# Interact impl: surfaces a "typing" action while working
-    src/Sessions.jo      #   session-per-chat-id storage layout
+    src/Session.jo       #   session-per-chat-id storage layout
     src/Config.jo        #   defer hooks + bot token + chat-id allowlist, keyed `harpe.telegram.*`
   example/               # an example CLI AGENT that depends on the framework
     jo.toml              #   the agent app: jo.main = harpe.cli.main
@@ -63,8 +73,9 @@ harpe/                   # a workspace: three framework packages + an example ag
     src/TelegramExample.jo#  the echo-model override (drop the link to use Anthropic)
 ```
 
-The web agent reuses the entire engine unchanged — `harpe.turn`, `harpe.models`,
-`harpe.tools`, `Workspace`, `SessionLog`. Only the driver differs: `harpe.web`
+The web agent reuses the entire engine unchanged — the `harpe` core (`Agent`,
+`Model`, `Tool`, `Context`, `Memory`, `SessionLog`, `Workspace`) and its
+`harpe.models` / `harpe.tools` / `harpe.context` layers. Only the driver differs: `harpe.web`
 serves a browser chat over HTTP and implements `Interact` by streaming each
 `TurnEvent` as one NDJSON line, so the page shows live progress (the browser
 counterpart of the CLI spinner). Switching an agent from terminal to browser is
@@ -90,8 +101,8 @@ and then launches the agent. (Running `jo run` directly skips the guest build; i
 the sandbox isn't built, `runCode` reports "sandbox not built".)
 
 The framework is three packages. `harpe` (in `agent/`) is the shared base: the
-`harpe.ffi` interop and the `harpe.tools` layer (the `Tool` abstraction +
-`runCode`/skill tools). `harpe-sandbox` is a self-contained foundational package
+core abstractions (`Agent`, `Model`, `Tool`, `Context`, `Memory`) with the
+`harpe.ffi` interop and the concrete `harpe.tools` (`runCode`/skill/memory tools). `harpe-sandbox` is a self-contained foundational package
 providing the `Sandbox` abstraction — host-side facilities (logging, env, future
 agent↔sandbox comms) for the sandbox runtime and capability implementations,
 **never** the LLM. `harpe-cli` is one agent type — the conversational loop
@@ -174,7 +185,7 @@ hooks an agent can override through its `jo.toml`.
 
 ## Defining and customizing tools
 
-A tool is a `harpe.tools.Tool` (`harpe/src/tools/Tool.jo`): a name, a description,
+A tool is a `harpe.Tool` (`agent/src/Tool.jo`): a name, a description,
 typed parameters, and a host-side handler. Parameters are modeled in Jo
 (`ParamType` / `ToolParam`) — the `spec` method derives the Anthropic JSON schema,
 and handlers read arguments via a typed `ToolInput`, so tool authors never
@@ -208,7 +219,7 @@ harpe-cli = { path = "../cli" }
 ```jo
 // my-agent/src/MyAgent.jo
 namespace MyAgent
-import harpe.tools.*
+import harpe.*
 
 // Add `receives workspace` (and `import harpe.workspace`) if your tools need to
 // resolve paths against the agent's working directory.
@@ -226,7 +237,7 @@ the model new ways to *act* on the world.
 
 ## Choosing the model
 
-The chat model is a provider-agnostic `harpe.models.Model` — `reply(system,
+The chat model is a provider-agnostic `harpe.Model` — `reply(system,
 history, tools)` returning the assistant's next message. The loop owns the
 conversation (a Jo `List[Message]`) and runs the tools; each provider impl only
 translates to/from its own wire format, so swapping providers touches nothing

@@ -15,9 +15,8 @@
   ! tools, which any strategy may render.
 //]
 
-namespace harpe.context
+namespace harpe
 
-import harpe.models.*
 import harpe.turn.Interact
 
 //[ A context-management strategy: owns the transcript, composes each request. //]
@@ -43,14 +42,3 @@ interface Context
   //]
   def rollback(): Unit
 end
-
-//[ The volatile memory block, appended after the stable base prompt by the
-  ! provided strategies (namespace-private, shared across their files). One
-  ! section per key; the keys are the agent's own (steered by AGENT.md, no fixed
-  ! schema).
-//]
-private def memoryBlock(memory: Map[String, String]): String =
-  var s = "# Working memory\n\n(You maintain this with the memory tools; it persists across turns.)\n"
-  for k ~ v in memory.toList do
-    s = s + "\n## \{k}\n\{v}\n"
-  s
