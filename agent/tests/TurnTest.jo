@@ -57,6 +57,11 @@ private def joinPy(xs: py.List): String =
 private def echoTool(): Tool =
   Tool("echo", "echo tool", [], input => new RunOutcome("echoed", "echo · ran"))
 
+// A tool that raises instead of returning — the engine must contain it via
+// `runSafely` and keep the turn going.
+private def boomTool(): Tool =
+  Tool("boom", "always throws", [], input => abort "kaboom")
+
 type Responder = (List[Message], List[Tool]) => Option[ReplyResult]
 
 // Interrupt fakes — no threads, no real sleeping, so the engine's cancellation
@@ -180,3 +185,16 @@ def run(): Unit receives stdout =
     "I cancelled-during-backoff"
     scenario: tools, 50, 4, (h, t) => Some(new Transient("blip")), State(cancelled = false, pause = true)
     "Interrupted | start,end,transient"
+
+  // A tool that raises does NOT crash the turn: `runSafely` turns the exception
+  // into an error result the model sees, and the next (text) reply ends the turn.
+  val stepJ = py.list(0)
+  val askJ: Responder = (h, t) =>
+    val n = stepJ.get(0).asInt
+    stepJ.set(0, n + 1)
+    if n == 0 then toolReply("boom") else textReply("recovered")
+
+  check:
+    "J tool-error-continues"
+    scenario: [boomTool()], 50, 4, askJ, live
+    expected = "Answered(recovered) | start,end,tool+boom,tool-boom,start,end"

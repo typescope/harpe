@@ -39,6 +39,15 @@ class ToolParam(name: String, paramType: ParamType, description: String, require
 class ToolInput(raw: py.Dict)
   def string(name: String): String = raw.get(name, "").asString
   def stringOr(name: String, fallback: String): String = raw.get(name, fallback).asString
+
+  def int(name: String): Int = intOr(name, 0)
+  def intOr(name: String, fallback: Int): Int = raw.get(name, fallback).asInt
+
+  def bool(name: String): Bool = boolOr(name, false)
+  def boolOr(name: String, fallback: Bool): Bool = raw.get(name, fallback).asBool
+
+  def num(name: String): Float = numOr(name, 0.0)
+  def numOr(name: String, fallback: Float): Float = raw.get(name, fallback).asFloat
 end
 
 //[ A tool
@@ -56,6 +65,33 @@ class Tool(
   run: ToolInput => RunOutcome
 )
 
+//[ Run a tool, turning an unexpected host exception into an error `RunOutcome`
+  ! instead of letting it abort the whole turn. A well-behaved tool returns a
+  ! `RunOutcome`; this is the backstop for one that raises. The failure is fed
+  ! back to the model as a tool result — so the model can react — rather than
+  ! crashing the turn (or the driver).
+//]
+def runSafely(tool: Tool, input: ToolInput): RunOutcome =
+  match py.try(tool.run(input))
+  case Ok(outcome) => outcome
+
+  case Err(e) =>
+    new RunOutcome(
+      "The tool '\{tool.name}' failed: \{e.message}",
+      "error · \{tool.name}")
+
 //[ A required string parameter — the common case when defining a tool. //]
 def strParam(name: String, description: String): ToolParam =
   new ToolParam(name, StrParam, description, true)
+
+//[ A required integer parameter. //]
+def intParam(name: String, description: String): ToolParam =
+  new ToolParam(name, IntParam, description, true)
+
+//[ A required boolean parameter. //]
+def boolParam(name: String, description: String): ToolParam =
+  new ToolParam(name, BoolParam, description, true)
+
+//[ A required number (float) parameter. //]
+def numParam(name: String, description: String): ToolParam =
+  new ToolParam(name, NumParam, description, true)
