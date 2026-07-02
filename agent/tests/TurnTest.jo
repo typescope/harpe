@@ -1,10 +1,10 @@
 //[ TurnTest.jo
   !
-  ! Unit tests for the `harpe.turn` engine (`runTurn`). The engine is pure — its
+  ! Unit tests for the turn engine (`Agent.runTurn`). The engine is pure — its
   ! model call is an injected `Responder`, its output an injected `emit`, and its
   ! cancellation a plain event — so each scenario scripts a `Responder`, records
   ! the emitted `TurnEvent`s, and asserts the resulting `TurnResult` + event
-  ! sequence. No model, no network, no tty.
+  ! sequence. No network, no tty.
   !
   ! Each scenario is summarized as "<result> | <event,tags>" so the expectation
   ! is a single deterministic string (no timings).
@@ -16,6 +16,7 @@ import jo.IO.stdout
 import harpe.turn.*
 import harpe.models.*
 import harpe.tools.*
+import harpe.Agent
 import harpe.Memory
 import harpe.context.WindowedContext
 
@@ -74,7 +75,7 @@ private class TestInteract(responder: Responder, state: State)
 
   val log = py.list()
 
-  def ask(system: String, messages: List[Message], tools: List[Tool]): Option[ReplyResult] =
+  def ask(model: Model, system: String, messages: List[Message], tools: List[Tool]): Option[ReplyResult] =
     responder(messages, tools)
 
   def emit(event: TurnEvent): Unit = log.append: eventTag(event)
@@ -86,11 +87,13 @@ end
 
 private class State(cancelled: Bool, pause: Bool)
 
-// Drive one turn and summarize it as "<result> | <events>".
+// Drive one turn and summarize it as "<result> | <events>". The agent's brain is
+// the no-network echo model — the scripted TestInteract.ask never touches it.
 private def scenario(tools: List[Tool], maxToolRounds: Int, maxRetries: Int, responder: Responder, state: State): String =
   val interact = new TestInteract(responder, state)
   val context = new WindowedContext("", new Memory, List.empty[Message])
-  val res = runTurn(context, tools, maxToolRounds, maxRetries, interact)
+  val agent = new Agent(echo(), tools, context, maxToolRounds)
+  val res = agent.runTurn(maxRetries, interact)
   "\{resultTag(res)} | \{joinPy(interact.log)}"
 
 private def msgTag(m: Message): String =
@@ -218,7 +221,8 @@ def run(): Unit receives stdout =
     if n == 0 then toolReply("echo") else textReply("done")
 
   val ctxK = new WindowedContext("", new Memory, List.empty[Message])
-  val resK = runTurn(ctxK, tools, 50, 4, new TestInteract(askK, live))
+  val agentK = new Agent(echo(), tools, ctxK, 50)
+  val resK = agentK.runTurn(4, new TestInteract(askK, live))
 
   var deltaShape = ""
 

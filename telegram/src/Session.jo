@@ -14,20 +14,21 @@
 namespace harpe.telegram
 
 import harpe.models.*
-import harpe.context.WindowedContext
+import harpe.Agent
 import harpe.Memory
 import harpe.SessionLog
 import harpe.workspace
 
-//[ One live conversation: its chat id, its append log, its context (which owns
-  ! the running transcript window), and its working memory.
+//[ One live conversation: its chat id, its append log, its agent (which owns
+  ! the context and therefore the running transcript window), and its working
+  ! memory.
   !
   ! Each session has a FIFO `queue` drained by its own dedicated worker thread, so
   ! turns for different chats run concurrently while turns within one chat stay
   ! ordered and serialized. Only that worker touches the session's state, so no
   ! lock is needed around it.
 //]
-private class Session(id: String, log: SessionLog, context: WindowedContext, memory: Memory)
+private class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
   val queue = py.module("queue").Queue()
   private var pending: List[Message] = []
 
@@ -37,8 +38,8 @@ private class Session(id: String, log: SessionLog, context: WindowedContext, mem
   def beginTurn(text: String): Unit =
     val userMsg: Message = UserText(text)
     pending = [userMsg]
-    context.mark()
-    context.append(userMsg)
+    agent.context.mark()
+    agent.context.append(userMsg)
 
   //[ Commit a completed turn: append the user message plus the turn's delta (the
     ! engine-produced messages) to the transcript archive, and persist memory.
@@ -52,7 +53,7 @@ private class Session(id: String, log: SessionLog, context: WindowedContext, mem
     ! transcript.
   //]
   def rollback(): Unit =
-    context.rollback()
+    agent.context.rollback()
     saveMemory()
 
   //[ Persist the working memory beside the transcript archive. Runs on the chat's

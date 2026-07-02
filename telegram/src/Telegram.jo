@@ -20,6 +20,7 @@ import harpe.turn.*
 import harpe.models.*
 import harpe.tools.Tool
 import harpe.tools.memoryTools
+import harpe.Agent
 import harpe.Memory
 import harpe.context.WindowedContext
 import harpe.Workspace
@@ -241,9 +242,11 @@ private class TelegramBot(
       val log = Session.forSession(chatId)
       val memory = Memory.load(log.memoryPath)
       // `Session.load` caps the replayed transcript (a RAM backstop); the full
-      // transcript stays on disk.
+      // transcript stays on disk. The session's agent: the shared brain and tools
+      // plus this chat's memory tools, over a windowed context.
       val context = new WindowedContext(sysPrompt, memory, Session.load(chatId))
-      val session = new Session(chatId, log, context, memory)
+      val agent = new Agent(brain, tools ++ memoryTools(memory), context, Config.maxToolRounds)
+      val session = new Session(chatId, log, agent, memory)
       registryLock.acquire()
       registry.set(chatId, session)
       session.queue.put(py.dynamic(text))
@@ -284,12 +287,11 @@ private class TelegramBot(
     ! the session's own worker calls this, so its `history` needs no lock.
   //]
   private def processTurn(session: Session, text: String): Unit =
-    val interact = new TelegramInteract(brain, client, session.id)
-    val sessionTools = tools ++ memoryTools(session.memory)
+    val interact = new TelegramInteract(client, session.id)
 
     session.beginTurn(text)
 
-    match runTurn(session.context, sessionTools, Config.maxToolRounds, Config.maxRetries, interact)
+    match session.agent.runTurn(Config.maxRetries, interact)
     case Answered(delta, answer) =>
       session.commit(delta)
       client.sendMessage(session.id, answer)

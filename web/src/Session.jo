@@ -18,16 +18,17 @@ import harpe.ffi.jsonMod
 import harpe.ffi.readFile
 import harpe.ffi.threadingMod
 import harpe.models.*
-import harpe.context.WindowedContext
+import harpe.Agent
 import harpe.Memory
 import harpe.SessionLog
 import harpe.workspace
 
-//[ One live conversation: its id, its append log, its context (which owns the
-  ! running transcript window), and its working memory. A lock serializes turns
-  ! within the session so its state stays consistent under concurrent requests.
+//[ One live conversation: its id, its append log, its agent (which owns the
+  ! context and therefore the running transcript window), and its working memory.
+  ! A lock serializes turns within the session so its state stays consistent
+  ! under concurrent requests.
 //]
-class Session(id: String, log: SessionLog, context: WindowedContext, memory: Memory)
+class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
   val lock = threadingMod.Lock()
   var lastActive: Float = time.now()
   private var pending: List[Message] = []
@@ -39,8 +40,8 @@ class Session(id: String, log: SessionLog, context: WindowedContext, memory: Mem
     lastActive = time.now()
     val userMsg: Message = UserText(text)
     pending = [userMsg]
-    context.mark()
-    context.append(userMsg)
+    agent.context.mark()
+    agent.context.append(userMsg)
 
   //[ Commit a completed turn: append the user message plus the turn's delta (the
     ! engine-produced messages) to the transcript archive, and persist memory.
@@ -54,7 +55,7 @@ class Session(id: String, log: SessionLog, context: WindowedContext, memory: Mem
     ! transcript.
   //]
   def rollback(): Unit =
-    context.rollback()
+    agent.context.rollback()
     saveMemory()
 
   //[ Persist the working memory beside the transcript archive. //]

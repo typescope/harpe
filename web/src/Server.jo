@@ -25,6 +25,7 @@ import harpe.turn.*
 import harpe.models.*
 import harpe.tools.Tool
 import harpe.tools.memoryTools
+import harpe.Agent
 import harpe.Memory
 import harpe.context.WindowedContext
 import harpe.Workspace
@@ -98,12 +99,11 @@ class ChatServer(brain: Model, sysPrompt: String, tools: List[Tool], name: Strin
   private def runOneTurn(session: Session, text: String, sink: Sink): Unit =
     session.lock.acquire()
 
-    val interact = new WebInteract(brain, sink)
-    val sessionTools = tools ++ memoryTools(session.memory)
+    val interact = new WebInteract(sink)
 
     session.beginTurn(text)
 
-    match runTurn(session.context, sessionTools, Config.maxToolRounds, Config.maxRetries, interact)
+    match session.agent.runTurn(Config.maxRetries, interact)
     case Answered(delta, answer) =>
       session.commit(delta)
       sink(py.dict("type" ~ "answer", "text" ~ answer))
@@ -122,8 +122,7 @@ class ChatServer(brain: Model, sysPrompt: String, tools: List[Tool], name: Strin
   private def createSession(): Session receives workspace =
     val id = time.strftime("%Y%m%dT%H%M%S") + "-" + py.module("secrets").token_hex(2).asString
     val memory = new Memory
-    val context = new WindowedContext(sysPrompt, memory, List.empty[Message])
-    val session = new Session(id, Session.forSession(id), context, memory)
+    val session = new Session(id, Session.forSession(id), assembleAgent(memory, List.empty[Message]), memory)
     registry.set(id, session)
     session
 
@@ -139,10 +138,17 @@ class ChatServer(brain: Model, sysPrompt: String, tools: List[Tool], name: Strin
       val memory = Memory.load(log.memoryPath)
       // `Session.load` caps the replayed transcript (a RAM backstop); the full
       // transcript stays on disk.
-      val context = new WindowedContext(sysPrompt, memory, Session.load(id))
-      val session = new Session(id, log, context, memory)
+      val session = new Session(id, log, assembleAgent(memory, Session.load(id)), memory)
       registry.set(id, session)
       session
+
+  //[ Assemble a session's agent: the shared brain and tools plus the tools that
+    ! curate this session's memory, over a windowed context seeded with the
+    ! session's replayed transcript.
+  //]
+  private def assembleAgent(memory: Memory, initial: List[Message]): Agent =
+    val context = new WindowedContext(sysPrompt, memory, initial)
+    new Agent(brain, tools ++ memoryTools(memory), context, Config.maxToolRounds)
 
   //[ Drop sessions idle longer than `Config.sessionIdleSeconds` from the resident
     ! registry; they reload from disk on next access. Bounds memory on a long-running

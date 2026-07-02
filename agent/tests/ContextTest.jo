@@ -26,7 +26,7 @@ private def check(label: String, cond: Bool): Unit receives stdout =
 private class NoInteract
   view Interact
 
-  def ask(system: String, messages: List[Message], tools: List[Tool]): Option[ReplyResult] = None
+  def ask(model: Model, system: String, messages: List[Message], tools: List[Tool]): Option[ReplyResult] = None
 
   def emit(event: TurnEvent): Unit = pass
 
@@ -43,7 +43,7 @@ private class ScriptedInteract(result: Option[ReplyResult])
   val prompts = py.list()
   var compactions = 0
 
-  def ask(system: String, messages: List[Message], tools: List[Tool]): Option[ReplyResult] =
+  def ask(model: Model, system: String, messages: List[Message], tools: List[Tool]): Option[ReplyResult] =
     if messages.get(0) is UserText(t) then prompts.append(t)
     result
 
@@ -127,7 +127,7 @@ def run(): Unit receives stdout =
   // --- SummarizingContext: 8-char turns, high water 30, low water 16 ---
   val distiller = new ScriptedInteract(Some(Reply(Assistant("DISTILLED", List.empty[ToolCall]))))
   val smem = new Memory
-  val sctx = new SummarizingContext("BASE", smem, List.empty[Message], 30, 16)
+  val sctx = new SummarizingContext("BASE", smem, List.empty[Message], echo(), 30, 16)
 
   for m in turn8("AAAA", "aaaa") ++ turn8("BBBB", "bbbb") ++ turn8("CCCC", "cccc") do
     sctx.append(m)
@@ -173,7 +173,7 @@ def run(): Unit receives stdout =
 
   // A failed distillation call skips compaction: the oversized window is sent as-is.
   val failing = new ScriptedInteract(Some(Fatal("boom")))
-  val fctx = new SummarizingContext("BASE", new Memory, List.empty[Message], 30, 16)
+  val fctx = new SummarizingContext("BASE", new Memory, List.empty[Message], echo(), 30, 16)
 
   for m in turn8("AAAA", "aaaa") ++ turn8("BBBB", "bbbb") ++ turn8("CCCC", "cccc") ++ turn8("DDDD", "dddd") ++ turn8("EEEE", "eeee") do
     fctx.append(m)
@@ -185,7 +185,7 @@ def run(): Unit receives stdout =
 
   // A cancelled distillation call (None) skips the same way.
   val cancelledAsk = new ScriptedInteract(None)
-  val cctx = new SummarizingContext("BASE", new Memory, List.empty[Message], 30, 16)
+  val cctx = new SummarizingContext("BASE", new Memory, List.empty[Message], echo(), 30, 16)
 
   for m in turn8("AAAA", "aaaa") ++ turn8("BBBB", "bbbb") ++ turn8("CCCC", "cccc") ++ turn8("DDDD", "dddd") ++ turn8("EEEE", "eeee") do
     cctx.append(m)
@@ -194,7 +194,7 @@ def run(): Unit receives stdout =
 
   // mark/rollback restores both the window and the summary.
   val rdistiller = new ScriptedInteract(Some(Reply(Assistant("DISTILLED", List.empty[ToolCall]))))
-  val rctx = new SummarizingContext("BASE", new Memory, List.empty[Message], 30, 16)
+  val rctx = new SummarizingContext("BASE", new Memory, List.empty[Message], echo(), 30, 16)
 
   for m in turn8("AAAA", "aaaa") ++ turn8("BBBB", "bbbb") ++ turn8("CCCC", "cccc") do
     rctx.append(m)

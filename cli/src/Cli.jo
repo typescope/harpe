@@ -22,6 +22,7 @@ import harpe.turn.*
 import harpe.models.*
 import harpe.tools.Tool
 import harpe.tools.memoryTools
+import harpe.Agent
 import harpe.Memory
 import harpe.context.WindowedContext
 import harpe.Workspace
@@ -60,8 +61,11 @@ private def runChat(): Unit receives stdout, workspace =
   // transcript, starting empty.
   val context = new WindowedContext(sysPrompt, memory, List.empty[Message])
 
+  // The agent for this run: brain, capabilities, context, turn policy.
+  val agent = new Agent(brain, tools, context, Config.maxToolRounds)
+
   val inputHistory = workspace.relative("logs/inputs.txt")
-  val interact = new ConsoleInteract(brain, stdout, inputHistory)
+  val interact = new ConsoleInteract(stdout, inputHistory)
 
   interact.init()
 
@@ -84,7 +88,7 @@ private def runChat(): Unit receives stdout, workspace =
     context.append(userMsg)
 
     val res = interact.turn: () =>
-      runTurn(context, tools, Config.maxToolRounds, Config.maxRetries, interact)
+      agent.runTurn(Config.maxRetries, interact)
 
     if res is Answered(delta, text) then
       sessionLog.append(time.now(), [userMsg] ++ delta)

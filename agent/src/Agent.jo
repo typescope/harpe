@@ -1,0 +1,185 @@
+//[ Agent.jo
+  !
+  ! `Agent` — the bundle that constitutes an agent, and the turn engine that
+  ! drives it. An agent is: a **brain** (the model), its **capabilities** (the
+  ! tools, including the memory tools), its **context** (system prompt + memory +
+  ! transcript policy — see `harpe.context`), and its **turn policy** (the
+  ! tool-round budget).
+  !
+  ! What is deliberately NOT the agent: session lifecycle (persistence, locks,
+  ! delta archiving) and presentation (spinners, streams, chat actions) — those
+  ! belong to the drivers. The engine performs no I/O of its own and is provider-
+  ! and UI-agnostic: every user-visible moment is reported through the injected
+  ! `interact` handler, and the model call itself is issued through
+  ! `interact.ask`, so cancellation machinery stays with the driver.
+//]
+
+namespace harpe
+
+import harpe.models.*
+import harpe.tools.*
+import harpe.turn.*
+import harpe.context.Context
+
+//[ An agent: what thinks, what it can do, what it sees, and its turn policy. //]
+class Agent(brain: Model, tools: List[Tool], context: Context, maxToolRounds: Int)
+
+  //[ Drive one user turn
+    !
+    ! Call the model (with retries), run any tool calls it requests, and repeat
+    ! until it replies with plain text.
+    !
+    ! The `context` owns the transcript: the engine appends each assistant reply
+    ! and tool-result batch to it, and asks it to compose `(system, messages)`
+    ! before every model request. The caller appends the turn's `UserText` (after
+    ! `context.mark()`) before calling; on `Answered` it receives the turn's
+    ! delta to archive, on interruption/failure it calls `context.rollback()`.
+    !
+    ! A turn is bounded to `maxToolRounds` tool-call rounds; once spent the model
+    ! is asked once more with no tools, forcing a final answer. `maxRetries` is
+    ! transport policy — how often a transient model error is retried — so it is
+    ! an argument, not part of the agent.
+  //]
+  def runTurn(maxRetries: Int, interact: Interact): TurnResult =
+    var delta: List[Message] = []
+    var rounds = 0
+    var result: TurnResult = Failed
+
+    while true do
+      // Once the tool budget is spent, offer no tools so the model must reply with
+      // a final text answer rather than calling another tool.
+      val offer: List[Tool] = if rounds >= maxToolRounds then [] else tools
+
+      if rounds == maxToolRounds then
+        interact.emit: ToolBudgetReached(maxToolRounds)
+
+      // Compose what the model sees for this request — the context's policy,
+      // applied once here, not in each concrete Interact.
+      val rendered = context.render(interact)
+
+      match fetchReply(brain, rendered.fst, rendered.snd, offer, maxRetries, interact)
+        case Stopped =>
+          result = Interrupted
+          break
+
+        case GaveUp =>
+          result = Failed
+          break
+
+        case Got(reply) =>
+          context.append(reply)
+          delta = delta + reply
+
+          if reply.calls.isEmpty then
+            result = Answered(delta, reply.text.trim)
+            break
+
+          var toolResults: List[ToolResult] = []
+          var cancelled = false
+
+          for call in reply.calls do
+            if interact.cancelled then
+              cancelled = true
+              break
+
+            val toolName = call.name
+            interact.emit: ToolCallStarted(toolName)
+
+            val outcome =
+              if tools.find(t => t.name == toolName) is Some(t) then
+                runSafely(t, call.input)
+              else
+                RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}")
+
+            interact.emit: ToolCallEnded(toolName, outcome.summary)
+
+            toolResults = toolResults + ToolResult(call.id, outcome.result)
+
+          if cancelled || interact.cancelled then
+            result = Interrupted
+            break
+
+          else
+            val results = ToolResults(toolResults)
+            context.append(results)
+            delta = delta + results
+            rounds = rounds + 1
+    end // while
+
+    result
+end
+
+//[ The result of fetching one model reply (after any retries)
+  !
+  ! The assistant message, a give-up (fatal error or retries exhausted), or an interruption.
+//]
+private union Fetched =
+    Got(message: Assistant)
+  | GaveUp
+  | Stopped
+
+//[ Exponential backoff between retries: 1s, 2s, 4s, … capped at 30s.  //]
+private def backoffSeconds(attempt: Int): Float =
+  var d = 1.0
+  var i = 1
+  while i < attempt do
+    d = d * 2.0
+    i = i + 1
+
+  if d > 30.0 then 30.0 else d
+
+//[ Ask the model for one reply
+  !
+  ! Retry transient errors with exponential backoff up to `maxRetries`.
+  !
+  ! A `None` from `ask` (a cancelled request), or interrupt firing during a
+  ! backoff wait, ends the attempt.
+  !
+  ! Progress and errors are reported through `interact.emit`.
+//]
+private def fetchReply(
+    model: Model, system: String, messages: List[Message], tools: List[Tool],
+    maxRetries: Int, interact: Interact)
+: Fetched =
+
+  var attempt = 0
+  var outcome: Fetched = GaveUp
+
+  while true do
+    interact.emit: ModelRequestStarted(attempt, maxRetries)
+
+    val maybe = interact.ask(model, system, messages, tools)
+
+    interact.emit: ModelRequestEnded
+
+    val res = maybe rescue None =>
+      outcome = Stopped
+      break
+
+    match res
+      case Reply(message) =>
+        outcome = Got(message)
+        break
+
+      case Fatal(detail) =>
+        interact.emit: RequestFailed(detail)
+        outcome = GaveUp
+        break
+
+      case Transient(detail) =>
+        attempt = attempt + 1
+        if attempt > maxRetries then
+          interact.emit: RetriesExhausted(detail, maxRetries)
+          outcome = GaveUp
+          break
+
+        else
+          val delay = backoffSeconds(attempt)
+          interact.emit: TransientError(detail, delay)
+          // pause returns true if cancellation fired during the backoff.
+          if interact.pause(delay) then
+            outcome = Stopped
+            break
+  end // while
+
+  outcome

@@ -21,15 +21,17 @@ import harpe.Memory
   ! the oldest whole turns are folded into the summary until the window fits
   ! `lowWaterChars` — rare, large compactions (`lowWaterChars` well below
   ! `highWaterChars`), so the provider's cached prefix survives most requests.
-  ! The distillation is one extra model call through the turn's `interact`
-  ! (cancellable; surfaced as `ContextCompacted`). If that call fails or is
-  ! cancelled, compaction is skipped: the oversized window is sent as-is (the
-  ! provider may reject it, as with `WindowedContext`'s oversized final turn) and
-  ! compaction is retried on the next request.
+  ! The distillation is one extra call to `distiller` through the turn's
+  ! `interact` (cancellable; surfaced as `ContextCompacted`). The distiller is
+  ! the context's own model — it may be the agent's brain, or a cheaper model
+  ! reserved for summarization. If the call fails or is cancelled, compaction is
+  ! skipped: the oversized window is sent as-is (the provider may reject it, as
+  ! with `WindowedContext`'s oversized final turn) and compaction is retried on
+  ! the next request.
 //]
 class SummarizingContext(
     baseSystem: String, memory: Memory, initial: List[Message],
-    highWaterChars: Int, lowWaterChars: Int)
+    distiller: Model, highWaterChars: Int, lowWaterChars: Int)
   view Context
 
   private var summary: String = ""
@@ -79,7 +81,7 @@ class SummarizingContext(
       val dropped = transcript.take(dropCount)
       val request: Message = distillRequest(summary, dropped)
 
-      match interact.ask(distillSystem(), [request], List.empty[Tool])
+      match interact.ask(distiller, distillSystem(), [request], List.empty[Tool])
       case Some(res) =>
         if res is Reply(message) then
           summary = message.text.trim
