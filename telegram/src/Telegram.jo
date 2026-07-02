@@ -35,10 +35,17 @@ import time
   ! ordered and serialized. Only that worker mutates `history`/`saved`, so no lock
   ! is needed around them.
 //]
-private class Session(id: String, log: SessionLog, initial: List[Message], memory: Memory, memoryPath: String)
+private class Session(id: String, log: SessionLog, initial: List[Message], memory: Memory)
   val queue = py.module("queue").Queue()
   var history: List[Message] = initial
   var saved: Int = initial.size
+
+  //[ Persist the working memory beside the transcript archive. Called after every
+    ! turn regardless of outcome — memory is deliberate and not rolled back. Runs on
+    ! the chat's worker thread; `memoryPath` is a pure derivation, so no `workspace`
+    ! capability is needed. //]
+  def saveMemory(): Unit =
+    if !memory.isEmpty then Memory.save(log.memoryPath, memory)
 end
 
 //[ The agent's working directory is the CWD; tools resolve paths against it. It
@@ -253,8 +260,8 @@ private class TelegramBot(
     registryLock.release()
 
     if !live then
-      val mpath = Sessions.memoryPath(chatId)
-      val session = new Session(chatId, Sessions.forSession(chatId), Sessions.load(chatId), Memory.load(mpath), mpath)
+      val log = Sessions.forSession(chatId)
+      val session = new Session(chatId, log, Sessions.load(chatId), Memory.load(log.memoryPath))
       registryLock.acquire()
       registry.set(chatId, session)
       session.queue.put(py.dynamic(text))
@@ -314,10 +321,7 @@ private class TelegramBot(
       session.history = snapshot
       client.sendMessage(session.id, "Sorry — the request failed. Please try again.")
 
-    // Persist memory regardless of outcome (deliberate, not rolled back). The path
-    // was resolved under `workspace` at session creation, so this save runs on the
-    // worker thread without needing that capability.
-    if !session.memory.isEmpty then Memory.save(session.memoryPath, session.memory)
+    session.saveMemory()
 
   //[ Start a chat's dedicated worker on a daemon thread (dies with the process). //]
   private def startWorker(chatId: String, session: Session): Unit =

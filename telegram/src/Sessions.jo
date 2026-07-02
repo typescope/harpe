@@ -22,10 +22,6 @@ section Sessions
   def sessionPath(chatId: String): String receives workspace =
     workspace.relative("logs/sessions/" + chatId + ".jsonl")
 
-  //[ The memory-snapshot file for this chat, beside its transcript archive. //]
-  def memoryPath(chatId: String): String receives workspace =
-    workspace.relative("logs/sessions/" + chatId + ".memory.json")
-
   //[ An append log for this chat's session (its file is created lazily). //]
   def forSession(chatId: String): SessionLog receives workspace =
     new SessionLog(sessionPath(chatId))

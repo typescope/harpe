@@ -26,7 +26,11 @@ import harpe.tools.*
 class SessionLog
   private val logFile: py.Dynamic
 
+  //[ The transcript-archive path this log writes to. //]
+  val path: String
+
   def SessionLog(path: String) =
+    this.path = path
     os.makedirs(os.path.dirname(path))
     this.logFile = py.open(path, "a")
 
@@ -42,6 +46,15 @@ class SessionLog
     logFile.flush()
 
   def close(): Unit = logFile.close()
+
+  //[ The sibling memory-snapshot path for this session
+    ! (`<base>.jsonl` → `<base>.memory.json`).
+  //]
+  def memoryPath: String =
+    if path.endsWith(".jsonl") then
+      path.substring(0, path.size - 6) + ".memory.json"
+    else
+      path + ".memory.json"
 end
 
 section SessionLog

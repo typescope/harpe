@@ -60,7 +60,9 @@ private def runChat(): Unit receives stdout, workspace =
 
   interact.init()
 
-  // Where this session's conversation is serialized; fixed at session start.
+  // Where this session's conversation is serialized; fixed at session start. Memory
+  // is saved beside it (`sessionLog.memoryPath`) for inspection — the CLI does not
+  // resume, so it is written but never loaded.
   val sessionLog = SessionLog.newLog()
 
   var history: List[Message] = []
@@ -93,6 +95,9 @@ private def runChat(): Unit receives stdout, workspace =
       history = snapshot
       if res is Interrupted then println "  ⎋ interrupted"
       else println "  · request failed"
+
+    // Persist memory regardless of outcome (it is not rolled back with a turn).
+    if !memory.isEmpty then Memory.save(sessionLog.memoryPath, memory)
   end
 
   sessionLog.close()
