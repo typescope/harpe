@@ -31,6 +31,10 @@ section Sessions
   def sessionPath(id: String): String receives workspace =
     workspace.relative("logs/sessions/" + id + ".jsonl")
 
+  //[ The memory-snapshot file for this id, beside its transcript archive. //]
+  def memoryPath(id: String): String receives workspace =
+    workspace.relative("logs/sessions/" + id + ".memory.json")
+
   //[ An append log for this id's session (its file is created lazily). //]
   def forSession(id: String): SessionLog receives workspace =
     new SessionLog(sessionPath(id))

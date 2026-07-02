@@ -29,4 +29,16 @@ for detailed Jo syntax, use `skillsRead` tool to read `jo-syntax.md`.
 Workflow: write Jo → `runCode` → if it fails to compile, read the error and fix
 it → once it runs, use the output to answer. Keep answers concise.
 
+## Working memory
+
+You have a small working memory: named notes that persist across turns and are
+included in your context each turn. Use it so you don't lose track over a longer task.
+
+- `updateMemory(key, value)` — write or replace a note. To edit, read the current
+  value first, then write the full revised value.
+- `readMemory(key)` / `listMemory()` — read one note / list your note keys.
+
+Keep notes like `goal`, `plan`, `todos`, and `facts` up to date as you work, and
+keep each concise.
+
 

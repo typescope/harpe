@@ -35,7 +35,7 @@ import time
   ! ordered and serialized. Only that worker mutates `history`/`saved`, so no lock
   ! is needed around them.
 //]
-private class Session(id: String, log: SessionLog, initial: List[Message], memory: Memory)
+private class Session(id: String, log: SessionLog, initial: List[Message], memory: Memory, memoryPath: String)
   val queue = py.module("queue").Queue()
   var history: List[Message] = initial
   var saved: Int = initial.size
@@ -253,7 +253,8 @@ private class TelegramBot(
     registryLock.release()
 
     if !live then
-      val session = new Session(chatId, Sessions.forSession(chatId), Sessions.load(chatId), new Memory)
+      val mpath = Sessions.memoryPath(chatId)
+      val session = new Session(chatId, Sessions.forSession(chatId), Sessions.load(chatId), Memory.load(mpath), mpath)
       registryLock.acquire()
       registry.set(chatId, session)
       session.queue.put(py.dynamic(text))
@@ -312,6 +313,11 @@ private class TelegramBot(
     case Failed =>
       session.history = snapshot
       client.sendMessage(session.id, "Sorry — the request failed. Please try again.")
+
+    // Persist memory regardless of outcome (deliberate, not rolled back). The path
+    // was resolved under `workspace` at session creation, so this save runs on the
+    // worker thread without needing that capability.
+    if !session.memory.isEmpty then Memory.save(session.memoryPath, session.memory)
 
   //[ Start a chat's dedicated worker on a daemon thread (dies with the process). //]
   private def startWorker(chatId: String, session: Session): Unit =
