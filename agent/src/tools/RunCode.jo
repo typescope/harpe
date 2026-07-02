@@ -85,7 +85,8 @@ private def runCode(
     gate: py.Dynamic,
     logRun: py.Dict => Unit,
     buildTimeout: Float,
-    runTimeout: Float)
+    runTimeout: Float,
+    maxResultChars: Int)
 : RunOutcome =
   match findDoneFile(guestDir)
   case None =>
@@ -100,9 +101,11 @@ private def runCode(
     val _ = py.try(shutilMod.rmtree(runDir, ignore_errors = true))
     gate.release()
 
+    // Bound only the text the model sees; `buildAndRun` has already logged the full
+    // output/error to the run log, so nothing is lost from the record.
     match outcome
-    case Ok(result) => result
-    case Err(e)     => new RunOutcome("The run failed unexpectedly: \{e.message}", "internal error")
+    case Ok(outc) => new RunOutcome(elide(outc.result, maxResultChars), outc.summary)
+    case Err(e)   => new RunOutcome("The run failed unexpectedly: \{e.message}", "internal error")
 
 //[ Compile and run `code` in `runDir` by replaying the recorded invocation from
   ! `donePath`, logging the outcome.
@@ -220,13 +223,18 @@ private def buildAndRun(
   ! `logRun` is the injected audit sink: one structured record per run (time,
   ! code, compile/run timings, output or error). Where it goes is the caller's
   ! policy.
+  !
+  ! `maxResultChars` bounds the result text returned to the model (middle-elided,
+  ! head + tail kept) so one large program output cannot flood the context. The
+  ! full, un-elided output is still written to `logRun`, so nothing is lost.
 //]
 def runCodeTool(
     guestDir: String,
     logRun: py.Dict => Unit,
     buildTimeout: Float = 120.0,
     runTimeout: Float = 30.0,
-    maxConcurrent: Int = 4)
+    maxConcurrent: Int = 4,
+    maxResultChars: Int = 4000)
 : Tool =
   val gate = threadingMod.Semaphore(maxConcurrent)
 
@@ -234,5 +242,5 @@ def runCodeTool(
     "runCode",
     "Write a Jo program (namespace UserTask, def runTask), compile it against the agent sandbox, and run it. Returns the program's stdout, or the compile error if it does not build.",
     [strParam("code", "The Jo source code to compile and run")],
-    input => runCode(input.string("code"), guestDir, gate, logRun, buildTimeout, runTimeout)
+    input => runCode(input.string("code"), guestDir, gate, logRun, buildTimeout, runTimeout, maxResultChars)
   )

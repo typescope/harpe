@@ -16,6 +16,7 @@ import jo.IO.stdout
 import harpe.turn.*
 import harpe.models.*
 import harpe.tools.*
+import harpe.Memory
 
 // A reply carrying only text (no tool calls).
 private def textReply(s: String): Option[ReplyResult] =
@@ -71,8 +72,8 @@ private class TestInteract(responder: Responder, state: State)
 
   val log = py.list()
 
-  def ask(history: List[Message], tools: List[Tool]): Option[ReplyResult] =
-    responder(history, tools)
+  def ask(system: String, messages: List[Message], tools: List[Tool]): Option[ReplyResult] =
+    responder(messages, tools)
 
   def emit(event: TurnEvent): Unit = log.append: eventTag(event)
 
@@ -86,7 +87,7 @@ private class State(cancelled: Bool, pause: Bool)
 // Drive one turn and summarize it as "<result> | <events>".
 private def scenario(tools: List[Tool], maxToolRounds: Int, maxRetries: Int, responder: Responder, state: State): String =
   val interact = new TestInteract(responder, state)
-  val res = runTurn(List.empty[Message], tools, maxToolRounds, maxRetries, interact)
+  val res = runTurn(List.empty[Message], new Memory, tools, maxToolRounds, maxRetries, interact, "")
   "\{resultTag(res)} | \{joinPy(interact.log)}"
 
 private def check(label: String, actual: String, expected: String): Unit receives stdout =

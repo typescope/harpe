@@ -24,6 +24,8 @@ import harpe.ffi.*
 import harpe.turn.*
 import harpe.models.*
 import harpe.tools.Tool
+import harpe.tools.memoryTools
+import harpe.Memory
 import harpe.SessionLog
 import harpe.Workspace
 import harpe.workspace
@@ -33,7 +35,7 @@ import time
   ! much of that history is already persisted. A lock serializes turns within the
   ! session so its history stays consistent under concurrent requests.
 //]
-class Session(id: String, log: SessionLog, initial: List[Message])
+class Session(id: String, log: SessionLog, initial: List[Message], memory: Memory)
   val lock = threadingMod.Lock()
   var history: List[Message] = initial
   var saved: Int = initial.size
@@ -105,11 +107,12 @@ class ChatServer(brain: Model, sysPrompt: String, tools: List[Tool], name: Strin
   private def runOneTurn(session: Session, text: String, sink: Sink): Unit =
     session.lock.acquire()
 
-    val interact = new WebInteract(brain, sysPrompt, sink)
+    val interact = new WebInteract(brain, sink)
+    val sessionTools = tools ++ memoryTools(session.memory)
     val snapshot = session.history
     session.history = session.history + UserText(text)
 
-    match runTurn(session.history, tools, Config.maxToolRounds, Config.maxRetries, interact)
+    match runTurn(session.history, session.memory, sessionTools, Config.maxToolRounds, Config.maxRetries, interact, sysPrompt)
     case Answered(updated, answer) =>
       session.history = updated
       session.log.append(time.now(), session.history.drop(session.saved))
@@ -130,7 +133,7 @@ class ChatServer(brain: Model, sysPrompt: String, tools: List[Tool], name: Strin
   //[ A fresh session under a newly-minted, time-sortable id. //]
   private def createSession(): Session receives workspace =
     val id = time.strftime("%Y%m%dT%H%M%S") + "-" + py.module("secrets").token_hex(2).asString
-    val session = new Session(id, Sessions.forSession(id), [])
+    val session = new Session(id, Sessions.forSession(id), [], new Memory)
     registry.set(id, session)
     session
 
@@ -142,7 +145,7 @@ class ChatServer(brain: Model, sysPrompt: String, tools: List[Tool], name: Strin
       registry.get(id).cast[Session]
 
     else
-      val session = new Session(id, Sessions.forSession(id), Sessions.load(id))
+      val session = new Session(id, Sessions.forSession(id), Sessions.load(id), new Memory)
       registry.set(id, session)
       session
 

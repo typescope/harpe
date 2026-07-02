@@ -1,0 +1,66 @@
+//[ RenderTest.jo
+  !
+  ! Unit tests for the context-engineering surface (`harpe.turn`): `render`'s default
+  ! composition and `truncate`'s turn-boundary windowing (pairing-safe, keeps the
+  ! most recent turns).
+//]
+
+namespace RenderTest
+
+import jo.IO.stdout
+import harpe.turn.*
+import harpe.models.*
+import harpe.tools.*
+
+private def check(label: String, cond: Bool): Unit receives stdout =
+  assert: cond, "\{label} failed"
+  println "  ok \{label}"
+
+private def user(t: String): Message = UserText(t)
+private def asst(t: String): Message = Assistant(t, List.empty[ToolCall])
+
+// A turn that calls a tool: user, assistant tool_use, tool result, assistant text.
+private def toolTurn(u: String, code: String, out: String): List[Message] =
+  val call = ToolCall("id", "runCode", ToolInput(py.dict("code" ~ code)))
+  [UserText(u), Assistant("", [call]), ToolResults([ToolResult("id", out)]), Assistant("done", List.empty[ToolCall])]
+
+def run(): Unit receives stdout =
+  // --- render: memory folded into the system tail; transcript passed through ---
+  val convo = [user("hi"), asst("hello")]
+
+  val plain = render("BASE", Map.empty[String, String], convo)
+  check("render without memory leaves system as base", plain.fst == "BASE")
+  check("render passes the transcript through", plain.snd.size == 2)
+
+  val mem = Map("goal" ~ "win", "todos" ~ "- a\n- b")
+  val withMem = render("BASE", mem, convo)
+  check("render keeps base at the front", withMem.fst.startsWith("BASE"))
+  check("render appends memory keys", withMem.fst.contains("goal") && withMem.fst.contains("todos"))
+  check("render appends memory values", withMem.fst.contains("win") && withMem.fst.contains("- a\n- b"))
+
+  // --- truncate: small transcript is unchanged ---
+  val a = [user("AAAA"), asst("aaaa")]   // 8 chars
+  val b = [user("BBBB"), asst("bbbb")]   // 8
+  val c = [user("CCCC"), asst("cccc")]   // 8
+  val all = a ++ b ++ c                  // 24 chars, 6 messages
+
+  check("truncate keeps all when it fits", truncate(all, 100).size == 6)
+
+  // --- truncate: drops whole oldest turns to fit ---
+  val two = truncate(all, 16)
+  check("truncate drops the oldest turn", two.size == 4)
+  check("truncate window starts at a user turn", two.get(0) is UserText("BBBB"))
+
+  val one = truncate(all, 7)
+  check("truncate drops down to the last turn", one.size == 2)
+  check("truncate keeps the most recent turn", one.get(0) is UserText("CCCC"))
+
+  // --- truncate: always keeps at least the last turn, even if oversized ---
+  val big = truncate(all, 1)
+  check("truncate never drops the final turn", big.size == 2 && big.get(0) is UserText("CCCC"))
+
+  // --- truncate: never splits a tool_use / tool_result pair ---
+  val paired = toolTurn("keep me", "print 1", "1") ++ toolTurn("and me", "print 2", "2")
+  val kept = truncate(paired, 30)     // room for ~one turn
+  check("truncate keeps whole turns (starts at user)", kept.get(0) is UserText(_))
+  check("truncate never orphans a tool result", !(kept.get(0) is ToolResults(_)))

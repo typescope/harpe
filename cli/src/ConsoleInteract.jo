@@ -14,7 +14,7 @@ import harpe.Workspace
 import harpe.workspace
 
 //[ The CLI's interaction //]
-private class ConsoleInteract(brain: Model, sysPrompt: String, out: String => Unit, historyFile: String)
+private class ConsoleInteract(brain: Model, out: String => Unit, historyFile: String)
   view Interact
 
   private val interrupt = threadingMod.Event()
@@ -107,9 +107,9 @@ private class ConsoleInteract(brain: Model, sysPrompt: String, out: String => Un
 
     res
 
-  def ask(history: List[Message], tools: List[Tool]): Option[ReplyResult] =
+  def ask(system: String, messages: List[Message], tools: List[Tool]): Option[ReplyResult] =
     ConsoleInteract.callInterruptible: this, () =>
-      brain.reply(sysPrompt, history, tools)
+      brain.reply(system, messages, tools)
 
   def emit(event: TurnEvent): Unit = with IO.stdout = out in
     match event

@@ -95,3 +95,24 @@ def boolParam(name: String, description: String): ToolParam =
 //[ A required number (float) parameter. //]
 def numParam(name: String, description: String): ToolParam =
   new ToolParam(name, NumParam, description, true)
+
+//[ Bound a tool result's text to at most `maxChars`, keeping the head and the tail
+  ! and marking the elided middle (a program's setup is at the start, its errors and
+  ! final output at the end — both worth keeping). Text within the limit is returned
+  ! unchanged.
+  !
+  ! This bounds only what the model sees; a tool that elides is expected to preserve
+  ! the full artifact elsewhere (e.g. `runCode` writes it to `logs/runs.jsonl`), so
+  ! nothing is lost from the record — this is the "reference, don't inline" rule.
+//]
+def elide(text: String, maxChars: Int): String =
+  if text.size <= maxChars then
+    text
+
+  else
+    val headLen = maxChars / 2
+    val tailLen = maxChars - headLen
+    val head = text.substring(0, headLen)
+    val tail = text.substring(text.size - tailLen, text.size)
+    val elided = text.size - headLen - tailLen
+    "\{head}\n…[\{elided} characters elided]…\n\{tail}"

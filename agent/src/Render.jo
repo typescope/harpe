@@ -1,0 +1,102 @@
+//[ Render.jo
+  !
+  ! `render` — the pluggable context-engineering surface. It composes what the model
+  ! sees for one request from the base system prompt (AGENT.md), the agent's working
+  ! `memory`, and the running `transcript`, returning `(system, messages)`.
+  !
+  ! The engine calls `render` once per model request (see `runTurn`), so it is
+  ! written here once rather than in each concrete `Interact`. It is a `defer def`:
+  ! an agent overrides it via `[main.links] "harpe.turn.render" = "MyAgent.render"`
+  ! to compose context however it likes.
+  !
+  ! The default folds memory into the *end* of the system prompt (so the stable
+  ! prefix — AGENT.md, tool specs — stays cache-friendly) and truncates the
+  ! transcript to a character budget by dropping whole oldest turns.
+//]
+
+namespace harpe.turn
+
+import harpe.models.*
+import harpe.ffi.jsonMod
+
+//[ Default budget (characters) for the recent transcript window (~4 chars/token).
+  ! Older whole turns are dropped to fit; memory carries longer-term context.
+  ! Override via `[main.links] "harpe.turn.maxTranscriptChars" = "..."`.
+//]
+defer def maxTranscriptChars(): Int = 24000
+
+//[ Compose `(system, messages)` for one model request. //]
+defer def render(baseSystem: String, memory: Map[String, String], transcript: List[Message]): String ~ List[Message] =
+  val system =
+    if memory.isEmpty then baseSystem
+    else baseSystem + "\n\n" + memoryBlock(memory)
+
+  system ~ truncate(transcript, maxTranscriptChars)
+
+//[ The volatile memory block, appended after the stable base prompt. One section
+  ! per key; the keys are the agent's own (steered by AGENT.md, no fixed schema).
+//]
+private def memoryBlock(memory: Map[String, String]): String =
+  var s = "# Working memory\n\n(You maintain this with the memory tools; it persists across turns.)\n"
+  for k ~ v in memory.toList do
+    s = s + "\n## \{k}\n\{v}\n"
+  s
+
+//[ Bound the transcript to `maxChars` by dropping whole oldest *turns* (a turn
+  ! begins at a `UserText`). This never splits an `Assistant`+`ToolResults` pair,
+  ! always leaves the window starting at a user turn, and keeps at least the most
+  ! recent turn (sent even if it alone exceeds the budget).
+//]
+def truncate(transcript: List[Message], maxChars: Int): List[Message] =
+  var groups = splitTurns(transcript)
+
+  while groups.size > 1 && groupsChars(groups) > maxChars do
+    groups = groups.drop(1)
+
+  flatten(groups)
+
+//[ Group messages into turns; each group begins at a `UserText`. //]
+private def splitTurns(ms: List[Message]): List[List[Message]] =
+  var groups: List[List[Message]] = []
+  var current: List[Message] = []
+
+  for m in ms do
+    if m is UserText(_) && !current.isEmpty then
+      groups = groups + current
+      current = [m]
+
+    else
+      current = current + m
+
+  if !current.isEmpty then groups = groups + current
+
+  groups
+
+private def flatten(groups: List[List[Message]]): List[Message] =
+  var out: List[Message] = []
+  for g in groups do
+    for m in g do out = out + m
+  out
+
+private def groupsChars(groups: List[List[Message]]): Int =
+  var n = 0
+  for g in groups do
+    for m in g do n = n + messageChars(m)
+  n
+
+//[ A rough character size of a message: its text plus tool inputs (serialized) and
+  ! tool-result contents. Approximate on purpose — a conservative budget absorbs it.
+//]
+private def messageChars(m: Message): Int =
+  match m
+  case UserText(t) => t.size
+
+  case Assistant(text, calls) =>
+    var n = text.size
+    for c in calls do n = n + jsonMod.dumps(c.input.raw).asString.size
+    n
+
+  case ToolResults(results) =>
+    var n = 0
+    for r in results do n = n + r.content.size
+    n

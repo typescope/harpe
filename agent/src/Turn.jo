@@ -17,6 +17,7 @@ namespace harpe.turn
 
 import harpe.models.*
 import harpe.tools.*
+import harpe.Memory
 
 //[ Interact
   !
@@ -25,14 +26,15 @@ import harpe.tools.*
 interface Interact
   //[ Ask for LLM reply
     !
-    ! A cancellable model call: maps `(history, tools)` to the model's reply
-    ! (or a typed error) as `Some(ReplyResult)`, or `None` if the request was
-    ! cancelled.
+    ! A cancellable model call over the already-composed `(system, messages,
+    ! tools)`: the model's reply (or a typed error) as `Some(ReplyResult)`, or
+    ! `None` if the request was cancelled. The engine composes `system`/`messages`
+    ! via `render` before calling this, so the impl is a thin model-call delegate.
     !
     ! The caller owns how the call is issued and cancelled, keeping that
     ! machinery — threads, interrupt polling — out of the engine.
   //]
-  def ask(history: List[Message], tools: List[Tool]): Option[ReplyResult]
+  def ask(system: String, messages: List[Message], tools: List[Tool]): Option[ReplyResult]
 
   //[ Has cancellation been requested? //]
   def cancelled: Bool
@@ -102,7 +104,7 @@ private def backoffSeconds(attempt: Int): Float =
   ! Progress and errors are reported through `interact.emit`.
 //]
 private def fetchReply(
-    history: List[Message], tools: List[Tool], maxRetries: Int, interact: Interact)
+    system: String, messages: List[Message], tools: List[Tool], maxRetries: Int, interact: Interact)
 : Fetched =
 
   var attempt = 0
@@ -111,7 +113,7 @@ private def fetchReply(
   while true do
     interact.emit: ModelRequestStarted(attempt, maxRetries)
 
-    val maybe = interact.ask(history, tools)
+    val maybe = interact.ask(system, messages, tools)
 
     interact.emit: ModelRequestEnded
 
@@ -156,8 +158,8 @@ private def fetchReply(
   ! is asked once more with no tools, forcing a final answer.
 //]
 def runTurn(
-    start: List[Message], tools: List[Tool],
-    maxToolRounds: Int, maxRetries: Int, interact: Interact)
+    start: List[Message], memory: Memory, tools: List[Tool],
+    maxToolRounds: Int, maxRetries: Int, interact: Interact, baseSystem: String)
 : TurnResult =
 
   var history = start
@@ -172,7 +174,11 @@ def runTurn(
     if rounds == maxToolRounds then
       interact.emit: ToolBudgetReached(maxToolRounds)
 
-    match fetchReply(history, offer, maxRetries, interact)
+    // Compose what the model sees for this request — memory folded into the system
+    // prompt, transcript truncated — once here, not in each concrete Interact.
+    val rendered = render(baseSystem, memory.snapshot(), history)
+
+    match fetchReply(rendered.fst, rendered.snd, offer, maxRetries, interact)
       case Stopped =>
         result = Interrupted
         break

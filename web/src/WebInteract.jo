@@ -23,14 +23,14 @@ import harpe.tools.Tool
 //]
 type Sink = py.Dict => Unit
 
-private class WebInteract(brain: Model, sysPrompt: String, sink: Sink)
+private class WebInteract(brain: Model, sink: Sink)
   view Interact
 
   //[ A plain (non-cancellable) model call; the turn engine retries transient
     ! errors itself.
   //]
-  def ask(history: List[Message], tools: List[Tool]): Option[ReplyResult] =
-    Some(brain.reply(sysPrompt, history, tools))
+  def ask(system: String, messages: List[Message], tools: List[Tool]): Option[ReplyResult] =
+    Some(brain.reply(system, messages, tools))
 
   def cancelled: Bool = false
 

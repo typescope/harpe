@@ -10,10 +10,22 @@ namespace ToolTest
 
 import jo.IO.stdout
 import harpe.tools.*
+import harpe.Memory
 
 private def check(label: String, cond: Bool): Unit receives stdout =
   assert: cond, "\{label} failed"
   println "  ok \{label}"
+
+private def rep(c: String, n: Int): String =
+  var s = ""
+  var i = 0
+  while i < n do
+    s = s + c
+    i = i + 1
+  s
+
+private def toolNamed(ts: List[Tool], name: String): Tool =
+  ts.find(t => t.name == name) rescue None => abort "no tool named \{name}"
 
 def run(): Unit receives stdout =
   // --- typed ToolInput accessors read values of each schema type ---
@@ -55,3 +67,33 @@ def run(): Unit receives stdout =
   val badOut = runSafely(badTool, empty)
   check("runSafely summary names the tool", badOut.summary == "error · boom")
   check("runSafely result carries the message", badOut.result.contains("kaboom"))
+
+  // --- elide: bound a large tool result, keeping head + tail ---
+  check("elide leaves short text unchanged", elide("hello", 100) == "hello")
+  check("elide leaves at-limit text unchanged", elide("abcde", 5) == "abcde")
+
+  val big = rep("a", 100) + rep("b", 100)
+  val small = elide(big, 100)
+  check("elide shrinks oversized text", small.size < big.size)
+  check("elide keeps the head", small.startsWith("a"))
+  check("elide keeps the tail", small.endsWith("b"))
+  check("elide marks the omission", small.contains("100 characters elided"))
+
+  // --- memoryTools: the LLM's read/write/list interface to a Memory store ---
+  val mem = new Memory
+  val mtools = memoryTools(mem)
+  check("memoryTools builds three tools", mtools.size == 3)
+
+  val r1 = toolNamed(mtools, "updateMemory").run(ToolInput(py.dict("key" ~ "goal", "value" ~ "win")))
+  check("updateMemory writes the store", mem.get("goal") == "win")
+  check("updateMemory summary names the key", r1.summary == "memory ← goal")
+
+  val r2 = toolNamed(mtools, "readMemory").run(ToolInput(py.dict("key" ~ "goal")))
+  check("readMemory returns the value", r2.result == "win")
+
+  val r3 = toolNamed(mtools, "readMemory").run(ToolInput(py.dict("key" ~ "absent")))
+  check("readMemory notes an empty key", r3.result.contains("empty"))
+
+  mem.set("plan", "do X")
+  val r4 = toolNamed(mtools, "listMemory").run(ToolInput(py.dict()))
+  check("listMemory reports the keys", r4.result.contains("goal") && r4.result.contains("plan"))

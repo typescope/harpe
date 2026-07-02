@@ -21,6 +21,8 @@ import harpe.ffi.loadDotenv
 import harpe.turn.*
 import harpe.models.*
 import harpe.tools.Tool
+import harpe.tools.memoryTools
+import harpe.Memory
 import harpe.Workspace
 import harpe.workspace
 import harpe.SessionLog
@@ -47,8 +49,14 @@ def main(): Unit receives stdout =
 private def runChat(): Unit receives stdout, workspace =
   val brain = Config.model()
   val sysPrompt = Config.systemPrompt()
+
+  // The agent's working memory for this run, and the tools it curates it with. The
+  // CLI is single-session and in-process — memory is not persisted across runs.
+  val memory = new Memory
+  val tools = Config.tools ++ memoryTools(memory)
+
   val inputHistory = workspace.relative("logs/inputs.txt")
-  val interact = new ConsoleInteract(brain, sysPrompt, stdout, inputHistory)
+  val interact = new ConsoleInteract(brain, stdout, inputHistory)
 
   interact.init()
 
@@ -72,7 +80,7 @@ private def runChat(): Unit receives stdout, workspace =
 
     val sofar = history
     val res = interact.turn: () =>
-      runTurn(sofar, Config.tools, Config.maxToolRounds, Config.maxRetries, interact)
+      runTurn(sofar, memory, tools, Config.maxToolRounds, Config.maxRetries, interact, sysPrompt)
 
     if res is Answered(updated, text) then
       history = updated

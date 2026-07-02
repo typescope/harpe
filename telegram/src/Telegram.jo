@@ -19,6 +19,8 @@ import harpe.ffi.*
 import harpe.turn.*
 import harpe.models.*
 import harpe.tools.Tool
+import harpe.tools.memoryTools
+import harpe.Memory
 import harpe.SessionLog
 import harpe.Workspace
 import harpe.workspace
@@ -33,7 +35,7 @@ import time
   ! ordered and serialized. Only that worker mutates `history`/`saved`, so no lock
   ! is needed around them.
 //]
-private class Session(id: String, log: SessionLog, initial: List[Message])
+private class Session(id: String, log: SessionLog, initial: List[Message], memory: Memory)
   val queue = py.module("queue").Queue()
   var history: List[Message] = initial
   var saved: Int = initial.size
@@ -251,7 +253,7 @@ private class TelegramBot(
     registryLock.release()
 
     if !live then
-      val session = new Session(chatId, Sessions.forSession(chatId), Sessions.load(chatId))
+      val session = new Session(chatId, Sessions.forSession(chatId), Sessions.load(chatId), new Memory)
       registryLock.acquire()
       registry.set(chatId, session)
       session.queue.put(py.dynamic(text))
@@ -292,11 +294,12 @@ private class TelegramBot(
     ! the session's own worker calls this, so its `history` needs no lock.
   //]
   private def processTurn(session: Session, text: String): Unit =
-    val interact = new TelegramInteract(brain, sysPrompt, client, session.id)
+    val interact = new TelegramInteract(brain, client, session.id)
+    val sessionTools = tools ++ memoryTools(session.memory)
     val snapshot = session.history
     session.history = session.history + UserText(text)
 
-    match runTurn(session.history, tools, Config.maxToolRounds, Config.maxRetries, interact)
+    match runTurn(session.history, session.memory, sessionTools, Config.maxToolRounds, Config.maxRetries, interact, sysPrompt)
     case Answered(updated, answer) =>
       session.history = updated
       session.log.append(time.now(), session.history.drop(session.saved))
