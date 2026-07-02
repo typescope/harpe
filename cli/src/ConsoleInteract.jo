@@ -20,11 +20,6 @@ private class ConsoleInteract(brain: Model, sysPrompt: String, out: String => Un
   private val interrupt = threadingMod.Event()
   private val stopWatch = threadingMod.Event()
 
-  // Set while blocked in `userInput`, so the SIGINT handler knows whether
-  // Ctrl-C should abort the prompt (raise) or interrupt a running turn (set the
-  // interrupt event, like ESC).
-  private val atPrompt = threadingMod.Event()
-
   // One spinner resource for the whole session.
   private val spinner = new Spinner
 
@@ -37,14 +32,17 @@ private class ConsoleInteract(brain: Model, sysPrompt: String, out: String => Un
     val rl = py.module("readline")
     if fileExists(historyFile) then rl.read_history_file(historyFile)
 
-    // Ctrl-C: at the prompt it aborts the line being read (caught in
-    // `userInput`); during a turn it requests cancellation, exactly like ESC.
-    // Installed here, on the main thread, as Python requires.
+    // Ctrl-C quits cleanly from anywhere. Capture the terminal's cooked-mode
+    // settings now so the handler can restore them: a turn puts the terminal in
+    // cbreak mode (for the ESC watcher), and exiting from there would otherwise
+    // leave the user's shell in a broken state. Installed on the main thread, as
+    // Python requires.
+    val cooked = termiosMod.tcgetattr(0)
     onSigint: (signum: Int, frame: py.Dynamic) =>
-      if atPrompt.is_set().asBool then
-        abort "interrupted at prompt"
-      else
-        val _ = interrupt.set()
+      termiosMod.tcsetattr(0, termiosMod.TCSADRAIN, cooked)
+      sysMod.stdout.write("\nGoodbye.\n")
+      sysMod.stdout.flush()
+      val _ = sysMod.exit(0)
 
     println """
 
@@ -59,34 +57,25 @@ private class ConsoleInteract(brain: Model, sysPrompt: String, out: String => Un
 
     """
 
-    println "Type a message to start. Ctrl-C interrupts a reply; Ctrl-D or 'quit' to exit."
+    println "Type a message to start. Ctrl-C, Ctrl-D, or 'quit' to exit."
 
-  //[ Read one line from the user.
-    !
-    ! `None` signals end-of-input (Ctrl-D / EOF) — the caller should exit.
-    ! `Some(line)` is a line to act on; `Some("")` includes a blank line and a
-    ! line abandoned with Ctrl-C, both of which just re-prompt.
+  //[ Read one line from the user. `None` signals end-of-input (Ctrl-D / EOF),
+    ! on which the caller should exit.
   //]
   def userInput(): Option[String] =
     println ""
-    // While reading, Ctrl-C should abort this line rather than cancel a turn.
-    atPrompt.set()
     // Keep the prompt a single line with no embedded newline, so readline can
     // redraw it correctly when navigating history with the up/down arrows.
-    val res = py.try(py.input("You ▸ "))
-    atPrompt.clear()
-
-    match res
+    // Ctrl-C is handled by the SIGINT handler (quit); Ctrl-D surfaces here as
+    // EOFError, which py.try catches so we exit cleanly instead of crashing.
+    match py.try(py.input("You ▸ "))
     case Ok(line) =>
       saveInputHistory()
       Some(line.trim)
 
-    case Err(e) =>
-      // Move off the prompt line the interrupt/EOF left dangling.
+    case Err(_) =>
       println ""
-      // Ctrl-D surfaces as EOFError → exit; Ctrl-C (our handler's abort) and any
-      // other read error → treat as a blank line and re-prompt.
-      if e.typeName == "EOFError" then None else Some("")
+      None
 
   def agentResponse(text: String): Unit =
     println ""
@@ -101,9 +90,10 @@ private class ConsoleInteract(brain: Model, sysPrompt: String, out: String => Un
     val _ = py.try(py.module("readline").write_history_file(historyFile))
 
   def turn[T](f: () => T): T =
-    // Reset the interrupt/watcher state so cancellation works on every turn, not
-    // just the first, and so a stray Ctrl-C between turns cannot pre-cancel this
-    // one.
+    // Reset the ESC-watcher state so interruption works on every turn: the
+    // previous turn left `stopWatch` set (stopping its watcher) and may have
+    // left `interrupt` set (if ESC was pressed). Without clearing, the watcher
+    // would exit immediately and a prior ESC would instantly cancel this turn.
     interrupt.clear()
     stopWatch.clear()
 
