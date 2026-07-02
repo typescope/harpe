@@ -238,6 +238,8 @@ private class TelegramBot(
 
     if !live then
       val log = Session.forSession(chatId)
+      // `Session.load` caps the loaded transcript (a RAM backstop); the full
+      // transcript stays on disk.
       val session = new Session(chatId, log, Session.load(chatId), Memory.load(log.memoryPath))
       registryLock.acquire()
       registry.set(chatId, session)

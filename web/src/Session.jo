@@ -30,12 +30,14 @@ class Session(id: String, log: SessionLog, initial: List[Message], memory: Memor
   val lock = threadingMod.Lock()
   var history: List[Message] = initial
   var saved: Int = initial.size
+  var lastActive: Float = time.now()
   private var priorHistory: List[Message] = initial
 
   //[ Begin a user turn: append the user's message and return the history to run.
     ! The pre-turn point is remembered so a cancelled/failed turn can roll back.
   //]
   def beginTurn(text: String): List[Message] =
+    lastActive = time.now()
     priorHistory = history
     history = history + UserText(text)
     history

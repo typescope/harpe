@@ -84,6 +84,7 @@ class ChatServer(brain: Model, sysPrompt: String, tools: List[Tool], name: Strin
       sink(py.dict("type" ~ "error", "detail" ~ "empty message"))
 
     else
+      evictIdle()
       val minted = reqId == ""
       val session = if minted then createSession() else openSession(reqId)
 
@@ -130,9 +131,25 @@ class ChatServer(brain: Model, sysPrompt: String, tools: List[Tool], name: Strin
 
     else
       val log = Session.forSession(id)
+      // `Session.load` caps the loaded transcript (a RAM backstop); the full
+      // transcript stays on disk.
       val session = new Session(id, log, Session.load(id), Memory.load(log.memoryPath))
       registry.set(id, session)
       session
+
+  //[ Drop sessions idle longer than `Config.sessionIdleSeconds` from the resident
+    ! registry; they reload from disk on next access. Bounds memory on a long-running
+    ! server. The WSGI server is single-threaded, so this runs between requests.
+  //]
+  private def evictIdle(): Unit =
+    val cutoff = time.now() - Config.sessionIdleSeconds().toFloat
+    val stale = py.list()
+
+    for k in py.iter(registry.keys()) do
+      if registry.get(k).cast[Session].lastActive < cutoff then stale.append(k)
+
+    for k in py.iter(stale) do
+      val _ = registry.pop(k)
 
   private def handleSessions(startResp: py.Dynamic): py.List receives workspace =
     val arr = py.list()
@@ -145,7 +162,10 @@ class ChatServer(brain: Model, sysPrompt: String, tools: List[Tool], name: Strin
   //]
   private def handleHistory(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
     val id = queryParam(environ, "session")
-    val msgs = if registry.contains(id) then registry.get(id).cast[Session].history else Session.load(id)
+    // Display reads the transcript archive (capped to the RAM backstop by
+    // `Session.load`; showing less than the full history is an accepted constraint),
+    // current since `commit` appends after each turn.
+    val msgs = Session.load(id)
 
     val arr = py.list()
     for m in msgs do
