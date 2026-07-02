@@ -59,7 +59,9 @@ private def runChat(): Unit receives stdout, workspace =
   var saved = 0   // count of messages already appended to the session file
 
   while true do
-    val userInput = interact.userInput()
+    // `None` is end-of-input (Ctrl-D); a blank line or a Ctrl-C'd prompt is
+    // `Some("")`, which just re-prompts.
+    val userInput = interact.userInput() rescue None => break
 
     if userInput == "quit" || userInput == "exit" then break
 

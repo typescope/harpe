@@ -19,6 +19,7 @@ import harpe.ffi.loadDotenv
 import harpe.ffi.getenv
 import harpe.ffi.readFile
 import harpe.ffi.builtins
+import harpe.ffi.shutdownOnSigint
 import harpe.Workspace
 import harpe.workspace
 import os
@@ -59,6 +60,10 @@ private def serve(): Unit receives stdout, workspace =
   val httpd = wsgi.make_server(host, port, app)
 
   println "Harpe ▸ \{name} is live at http://\{host}:\{port}  (Ctrl-C to stop)"
+
+  // Stop cleanly on Ctrl-C instead of dumping a traceback from serve_forever.
+  shutdownOnSigint("\nHarpe ▸ shutting down.")
+
   httpd.serve_forever()
 
 //[ The agent's display name: the first Markdown H1 in AGENT.md, else a default. //]

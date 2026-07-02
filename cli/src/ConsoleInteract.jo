@@ -20,6 +20,11 @@ private class ConsoleInteract(brain: Model, sysPrompt: String, out: String => Un
   private val interrupt = threadingMod.Event()
   private val stopWatch = threadingMod.Event()
 
+  // Set while blocked in `userInput`, so the SIGINT handler knows whether
+  // Ctrl-C should abort the prompt (raise) or interrupt a running turn (set the
+  // interrupt event, like ESC).
+  private val atPrompt = threadingMod.Event()
+
   // One spinner resource for the whole session.
   private val spinner = new Spinner
 
@@ -31,6 +36,15 @@ private class ConsoleInteract(brain: Model, sysPrompt: String, out: String => Un
     os.makedirs("data")
     val rl = py.module("readline")
     if fileExists(historyFile) then rl.read_history_file(historyFile)
+
+    // Ctrl-C: at the prompt it aborts the line being read (caught in
+    // `userInput`); during a turn it requests cancellation, exactly like ESC.
+    // Installed here, on the main thread, as Python requires.
+    onSigint: (signum: Int, frame: py.Dynamic) =>
+      if atPrompt.is_set().asBool then
+        abort "interrupted at prompt"
+      else
+        val _ = interrupt.set()
 
     println """
 
@@ -45,15 +59,34 @@ private class ConsoleInteract(brain: Model, sysPrompt: String, out: String => Un
 
     """
 
-    println "Type a message to start. Ctrl-D or 'quit' to exit."
+    println "Type a message to start. Ctrl-C interrupts a reply; Ctrl-D or 'quit' to exit."
 
-  def userInput(): String =
+  //[ Read one line from the user.
+    !
+    ! `None` signals end-of-input (Ctrl-D / EOF) — the caller should exit.
+    ! `Some(line)` is a line to act on; `Some("")` includes a blank line and a
+    ! line abandoned with Ctrl-C, both of which just re-prompt.
+  //]
+  def userInput(): Option[String] =
     println ""
+    // While reading, Ctrl-C should abort this line rather than cancel a turn.
+    atPrompt.set()
     // Keep the prompt a single line with no embedded newline, so readline can
     // redraw it correctly when navigating history with the up/down arrows.
-    val line = py.input("You ▸ ")
-    saveInputHistory()
-    line.trim
+    val res = py.try(py.input("You ▸ "))
+    atPrompt.clear()
+
+    match res
+    case Ok(line) =>
+      saveInputHistory()
+      Some(line.trim)
+
+    case Err(e) =>
+      // Move off the prompt line the interrupt/EOF left dangling.
+      println ""
+      // Ctrl-D surfaces as EOFError → exit; Ctrl-C (our handler's abort) and any
+      // other read error → treat as a blank line and re-prompt.
+      if e.typeName == "EOFError" then None else Some("")
 
   def agentResponse(text: String): Unit =
     println ""
@@ -68,6 +101,12 @@ private class ConsoleInteract(brain: Model, sysPrompt: String, out: String => Un
     val _ = py.try(py.module("readline").write_history_file(historyFile))
 
   def turn[T](f: () => T): T =
+    // Reset the interrupt/watcher state so cancellation works on every turn, not
+    // just the first, and so a stray Ctrl-C between turns cannot pre-cancel this
+    // one.
+    interrupt.clear()
+    stopWatch.clear()
+
     val savedTerm = ConsoleInteract.enterCbreak()
     ConsoleInteract.startEscWatcher(interrupt, stopWatch)
 

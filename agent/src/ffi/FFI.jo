@@ -96,6 +96,35 @@ def runCapped(args: py.List, timeoutSecs: Float): Capped =
       val _ = py.try: proc.communicate()
       new Capped(-1, "", "", true)
 
+// --- Ctrl-C (SIGINT) handling ---
+
+//[ Install a handler for SIGINT (Ctrl-C), replacing the default that raises
+  ! `KeyboardInterrupt`. Must be called from the main thread.
+  !
+  ! `handler` receives the signal number and the interrupted stack frame (a
+  ! Python frame object, or `py.none`). It runs in the main thread at the next
+  ! bytecode boundary, so it can set a `threading.Event` a worker loop polls, or
+  ! raise to abort a blocking main-thread call such as `input()`.
+//]
+def onSigint(handler: (Int, py.Dynamic) => Unit): Unit =
+  signalMod.signal(signalMod.SIGINT, handler)
+
+//[ Make Ctrl-C shut the process down cleanly, with no Python traceback.
+  !
+  ! For long-running server agents whose main thread blocks in an accept/poll
+  ! loop (the web and Telegram drivers). On Ctrl-C the handler prints `message`
+  ! and raises `SystemExit` via `sys.exit`. Unlike the default
+  ! `KeyboardInterrupt`, `SystemExit` unwinds without a traceback and is not a
+  ! subclass of `Exception`, so the `py.try` (`except Exception`) blocks around
+  ! network calls do not swallow it — the process stops promptly and quietly.
+  ! Daemon worker threads are torn down as the interpreter exits.
+//]
+def shutdownOnSigint(message: String): Unit =
+  onSigint: (signum: Int, frame: py.Dynamic) =>
+    sysMod.stdout.write(message + "\n")
+    sysMod.stdout.flush()
+    val _ = sysMod.exit(0)
+
 // --- rounding ---
 
 def round2(x: Float): Float = builtins.round(x, 2).asFloat

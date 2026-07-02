@@ -82,6 +82,9 @@ private def serve(): Unit receives stdout, workspace =
   if allowed.isEmpty then
     println "  ⚠ TELEGRAM_ALLOWED_SENDERS is empty — all messages are rejected until you add sender ids."
 
+  // Stop cleanly on Ctrl-C instead of dumping a traceback out of the poll loop.
+  shutdownOnSigint("\nHarpe ▸ shutting down.")
+
   bot.run()
 
 //[ The agent's display name: the first Markdown H1 in AGENT.md, else a default. //]
