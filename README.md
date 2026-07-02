@@ -30,7 +30,7 @@ harpe/                   # a workspace: three framework packages + an example ag
     src/Sandbox.jo       #   Sandbox interface + factory (impl hidden)
   cli/                   # `harpe-cli`: the conversational loop (`harpe.cli`)
     jo.toml              #   dep harpe (../agent)
-    src/Harpe.jo         #   the chat loop + main entry + defer hooks (default/extraTools)
+    src/Cli.jo           #   the chat loop + main entry + defer hooks (default/extraTools)
   web/                   # `harpe-web`: the same loop, served in a browser (`harpe.web`)
     jo.toml              #   dep harpe (../agent)
     src/Web.jo           #   main entry: starts a local HTTP server
