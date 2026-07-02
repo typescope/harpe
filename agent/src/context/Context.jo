@@ -1,0 +1,56 @@
+//[ Context.jo
+  !
+  ! `Context` — the pluggable context-engineering surface. A per-session value
+  ! that owns the transcript and composes what the model sees for each request:
+  ! the engine (`runTurn`) appends transcript events to it and calls `render`
+  ! once per model request. Implementing this interface is the whole
+  ! customization surface for context management — there is deliberately no
+  ! secondary hook.
+  !
+  ! Two strategies are provided, named by their transcript policy:
+  ! `WindowedContext` (the default) drops turns that fall out of its window;
+  ! `SummarizingContext` distills them into a rolling summary via the model.
+  ! Both render the base system prompt (AGENT.md) plus a volatile memory block —
+  ! memory is orthogonal to the strategy: a store the agent maintains through
+  ! tools, which any strategy may render.
+//]
+
+namespace harpe.context
+
+import harpe.models.*
+import harpe.turn.Interact
+
+//[ A context-management strategy: owns the transcript, composes each request. //]
+interface Context
+  //[ Record a transcript event: user text, an assistant reply, or tool results. //]
+  def append(message: Message): Unit
+
+  //[ Compose what the model sees for this request: `(system, messages)`.
+    !
+    ! Called once per model request. May be effectful — an impl can use
+    ! `interact` to call the model first (e.g. summarize old turns) and mutate
+    ! its own state, under the turn's cancellation and event stream; the default
+    ! is pure and ignores it.
+  //]
+  def render(interact: Interact): String ~ List[Message]
+
+  //[ Mark the start of a user turn, so a cancelled/failed turn can roll back. //]
+  def mark(): Unit
+
+  //[ Drop transcript events recorded since `mark`. Working memory is
+    ! deliberately NOT rolled back — a memory edit is an intentional act,
+    ! independent of the turn's outcome.
+  //]
+  def rollback(): Unit
+end
+
+//[ The volatile memory block, appended after the stable base prompt by the
+  ! provided strategies (namespace-private, shared across their files). One
+  ! section per key; the keys are the agent's own (steered by AGENT.md, no fixed
+  ! schema).
+//]
+private def memoryBlock(memory: Map[String, String]): String =
+  var s = "# Working memory\n\n(You maintain this with the memory tools; it persists across turns.)\n"
+  for k ~ v in memory.toList do
+    s = s + "\n## \{k}\n\{v}\n"
+  s

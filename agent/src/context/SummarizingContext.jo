@@ -1,0 +1,129 @@
+//[ SummarizingContext.jo
+  !
+  ! A compacting `Context` strategy: turns that fall out of the window are
+  ! distilled into a rolling summary (using the model itself) instead of
+  ! dropped, so long sessions keep their thread without unbounded context.
+//]
+
+namespace harpe.context
+
+import harpe.models.*
+import harpe.util.truncate
+import harpe.util.transcriptChars
+import harpe.tools.Tool
+import harpe.turn.Interact
+import harpe.turn.ContextCompacted
+import harpe.Memory
+
+//[ Like `WindowedContext`, but with model-assisted distillation of old turns.
+  !
+  ! Compaction is hysteresis-triggered: when the window exceeds `highWaterChars`,
+  ! the oldest whole turns are folded into the summary until the window fits
+  ! `lowWaterChars` — rare, large compactions (`lowWaterChars` well below
+  ! `highWaterChars`), so the provider's cached prefix survives most requests.
+  ! The distillation is one extra model call through the turn's `interact`
+  ! (cancellable; surfaced as `ContextCompacted`). If that call fails or is
+  ! cancelled, compaction is skipped: the oversized window is sent as-is (the
+  ! provider may reject it, as with `WindowedContext`'s oversized final turn) and
+  ! compaction is retried on the next request.
+//]
+class SummarizingContext(
+    baseSystem: String, memory: Memory, initial: List[Message],
+    highWaterChars: Int, lowWaterChars: Int)
+  view Context
+
+  private var summary: String = ""
+  private var transcript: List[Message] = initial
+  private var markedTranscript: List[Message] = initial
+  private var markedSummary: String = ""
+
+  def append(message: Message): Unit =
+    transcript = transcript + message
+
+  //[ Compact if over the high-water mark, then compose: base prompt, summary of
+    ! distilled turns, memory block, and the retained recent turns.
+  //]
+  def render(interact: Interact): String ~ List[Message] =
+    if transcriptChars(transcript) > highWaterChars then compact(interact)
+
+    val mem = memory.snapshot()
+    var system = baseSystem
+
+    if summary != "" then system = system + "\n\n" + summaryBlock(summary)
+
+    if !mem.isEmpty then system = system + "\n\n" + memoryBlock(mem)
+
+    system ~ transcript
+
+  def mark(): Unit =
+    markedTranscript = transcript
+    markedSummary = summary
+
+  //[ Restores the summary too: a compaction rewrites the window, so rolling back
+    ! only the window would resurrect turns already folded into the summary.
+  //]
+  def rollback(): Unit =
+    transcript = markedTranscript
+    summary = markedSummary
+
+  //[ Fold the oldest whole turns into the rolling summary, keeping the window
+    ! `truncate` would keep under the low-water budget. Skipped (leaving the
+    ! transcript untouched) when the distillation call fails or is cancelled, or
+    ! when nothing can be dropped (the window is a single oversized turn).
+  //]
+  private def compact(interact: Interact): Unit =
+    val kept = truncate(transcript, lowWaterChars)
+    val dropCount = transcript.size - kept.size
+
+    if dropCount > 0 then
+      val dropped = transcript.take(dropCount)
+      val request: Message = distillRequest(summary, dropped)
+
+      match interact.ask(distillSystem(), [request], List.empty[Tool])
+      case Some(res) =>
+        if res is Reply(message) then
+          summary = message.text.trim
+          transcript = kept
+          interact.emit: ContextCompacted(dropCount)
+
+      case None => pass
+end
+
+//[ The distilled-history block, between the stable base prompt and the memory
+  ! block (it changes only at compactions, memory on any agent edit).
+//]
+private def summaryBlock(summary: String): String =
+  "# Conversation summary\n\n(Older turns, distilled; the messages below are the most recent turns.)\n\n" + summary
+
+//[ The distiller's system prompt. //]
+private def distillSystem(): String =
+  "You maintain a running summary of a conversation between a user and an agent. Reply with ONLY the updated summary text — no preamble, no headings. Preserve: the user's goals and constraints, decisions made, facts discovered, tool actions taken and their outcomes, and unresolved questions. Be concise; drop pleasantries and dead ends."
+
+//[ The distillation request: the summary so far (if any) plus the turns being
+  ! folded in, rendered as plain text.
+//]
+private def distillRequest(summary: String, dropped: List[Message]): Message =
+  val lead =
+    if summary == "" then "Conversation excerpt to summarize:\n\n"
+    else "Current summary:\n\n" + summary + "\n\nNew conversation excerpt to fold into it:\n\n"
+
+  UserText(lead + excerptText(dropped) + "\nReply with the updated summary.")
+
+//[ A plain-text rendering of transcript messages for the distiller. //]
+private def excerptText(ms: List[Message]): String =
+  var s = ""
+
+  for m in ms do
+    match m
+    case UserText(t) =>
+      s = s + "User: " + t + "\n"
+
+    case Assistant(text, calls) =>
+      if text != "" then s = s + "Agent: " + text + "\n"
+
+      for c in calls do s = s + "Agent: [called tool \{c.name}]\n"
+
+    case ToolResults(results) =>
+      for r in results do s = s + "[tool result] " + r.content + "\n"
+
+  s

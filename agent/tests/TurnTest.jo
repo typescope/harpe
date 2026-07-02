@@ -17,7 +17,7 @@ import harpe.turn.*
 import harpe.models.*
 import harpe.tools.*
 import harpe.Memory
-import harpe.WindowedContext
+import harpe.context.WindowedContext
 
 // A reply carrying only text (no tool calls).
 private def textReply(s: String): Option[ReplyResult] =
@@ -39,6 +39,7 @@ private def eventTag(e: TurnEvent): String =
   case ToolBudgetReached(_)      => "budget"
   case ToolCallStarted(n)        => "tool+\{n}"
   case ToolCallEnded(n, _)       => "tool-\{n}"
+  case ContextCompacted(_)       => "compact"
 
 private def resultTag(r: TurnResult): String =
   match r

@@ -27,6 +27,15 @@ def truncate(transcript: List[Message], maxChars: Int): List[Message] =
 
   flatten(groups)
 
+//[ The rough character size of a transcript (see `messageChars`) — the measure
+  ! `truncate` budgets against, exposed so context strategies can test the same
+  ! threshold they truncate with.
+//]
+def transcriptChars(transcript: List[Message]): Int =
+  var n = 0
+  for m in transcript do n = n + messageChars(m)
+  n
+
 //[ Group messages into turns; each group begins at a `UserText`. //]
 private def splitTurns(ms: List[Message]): List[List[Message]] =
   var groups: List[List[Message]] = []

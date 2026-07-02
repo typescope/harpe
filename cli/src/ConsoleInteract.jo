@@ -141,6 +141,9 @@ private class ConsoleInteract(brain: Model, out: String => Unit, historyFile: St
       spinner.stop()
       println "  · \{summary}"
 
+    case ContextCompacted(droppedMessages) =>
+      println "  · context compacted (\{droppedMessages} messages summarized)"
+
   def cancelled: Bool = interrupt.is_set().asBool
 
   def pause(seconds: Float): Bool = interrupt.wait(seconds).asBool

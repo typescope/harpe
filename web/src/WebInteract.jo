@@ -67,5 +67,8 @@ private class WebInteract(brain: Model, sink: Sink)
 
     case ToolCallEnded(name, summary) =>
       sink(py.dict("type" ~ "tool", "name" ~ name, "summary" ~ summary))
+
+    case ContextCompacted(droppedMessages) =>
+      sink(py.dict("type" ~ "status", "label" ~ "context compacted (\{droppedMessages} messages summarized)"))
   end
 end
