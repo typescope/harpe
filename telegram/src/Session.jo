@@ -14,46 +14,45 @@
 namespace harpe.telegram
 
 import harpe.models.*
+import harpe.WindowedContext
 import harpe.Memory
 import harpe.SessionLog
 import harpe.workspace
 
-//[ One live conversation: its chat id, its append log, the running history, and how
-  ! much of that history is already persisted.
+//[ One live conversation: its chat id, its append log, its context (which owns
+  ! the running transcript window), and its working memory.
   !
   ! Each session has a FIFO `queue` drained by its own dedicated worker thread, so
   ! turns for different chats run concurrently while turns within one chat stay
-  ! ordered and serialized. Only that worker mutates `history`/`saved`, so no lock is
-  ! needed around them.
+  ! ordered and serialized. Only that worker touches the session's state, so no
+  ! lock is needed around it.
 //]
-private class Session(id: String, log: SessionLog, initial: List[Message], memory: Memory)
+private class Session(id: String, log: SessionLog, context: WindowedContext, memory: Memory)
   val queue = py.module("queue").Queue()
-  var history: List[Message] = initial
-  var saved: Int = initial.size
-  private var priorHistory: List[Message] = initial
+  private var pending: List[Message] = []
 
-  //[ Begin a user turn: append the user's message and return the history to run.
-    ! The pre-turn point is remembered so a cancelled/failed turn can roll back.
+  //[ Begin a user turn: mark the context's rollback point and append the user's
+    ! message. The message is remembered so `commit` can archive the whole turn.
   //]
-  def beginTurn(text: String): List[Message] =
-    priorHistory = history
-    history = history + UserText(text)
-    history
+  def beginTurn(text: String): Unit =
+    val userMsg: Message = UserText(text)
+    pending = [userMsg]
+    context.mark()
+    context.append(userMsg)
 
-  //[ Commit a completed turn: adopt its history, append the newly-added messages to
-    ! the transcript archive, and persist memory.
+  //[ Commit a completed turn: append the user message plus the turn's delta (the
+    ! engine-produced messages) to the transcript archive, and persist memory.
   //]
-  def commit(updated: List[Message]): Unit =
-    history = updated
-    log.append(time.now(), history.drop(saved))
-    saved = history.size
+  def commit(delta: List[Message]): Unit =
+    log.append(time.now(), pending ++ delta)
     saveMemory()
 
-  //[ Abandon a cancelled/failed turn: restore the pre-turn history. Memory is still
-    ! persisted — it is deliberate and not rolled back with the transcript.
+  //[ Abandon a cancelled/failed turn: restore the context's pre-turn window.
+    ! Memory is still persisted — it is deliberate and not rolled back with the
+    ! transcript.
   //]
   def rollback(): Unit =
-    history = priorHistory
+    context.rollback()
     saveMemory()
 
   //[ Persist the working memory beside the transcript archive. Runs on the chat's

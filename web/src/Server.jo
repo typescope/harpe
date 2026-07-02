@@ -26,6 +26,7 @@ import harpe.models.*
 import harpe.tools.Tool
 import harpe.tools.memoryTools
 import harpe.Memory
+import harpe.WindowedContext
 import harpe.Workspace
 import harpe.workspace
 import time
@@ -100,9 +101,11 @@ class ChatServer(brain: Model, sysPrompt: String, tools: List[Tool], name: Strin
     val interact = new WebInteract(brain, sink)
     val sessionTools = tools ++ memoryTools(session.memory)
 
-    match runTurn(session.beginTurn(text), session.memory, sessionTools, Config.maxToolRounds, Config.maxRetries, interact, sysPrompt)
-    case Answered(updated, answer) =>
-      session.commit(updated)
+    session.beginTurn(text)
+
+    match runTurn(session.context, sessionTools, Config.maxToolRounds, Config.maxRetries, interact)
+    case Answered(delta, answer) =>
+      session.commit(delta)
       sink(py.dict("type" ~ "answer", "text" ~ answer))
 
     case Interrupted =>
@@ -118,7 +121,9 @@ class ChatServer(brain: Model, sysPrompt: String, tools: List[Tool], name: Strin
   //[ A fresh session under a newly-minted, time-sortable id. //]
   private def createSession(): Session receives workspace =
     val id = time.strftime("%Y%m%dT%H%M%S") + "-" + py.module("secrets").token_hex(2).asString
-    val session = new Session(id, Session.forSession(id), [], new Memory)
+    val memory = new Memory
+    val context = new WindowedContext(sysPrompt, memory, List.empty[Message])
+    val session = new Session(id, Session.forSession(id), context, memory)
     registry.set(id, session)
     session
 
@@ -131,9 +136,11 @@ class ChatServer(brain: Model, sysPrompt: String, tools: List[Tool], name: Strin
 
     else
       val log = Session.forSession(id)
-      // `Session.load` caps the loaded transcript (a RAM backstop); the full
+      val memory = Memory.load(log.memoryPath)
+      // `Session.load` caps the replayed transcript (a RAM backstop); the full
       // transcript stays on disk.
-      val session = new Session(id, log, Session.load(id), Memory.load(log.memoryPath))
+      val context = new WindowedContext(sysPrompt, memory, Session.load(id))
+      val session = new Session(id, log, context, memory)
       registry.set(id, session)
       session
 

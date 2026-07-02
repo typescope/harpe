@@ -21,6 +21,7 @@ import harpe.models.*
 import harpe.tools.Tool
 import harpe.tools.memoryTools
 import harpe.Memory
+import harpe.WindowedContext
 import harpe.Workspace
 import harpe.workspace
 import os
@@ -238,9 +239,11 @@ private class TelegramBot(
 
     if !live then
       val log = Session.forSession(chatId)
-      // `Session.load` caps the loaded transcript (a RAM backstop); the full
+      val memory = Memory.load(log.memoryPath)
+      // `Session.load` caps the replayed transcript (a RAM backstop); the full
       // transcript stays on disk.
-      val session = new Session(chatId, log, Session.load(chatId), Memory.load(log.memoryPath))
+      val context = new WindowedContext(sysPrompt, memory, Session.load(chatId))
+      val session = new Session(chatId, log, context, memory)
       registryLock.acquire()
       registry.set(chatId, session)
       session.queue.put(py.dynamic(text))
@@ -284,9 +287,11 @@ private class TelegramBot(
     val interact = new TelegramInteract(brain, client, session.id)
     val sessionTools = tools ++ memoryTools(session.memory)
 
-    match runTurn(session.beginTurn(text), session.memory, sessionTools, Config.maxToolRounds, Config.maxRetries, interact, sysPrompt)
-    case Answered(updated, answer) =>
-      session.commit(updated)
+    session.beginTurn(text)
+
+    match runTurn(session.context, sessionTools, Config.maxToolRounds, Config.maxRetries, interact)
+    case Answered(delta, answer) =>
+      session.commit(delta)
       client.sendMessage(session.id, answer)
 
     case Interrupted =>

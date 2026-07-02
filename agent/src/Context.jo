@@ -1,0 +1,92 @@
+//[ Context.jo
+  !
+  ! `Context` — the pluggable context-engineering surface. A per-session value
+  ! that owns the transcript and composes what the model sees for each request:
+  ! the engine (`runTurn`) appends transcript events to it and calls `render`
+  ! once per model request. Implementing this interface is the whole
+  ! customization surface for context management — there is deliberately no
+  ! secondary hook.
+  !
+  ! `WindowedContext` is the default strategy: the base system prompt (AGENT.md)
+  ! plus a volatile memory block, over a sliding window of recent turns.
+  ! Strategies are named by their transcript policy (a future summarizing
+  ! context would distill old turns instead of dropping them); memory is
+  ! orthogonal — a store the agent maintains through tools, which any strategy
+  ! may render.
+//]
+
+namespace harpe
+
+import harpe.models.*
+import harpe.util.truncate
+import harpe.turn.Interact
+
+//[ A context-management strategy: owns the transcript, composes each request. //]
+interface Context
+  //[ Record a transcript event: user text, an assistant reply, or tool results. //]
+  def append(message: Message): Unit
+
+  //[ Compose what the model sees for this request: `(system, messages)`.
+    !
+    ! Called once per model request. May be effectful — an impl can use
+    ! `interact` to call the model first (e.g. summarize old turns) and mutate
+    ! its own state, under the turn's cancellation and event stream; the default
+    ! is pure and ignores it.
+  //]
+  def render(interact: Interact): String ~ List[Message]
+
+  //[ Mark the start of a user turn, so a cancelled/failed turn can roll back. //]
+  def mark(): Unit
+
+  //[ Drop transcript events recorded since `mark`. Working memory is
+    ! deliberately NOT rolled back — a memory edit is an intentional act,
+    ! independent of the turn's outcome.
+  //]
+  def rollback(): Unit
+end
+
+//[ Budget (characters) for the recent transcript window (~4 chars/token); older
+  ! whole turns are dropped to fit, and memory carries longer-term context.
+//]
+private def maxTranscriptChars(): Int = 24000
+
+//[ The default context: the stable base prompt (AGENT.md) first, the volatile
+  ! memory block at the system tail (so the cached prefix survives memory edits),
+  ! and a char-budget window of recent turns as the messages. `initial` seeds the
+  ! window (a resumed session's replayed transcript; `[]` for a fresh one).
+//]
+class WindowedContext(baseSystem: String, memory: Memory, initial: List[Message])
+  view Context
+
+  private var transcript: List[Message] = initial
+  private var marked: List[Message] = initial
+
+  def append(message: Message): Unit =
+    transcript = transcript + message
+
+  //[ Pure — `interact` is unused. Reads the memory snapshot each call, so an
+    ! `updateMemory` during a turn is visible to the next request.
+  //]
+  def render(interact: Interact): String ~ List[Message] =
+    val mem = memory.snapshot()
+    val system =
+      if mem.isEmpty then baseSystem
+      else baseSystem + "\n\n" + memoryBlock(mem)
+
+    system ~ truncate(transcript, maxTranscriptChars())
+
+  def mark(): Unit =
+    marked = transcript
+
+  def rollback(): Unit =
+    transcript = marked
+end
+
+//[ The volatile memory block, appended after the stable base prompt. One section
+  ! per key; the keys are the agent's own (steered by AGENT.md, no fixed schema).
+//]
+private def memoryBlock(memory: Map[String, String]): String =
+  var s = "# Working memory\n\n(You maintain this with the memory tools; it persists across turns.)\n"
+  for k ~ v in memory.toList do
+    s = s + "\n## \{k}\n\{v}\n"
+  s

@@ -18,44 +18,43 @@ import harpe.ffi.jsonMod
 import harpe.ffi.readFile
 import harpe.ffi.threadingMod
 import harpe.models.*
+import harpe.WindowedContext
 import harpe.Memory
 import harpe.SessionLog
 import harpe.workspace
 
-//[ One live conversation: its id, its append log, the running history, and how much
-  ! of that history is already persisted. A lock serializes turns within the session
-  ! so its history stays consistent under concurrent requests.
+//[ One live conversation: its id, its append log, its context (which owns the
+  ! running transcript window), and its working memory. A lock serializes turns
+  ! within the session so its state stays consistent under concurrent requests.
 //]
-class Session(id: String, log: SessionLog, initial: List[Message], memory: Memory)
+class Session(id: String, log: SessionLog, context: WindowedContext, memory: Memory)
   val lock = threadingMod.Lock()
-  var history: List[Message] = initial
-  var saved: Int = initial.size
   var lastActive: Float = time.now()
-  private var priorHistory: List[Message] = initial
+  private var pending: List[Message] = []
 
-  //[ Begin a user turn: append the user's message and return the history to run.
-    ! The pre-turn point is remembered so a cancelled/failed turn can roll back.
+  //[ Begin a user turn: mark the context's rollback point and append the user's
+    ! message. The message is remembered so `commit` can archive the whole turn.
   //]
-  def beginTurn(text: String): List[Message] =
+  def beginTurn(text: String): Unit =
     lastActive = time.now()
-    priorHistory = history
-    history = history + UserText(text)
-    history
+    val userMsg: Message = UserText(text)
+    pending = [userMsg]
+    context.mark()
+    context.append(userMsg)
 
-  //[ Commit a completed turn: adopt its history, append the newly-added messages to
-    ! the transcript archive, and persist memory.
+  //[ Commit a completed turn: append the user message plus the turn's delta (the
+    ! engine-produced messages) to the transcript archive, and persist memory.
   //]
-  def commit(updated: List[Message]): Unit =
-    history = updated
-    log.append(time.now(), history.drop(saved))
-    saved = history.size
+  def commit(delta: List[Message]): Unit =
+    log.append(time.now(), pending ++ delta)
     saveMemory()
 
-  //[ Abandon a cancelled/failed turn: restore the pre-turn history. Memory is still
-    ! persisted — it is deliberate and not rolled back with the transcript.
+  //[ Abandon a cancelled/failed turn: restore the context's pre-turn window.
+    ! Memory is still persisted — it is deliberate and not rolled back with the
+    ! transcript.
   //]
   def rollback(): Unit =
-    history = priorHistory
+    context.rollback()
     saveMemory()
 
   //[ Persist the working memory beside the transcript archive. //]

@@ -17,7 +17,7 @@ namespace harpe.turn
 
 import harpe.models.*
 import harpe.tools.*
-import harpe.Memory
+import harpe.Context
 
 //[ Interact
   !
@@ -68,10 +68,12 @@ union TurnEvent =
 
 //[ The outcome of one user turn
   !
-  ! An answer (with the updated history), an interruption, or a failed request.
+  ! An answer — with the turn's *delta*, the messages the engine produced this
+  ! turn (assistant replies and tool-result batches, in order), so the driver
+  ! can archive them — or an interruption, or a failed request.
 //]
 union TurnResult =
-    Answered(history: List[Message], text: String)
+    Answered(delta: List[Message], text: String)
   | Interrupted
   | Failed
 
@@ -154,15 +156,21 @@ private def fetchReply(
   ! Call the model (with retries), run any tool calls it requests, and repeat
   ! until it replies with plain text.
   !
+  ! The `context` owns the transcript: the engine appends each assistant reply
+  ! and tool-result batch to it, and asks it to compose `(system, messages)`
+  ! before every model request. The caller appends the turn's `UserText` (after
+  ! `context.mark()`) before calling; on `Answered` it receives the turn's
+  ! delta to archive, on interruption/failure it calls `context.rollback()`.
+  !
   ! A turn is bounded to `maxToolRounds` tool-call rounds; once spent the model
   ! is asked once more with no tools, forcing a final answer.
 //]
 def runTurn(
-    start: List[Message], memory: Memory, tools: List[Tool],
-    maxToolRounds: Int, maxRetries: Int, interact: Interact, baseSystem: String)
+    context: Context, tools: List[Tool],
+    maxToolRounds: Int, maxRetries: Int, interact: Interact)
 : TurnResult =
 
-  var history = start
+  var delta: List[Message] = []
   var rounds = 0
   var result: TurnResult = Failed
 
@@ -174,9 +182,9 @@ def runTurn(
     if rounds == maxToolRounds then
       interact.emit: ToolBudgetReached(maxToolRounds)
 
-    // Compose what the model sees for this request — memory folded into the system
-    // prompt, transcript truncated — once here, not in each concrete Interact.
-    val rendered = render(baseSystem, memory.snapshot(), history)
+    // Compose what the model sees for this request — the context's policy,
+    // applied once here, not in each concrete Interact.
+    val rendered = context.render(interact)
 
     match fetchReply(rendered.fst, rendered.snd, offer, maxRetries, interact)
       case Stopped =>
@@ -188,10 +196,11 @@ def runTurn(
         break
 
       case Got(reply) =>
-        history = history + reply
+        context.append(reply)
+        delta = delta + reply
 
         if reply.calls.isEmpty then
-          result = Answered(history, reply.text.trim)
+          result = Answered(delta, reply.text.trim)
           break
 
         var toolResults: List[ToolResult] = []
@@ -220,7 +229,9 @@ def runTurn(
           break
 
         else
-          history = history + ToolResults(toolResults)
+          val results = ToolResults(toolResults)
+          context.append(results)
+          delta = delta + results
           rounds = rounds + 1
   end // while
 

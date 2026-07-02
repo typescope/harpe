@@ -23,6 +23,7 @@ import harpe.models.*
 import harpe.tools.Tool
 import harpe.tools.memoryTools
 import harpe.Memory
+import harpe.WindowedContext
 import harpe.Workspace
 import harpe.workspace
 import harpe.SessionLog
@@ -55,6 +56,10 @@ private def runChat(): Unit receives stdout, workspace =
   val memory = new Memory
   val tools = Config.tools ++ memoryTools(memory)
 
+  // The context strategy for this run: memory + a sliding window over the
+  // transcript, starting empty.
+  val context = new WindowedContext(sysPrompt, memory, List.empty[Message])
+
   val inputHistory = workspace.relative("logs/inputs.txt")
   val interact = new ConsoleInteract(brain, stdout, inputHistory)
 
@@ -65,9 +70,6 @@ private def runChat(): Unit receives stdout, workspace =
   // resume, so it is written but never loaded.
   val sessionLog = SessionLog.newLog()
 
-  var history: List[Message] = []
-  var saved = 0   // count of messages already appended to the session file
-
   while true do
     // `None` is end-of-input (Ctrl-D); a blank line or a Ctrl-C'd prompt is
     // `Some("")`, which just re-prompts.
@@ -77,22 +79,20 @@ private def runChat(): Unit receives stdout, workspace =
 
     if userInput == "" then continue
 
-    val snapshot = history
-    history = history + UserText(userInput)
+    val userMsg: Message = UserText(userInput)
+    context.mark()
+    context.append(userMsg)
 
-    val sofar = history
     val res = interact.turn: () =>
-      runTurn(sofar, memory, tools, Config.maxToolRounds, Config.maxRetries, interact, sysPrompt)
+      runTurn(context, tools, Config.maxToolRounds, Config.maxRetries, interact)
 
-    if res is Answered(updated, text) then
-      history = updated
-      sessionLog.append(time.now(), history.drop(saved))
-      saved = history.size
+    if res is Answered(delta, text) then
+      sessionLog.append(time.now(), [userMsg] ++ delta)
       interact.agentResponse(text)
 
     else
       // Discard the cancelled/failed turn so the conversation stays valid.
-      history = snapshot
+      context.rollback()
       if res is Interrupted then println "  ⎋ interrupted"
       else println "  · request failed"
 

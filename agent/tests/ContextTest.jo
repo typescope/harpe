@@ -1,21 +1,38 @@
-//[ RenderTest.jo
+//[ ContextTest.jo
   !
-  ! Unit tests for the context-engineering surface (`harpe.turn`): `render`'s default
-  ! composition and `truncate`'s turn-boundary windowing (pairing-safe, keeps the
-  ! most recent turns).
+  ! Unit tests for the context surface (`harpe.Context`): `WindowedContext`'s
+  ! default composition (memory folded into the system tail, transcript windowed),
+  ! its `mark`/`rollback` turn bracketing, and `truncate`'s turn-boundary
+  ! windowing (pairing-safe, keeps the most recent turns).
 //]
 
-namespace RenderTest
+namespace ContextTest
 
 import jo.IO.stdout
 import harpe.turn.*
 import harpe.util.truncate
 import harpe.models.*
 import harpe.tools.*
+import harpe.Memory
+import harpe.WindowedContext
 
 private def check(label: String, cond: Bool): Unit receives stdout =
   assert: cond, "\{label} failed"
   println "  ok \{label}"
+
+// A do-nothing Interact: the default WindowedContext.render is pure and never
+// touches it.
+private class NoInteract
+  view Interact
+
+  def ask(system: String, messages: List[Message], tools: List[Tool]): Option[ReplyResult] = None
+
+  def emit(event: TurnEvent): Unit = pass
+
+  def cancelled: Bool = false
+
+  def pause(seconds: Float): Bool = false
+end
 
 private def user(t: String): Message = UserText(t)
 private def asst(t: String): Message = Assistant(t, List.empty[ToolCall])
@@ -26,18 +43,35 @@ private def toolTurn(u: String, code: String, out: String): List[Message] =
   [UserText(u), Assistant("", [call]), ToolResults([ToolResult("id", out)]), Assistant("done", List.empty[ToolCall])]
 
 def run(): Unit receives stdout =
-  // --- render: memory folded into the system tail; transcript passed through ---
-  val convo = [user("hi"), asst("hello")]
+  val nix = new NoInteract
 
-  val plain = render("BASE", Map.empty[String, String], convo)
+  // --- WindowedContext: memory folded into the system tail ---
+  val mem = new Memory
+  val ctx = new WindowedContext("BASE", mem, List.empty[Message])
+  ctx.append(user("hi"))
+  ctx.append(asst("hello"))
+
+  val plain = ctx.render(nix)
   check("render without memory leaves system as base", plain.fst == "BASE")
   check("render passes the transcript through", plain.snd.size == 2)
 
-  val mem = Map("goal" ~ "win", "todos" ~ "- a\n- b")
-  val withMem = render("BASE", mem, convo)
+  mem.set("goal", "win")
+  mem.set("todos", "- a\n- b")
+
+  val withMem = ctx.render(nix)
   check("render keeps base at the front", withMem.fst.startsWith("BASE"))
-  check("render appends memory keys", withMem.fst.contains("goal") && withMem.fst.contains("todos"))
+  check("a memory update is visible to the next render", withMem.fst.contains("goal") && withMem.fst.contains("todos"))
   check("render appends memory values", withMem.fst.contains("win") && withMem.fst.contains("- a\n- b"))
+
+  // --- mark/rollback: the window restores; memory stays ---
+  ctx.mark()
+  ctx.append(user("oops"))
+  ctx.append(asst("half-done"))
+  check("appended messages are in the window", ctx.render(nix).snd.size == 4)
+
+  ctx.rollback()
+  check("rollback restores the pre-turn window", ctx.render(nix).snd.size == 2)
+  check("rollback leaves memory alone", ctx.render(nix).fst.contains("win"))
 
   // --- truncate: small transcript is unchanged ---
   val a = [user("AAAA"), asst("aaaa")]   // 8 chars
