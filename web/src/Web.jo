@@ -17,26 +17,17 @@ import jo.IO.stdout
 import harpe.ffi.fileExists
 import harpe.ffi.loadDotenv
 import harpe.ffi.getenv
-import harpe.ffi.readFile
 import harpe.ffi.builtins
 import harpe.ffi.shutdownOnSigint
 import harpe.ffi.sysMod
 import harpe.Workspace
+import harpe.Defaults
 import harpe.workspace
 import os
 
-//[ The agent's working directory is the CWD; tools resolve paths against it. It
-  ! must hold the agent's own `jo.toml` and a `sandbox/`, checked up front so a
-  ! mislaunch fails clearly instead of with confusing path errors mid-run.
-//]
-private def inAgentDir(): Bool =
-  fileExists("jo.toml") && os.path.isdir("sandbox")
-
 //[ The entry point //]
 def main(): Unit receives stdout =
-  if !inAgentDir() then
-    println "Error: run this from an agent's working directory — a folder containing its jo.toml and a sandbox/ directory."
-  else
+  if Defaults.checkAgentDir() then
     loadDotenv(".env")
     val wspace = new Workspace(os.path.abspath("."))
     with workspace = wspace in serve()
@@ -50,11 +41,11 @@ private def serve(): Unit receives stdout, workspace =
     sysMod.exit(1)
 
   val brain = Config.model()
-  val sysPrompt = Config.systemPrompt()
+  val basePrompt = Config.basePrompt()
   val tools = Config.tools
-  val name = agentName()
+  val name = Config.agentName()
 
-  val server = new ChatServer(brain, sysPrompt, tools, name, workspace)
+  val server = new ChatServer(brain, basePrompt, tools, name, workspace)
 
   val host = getenv("HOST", "127.0.0.1")
   val port = builtins.int(getenv("PORT", "8765")).asInt
@@ -73,13 +64,3 @@ private def serve(): Unit receives stdout, workspace =
   shutdownOnSigint("\nHarpe ▸ shutting down.")
 
   httpd.serve_forever()
-
-//[ The agent's display name: the first Markdown H1 in AGENT.md, else a default. //]
-private def agentName(): String receives workspace =
-  if fileExists(workspace.agentMd) then
-    for line in readFile(workspace.agentMd).lines do
-      val t = line.trim
-      if t.startsWith("# ") then return t.substring(2, t.size).trim
-    "Harpe Agent"
-  else
-    "Harpe Agent"

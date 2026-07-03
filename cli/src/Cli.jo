@@ -16,7 +16,6 @@
 namespace harpe.cli
 
 import jo.IO.stdout
-import harpe.ffi.fileExists
 import harpe.ffi.loadDotenv
 import harpe.*
 import harpe.turn.*
@@ -25,26 +24,16 @@ import harpe.context.WindowedContext
 import os
 import time
 
-//[ The agent's working directory is the CWD, and the runCode/skill tools resolve
-  ! their paths against it. It must hold the agent's own `jo.toml` and a
-  ! `sandbox/` — the driver checks this up front so a mislaunch fails with a clear
-  ! message instead of confusing path errors mid-run.
-//]
-private def inAgentDir(): Bool =
-  fileExists("jo.toml") && os.path.isdir("sandbox")
-
 //[ The entry point   //]
 def main(): Unit receives stdout =
-  if !inAgentDir() then
-    println "Error: run this from an agent's working directory — a folder containing its jo.toml and a sandbox/ directory."
-  else
+  if Defaults.checkAgentDir() then
     loadDotenv(".env")
     val wspace = new Workspace(os.path.abspath("."))
     with workspace = wspace in runChat()
 
 private def runChat(): Unit receives stdout, workspace =
   val brain = Config.model()
-  val sysPrompt = Config.systemPrompt()
+  val basePrompt = Config.basePrompt()
 
   // The agent's working memory for this run, and the tools it curates it with. The
   // CLI is single-session and in-process — memory is not persisted across runs.
@@ -53,7 +42,7 @@ private def runChat(): Unit receives stdout, workspace =
 
   // The context strategy for this run: memory + a sliding window over the
   // transcript, starting empty.
-  val context = new WindowedContext(sysPrompt, memory, List.empty[Message])
+  val context = new WindowedContext(basePrompt, memory, List.empty[Message])
 
   // The agent for this run: brain, capabilities, context, turn policy.
   val agent = new Agent(brain, tools, context, Config.maxToolRounds)

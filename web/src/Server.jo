@@ -28,7 +28,7 @@ import harpe.tools.memoryTools
 import harpe.context.WindowedContext
 import time
 
-class ChatServer(brain: Model, sysPrompt: String, tools: List[Tool], name: String, wspace: Workspace)
+class ChatServer(brain: Model, basePrompt: String, tools: List[Tool], name: String, wspace: Workspace)
   // Resident sessions, id -> Session. Persisted sessions not yet touched this
   // run are loaded from disk on first access.
   private val registry = py.dict()
@@ -150,7 +150,7 @@ class ChatServer(brain: Model, sysPrompt: String, tools: List[Tool], name: Strin
     ! session's replayed transcript.
   //]
   private def assembleAgent(memory: Memory, initial: List[Message]): Agent =
-    val context = new WindowedContext(sysPrompt, memory, initial)
+    val context = new WindowedContext(basePrompt, memory, initial)
     new Agent(brain, tools ++ memoryTools(memory), context, Config.maxToolRounds)
 
   //[ Drop sessions idle longer than `Config.sessionIdleSeconds` from the resident

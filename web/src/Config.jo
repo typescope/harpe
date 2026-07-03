@@ -1,111 +1,50 @@
 //[ Config.jo
   !
-  ! Configuration for the web agent. Mirrors `harpe.cli.Config`: the same agent
-  ! knobs (system prompt, model, toolset, turn bounds), exposed as `defer` hooks
-  ! an agent overrides in its `jo.toml` — only the link prefix differs
-  ! (`harpe.web.*` instead of `harpe.cli.*`).
+  ! This agent's configuration — plain functions, meant to be edited. The common
+  ! cases delegate to the shared `harpe.Defaults`; customize by changing the code
+  ! here (e.g. append your own tools with `Defaults.tools() ++ [myTool]`, or
+  ! replace `Defaults.model()` with any `Model`).
 //]
 
 namespace harpe.web
 
-import harpe.ffi.getenv
-import harpe.ffi.sysMod
-import harpe.ffi.readFile
-import harpe.ffi.fileExists
-import harpe.ffi.jsonMod
 import harpe.*
-import harpe.models.*
-import harpe.tools.*
-
 
 section Config
-  //[ The system prompt is the agent's AGENT.md, used verbatim — fully visible and
-    ! editable by the agent author.
-    !
-    ! The framework injects nothing.
+  //[ The base of the system prompt: AGENT.md, used verbatim (the context
+    ! strategy may append volatile blocks — memory, summary — after it).
   //]
-  def systemPrompt(): String receives workspace =
-    if fileExists(workspace.agentMd) then readFile(workspace.agentMd) else ""
+  def basePrompt(): String receives workspace = workspace.read("AGENT.md") rescue None => ""
 
-  //[ extra tools
-    !
-    ! Deferred hook for ADDING tools. The default is none; an agent overrides it
-    ! in its jo.toml — `[main.links] "harpe.web.extraTools" = "MyAgent.myTools"` —
-    ! to offer its own tools alongside the built-ins. Its impl `receives workspace`,
-    ! so it can resolve paths against the agent's working directory.
+  //[ The agent's display name, shown by the driver. //]
+  def agentName(): String receives workspace = Defaults.extractAgentName()
+
+  //[ The tools offered to the model: runCode + the read-only skill tools.
+    ! Add your own: `Defaults.tools() ++ [myTool]`.
   //]
-  defer def extraTools(): List[Tool] receives workspace = []
+  def tools: List[Tool] receives workspace = Defaults.tools()
 
-  //[ default tools
-    !
-    ! Deferred hook for the BASE toolset (runCode + the read-only skill tools). An
-    ! agent that wants full control — including whether and how `runCode` exists —
-    ! overrides it: `[main.links] "harpe.web.defaultTools" = "MyAgent.myTools"`.
+  //[ The chat model, selected by env (PROVIDER / MODEL / API keys — see
+    ! `Defaults.model`). Replace with any `Model`, e.g. `harpe.models.echo()`
+    ! for a keyless dummy.
   //]
-  defer def defaultTools(): List[Tool] receives workspace =
-    val runTool = runCodeTool: workspace.guestDir, entry =>
-      os.makedirs(workspace.relative("logs"))
-      val f = py.open(workspace.relative("logs/runs.jsonl"), "a")
-      f.write(jsonMod.dumps(entry).asString + "\n")
-      f.close()
+  def model(): Model receives IO.stdout = Defaults.model()
 
-    [runTool] ++ skillTools(workspace.skillsDir)
-
-
-  //[ All tools including extra tools and default tools  //]
-  def tools: List[Tool] receives workspace = defaultTools ++ extraTools
-
-  //[ The LLM model
-    !
-    ! Deferred hook selecting the chat model. Controlled by env vars:
-    !
-    !   PROVIDER          "anthropic" (default) or "openai"
-    !   MODEL             model id — defaults to "claude-opus-4-6" for Anthropic,
-    !                     "gpt-4o" for OpenAI
-    !   ANTHROPIC_API_KEY required when PROVIDER=anthropic
-    !   OPENAI_API_KEY    required when PROVIDER=openai
-    !   OPENAI_BASE_URL   optional base URL for OpenAI-compatible endpoints
-    !                     (Groq, Together AI, local llama.cpp, …); leave unset
-    !                     for the default OpenAI API
+  //[ Cap on tool-call rounds in a single turn. Once spent, the model is asked
+    ! once more with NO tools, so it must answer with text — bounding runaway
+    ! turns (and API spend).
   //]
-  defer def model(): Model receives IO.stdout =
-    val provider = getenv("PROVIDER", "anthropic")
-    if provider == "openai" then
-      val key = getenv("OPENAI_API_KEY", "")
-      if key == "" then
-        println "Error: OPENAI_API_KEY is not set (put it in .env or the environment)."
-        sysMod.exit(1)
-      openai(key, getenv("MODEL", "gpt-4o"), getenv("OPENAI_BASE_URL", ""))
-    else
-      val key = getenv("ANTHROPIC_API_KEY", "")
-      if key == "" then
-        println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
-        sysMod.exit(1)
-      anthropic(key, getenv("MODEL", "claude-opus-4-6"))
+  def maxToolRounds(): Int = 50
 
-  //[ maxToolRounds
-    !
-    ! Cap on tool-call rounds in a single turn. Once spent, the model is asked once
-    ! more with NO tools, so it must answer with text — bounding runaway turns (and
-    ! API spend) from a model that keeps calling tools forever. Override in jo.toml:
-    ! `[main.links] "harpe.web.maxToolRounds" = "MyAgent.maxToolRounds"`.
+  //[ How many times to retry a transient model error (rate limit, 5xx,
+    ! connection blip) before giving up the turn, with exponential backoff.
   //]
-  defer def maxToolRounds(): Int = 50
+  def maxRetries(): Int = 4
 
-  //[ maxRetries
-    !
-    ! How many times to retry a transient model error (rate limit, 5xx, connection
-    ! blip) before giving up the turn, with exponential backoff between attempts.
-    ! Override in jo.toml like `maxToolRounds`.
+  //[ How long a session may sit idle in the resident registry before it is
+    ! evicted to free memory. Its transcript and memory are on disk, so it
+    ! reloads on next access — eviction bounds RAM as sessions accumulate on a
+    ! long-running server.
   //]
-  defer def maxRetries(): Int = 4
-
-  //[ sessionIdleSeconds
-    !
-    ! How long a session may sit idle in the resident registry before it is evicted
-    ! to free memory. Its transcript and memory are on disk, so it reloads on next
-    ! access — eviction bounds RAM as sessions accumulate on a long-running server.
-    ! Override in jo.toml like `maxToolRounds`.
-  //]
-  defer def sessionIdleSeconds(): Int = 1800
+  def sessionIdleSeconds(): Int = 1800
 end

@@ -1,83 +1,49 @@
 //[ Config.jo
   !
-  ! Configuration for the Telegram agent. Mirrors `harpe.web.Config`: the same
-  ! agent knobs (system prompt, model, toolset, turn bounds) as `defer` hooks an
-  ! agent overrides in its `jo.toml` (link prefix `harpe.telegram.Config.*`), plus
-  ! two Telegram-specific settings read from the environment — the bot token and
-  ! the chat-id allowlist.
+  ! This agent's configuration — plain functions, meant to be edited. The common
+  ! cases delegate to the shared `harpe.Defaults`; customize by changing the code
+  ! here (e.g. append your own tools with `Defaults.tools() ++ [myTool]`, or
+  ! replace `Defaults.model()` with any `Model`). Two settings are
+  ! Telegram-specific and read from the environment: the bot token and the
+  ! sender allowlist.
 //]
 
 namespace harpe.telegram
 
 import harpe.ffi.getenv
 import harpe.ffi.sysMod
-import harpe.ffi.readFile
-import harpe.ffi.fileExists
-import harpe.ffi.jsonMod
 import harpe.*
-import harpe.models.*
-import harpe.tools.*
-import os
-
 
 section Config
-  //[ The system prompt is the agent's AGENT.md, used verbatim — fully visible and
-    ! editable by the agent author. The framework injects nothing.
+  //[ The base of the system prompt: AGENT.md, used verbatim (the context
+    ! strategy may append volatile blocks — memory, summary — after it).
   //]
-  def systemPrompt(): String receives workspace =
-    if fileExists(workspace.agentMd) then readFile(workspace.agentMd) else ""
+  def basePrompt(): String receives workspace = workspace.read("AGENT.md") rescue None => ""
 
-  //[ extra tools
-    !
-    ! Deferred hook for ADDING tools. The default is none; an agent overrides it in
-    ! its jo.toml — `[main.links] "harpe.telegram.Config.extraTools" = "MyAgent.myTools"`
-    ! — to offer its own tools alongside the built-ins.
+  //[ The agent's display name, shown by the driver. //]
+  def agentName(): String receives workspace = Defaults.extractAgentName()
+
+  //[ The tools offered to the model: runCode + the read-only skill tools.
+    ! Add your own: `Defaults.tools() ++ [myTool]`.
   //]
-  defer def extraTools(): List[Tool] receives workspace = []
+  def tools: List[Tool] receives workspace = Defaults.tools()
 
-  //[ default tools
-    !
-    ! Deferred hook for the BASE toolset (runCode + the read-only skill tools). An
-    ! agent that wants full control — including whether and how `runCode` exists —
-    ! overrides it: `"harpe.telegram.Config.defaultTools" = "MyAgent.myTools"`.
+  //[ The chat model, selected by env (PROVIDER / MODEL / API keys — see
+    ! `Defaults.model`). Replace with any `Model`, e.g. `harpe.models.echo()`
+    ! for a keyless dummy.
   //]
-  defer def defaultTools(): List[Tool] receives workspace =
-    val runTool = runCodeTool: workspace.guestDir, entry =>
-      os.makedirs(workspace.relative("logs"))
-      val f = py.open(workspace.relative("logs/runs.jsonl"), "a")
-      f.write(jsonMod.dumps(entry).asString + "\n")
-      f.close()
+  def model(): Model receives IO.stdout = Defaults.model()
 
-    [runTool] ++ skillTools(workspace.skillsDir)
-
-  //[ All tools including extra tools and default tools  //]
-  def tools: List[Tool] receives workspace = defaultTools ++ extraTools
-
-  //[ The LLM model
-    !
-    ! Deferred hook selecting the chat model. Controlled by env vars:
-    !
-    !   PROVIDER          "anthropic" (default) or "openai"
-    !   MODEL             model id — defaults to "claude-opus-4-6" for Anthropic,
-    !                     "gpt-4o" for OpenAI
-    !   ANTHROPIC_API_KEY required when PROVIDER=anthropic
-    !   OPENAI_API_KEY    required when PROVIDER=openai
-    !   OPENAI_BASE_URL   optional base URL for OpenAI-compatible endpoints
+  //[ Cap on tool-call rounds in a single turn. Once spent, the model is asked
+    ! once more with NO tools, so it must answer with text — bounding runaway
+    ! turns (and API spend).
   //]
-  defer def model(): Model receives IO.stdout =
-    val provider = getenv("PROVIDER", "anthropic")
-    if provider == "openai" then
-      val key = getenv("OPENAI_API_KEY", "")
-      if key == "" then
-        println "Error: OPENAI_API_KEY is not set (put it in .env or the environment)."
-        sysMod.exit(1)
-      openai(key, getenv("MODEL", "gpt-4o"), getenv("OPENAI_BASE_URL", ""))
-    else
-      val key = getenv("ANTHROPIC_API_KEY", "")
-      if key == "" then
-        println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
-        sysMod.exit(1)
-      anthropic(key, getenv("MODEL", "claude-opus-4-6"))
+  def maxToolRounds(): Int = 50
+
+  //[ How many times to retry a transient model error (rate limit, 5xx,
+    ! connection blip) before giving up the turn, with exponential backoff.
+  //]
+  def maxRetries(): Int = 4
 
   //[ The Telegram bot token, from `TELEGRAM_BOT_TOKEN` (obtained from @BotFather).
     ! Required — the driver exits with a clear message if it is unset.
@@ -114,27 +80,13 @@ section Config
   //[ How long a single `getUpdates` long poll waits (seconds) before returning
     ! empty and looping again.
   //]
-  defer def pollSeconds(): Int = 50
+  def pollSeconds(): Int = 50
 
   //[ How long a chat's worker thread sits idle (no new messages) before it is
     ! reaped — its thread exits and the session leaves the resident registry. The
-    ! next message from that chat simply recreates it, reloading history from disk.
-    ! This bounds threads/memory to *active* chats rather than every chat seen
-    ! since startup. Default 15 minutes.
+    ! next message from that chat simply recreates it, reloading history from
+    ! disk. This bounds threads/memory to *active* chats rather than every chat
+    ! seen since startup. Default 15 minutes.
   //]
-  defer def idleSeconds(): Float = 900.0
-
-  //[ maxToolRounds
-    !
-    ! Cap on tool-call rounds in a single turn. Once spent, the model is asked once
-    ! more with NO tools, so it must answer with text — bounding runaway turns.
-  //]
-  defer def maxToolRounds(): Int = 50
-
-  //[ maxRetries
-    !
-    ! How many times to retry a transient model error before giving up the turn,
-    ! with exponential backoff between attempts.
-  //]
-  defer def maxRetries(): Int = 4
+  def idleSeconds(): Float = 900.0
 end

@@ -136,47 +136,41 @@ sandbox, so keep them narrow. A tool is data plus a handler — typed parameters
 no hand-written JSON schema:
 
 ```jo
-Tool:
-  "textLength"
-  "Return the number of characters in a string."
-  [strParam("text", "The text to measure")]
-  input =>
-    val n = input.string("text").size
-    new RunOutcome("\{n}", "measured · \{n} chars")
+def textLength(): Tool =
+  Tool:
+    "textLength"
+    "Return the number of characters in a string."
+    [strParam("text", "The text to measure")]
+    input =>
+      val n = input.string("text").size
+      new RunOutcome("\{n}", "measured · \{n} chars")
 ```
 
-Wire it through your agent's `jo.toml` — the same compile-time linking that
-wires `jo.main`; a mismatched signature is a compile error:
-
-```toml
-[main.links]
-"harpe.cli.extraTools" = "MyAgent.extraTools"    # ADD tools to the built-ins
-# "harpe.cli.defaultTools" = "MyAgent.allTools"  # or REPLACE the base set
-```
+Offer it by editing one line in your agent's `src/Config.jo`:
 
 ```jo
-// src/MyAgent.jo — next to the driver sources
-namespace MyAgent
-import harpe.*
-
-def extraTools(): List[Tool] = [ /* your Tool values */ ]
+def tools: List[Tool] receives workspace = Defaults.tools() ++ [textLength()]
 ```
 
-(The web and Telegram agents expose the same hooks under `harpe.web.*` /
-`harpe.telegram.*` — see each driver's `Config.jo` for the exact keys, including
-`maxToolRounds` and `maxRetries`.)
+`Config.jo` is the agent's whole configuration surface — plain functions:
+`basePrompt()` (reads `AGENT.md`; the context strategy appends volatile blocks
+after it), `tools`, `model()`, the knobs (`maxToolRounds`, `maxRetries`), and
+driver-specific settings (web session idle time, Telegram allowlist). The common
+cases delegate to the shared `harpe.Defaults` (base tools, env-selected model,
+name extraction). There are no registration hooks: to change behavior, change
+the code.
 
-**Choose the model.** `harpe.Model` is provider-agnostic; the default `model()`
-hook selects by env:
+**Choose the model.** `harpe.Model` is provider-agnostic; `Defaults.model()`
+selects by env:
 
 | `PROVIDER`            | Key                 | `MODEL` default   | Extra                       |
 |-----------------------|---------------------|-------------------|-----------------------------|
 | `anthropic` (default) | `ANTHROPIC_API_KEY` | `claude-opus-4-6` | —                           |
 | `openai`              | `OPENAI_API_KEY`    | `gpt-4o`          | `OPENAI_BASE_URL` (optional — Groq, llama.cpp, …) |
 
-Or link your own factory (`"harpe.cli.model" = "MyAgent.model"`);
-`harpe.models.echo` is a keyless dummy for wiring tests. A new provider is one
-file: a class that `view Model` plus a factory.
+Or edit `Config.model()` to return any `Model` — `harpe.models.echo()` is a
+keyless dummy for wiring tests. A new provider is one file: a class that
+`view Model` plus a factory.
 
 **Restyle the web page.** `web/assets/index.html` is a plain self-contained
 page, served from disk and read per request — edits show on browser refresh, no

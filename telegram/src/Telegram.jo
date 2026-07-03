@@ -22,18 +22,9 @@ import harpe.tools.memoryTools
 import harpe.context.WindowedContext
 import os
 
-//[ The agent's working directory is the CWD; tools resolve paths against it. It
-  ! must hold the agent's own `jo.toml` and a `sandbox/`, checked up front so a
-  ! mislaunch fails clearly instead of with confusing path errors mid-run.
-//]
-private def inAgentDir(): Bool =
-  fileExists("jo.toml") && os.path.isdir("sandbox")
-
 //[ The entry point //]
 def main(): Unit receives stdout =
-  if !inAgentDir() then
-    println "Error: run this from an agent's working directory — a folder containing its jo.toml and a sandbox/ directory."
-  else
+  if Defaults.checkAgentDir() then
     loadDotenv(".env")
     val wspace = new Workspace(os.path.abspath("."))
     with workspace = wspace in serve()
@@ -41,7 +32,7 @@ def main(): Unit receives stdout =
 private def serve(): Unit receives stdout, workspace =
   val token = Config.botToken()
   val brain = Config.model()
-  val sysPrompt = Config.systemPrompt()
+  val basePrompt = Config.basePrompt()
   val tools = Config.tools
   val allowed = Config.allowedSenders()
   val client = new TelegramClient(token)
@@ -58,9 +49,9 @@ private def serve(): Unit receives stdout, workspace =
   val result = me.get("result").cast[py.Dict]
   val username = result.get("username").asString
   val botId = result.get("id").asInt
-  val bot = new TelegramBot(brain, sysPrompt, tools, client, allowed, username, botId)
+  val bot = new TelegramBot(brain, basePrompt, tools, client, allowed, username, botId)
 
-  println "Harpe ▸ \{agentName()} is live on Telegram as @\{username} (Ctrl-C to stop)"
+  println "Harpe ▸ \{Config.agentName()} is live on Telegram as @\{username} (Ctrl-C to stop)"
 
   if allowed.isEmpty then
     println "  ⚠ TELEGRAM_ALLOWED_SENDERS is empty — all messages are rejected until you add sender ids."
@@ -70,23 +61,13 @@ private def serve(): Unit receives stdout, workspace =
 
   bot.run()
 
-//[ The agent's display name: the first Markdown H1 in AGENT.md, else a default. //]
-private def agentName(): String receives workspace =
-  if fileExists(workspace.agentMd) then
-    for line in readFile(workspace.agentMd).lines do
-      val t = line.trim
-      if t.startsWith("# ") then return t.substring(2, t.size).trim
-    "Harpe Agent"
-  else
-    "Harpe Agent"
-
 //[ The bot: holds the model, prompt, toolset, the network client, and the
   ! sender allowlist, plus a registry of resident sessions keyed by chat id. It
   ! polls for updates and drives one turn per incoming message. `allowed` is the
   ! set of permitted sender (user) ids — authorization is by who sends, not where.
 //]
 private class TelegramBot(
-    brain: Model, sysPrompt: String, tools: List[Tool],
+    brain: Model, basePrompt: String, tools: List[Tool],
     client: TelegramClient, allowed: List[String],
     botUsername: String, botId: Int)
 
@@ -239,7 +220,7 @@ private class TelegramBot(
       // `Session.load` caps the replayed transcript (a RAM backstop); the full
       // transcript stays on disk. The session's agent: the shared brain and tools
       // plus this chat's memory tools, over a windowed context.
-      val context = new WindowedContext(sysPrompt, memory, Session.load(chatId))
+      val context = new WindowedContext(basePrompt, memory, Session.load(chatId))
       val agent = new Agent(brain, tools ++ memoryTools(memory), context, Config.maxToolRounds)
       val session = new Session(chatId, log, agent, memory)
       registryLock.acquire()
