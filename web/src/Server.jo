@@ -217,8 +217,11 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       arr.append(py.dict("id" ~ m.id, "title" ~ m.title, "time" ~ m.time))
     respondJson(startResp, py.dict("sessions" ~ arr))
 
-  //[ One session's user/agent messages, for rendering on load. Tool-result turns
-    ! are internal and omitted; empty assistant turns (pure tool calls) too.
+  //[ One session's user/agent messages, for rendering on load — only the
+    ! visible conversation: each user message and each turn's FINAL reply. An
+    ! assistant message that carries tool calls is intermediate turn traffic
+    ! (commentary before a tool runs), and tool results are internal; both are
+    ! omitted, matching the live view's transient progress.
   //]
   private def handleHistory(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
     val id = queryParam(environ, "session")
@@ -232,8 +235,8 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       if m is UserText(t) then
         arr.append(py.dict("role" ~ "user", "text" ~ t))
 
-      else if m is Assistant(t, _) then
-        if t != "" then arr.append(py.dict("role" ~ "agent", "text" ~ t))
+      else if m is Assistant(t, calls) then
+        if calls.isEmpty && t != "" then arr.append(py.dict("role" ~ "agent", "text" ~ t))
 
     respondJson(startResp, py.dict("messages" ~ arr))
 
