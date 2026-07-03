@@ -58,9 +58,9 @@ private def toMessages(history: List[Message]): py.List =
   ! A `stop_reason` of "max_tokens" means the reply was cut off — possibly mid
   ! tool call, whose input JSON would be incomplete — so a truncated reply keeps
   ! its text plus a visible marker and DROPS any tool calls rather than running
-  ! a tool on partial arguments. (Public for offline testing — see `ModelTest`.)
+  ! a tool on partial arguments.
 //]
-def parseReply(response: py.Dynamic): Assistant =
+private def parseReply(response: py.Dynamic): Assistant =
   val content: py.List = response.content.cast[py.List]
   var text = ""
   var calls: List[ToolCall] = []
