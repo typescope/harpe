@@ -79,8 +79,9 @@ private class TelegramClient(token: String)
       PollFailed(detail(resp))
 
   //[ Send `text` to `chatId`, split across as many messages as the 4096-char
-    ! limit requires. Each chunk is rendered as Telegram HTML (so the model's
-    ! Markdown — bold, code, links — displays); if Telegram rejects the markup,
+    ! limit requires. Each chunk is rendered from the model's Markdown into
+    ! Telegram HTML (`Markdown.toHtml` — a real CommonMark parse: headings,
+    ! lists, quotes, code, emphasis, links); if Telegram rejects the markup,
     ! that chunk is resent as plain text so the content always gets through. An
     ! empty body is replaced with a placeholder so the send never fails on it.
   //]
