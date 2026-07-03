@@ -31,18 +31,30 @@ jobs:
       - name: Verify Jo install
         run: jo --version
 
-      - name: Build example
-        working-directory: example
+      - name: Build CLI agent
+        working-directory: cli
         run: jo build
 
-      - name: Build example-web
-        working-directory: example-web
+      - name: Build CLI sandbox guest
+        working-directory: cli
+        run: jo build --spec sandbox/guest/jo.toml
+
+      - name: Build web agent
+        working-directory: web
         run: jo build
 
-      - name: Build example-telegram
-        working-directory: example-telegram
+      - name: Build web sandbox guest
+        working-directory: web
+        run: jo build --spec sandbox/guest/jo.toml
+
+      - name: Build Telegram agent
+        working-directory: telegram
         run: jo build
 
-      - name: Test agent
+      - name: Build Telegram sandbox guest
+        working-directory: telegram
+        run: jo build --spec sandbox/guest/jo.toml
+
+      - name: Test agent library
         working-directory: agent
         run: jo test
