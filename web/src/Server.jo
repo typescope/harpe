@@ -24,11 +24,9 @@ namespace harpe.web
 import harpe.*
 import harpe.ffi.*
 import harpe.turn.*
-import harpe.tools.memoryTools
-import harpe.context.WindowedContext
 import time
 
-class ChatServer(brain: Model, basePrompt: String, tools: List[Tool], name: String, wspace: Workspace)
+class ChatServer(brain: Model, name: String, wspace: Workspace)
   // Resident sessions, id -> Session. Persisted sessions not yet touched this
   // run are loaded from disk on first access.
   private val registry = py.dict()
@@ -125,7 +123,12 @@ class ChatServer(brain: Model, basePrompt: String, tools: List[Tool], name: Stri
   private def createSession(): Session receives workspace =
     val id = time.strftime("%Y%m%dT%H%M%S") + "-" + py.module("secrets").token_hex(2).asString
     val memory = new Memory
-    val session = new Session(id, Session.forSession(id), assembleAgent(memory, List.empty[Message]), memory)
+    val agent = Config.agent:
+      brain
+      memory
+      List.empty[Message]
+
+    val session = new Session(id, Session.forSession(id), agent, memory)
     registry.set(id, session)
     session
 
@@ -141,17 +144,14 @@ class ChatServer(brain: Model, basePrompt: String, tools: List[Tool], name: Stri
       val memory = Memory.load(log.memoryPath)
       // `Session.load` caps the replayed transcript (a RAM backstop); the full
       // transcript stays on disk.
-      val session = new Session(id, log, assembleAgent(memory, Session.load(id)), memory)
+      val agent = Config.agent:
+        brain
+        memory
+        Session.load(id)
+
+      val session = new Session(id, log, agent, memory)
       registry.set(id, session)
       session
-
-  //[ Assemble a session's agent: the shared brain and tools plus the tools that
-    ! curate this session's memory, over a windowed context seeded with the
-    ! session's replayed transcript.
-  //]
-  private def assembleAgent(memory: Memory, initial: List[Message]): Agent =
-    val context = new WindowedContext(basePrompt, memory, initial)
-    new Agent(brain, tools ++ memoryTools(memory), context, Config.maxToolRounds)
 
   //[ Drop sessions idle longer than `Config.sessionIdleSeconds` from the resident
     ! registry; they reload from disk on next access. Bounds memory on a long-running

@@ -18,8 +18,6 @@ import jo.IO.stdout
 import harpe.ffi.*
 import harpe.*
 import harpe.turn.*
-import harpe.tools.memoryTools
-import harpe.context.WindowedContext
 import os
 
 //[ The entry point //]
@@ -32,8 +30,6 @@ def main(): Unit receives stdout =
 private def serve(): Unit receives stdout, workspace =
   val token = Config.botToken()
   val brain = Config.model()
-  val basePrompt = Config.basePrompt()
-  val tools = Config.tools
   val allowed = Config.allowedSenders()
   val client = new TelegramClient(token)
 
@@ -49,7 +45,7 @@ private def serve(): Unit receives stdout, workspace =
   val result = me.get("result").cast[py.Dict]
   val username = result.get("username").asString
   val botId = result.get("id").asInt
-  val bot = new TelegramBot(brain, basePrompt, tools, client, allowed, username, botId)
+  val bot = new TelegramBot(brain, client, allowed, username, botId)
 
   println "Harpe ▸ \{Config.agentName()} is live on Telegram as @\{username} (Ctrl-C to stop)"
 
@@ -67,8 +63,7 @@ private def serve(): Unit receives stdout, workspace =
   ! set of permitted sender (user) ids — authorization is by who sends, not where.
 //]
 private class TelegramBot(
-    brain: Model, basePrompt: String, tools: List[Tool],
-    client: TelegramClient, allowed: List[String],
+    brain: Model, client: TelegramClient, allowed: List[String],
     botUsername: String, botId: Int)
 
   // Resident sessions, chatId -> Session. A chat not yet touched this run is
@@ -218,10 +213,12 @@ private class TelegramBot(
       val log = Session.forSession(chatId)
       val memory = Memory.load(log.memoryPath)
       // `Session.load` caps the replayed transcript (a RAM backstop); the full
-      // transcript stays on disk. The session's agent: the shared brain and tools
-      // plus this chat's memory tools, over a windowed context.
-      val context = new WindowedContext(basePrompt, memory, Session.load(chatId))
-      val agent = new Agent(brain, tools ++ memoryTools(memory), context, Config.maxToolRounds)
+      // transcript stays on disk. The session's agent is assembled by Config.
+      val agent = Config.agent:
+        brain
+        memory
+        Session.load(chatId)
+
       val session = new Session(chatId, log, agent, memory)
       registryLock.acquire()
       registry.set(chatId, session)

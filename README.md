@@ -146,19 +146,23 @@ def textLength(): Tool =
       new RunOutcome("\{n}", "measured · \{n} chars")
 ```
 
-Offer it by editing one line in your agent's `src/Config.jo`:
+Offer it by editing the toolset line in your agent's `Config.agent`:
 
 ```jo
-def tools: List[Tool] receives workspace = Defaults.tools() ++ [textLength()]
+val tools = Defaults.tools() ++ memoryTools(memory) ++ [textLength()]
 ```
 
-`Config.jo` is the agent's whole configuration surface — plain functions:
-`basePrompt()` (reads `AGENT.md`; the context strategy appends volatile blocks
-after it), `tools`, `model()`, the knobs (`maxToolRounds`, `maxRetries`), and
-driver-specific settings (web session idle time, Telegram allowlist). The common
-cases delegate to the shared `harpe.Defaults` (base tools, env-selected model,
-name extraction). There are no registration hooks: to change behavior, change
-the code.
+`Config.jo` is the agent's whole configuration surface — plain functions,
+centered on `agent(brain, memory, initial)`: the per-session assembly of the
+base prompt (from `AGENT.md`), the toolset (base tools + the session's memory
+tools), the context strategy, and the turn budget. It is *this* agent's
+configuration, not framework code, so it assumes freely — edit it to change any
+of those (an agent with different assumptions, e.g. a sub-agent, constructs
+`Agent` directly). Around it sit `model()`, the knobs (`maxToolRounds`,
+`maxRetries`), and driver-specific settings (web session idle time, Telegram
+allowlist). The common cases delegate to the shared `harpe.Defaults` (base
+tools, env-selected model, name extraction). There are no registration hooks: to
+change behavior, change the code.
 
 **Choose the model.** `harpe.Model` is provider-agnostic; `Defaults.model()`
 selects by env:

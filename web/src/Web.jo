@@ -41,11 +41,9 @@ private def serve(): Unit receives stdout, workspace =
     sysMod.exit(1)
 
   val brain = Config.model()
-  val basePrompt = Config.basePrompt()
-  val tools = Config.tools
   val name = Config.agentName()
 
-  val server = new ChatServer(brain, basePrompt, tools, name, workspace)
+  val server = new ChatServer(brain, name, workspace)
 
   val host = getenv("HOST", "127.0.0.1")
   val port = builtins.int(getenv("PORT", "8765")).asInt

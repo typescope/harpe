@@ -9,17 +9,27 @@
 namespace harpe.cli
 
 import harpe.*
+import harpe.tools.memoryTools
+import harpe.context.WindowedContext
 
 section Config
-  //[ The base of the system prompt: AGENT.md, used verbatim (the context
-    ! strategy may append volatile blocks — memory, summary — after it).
+  //[ Assemble this agent for one session — the central place where its pieces
+    ! come together: AGENT.md as the base prompt, the base tools plus the tools
+    ! curating this session's memory, a sliding-window context over the memory
+    ! and the replayed transcript (`[]` for a fresh session), and the turn
+    ! budget.
+    !
+    ! This is THIS agent's configuration, not framework code, so it assumes
+    ! freely — edit it to change the prompt source, the toolset, or the context
+    ! strategy (e.g. a `SummarizingContext` with a cheap distiller model). An
+    ! agent with different assumptions (a sub-agent, say) constructs `Agent`
+    ! directly.
   //]
-  def basePrompt(): String receives workspace = workspace.read("AGENT.md") rescue None => ""
-
-  //[ The tools offered to the model: runCode + the read-only skill tools.
-    ! Add your own: `Defaults.tools() ++ [myTool]`.
-  //]
-  def tools: List[Tool] receives workspace = Defaults.tools()
+  def agent(brain: Model, memory: Memory, initial: List[Message]): Agent receives workspace =
+    val basePrompt = workspace.read("AGENT.md") rescue None => ""
+    val tools = Defaults.tools() ++ memoryTools(memory)
+    val context = new WindowedContext(basePrompt, memory, initial)
+    new Agent(brain, tools, context, maxToolRounds())
 
   //[ The chat model, selected by env (PROVIDER / MODEL / API keys — see
     ! `Defaults.model`). Replace with any `Model`, e.g. `harpe.models.echo()`

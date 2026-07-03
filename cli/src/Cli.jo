@@ -19,8 +19,6 @@ import jo.IO.stdout
 import harpe.ffi.loadDotenv
 import harpe.*
 import harpe.turn.*
-import harpe.tools.memoryTools
-import harpe.context.WindowedContext
 import os
 import time
 
@@ -33,19 +31,15 @@ def main(): Unit receives stdout =
 
 private def runChat(): Unit receives stdout, workspace =
   val brain = Config.model()
-  val basePrompt = Config.basePrompt()
 
-  // The agent's working memory for this run, and the tools it curates it with. The
-  // CLI is single-session and in-process — memory is not persisted across runs.
+  // The agent for this run — assembled by the agent's own Config. Its working
+  // memory is in-process for the run (the CLI has no session resume), and the
+  // context starts on an empty transcript.
   val memory = new Memory
-  val tools = Config.tools ++ memoryTools(memory)
-
-  // The context strategy for this run: memory + a sliding window over the
-  // transcript, starting empty.
-  val context = new WindowedContext(basePrompt, memory, List.empty[Message])
-
-  // The agent for this run: brain, capabilities, context, turn policy.
-  val agent = new Agent(brain, tools, context, Config.maxToolRounds)
+  val agent = Config.agent:
+    brain
+    memory
+    List.empty[Message]
 
   val inputHistory = workspace.relative("logs/inputs.txt")
   val interact = new ConsoleInteract(stdout, inputHistory)
@@ -67,8 +61,8 @@ private def runChat(): Unit receives stdout, workspace =
     if userInput == "" then continue
 
     val userMsg: Message = UserText(userInput)
-    context.mark()
-    context.append(userMsg)
+    agent.context.mark()
+    agent.context.append(userMsg)
 
     val res = interact.turn: () =>
       agent.runTurn(Config.maxRetries, interact)
@@ -79,7 +73,7 @@ private def runChat(): Unit receives stdout, workspace =
 
     else
       // Discard the cancelled/failed turn so the conversation stays valid.
-      context.rollback()
+      agent.context.rollback()
       if res is Interrupted then println "  ⎋ interrupted"
       else println "  · request failed"
 
