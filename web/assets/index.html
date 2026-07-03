@@ -128,12 +128,7 @@
       animation: pulse 1s infinite ease-in-out;
     }
     @keyframes pulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
-    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 2px 0; }
-    .chip {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 12px; color: #3a5; background: #eef7f0;
-      border: 1px solid #d4ebda; border-radius: 8px; padding: 2px 8px;
-    }
+    .bubble.notice { color: var(--muted); font-style: italic; }
     .empty {
       max-width: 760px; margin: 16vh auto 0; padding: 0 20px;
       text-align: center; color: var(--muted);
@@ -359,8 +354,6 @@
       var statusText = el('span', null, 'thinking');
       status.appendChild(statusText);
       row.appendChild(status);
-      var chips = el('div', 'chips');
-      row.appendChild(chips);
       scrollDown();
 
       fetch('/api/message', {
@@ -388,7 +381,7 @@
             while ((idx = buf.indexOf(NL)) >= 0) {
               var line = buf.slice(0, idx).trim();
               buf = buf.slice(idx + 1);
-              if (line) handle(JSON.parse(line), bubble, statusText, chips);
+              if (line) handle(JSON.parse(line), bubble, statusText);
             }
             return pump();
           });
@@ -402,14 +395,18 @@
       });
     }
 
-    function handle(ev, bubble, statusText, chips) {
+    // Progress is transient: while the turn runs, the pulsing dot plus one
+    // line of small text show the latest step (thinking / tool summaries);
+    // it all disappears when the turn's result arrives (finish() removes the
+    // status element). Only the result lands in the transcript.
+    function handle(ev, bubble, statusText) {
       if (ev.type === 'session') {
         currentSession = ev.id;
         history.pushState({}, '', '/c/' + ev.id);
       } else if (ev.type === 'status') {
         statusText.textContent = ev.label;
       } else if (ev.type === 'tool') {
-        chips.appendChild(el('span', 'chip', ev.summary));
+        statusText.textContent = ev.summary;
       } else if (ev.type === 'answer') {
         var html = renderMarkdown(ev.text);
         if (html === null) bubble.textContent = ev.text;
@@ -418,7 +415,8 @@
         bubble.classList.add('error');
         bubble.textContent = ev.detail;
       } else if (ev.type === 'interrupted') {
-        statusText.textContent = 'stopped';
+        bubble.classList.add('notice');
+        bubble.textContent = 'Stopped.';
       } else if (ev.type === 'failed') {
         bubble.classList.add('error');
         bubble.textContent = 'request failed';
