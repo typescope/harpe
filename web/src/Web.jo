@@ -20,6 +20,7 @@ import harpe.ffi.getenv
 import harpe.ffi.readFile
 import harpe.ffi.builtins
 import harpe.ffi.shutdownOnSigint
+import harpe.ffi.sysMod
 import harpe.Workspace
 import harpe.workspace
 import os
@@ -41,6 +42,13 @@ def main(): Unit receives stdout =
     with workspace = wspace in serve()
 
 private def serve(): Unit receives stdout, workspace =
+  // The chat page is the agent's own file, served from disk (see Server.route),
+  // so the agent owns and customizes it. Fail fast with a pointer if it is missing.
+  if !fileExists(workspace.relative("assets/index.html")) then
+    println "Error: assets/index.html not found — the web driver serves the chat page from the agent's assets/ directory."
+    println "  It ships with the web agent; restore it from the harpe repo (web/assets/index.html)."
+    sysMod.exit(1)
+
   val brain = Config.model()
   val sysPrompt = Config.systemPrompt()
   val tools = Config.tools

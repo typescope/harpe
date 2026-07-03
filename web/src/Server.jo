@@ -16,6 +16,7 @@
   ! the URL (`/c/<id>`). A turn runs under that session's lock, and its history is
   ! persisted via `SessionLog`, so a session resumes by id — even across restarts,
   ! by loading from disk.
+  !
 //]
 
 namespace harpe.web
@@ -41,7 +42,7 @@ class ChatServer(brain: Model, sysPrompt: String, tools: List[Tool], name: Strin
     val path = environ.get("PATH_INFO", "/").asString
 
     if method == "GET" && (path == "/" || path.startsWith("/c/")) then
-      respond(startResp, "200 OK", "text/html; charset=utf-8", Assets.indexHtml)
+      respond(startResp, "200 OK", "text/html; charset=utf-8", readFile(indexPath()))
 
     else if path == "/api/info" then
       respondJson(startResp, py.dict("name" ~ name))
@@ -57,6 +58,13 @@ class ChatServer(brain: Model, sysPrompt: String, tools: List[Tool], name: Strin
 
     else
       respond(startResp, "404 Not Found", "text/plain", "not found")
+
+  //[ The chat page is the agent's own `assets/index.html` (its presence is
+    ! checked at startup, see `Web.serve`). Read from disk on every request, so
+    ! editing the page needs no rebuild or restart.
+  //]
+  private def indexPath(): String receives workspace =
+    workspace.relative("assets/index.html")
 
   //[ Run one turn, streaming its progress and final answer as NDJSON.
     !
