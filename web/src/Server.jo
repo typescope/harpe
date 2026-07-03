@@ -104,7 +104,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
     session.beginTurn(text)
 
-    match session.agent.runTurn(Config.maxRetries, interact)
+    match session.agent.runTurn(interact, Config.maxToolRounds, Config.maxRetries)
     case Answered(delta, answer) =>
       session.commit(delta)
       sink(py.dict("type" ~ "answer", "text" ~ answer))

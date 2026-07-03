@@ -65,7 +65,7 @@ private def runChat(): Unit receives stdout, workspace =
     agent.context.append(userMsg)
 
     val res = interact.turn: () =>
-      agent.runTurn(Config.maxRetries, interact)
+      agent.runTurn(interact, Config.maxToolRounds, Config.maxRetries)
 
     if res is Answered(delta, text) then
       sessionLog.append(time.now(), [userMsg] ++ delta)

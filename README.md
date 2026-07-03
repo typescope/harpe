@@ -73,8 +73,8 @@ An **`Agent`** bundles what thinks, what it can do, what it sees, and its turn
 policy:
 
 ```
-class Agent(brain: Model, tools: List[Tool], context: Context, maxToolRounds: Int)
-  def runTurn(maxRetries: Int, interact: Interact): TurnResult
+class Agent(brain: Model, tools: List[Tool], context: Context)
+  def runTurn(interact: Interact, maxToolRounds: Int, maxRetries: Int): TurnResult
 ```
 
 `runTurn` asks the model, runs the tool calls it makes, and repeats until the

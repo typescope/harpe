@@ -19,7 +19,7 @@ namespace harpe
 import harpe.turn.*
 
 //[ An agent: what thinks, what it can do, what it sees, and its turn policy. //]
-class Agent(brain: Model, tools: List[Tool], context: Context, maxToolRounds: Int)
+class Agent(brain: Model, tools: List[Tool], context: Context)
 
   //[ Drive one user turn
     !
@@ -37,7 +37,7 @@ class Agent(brain: Model, tools: List[Tool], context: Context, maxToolRounds: In
     ! transport policy — how often a transient model error is retried — so it is
     ! an argument, not part of the agent.
   //]
-  def runTurn(maxRetries: Int, interact: Interact): TurnResult =
+  def runTurn(interact: Interact, maxToolRounds: Int, maxRetries: Int): TurnResult =
     var delta: List[Message] = []
     var rounds = 0
     var result: TurnResult = Failed

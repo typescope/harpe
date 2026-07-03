@@ -264,7 +264,7 @@ private class TelegramBot(
 
     session.beginTurn(text)
 
-    match session.agent.runTurn(Config.maxRetries, interact)
+    match session.agent.runTurn(interact, Config.maxToolRounds, Config.maxRetries)
     case Answered(delta, answer) =>
       session.commit(delta)
       client.sendMessage(session.id, answer)
