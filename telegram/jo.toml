@@ -1,9 +1,15 @@
 jo   = "0.11"
 name = "harpe-telegram"
 
-[package]
-version = "0.1.0"
-runtime = "python"
+[main]
+target = "python"
+compile-options = ["--use-runtime-api", "python"]
 
 [main.dependencies]
 harpe = { path = "../agent" }
+
+[main.links]
+"jo.main" = "harpe.telegram.main"
+
+[commands]
+start = "jo build --spec sandbox/guest/jo.toml && jo run"
