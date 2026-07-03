@@ -10,6 +10,7 @@
   !   GET  /api/sessions    the persisted sessions, newest first (for the picker)
   !   GET  /api/history     one session's messages (to render on load)
   !   POST /api/message     run one turn, STREAMING progress then the answer (NDJSON)
+  !   POST /api/stop        request cancellation of a session's running turn
   !
   ! Sessions are the conversation's unit: a `POST /api/message` with no `session`
   ! mints a new id (emitted as the first stream event), and the browser puts it in
@@ -28,8 +29,11 @@ import time
 
 class ChatServer(brain: Model, name: String, wspace: Workspace)
   // Resident sessions, id -> Session. Persisted sessions not yet touched this
-  // run are loaded from disk on first access.
+  // run are loaded from disk on first access. The server is threaded (each
+  // request on its own thread), so registry access is guarded by registryLock;
+  // turns within one session are serialized by the session's own lock.
   private val registry = py.dict()
+  private val registryLock = threadingMod.Lock()
 
   //[ The WSGI application: establish the workspace context, then route. //]
   def handle(environ: py.Dynamic, startResp: py.Dynamic): py.List =
@@ -53,6 +57,9 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
     else if path == "/api/message" && method == "POST" then
       handleMessage(environ, startResp)
+
+    else if path == "/api/stop" && method == "POST" then
+      handleStop(environ, startResp)
 
     else
       respond(startResp, "404 Not Found", "text/plain", "not found")
@@ -97,10 +104,24 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
     py.list()
 
+  //[ Request cancellation of a session's running turn: set its stop event; the
+    ! engine notices between model calls and tool executions and rolls the turn
+    ! back. Unknown or idle sessions are a no-op — stopping is idempotent.
+  //]
+  private def handleStop(environ: py.Dynamic, startResp: py.Dynamic): py.List =
+    val body = jsonMod.loads(readBody(environ)).cast[py.Dict]
+    val id = body.get("session", "").asString
+
+    registryLock.acquire()
+    if registry.contains(id) then registry.get(id).cast[Session].stop.set()
+    registryLock.release()
+
+    respondJson(startResp, py.dict("ok" ~ true))
+
   private def runOneTurn(session: Session, text: String, sink: Sink): Unit =
     session.lock.acquire()
 
-    val interact = new WebInteract(sink)
+    val interact = new WebInteract(sink, session.stop)
 
     session.beginTurn(text)
 
@@ -129,17 +150,27 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       List.empty[Message]
 
     val session = new Session(id, Session.forSession(id), agent, memory)
+
+    registryLock.acquire()
     registry.set(id, session)
+    registryLock.release()
+
     session
 
   //[ The session for `id` — resident if seen this run, otherwise loaded from disk
-    ! (an unknown id loads as an empty conversation keyed to that id).
+    ! (an unknown id loads as an empty conversation keyed to that id). Two
+    ! concurrent first touches of the same id both load; the second registration
+    ! wins — harmless, since the loser is dropped before running a turn.
   //]
   private def openSession(id: String): Session receives workspace =
-    if registry.contains(id) then
-      registry.get(id).cast[Session]
+    registryLock.acquire()
+    val resident: Option[Session] = if registry.contains(id) then Some(registry.get(id).cast[Session]) else None
+    registryLock.release()
 
-    else
+    match resident
+    case Some(session) => session
+
+    case None =>
       val log = Session.forSession(id)
       val memory = Memory.load(log.memoryPath)
       // `Session.load` caps the replayed transcript (a RAM backstop); the full
@@ -150,15 +181,26 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
         Session.load(id)
 
       val session = new Session(id, log, agent, memory)
-      registry.set(id, session)
-      session
+
+      registryLock.acquire()
+      val winner =
+        if registry.contains(id) then registry.get(id).cast[Session]
+        else
+          registry.set(id, session)
+          session
+      registryLock.release()
+
+      winner
 
   //[ Drop sessions idle longer than `Config.sessionIdleSeconds` from the resident
-    ! registry; they reload from disk on next access. Bounds memory on a long-running
-    ! server. The WSGI server is single-threaded, so this runs between requests.
+    ! registry; they reload from disk on next access. Bounds memory on a
+    ! long-running server. A session evicted while its turn still runs is
+    ! harmless: the running turn holds its own reference and commits to disk.
   //]
   private def evictIdle(): Unit =
     val cutoff = time.now() - Config.sessionIdleSeconds().toFloat
+
+    registryLock.acquire()
     val stale = py.list()
 
     for k in py.iter(registry.keys()) do
@@ -166,6 +208,8 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
     for k in py.iter(stale) do
       val _ = registry.pop(k)
+
+    registryLock.release()
 
   private def handleSessions(startResp: py.Dynamic): py.List receives workspace =
     val arr = py.list()

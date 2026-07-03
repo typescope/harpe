@@ -6,9 +6,10 @@
   ! turn of the shared engine (`harpe.turn.runTurn`), driven by `WebInteract` so
   ! the browser sees progress live.
   !
-  ! The skeleton is single-session and single-threaded — fine for a local
-  ! `jo run` dev chat. Sessions, cancellation, and the transparency/confirmation
-  ! UI are later phases.
+  ! The server is threaded (one request per thread), so the page and
+  ! `/api/stop` stay responsive while a turn runs; a session's turns are
+  ! serialized by its lock, and a running turn is cancellable via the session's
+  ! stop event.
 //]
 
 namespace harpe.web
@@ -53,8 +54,20 @@ private def serve(): Unit receives stdout, workspace =
   val app = (environ: py.Dynamic, startResp: py.Dynamic) =>
     server.handle(environ, startResp)
 
+  // A THREADED WSGI server: each request runs on its own thread, so the page
+  // and `/api/stop` stay responsive while a long turn runs. Turns within one
+  // session are still serialized by the session lock, and the shared model
+  // client is thread-safe. daemon_threads lets Ctrl-C exit without joining
+  // in-flight workers.
   val wsgi = py.module("wsgiref.simple_server")
-  val httpd = wsgi.make_server(host, port, app)
+  val ThreadingMixIn = py.module("socketserver").ThreadingMixIn
+  val threadedServer = builtins.callDynamic:
+    "type"
+    "ThreadingWSGIServer"
+    py.tuple(ThreadingMixIn, wsgi.WSGIServer)
+    py.dict("daemon_threads" ~ true)
+
+  val httpd = wsgi.make_server(host, port, app, server_class = threadedServer)
 
   println "Harpe ▸ \{name} is live at http://\{host}:\{port}  (Ctrl-C to stop)"
 

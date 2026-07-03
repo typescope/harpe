@@ -158,6 +158,12 @@
     #send:hover:not(:disabled) { background: #2256d6; }
     #send:disabled { opacity: .35; cursor: default; }
     #send svg { width: 19px; height: 19px; display: block; }
+    #send.stop { background: var(--error); }
+    #send.stop:hover { background: #a93226; }
+    #send.stop svg { display: none; }
+    #send.stop::before {
+      content: ''; width: 12px; height: 12px; border-radius: 2px; background: #fff;
+    }
     .hint { max-width: 760px; margin: 8px auto 0; color: var(--muted); font-size: 12px; text-align: center; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/markdown-it@14/dist/markdown-it.min.js"></script>
@@ -336,7 +342,8 @@
       addMessage('user', text);
 
       busy = true;
-      sendBtn.disabled = true;
+      sendBtn.classList.add('stop');
+      sendBtn.setAttribute('aria-label', 'Stop');
 
       var row = addMessage('agent', '');
       var bubble = row.querySelector('.bubble');
@@ -360,7 +367,8 @@
         function finish() {
           status.remove();
           busy = false;
-          sendBtn.disabled = false;
+          sendBtn.classList.remove('stop');
+          sendBtn.setAttribute('aria-label', 'Send');
           input.focus();
           scrollDown();
           loadSessions();
@@ -382,7 +390,8 @@
       }).catch(function () {
         statusText.textContent = 'connection error';
         busy = false;
-        sendBtn.disabled = false;
+        sendBtn.classList.remove('stop');
+        sendBtn.setAttribute('aria-label', 'Send');
       });
     }
 
@@ -410,7 +419,21 @@
       scrollDown();
     }
 
-    sendBtn.addEventListener('click', send);
+    // While a turn runs, the send button becomes a stop button: it asks the
+    // server to cancel the session's turn (takes effect at the next model/tool
+    // boundary; the stream then ends with an "interrupted" event).
+    function stopTurn() {
+      if (!currentSession) return;
+      fetch('/api/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session: currentSession })
+      });
+    }
+
+    sendBtn.addEventListener('click', function () {
+      if (busy) stopTurn(); else send();
+    });
     input.addEventListener('input', autoGrow);
     input.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }

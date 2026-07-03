@@ -26,13 +26,22 @@ import harpe.*
 //]
 class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
   val lock = threadingMod.Lock()
+
+  //[ Set (via `POST /api/stop`) to request cancellation of the running turn;
+    ! the engine notices between model calls and tool executions. Cleared when
+    ! the next turn begins.
+  //]
+  val stop = threadingMod.Event()
+
   var lastActive: Float = time.now()
   private var pending: List[Message] = []
 
-  //[ Begin a user turn: mark the context's rollback point and append the user's
-    ! message. The message is remembered so `commit` can archive the whole turn.
+  //[ Begin a user turn: clear any stale stop request, mark the context's
+    ! rollback point, and append the user's message. The message is remembered
+    ! so `commit` can archive the whole turn.
   //]
   def beginTurn(text: String): Unit =
+    stop.clear()
     lastActive = time.now()
     val userMsg: Message = UserText(text)
     pending = [userMsg]
