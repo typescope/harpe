@@ -27,6 +27,14 @@ section Config
     ! strategy (e.g. a `SummarizingContext` with a cheap distiller model). An
     ! agent with different assumptions (a sub-agent, say) constructs `Agent`
     ! directly.
+    !
+    ! The parameters are deliberately NOT configuration: `memory` and `initial`
+    ! are the per-session inputs, and `brain` is a process-lifecycle resource —
+    ! the driver constructs it once at startup, where a missing API key fails
+    ! fast with a clear message, and all sessions share it. (`model()` is
+    ! `receives IO.stdout` for exactly that reason: it prints and exits, which
+    ! a server's request path could neither do nor be allowed to by the effect
+    ! system.)
   //]
   def agent(brain: Model, memory: Memory, initial: List[Message]): Agent receives workspace =
     val basePrompt = workspace.read("AGENT.md") rescue None => ""
