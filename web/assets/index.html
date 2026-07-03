@@ -123,10 +123,16 @@
       font-size: 12px; color: var(--muted); margin: 6px 2px 0;
       display: flex; align-items: center; gap: 6px;
     }
-    .status .dot {
+    .status .dot, .loading .dot {
       width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
       animation: pulse 1s infinite ease-in-out;
     }
+    .loading {
+      max-width: 760px; margin: 16vh auto 0;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      color: var(--muted);
+    }
+    textarea:disabled { opacity: .5; }
     @keyframes pulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
     .bubble.notice { color: var(--muted); font-style: italic; }
     .empty {
@@ -189,6 +195,7 @@
   <div class="chat">
     <main>
       <div id="empty" class="empty">Start the conversation &mdash; ask the agent anything.</div>
+      <div id="loading" class="loading" style="display: none"><span class="dot"></span>Loading conversation&hellip;</div>
       <div id="messages"></div>
     </main>
     <footer>
@@ -302,16 +309,38 @@
       }).catch(function () {});
     }
 
+    // While a conversation loads, a centered indicator replaces the transcript
+    // and the composer is disabled, so a half-loaded session can't be typed
+    // into. `loadSeq` makes the latest load win if sessions are switched fast.
+    var loadSeq = 0;
+
+    function setLoading(on) {
+      document.getElementById('loading').style.display = on ? '' : 'none';
+      input.disabled = on;
+      sendBtn.disabled = on;
+    }
+
     function loadHistory(id) {
+      var seq = ++loadSeq;
+      msgs.innerHTML = '';
+      showEmpty(false);
+      setLoading(true);
+
       return fetch('/api/history?session=' + encodeURIComponent(id))
         .then(function (r) { return r.json(); })
         .then(function (d) {
-          msgs.innerHTML = '';
+          if (seq !== loadSeq) return;
+          setLoading(false);
           var list = d.messages || [];
           if (list.length === 0) { showEmpty(true); }
-          else { showEmpty(false); list.forEach(function (m) { appendMessage(m.role, m.text); }); }
+          else { list.forEach(function (m) { appendMessage(m.role, m.text); }); }
           scrollDown();
-        }).catch(function () {});
+          input.focus();
+        }).catch(function () {
+          if (seq !== loadSeq) return;
+          setLoading(false);
+          showEmpty(true);
+        });
     }
 
     function openSession(id) {
@@ -323,6 +352,8 @@
     }
 
     function newChat() {
+      loadSeq++;          // abandon any in-flight history load
+      setLoading(false);
       currentSession = null;
       history.pushState({}, '', '/');
       clearMessages();
@@ -336,7 +367,7 @@
     }
 
     function send() {
-      if (busy) return;
+      if (busy || input.disabled) return;
       var text = input.value.trim();
       if (!text) return;
       input.value = '';
