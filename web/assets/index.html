@@ -29,13 +29,20 @@
       display: flex; flex-direction: column; gap: 14px; padding: 16px;
     }
     body.collapsed #sidebar { display: none; }
-    .brand { display: flex; align-items: center; }
-    .brand .mark {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-weight: 700; color: var(--accent); letter-spacing: 1px;
+    .brand { display: flex; align-items: center; gap: 8px; }
+    .brand .agent-name {
+      font-weight: 650; font-size: 16px; min-width: 0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .brand .icon-btn { margin-left: auto; }
-    .agent-name { font-weight: 600; font-size: 16px; }
+    .brand .icon-btn { margin-left: auto; flex: none; }
+    .powered {
+      flex: none; padding-top: 10px; border-top: 1px solid var(--line);
+      font-size: 11px; color: var(--muted);
+    }
+    .powered .mark {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-weight: 700; letter-spacing: 1px;
+    }
     .panel-section {
       margin-top: 2px; font-size: 12px; text-transform: uppercase;
       letter-spacing: .5px; color: var(--muted);
@@ -171,15 +178,15 @@
 <body>
   <aside id="sidebar">
     <div class="brand">
-      <span class="mark">HARPE</span>
+      <span class="agent-name" id="title">Agent</span>
       <button id="collapse" class="icon-btn" aria-label="Collapse panel" title="Collapse panel">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
       </button>
     </div>
-    <div class="agent-name" id="title">Agent</div>
     <button id="newchat" class="newchat">+ New chat</button>
     <div class="panel-section">Recent</div>
     <div id="sessions" class="sessions"></div>
+    <div class="powered">Powered by <span class="mark">HARPE</span></div>
   </aside>
   <button id="opener" class="icon-btn opener" aria-label="Open panel" title="Open panel">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
