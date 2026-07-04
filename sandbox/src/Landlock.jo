@@ -1,11 +1,19 @@
 //[ Landlock.jo
   !
   ! Landlock self-sandboxing for the guest run — the OS-level layer beneath the
-  ! compile-time capability gate. Landlock lets an unprivileged process
+  ! compile-time capability gate. **Linux only**: Landlock is a Linux kernel
+  ! feature, so these helpers are a logged no-op on any other OS (and on Linux
+  ! kernels too old to support them). Landlock lets an unprivileged process
   ! irrevocably drop its own filesystem and TCP-network rights (kernel 5.13+ for
   ! files, 6.7+ for network); the restriction is inherited across `execve` and
   ! cannot be lifted, so any guest code that runs afterwards — even a subprocess
   ! it manages to spawn — is confined too.
+  !
+  ! Caller responsibility for `restrictFilesystem`: the `readable` set must
+  ! include Python's own installation and package directories (`sys.prefix`,
+  ! `sys.base_prefix`, and any site-packages) — otherwise the interpreter cannot
+  ! load the stdlib or C extensions once restricted. A caller that only lists
+  ! system dirs on a venv/pyenv/`~/.local` install will break imports.
   !
   ! It is applied via three raw syscalls (create_ruleset / add_rule /
   ! restrict_self) over ctypes, since Python exposes no Landlock wrapper. The
