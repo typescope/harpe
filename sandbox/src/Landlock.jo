@@ -2,8 +2,10 @@
   !
   ! Landlock self-sandboxing for the guest run — the OS-level layer beneath the
   ! compile-time capability gate. **Linux only**: Landlock is a Linux kernel
-  ! feature, so these helpers are a logged no-op on any other OS (and on Linux
-  ! kernels too old to support them). Landlock lets an unprivileged process
+  ! feature, so these helpers return false on any other OS (and on Linux kernels
+  ! too old to support them) — the `Sandbox` facility treats that as fatal and
+  ! aborts, fail-closed, rather than running the guest unprotected. Landlock lets
+  ! an unprivileged process
   ! irrevocably drop its own filesystem and TCP-network rights (kernel 5.13+ for
   ! files, 6.7+ for network); the restriction is inherited across `execve` and
   ! cannot be lifted, so any guest code that runs afterwards — even a subprocess
@@ -105,7 +107,8 @@ section Landlock
     !
     ! Grants read+execute under each `readable` path and read+write+execute under
     ! each `writable` path; everything else becomes inaccessible. Paths that do
-    ! not exist are skipped. Returns false (a no-op) if the kernel has no Landlock.
+    ! not exist are skipped. Returns false (applied nothing) if the kernel has no
+    ! Landlock, so the caller can fail-closed.
     !
     ! EXECUTE is included in the read grant because loading a shared library
     ! (Python C extensions) requires it — so the system dirs must be readable
