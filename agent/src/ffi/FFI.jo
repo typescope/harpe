@@ -77,13 +77,30 @@ class Capped(returnCode: Int, out: String, err: String, timedOut: Bool)
   ! stuck guest cannot disable; in-guest memory/CPU caps live in the sandbox
   ! runtime (`harpe.sandbox`), which the guest also cannot raise.
 //]
-def runCapped(args: py.List, timeoutSecs: Float): Capped =
+def runCapped(args: py.List, timeoutSecs: Float, asUser: Option[String] = None): Capped =
+  // Optionally drop to a low-privilege account for the child (Popen's own
+  // `user`/`group`/`extra_groups`, applied safely in the child before exec). The
+  // uid is what an nftables egress rule keys on. Requires the parent to run as
+  // root; without privilege the drop fails and the run errors — fail-closed.
+  var uid: Any = py.none
+  var gid: Any = py.none
+  var groups: Any = py.none
+
+  if asUser is Some(name) then
+    val pw = py.module("pwd").getpwnam(name)
+    uid = pw.pw_uid
+    gid = pw.pw_gid
+    groups = py.list()          // drop root's supplementary groups too
+
   val proc = subprocessMod.Popen(
     args,
     stdout = subprocessMod.PIPE,
     stderr = subprocessMod.PIPE,
     text = true,
-    start_new_session = true
+    start_new_session = true,
+    user = uid,
+    group = gid,
+    extra_groups = groups
   )
 
   match py.try(proc.communicate(timeout = timeoutSecs))

@@ -87,7 +87,8 @@ private def runCode(
     logRun: py.Dict => Unit,
     buildTimeout: Float,
     runTimeout: Float,
-    maxResultChars: Int)
+    maxResultChars: Int,
+    runAsUser: Option[String])
 : RunOutcome =
   match findDoneFile(guestDir)
   case None =>
@@ -98,7 +99,7 @@ private def runCode(
   case Some(donePath) =>
     gate.acquire()
     val runDir = tempfileMod.mkdtemp(prefix = "run-").asString
-    val outcome = py.try(buildAndRun(code, donePath, runDir, logRun, buildTimeout, runTimeout))
+    val outcome = py.try(buildAndRun(code, donePath, runDir, logRun, buildTimeout, runTimeout, runAsUser))
     val _ = py.try(shutilMod.rmtree(runDir, ignore_errors = true))
     gate.release()
 
@@ -117,7 +118,8 @@ private def buildAndRun(
     runDir: String,
     logRun: py.Dict => Unit,
     buildTimeout: Float,
-    runTimeout: Float)
+    runTimeout: Float,
+    runAsUser: Option[String])
 : RunOutcome =
   // Build one structured record per run — the time and the program under test,
   // plus the fields specific to how the run ended — and hand it to the injected
@@ -167,8 +169,15 @@ private def buildAndRun(
   if !os.path.isfile(runOut) then
     return new RunOutcome("The program compiled but no executable was found.", "no executable produced")
 
+  // When the run drops to another user, that user must be able to traverse the
+  // run dir and read the compiled program (mkdtemp is 0700, owned by us).
+  if runAsUser is Some(_) then
+    val osMod = py.module("os")
+    osMod.chmod(runDir, 493)   // 0o755 — traverse + read the directory
+    osMod.chmod(runOut, 420)   // 0o644 — read the compiled program
+
   val t1 = time.now()
-  val run = runCapped(py.list("python3", runOut), runTimeout)
+  val run = runCapped(py.list("python3", runOut), runTimeout, runAsUser)
   val runSeconds = round2(time.now() - t1)
 
   if run.timedOut then
@@ -228,6 +237,10 @@ private def buildAndRun(
   ! `maxResultChars` bounds the result text returned to the model (middle-elided,
   ! head + tail kept) so one large program output cannot flood the context. The
   ! full, un-elided output is still written to `logRun`, so nothing is lost.
+  !
+  ! `runAsUser` (when set) runs the compiled program as that account, so an
+  ! nftables egress rule can filter its traffic by uid (see `docs/sandbox.md`).
+  ! It requires the agent to run as root; a non-existent account fails fast here.
 //]
 def runCodeTool(
     guestDir: String,
@@ -235,13 +248,21 @@ def runCodeTool(
     buildTimeout: Float = 120.0,
     runTimeout: Float = 30.0,
     maxConcurrent: Int = 4,
-    maxResultChars: Int = 4000)
+    maxResultChars: Int = 4000,
+    runAsUser: Option[String] = None)
 : Tool =
   val gate = threadingMod.Semaphore(maxConcurrent)
+
+  // Fail fast at startup on a misconfigured run user, rather than on the first
+  // `runCode` call.
+  if runAsUser is Some(name) then
+    match py.try(py.module("pwd").getpwnam(name))
+    case Err(_) => abort "sandbox run_user '\{name}' not found — create the account or remove run_user from sandbox/sandbox.conf"
+    case Ok(_)  => pass
 
   new Tool(
     "runCode",
     "Write a Jo program (namespace UserTask, def runTask), compile it against the agent sandbox, and run it. Returns the program's stdout, or the compile error if it does not build.",
     [strParam("code", "The Jo source code to compile and run")],
-    input => runCode(input.string("code"), guestDir, gate, logRun, buildTimeout, runTimeout, maxResultChars)
+    input => runCode(input.string("code"), guestDir, gate, logRun, buildTimeout, runTimeout, maxResultChars, runAsUser)
   )

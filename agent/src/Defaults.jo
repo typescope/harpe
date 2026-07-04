@@ -20,13 +20,18 @@ section Defaults
   //[ The base toolset: `runCode` (logging full runs to `logs/runs.jsonl`) plus
     ! the read-only skill tools over the agent's `skills/`. The per-session
     ! memory tools are added by the drivers, since they capture session state.
+    !
+    ! `runCode` runs as the account named by `sandbox/sandbox.conf`'s `run_user`
+    ! (if any) so its egress can be filtered by uid (see `docs/sandbox.md`).
   //]
   def tools(): List[Tool] receives workspace =
-    val runTool = runCodeTool: workspace.guestDir, entry =>
+    val logRun: py.Dict => Unit = entry =>
       os.makedirs(workspace.relative("logs"))
       val f = py.open(workspace.relative("logs/runs.jsonl"), "a")
       f.write(jsonMod.dumps(entry).asString + "\n")
       f.close()
+
+    val runTool = runCodeTool(workspace.guestDir, logRun, runAsUser = SandboxConfig.runUser())
 
     [runTool] ++ skillTools(workspace.skillsDir)
 
