@@ -1,0 +1,50 @@
+//[ MemoryTest.jo
+  !
+  ! Unit tests for the working-memory store (`harpe.Memory`): store operations, the
+  ! immutable snapshot, JSON round-trip, and atomic file save/load.
+//]
+
+namespace MemoryTest
+
+import jo.IO.stdout
+import harpe.Memory
+import harpe.ffi.*
+import os
+
+private def check(label: String, cond: Bool): Unit receives stdout =
+  assert: cond, "\{label} failed"
+  println "  ok \{label}"
+
+def run(): Unit receives stdout =
+  // --- store operations ---
+  val m = new Memory
+  check("empty initially", m.isEmpty)
+
+  m.set("goal", "ship it")
+  check("get after set", m.get("goal") == "ship it")
+  check("has known key", m.has("goal"))
+  check("missing key is empty string", m.get("nope") == "")
+  check("keys lists the stored key", m.keys().size == 1 && m.has("goal"))
+
+  m.set("goal", "revised")
+  check("set replaces value", m.get("goal") == "revised")
+
+  // --- JSON round-trip ---
+  m.set("todos", "a\nb")
+  val restored = Memory.fromJson(m.toJson())
+  check("json round-trips goal", restored.get("goal") == "revised")
+  check("json round-trips multiline todos", restored.get("todos") == "a\nb")
+  check("fromJson empty string is empty", Memory.fromJson("").isEmpty)
+  check("fromJson garbage is empty", Memory.fromJson("{not json").isEmpty)
+
+  // --- snapshot ---
+  val snap = m.snapshot()
+  check("snapshot carries a value", snap.getOrElse("goal", "") == "revised")
+
+  // --- atomic file save/load ---
+  val dir = py.module("tempfile").mkdtemp().asString
+  val path = os.path.join(dir, "nested", "memory.json")   // 'nested' exercises makedirs
+  Memory.save(path, m)
+  val loaded = Memory.load(path)
+  check("file save/load round-trips", loaded.get("goal") == "revised" && loaded.get("todos") == "a\nb")
+  check("load of missing file is empty", Memory.load(os.path.join(dir, "absent.json")).isEmpty)

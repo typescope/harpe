@@ -1,0 +1,62 @@
+//[ Model.jo
+  !
+  ! A provider-agnostic abstraction for a chat model (LLM), so the loop can drive
+  ! Anthropic, OpenAI, a local model, or a dummy for tests — all behind one
+  ! interface. The conversation is modeled in Jo (`Message`); each provider impl
+  ! converts to/from its own wire format. The loop owns the history and runs the
+  ! tools; the model only turns (system, history, tools) into the next reply.
+//]
+
+namespace harpe
+
+//[ A tool call the model wants to make: a provider id, the tool name, and the
+  ! typed arguments (ready to hand to `Tool.run`).
+//]
+class ToolCall(id: String, name: String, input: ToolInput)
+
+//[ The result of running a tool call, fed back to the model next turn. //]
+class ToolResult(id: String, content: String)
+
+//[ Message
+  !
+  ! One entry in the conversation, as the loop sees it — independent of any
+  ! provider's wire format. `Assistant` is also what `Model.reply` returns.
+//]
+union Message =
+    UserText(text: String)
+  | Assistant(text: String, calls: List[ToolCall])
+  | ToolResults(results: List[ToolResult])
+
+//[ ReplyResult
+  !
+  ! The outcome of asking the model for a reply: the assistant message, or a
+  ! typed error. `Transient` errors (rate limits, 5xx, connection blips) are
+  ! worth retrying with backoff; `Fatal` ones (auth, bad request) are not. The
+  ! provider classifies the failure; the loop owns the retry policy.
+//]
+union ReplyResult =
+    Reply(message: Assistant)
+  | Transient(detail: String)
+  | Fatal(detail: String)
+
+//[ Model
+  !
+  ! A chat model. `reply` is a pure function of the system prompt, the
+  ! conversation so far, and the offered tools — returning the assistant's next
+  ! message (or a typed error). Stateless: the loop keeps the history.
+//]
+interface Model
+  def reply(system: String, history: List[Message], tools: List[Tool]): ReplyResult
+end
+
+//[ Map a `ParamType` to its JSON-schema type string.
+  !
+  ! Shared by all provider impls so each one can render tool specs without
+  ! duplicating this mapping.
+//]
+def jsonType(t: ParamType): String =
+  match t
+  case StrParam  => "string"
+  case IntParam  => "integer"
+  case BoolParam => "boolean"
+  case NumParam  => "number"

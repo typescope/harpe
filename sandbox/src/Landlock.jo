@@ -1,0 +1,178 @@
+//[ Landlock.jo
+  !
+  ! Landlock self-sandboxing for the guest run — the OS-level layer beneath the
+  ! compile-time capability gate. **Linux only**: Landlock is a Linux kernel
+  ! feature, so these helpers return false on any other OS (and on Linux kernels
+  ! too old to support them) — the `Sandbox` facility treats that as fatal and
+  ! aborts, fail-closed, rather than running the guest unprotected. Landlock lets
+  ! an unprivileged process
+  ! irrevocably drop its own filesystem and TCP-network rights (kernel 5.13+ for
+  ! files, 6.7+ for network); the restriction is inherited across `execve` and
+  ! cannot be lifted, so any guest code that runs afterwards — even a subprocess
+  ! it manages to spawn — is confined too.
+  !
+  ! Caller responsibility for `restrictFilesystem`: the `readable` set must
+  ! include Python's own installation and package directories (`sys.prefix`,
+  ! `sys.base_prefix`, and any site-packages) — otherwise the interpreter cannot
+  ! load the stdlib or C extensions once restricted. A caller that only lists
+  ! system dirs on a venv/pyenv/`~/.local` install will break imports.
+  !
+  ! It is applied via three raw syscalls (create_ruleset / add_rule /
+  ! restrict_self) over ctypes, since Python exposes no Landlock wrapper. The
+  ! syscall numbers are the Linux generic ABI (x86-64/arm64); the access-right
+  ! and struct layouts follow `linux/landlock.h`. If the kernel lacks Landlock
+  ! (or the required ABI), the helpers return false so the caller can warn and
+  ! continue rather than crash — the agent author opted in and should be told.
+  !
+  ! Network note: Landlock gates TCP bind/connect only (no UDP, no IP matching).
+  ! `denyNetwork` therefore cuts ALL TCP — the right posture for a guest that has
+  ! no business on the network. IP-restricted egress is a separate, heavier
+  ! mechanism (see `docs/sandbox.md`: a dedicated user + nftables).
+//]
+
+namespace harpe.sandbox
+
+private def ctypesMod: py.Dynamic = py.module("ctypes")
+private def structMod: py.Dynamic = py.module("struct")
+private def builtinsMod: py.Dynamic = py.module("builtins")
+
+// Linux generic syscall numbers (x86-64 / arm64).
+private def nrCreateRuleset(): Int = 444
+private def nrAddRule(): Int = 445
+private def nrRestrictSelf(): Int = 446
+
+private def rulePathBeneath(): Int = 1     // LANDLOCK_RULE_PATH_BENEATH
+private def prSetNoNewPrivs(): Int = 38    // PR_SET_NO_NEW_PRIVS
+
+// Filesystem access rights (bit positions from linux/landlock.h).
+private def fsRead(): Int =
+  (1 << 0) | (1 << 2) | (1 << 3)   // EXECUTE | READ_FILE | READ_DIR
+
+// TCP network access rights (ABI v4+).
+private def netAll(): Int =
+  (1 << 0) | (1 << 1)              // BIND_TCP | CONNECT_TCP
+
+//[ libc handle with `syscall` typed to return a full-width `long`.
+  !
+  ! The default `c_int` return type would truncate. ctypes caches the function
+  ! on the CDLL, so setting `restype` once sticks.
+//]
+private def libc(): py.Dynamic =
+  val c = ctypesMod.CDLL(py.none, use_errno = true)
+  builtinsMod.setattr(c.syscall, "restype", ctypesMod.c_long)
+  c
+
+//[ A C string buffer holding `bytes`, and a `void*` to it. //]
+private def cbuf(bytes: py.Dynamic): py.Dynamic =
+  ctypesMod.create_string_buffer(bytes, builtinsMod.len(bytes))
+
+private def cptr(sbuf: py.Dynamic): py.Dynamic =
+  // `callDynamic` because `cast` is also a py.Dynamic method name in Jo.
+  ctypesMod.callDynamic("cast", sbuf, ctypesMod.c_void_p)
+
+//[ The kernel's supported Landlock ABI version, or <= 0 if unavailable. //]
+private def abiVersion(): Int =
+  // create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION=1) returns the version.
+  libc().syscall(
+    ctypesMod.c_long(nrCreateRuleset()), ctypesMod.c_void_p(0),
+    ctypesMod.c_size_t(0), ctypesMod.c_uint(1)).asInt
+
+//[ The FS access bits the running kernel's ABI understands.
+  !
+  ! Only these may appear in a ruleset, or `create_ruleset` fails with EINVAL.
+//]
+private def fsHandled(version: Int): Int =
+  var m = (1 << 13) - 1                    // v1: EXECUTE .. MAKE_SYM
+  if version >= 2 then m = m | (1 << 13)   // REFER
+  if version >= 3 then m = m | (1 << 14)   // TRUNCATE
+  if version >= 5 then m = m | (1 << 15)   // IOCTL_DEV
+  m
+
+private def sysMod2: py.Dynamic = py.module("sys")
+
+//[ Enable no_new_privs — a precondition for `restrict_self` without privilege. //]
+private def setNoNewPrivs(): Unit =
+  val _ = libc().prctl(
+    ctypesMod.c_int(prSetNoNewPrivs()), ctypesMod.c_ulong(1),
+    ctypesMod.c_ulong(0), ctypesMod.c_ulong(0), ctypesMod.c_ulong(0))
+
+//[ Apply a completed ruleset to this process (irreversible). //]
+private def restrictSelf(rulesetFd: Int): Bool =
+  libc().syscall(
+    ctypesMod.c_long(nrRestrictSelf()), ctypesMod.c_int(rulesetFd),
+    ctypesMod.c_uint(0)).asInt == 0
+
+section Landlock
+  //[ Confine this process's filesystem to the given paths.
+    !
+    ! Grants read+execute under each `readable` path and read+write+execute under
+    ! each `writable` path; everything else becomes inaccessible. Paths that do
+    ! not exist are skipped. Returns false (applied nothing) if the kernel has no
+    ! Landlock, so the caller can fail-closed.
+    !
+    ! EXECUTE is included in the read grant because loading a shared library
+    ! (Python C extensions) requires it — so the system dirs must be readable
+    ! *and* executable for the interpreter to keep working.
+  //]
+  def restrictFilesystem(readable: List[String], writable: List[String]): Bool =
+    val version = abiVersion()
+    if version < 1 then return false
+
+    val handled = fsHandled(version)
+    val attr = cbuf(structMod.pack("=QQ", handled, 0))
+    val rs = libc().syscall(
+      ctypesMod.c_long(nrCreateRuleset()), cptr(attr),
+      ctypesMod.c_size_t(16), ctypesMod.c_uint(0)).asInt
+
+    if rs < 0 then return false
+
+    for path in readable do addPathRule(rs, path, fsRead() & handled)
+
+    for path in writable do addPathRule(rs, path, handled)
+
+    setNoNewPrivs()
+    val ok = restrictSelf(rs)
+    val _ = py.module("os").close(rs)
+    ok
+
+  //[ Deny ALL TCP networking (bind and connect) for this process.
+    !
+    ! Returns false (a no-op) on kernels below Landlock ABI v4 (6.7), where
+    ! network rights do not exist — the caller should warn.
+  //]
+  def denyNetwork(): Bool =
+    val version = abiVersion()
+    if version < 4 then return false
+
+    // A ruleset that HANDLES the TCP rights but adds no allow-rules denies them.
+    val attr = cbuf(structMod.pack("=QQ", 0, netAll()))
+    val rs = libc().syscall(
+      ctypesMod.c_long(nrCreateRuleset()), cptr(attr),
+      ctypesMod.c_size_t(16), ctypesMod.c_uint(0)).asInt
+
+    if rs < 0 then return false
+
+    setNoNewPrivs()
+    val ok = restrictSelf(rs)
+    val _ = py.module("os").close(rs)
+    ok
+
+  //[ Add a path_beneath rule granting `access` under `path`.
+    !
+    ! A missing path is skipped (opening it fails). The attr is the PACKED struct
+    ! `{ __u64 allowed_access; __s32 parent_fd; }` — 12 bytes, "=Qi".
+  //]
+  private def addPathRule(rulesetFd: Int, path: String, access: Int): Unit =
+    val os = py.module("os")
+    val flags = os.O_PATH.asInt | os.O_CLOEXEC.asInt
+
+    match py.try(os.open(path, flags))
+    case Err(_) => pass          // path does not exist — skip
+    case Ok(fdDyn) =>
+      val fd = fdDyn.asInt
+      val attr = cbuf(structMod.pack("=Qi", access, fd))
+      val _ = libc().syscall(
+        ctypesMod.c_long(nrAddRule()), ctypesMod.c_int(rulesetFd),
+        ctypesMod.c_ulong(rulePathBeneath()), cptr(attr), ctypesMod.c_uint(0))
+      val _ = os.close(fd)
+end

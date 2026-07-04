@@ -12,7 +12,7 @@
 namespace harpe.models
 
 import harpe.ffi.*
-import harpe.tools.*
+import harpe.*
 
 private section openai
   //[ One tool's OpenAI function spec, derived from the Jo `Tool` model. //]
@@ -66,7 +66,8 @@ private section openai
     ! `py.try` so null-to-String conversion errors are caught gracefully.
   //]
   def parseReply(response: py.Dynamic): Assistant =
-    val msg = response.choices[0].message
+    val choice = response.choices[0]
+    val msg = choice.message
     // msg.content or msg.tool_calls can be None
     val text = if !msg.content.isNone then msg.content.asString else ""
 
@@ -77,25 +78,15 @@ private section openai
         val argsDict = jsonMod.loads(argsJson).cast[py.Dict]
         calls = calls + ToolCall(tc.id.asString, tc.function.name.asString, ToolInput(argsDict))
 
-    new Assistant(text.trim, calls)
+    // A finish_reason of "length" means the reply was cut off — possibly mid
+    // tool call — so keep the text with a visible marker and drop the calls
+    // rather than running a tool on partial arguments.
+    val finish = choice.finish_reason
 
-  //[ Classify a failed `chat.completions.create` into a retryable or fatal
-    ! `ReplyResult`. Rate limits (429), server errors (5xx), and connection /
-    ! timeout blips are transient; auth, bad request, and other client errors
-    ! are fatal. Note: there is no "Overloaded" case here — OpenAI-compatible
-    ! providers surface overload as RateLimitError or InternalServerError.
-  //]
-  def classify(err: py.Error): ReplyResult =
-    val name = err.typeName
-    val transient =
-      name == "RateLimitError"
-      || name == "InternalServerError"
-      || name == "APIConnectionError"
-      || name == "APITimeoutError"
-      || name.contains("Connection")
-      || name.contains("Timeout")
-    if transient then Transient("\{name}: \{err.message}")
-    else Fatal("\{name}: \{err.message}")
+    if !finish.isNone && finish.asString == "length" then
+      new Assistant((text + "\n\n[Reply truncated: max_tokens reached.]").trim, List.empty[ToolCall])
+    else
+      new Assistant(text.trim, calls)
 end
 
 private class OpenAIModel(client: py.Dynamic, model: String)
@@ -114,7 +105,7 @@ private class OpenAIModel(client: py.Dynamic, model: String)
 
     match attempt
     case Ok(response) => Reply: openai.parseReply(response)
-    case Err(err)     => openai.classify(err)
+    case Err(err)     => classifyError(err)
 end
 
 //[ Build an OpenAI-compatible model from an API key, model id, and base URL.
@@ -124,9 +115,11 @@ end
   ! be reached by setting `baseUrl` to the provider's `/v1` root.
 //]
 def openai(apiKey: String, model: String, baseUrl: String): Model =
+  // Explicit request timeout; internal SDK retries disabled — the turn engine
+  // owns the retry/backoff policy, and hidden SDK retries would multiply it.
   val client =
     if baseUrl == "" then
-      py.module("openai").OpenAI(api_key = apiKey)
+      py.module("openai").OpenAI(api_key = apiKey, timeout = 600.0, max_retries = 0)
     else
-      py.module("openai").OpenAI(api_key = apiKey, base_url = baseUrl)
+      py.module("openai").OpenAI(api_key = apiKey, base_url = baseUrl, timeout = 600.0, max_retries = 0)
   new OpenAIModel(client, model)

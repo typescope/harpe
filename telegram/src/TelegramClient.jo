@@ -1,0 +1,114 @@
+//[ TelegramClient.jo
+  !
+  ! A thin client over the Telegram Bot API — the one place that touches the
+  ! network. Unlike the WhatsApp Cloud API (webhook in / REST out), Telegram lets
+  ! the bot *pull* updates over an outbound long-poll connection, so there is no
+  ! public endpoint, no TLS, and no signature to verify: `getUpdates` blocks until
+  ! messages arrive (or the poll times out), and `sendMessage` posts the reply.
+  !
+  ! Everything is a JSON POST to `https://api.telegram.org/bot<token>/<method>`.
+  ! `apiCall` is the single request primitive; the higher-level methods are
+  ! phrased in terms of it.
+//]
+
+namespace harpe.telegram
+
+import harpe.ffi.*
+
+//[ Telegram caps a message at 4096 characters; keep a margin so multi-byte
+  ! escapes never push a chunk over the limit.
+//]
+private def maxMessageChars: Int = 4000
+
+//[ The outcome of one `getUpdates` poll: the updates array, or a human-readable
+  ! failure (a 409 conflict from a second poller, a bad token, a network blip, …)
+  ! that the loop can report instead of silently retrying.
+//]
+union PollResult =
+    Polled(updates: py.List)
+  | PollFailed(detail: String)
+
+private class TelegramClient(token: String)
+  private def base: String = "https://api.telegram.org/bot" + token
+  private def urllibReq: py.Dynamic = py.module("urllib.request")
+
+  //[ One Bot API call: POST `params` as JSON, parse the JSON reply.
+    !
+    ! `timeout` is the socket timeout in seconds — for a long poll it must exceed
+    ! the poll's own `timeout` so the read outlives the wait. A network/HTTP
+    ! failure is swallowed into `{ok: false}` so callers never see a raw error.
+  //]
+  private def apiCall(method: String, params: py.Dict, timeout: Float): py.Dict =
+    val data = py.dynamic(jsonMod.dumps(params).asString).encode()
+    val headers = py.dict("Content-Type" ~ "application/json")
+    val req = urllibReq.Request(base + "/" + method, data = data, headers = headers, method = "POST")
+
+    match py.try(urllibReq.urlopen(req, timeout = timeout))
+    case Ok(resp) =>
+      jsonMod.loads(resp.read().decode().asString).cast[py.Dict]
+
+    case Err(e) =>
+      py.dict("ok" ~ false, "error" ~ e.message)
+
+  //[ A human-readable reason from a non-ok reply: the network error we caught, or
+    ! Telegram's own `description` (e.g. "Conflict: terminated by other
+    ! getUpdates request" for a 409), falling back to a generic string.
+  //]
+  def detail(resp: py.Dict): String =
+    if resp.contains("error") then resp.get("error").asString
+    else resp.get("description", "unknown error").asString
+
+  //[ Identify the bot behind the token (`getMe`). The caller uses this at startup
+    ! to confirm the token works and show which bot is live.
+  //]
+  def getMe(): py.Dict = apiCall("getMe", py.dict(), 15.0)
+
+  //[ Long-poll for updates newer than `offset`, waiting up to `pollSeconds`.
+    !
+    ! Surfaces a failure to the caller (rather than swallowing it) so a 409
+    ! conflict, bad token, or outage is visible instead of a silent dead loop.
+  //]
+  def getUpdates(offset: Int, pollSeconds: Int): PollResult =
+    val params = py.dict("offset" ~ offset, "timeout" ~ pollSeconds)
+    val resp = apiCall("getUpdates", params, py.dynamic(pollSeconds).asFloat + 15.0)
+
+    if resp.get("ok", false).asBool then
+      Polled(resp.get("result").cast[py.List])
+
+    else
+      PollFailed(detail(resp))
+
+  //[ Send `text` to `chatId`, split across as many messages as the 4096-char
+    ! limit requires. Each chunk is rendered from the model's Markdown into
+    ! Telegram HTML (`Markdown.toHtml` — a real CommonMark parse: headings,
+    ! lists, quotes, code, emphasis, links); if Telegram rejects the markup,
+    ! that chunk is resent as plain text so the content always gets through. An
+    ! empty body is replaced with a placeholder so the send never fails on it.
+  //]
+  def sendMessage(chatId: String, text: String): Unit =
+    val body = if text.trim == "" then "(no output)" else text
+
+    for piece in chunk(body, maxMessageChars) do
+      val html = Markdown.toHtml(piece)
+      val resp = apiCall("sendMessage",
+        py.dict("chat_id" ~ chatId, "text" ~ html, "parse_mode" ~ "HTML"), 30.0)
+
+      if !resp.get("ok", false).asBool then
+        val _ = apiCall("sendMessage", py.dict("chat_id" ~ chatId, "text" ~ piece), 30.0)
+
+  //[ Show a transient status in the chat (e.g. "typing"); best-effort. //]
+  def sendChatAction(chatId: String, action: String): Unit =
+    val _ = apiCall("sendChatAction", py.dict("chat_id" ~ chatId, "action" ~ action), 15.0)
+
+  //[ Split `s` into pieces of at most `size` characters (at least one piece). //]
+  private def chunk(s: String, size: Int): List[String] =
+    var out: List[String] = []
+    var i = 0
+
+    while i < s.size do
+      val stop = if i + size < s.size then i + size else s.size
+      out = out + s.substring(i, stop)
+      i = stop
+
+    if out.isEmpty then [s] else out
+end

@@ -1,92 +1,192 @@
-# Harpe (prototype)
+# Harpe
 
-A reusable agent framework for Jo. An agent is an LLM that acts **only** by
+An agent framework for Jo. A Harpe agent is an LLM that acts **only** by
 writing Jo programs, compiled against a typed capability sandbox and run each
-turn. This prototype covers **CLI** and **web (browser) conversational agents**.
+turn. The compile step is the security checkpoint: a program that names a
+capability you didn't grant fails to compile, so it never runs.
+
+Harpe ships as a **core library plus three runnable agents** — terminal
+(`cli/`), browser (`web/`), and Telegram (`telegram/`). Each agent directory
+carries both its driver code and its identity (`AGENT.md`, `skills/`,
+`sandbox/`, assets). **To make your own agent, copy one and edit it.**
+
+## Quick start
+
+```sh
+cd cli                        # or web/, or telegram/
+pip install -r requirements.txt
+cp .env.example .env          # set ANTHROPIC_API_KEY (or PROVIDER=openai + OPENAI_API_KEY)
+jo start                      # builds the sandbox guest, then launches the agent
+```
+
+- **cli** — chat in your terminal (ESC interrupts a running turn).
+- **web** — open `http://127.0.0.1:8765` (`HOST`/`PORT` to change). Sessions
+  live at `/c/<id>` and resume across restarts.
+- **telegram** — also set `TELEGRAM_BOT_TOKEN` (from @BotFather) and
+  `TELEGRAM_ALLOWED_SENDERS` (comma-separated numeric user ids; access is
+  closed by default — an unlisted sender is told their id in a private chat).
+  No public endpoint needed: the bot long-polls.
+
+`jo start` is the `[commands]` entry in the agent's `jo.toml`:
+`jo build --spec sandbox/guest/jo.toml && jo run` — build the sandbox the model
+compiles against, then run the agent. (Requires Jo 0.11.3+.)
 
 ## Layout
 
 ```
-harpe/                   # a workspace: three framework packages + an example agent
-  agent/                 # `harpe`: the shared base (runtime = python)
-    jo.toml
+harpe/
+  agent/                 # `harpe`: the core library — one file per abstraction
     src/
-      Workspace.jo       #   `harpe`:        the agent working dir (context param)
-      ffi/               #   `harpe.ffi` + `os`: Python interop
-        FFI.jo           #     module handles + helpers (`harpe.ffi`)
-        os.jo            #     the `os` namespace
-      models/            #   `harpe.models`: the provider-agnostic Model layer
-        Model.jo         #     the Model interface + Jo conversation model
-        Anthropic.jo     #     the Anthropic-backed Model (`anthropic`)
-        OpenAI.jo        #     an OpenAI-compatible Model (`openai`)
-        Echo.jo          #     a dummy Model for tests (`echo`)
-      tools/             #   `harpe.tools`:  the reusable tools layer
-        Tool.jo          #     the Jo-modeled Tool abstraction (+ RunOutcome)
-        RunCode.jo       #     the runCode tool (+ runCodeTool builder)
-        Skills.jo        #     the read-only skill tools (+ skillTools builder)
-  sandbox/               # `harpe-sandbox`: the `Sandbox` abstraction (`harpe.sandbox`)
-    jo.toml              #   self-contained (no deps)
-    src/Sandbox.jo       #   Sandbox interface + factory (impl hidden)
-  cli/                   # `harpe-cli`: the conversational loop (`harpe.cli`)
-    jo.toml              #   dep harpe (../agent)
-    src/Harpe.jo         #   the chat loop + main entry + defer hooks (default/extraTools)
-  web/                   # `harpe-web`: the same loop, served in a browser (`harpe.web`)
-    jo.toml              #   dep harpe (../agent)
-    src/Web.jo           #   main entry: starts a local HTTP server
-    src/Server.jo        #   WSGI routing + the turn-running ChatServer
-    src/WebInteract.jo   #   Interact impl: streams TurnEvents as NDJSON to the page
-    src/Assets.jo        #   the self-contained chat page (markup + styles + script)
-    src/Config.jo        #   defer hooks (model/tools/bounds), keyed `harpe.web.*`
-  example/               # an example CLI AGENT that depends on the framework
-    jo.toml              #   the agent app: jo.main = harpe.cli.main
-    AGENT.md             #   the system prompt (used verbatim)
-    skills/
-    .env.example
-    sandbox/
-      api/               #   sandbox-api: the runTask contract (the granted capabilities)
-      runtime/           #   sandbox-runtime: SandboxRuntime.main builds Sandbox + calls runTask
-      guest/             #   sandbox-guest: the model's per-turn program
-  example-web/           # the same agent, served in the browser (jo.main = harpe.web.main)
-    jo.toml              #   links harpe.web.Config.model to the keyless echo model
-    src/WebExample.jo    #   the echo-model override (drop the link to use Anthropic)
+      Agent.jo           #   Agent (brain + tools + context + budget) + the turn engine
+      Model.jo           #   Model interface + the conversation model (Message, …)
+      Tool.jo            #   Tool abstraction (typed params, ToolInput, RunOutcome)
+      Context.jo         #   Context interface — pluggable context engineering
+      Memory.jo          #   the agent-curated working-memory store
+      SessionLog.jo      #   the append-only transcript archive (audit)
+      Workspace.jo       #   the agent working dir (context param)
+      Interact.jo        #   `harpe.turn`: how a turn is driven/observed
+      models/            #   `harpe.models`: anthropic / openai / echo
+      tools/             #   `harpe.tools`: runCode, skill tools, memory tools
+      context/           #   `harpe.context`: WindowedContext, SummarizingContext
+      ffi/, util.jo      #   Python interop; transcript windowing
+  sandbox/               # `harpe-sandbox`: the Sandbox host-side abstraction
+  cli/  web/  telegram/  # the three runnable agents (see Quick start)
 ```
 
-The web agent reuses the entire engine unchanged — `harpe.turn`, `harpe.models`,
-`harpe.tools`, `Workspace`, `SessionLog`. Only the driver differs: `harpe.web`
-serves a browser chat over HTTP and implements `Interact` by streaming each
-`TurnEvent` as one NDJSON line, so the page shows live progress (the browser
-counterpart of the CLI spinner). Switching an agent from terminal to browser is
-one line — `jo.main = harpe.web.main`. Run `example-web/` with `jo run` and open
-`http://127.0.0.1:8765`.
+Each agent directory contains:
 
-The framework is three packages. `harpe` (in `agent/`) is the shared base: the
-`harpe.ffi` interop and the `harpe.tools` layer (the `Tool` abstraction +
-`runCode`/skill tools). `harpe-sandbox` is a self-contained foundational package
-providing the `Sandbox` abstraction — host-side facilities (logging, env, future
-agent↔sandbox comms) for the sandbox runtime and capability implementations,
-**never** the LLM. `harpe-cli` is one agent type — the conversational loop
-(`harpe.cli`). None of them owns `runTask` or the per-turn entry — each agent owns
-its `sandbox/`: `api` declares `runTask`, `runtime` has its own `main`
-(`SandboxRuntime.main`) where `jo.main` is rewired, and `guest` is what the LLM
-writes.
-
-## How an agent is wired
-
-The agent app links its `main` to the loop package:
-
-```toml
-# example/jo.toml
-[main.dependencies]
-harpe-cli = { path = "../cli" }
-[main.links]
-"jo.main" = "harpe.cli.main"
+```
+  jo.toml                # deps harpe; links jo.main to its driver; `start` command
+  AGENT.md               # the system prompt, used verbatim
+  skills/                # read-only reference files the agent can browse
+  sandbox/
+    api/                 # declares runTask — the granted capabilities
+    runtime/             # builds Sandbox + capability impls, calls runTask
+    guest/               # the model's per-turn program (rewritten by runCode)
+  src/                   # the driver (Cli.jo / Server.jo / Telegram.jo, Config.jo, …)
+  assets/index.html      # web only: the chat page, served from disk — edit it live
 ```
 
-The guest is the per-turn program. It depends on the agent's `api` (check) and
-`runtime` (link), and rewires the entry to the agent's own `SandboxRuntime.main`:
+## How a turn works
+
+An **`Agent`** bundles what thinks, what it can do, what it sees, and its turn
+policy:
+
+```
+class Agent(brain: Model, tools: List[Tool], context: Context)
+  def runTurn(interact: Interact, maxToolRounds: Int, maxRetries: Int): TurnResult
+```
+
+`runTurn` asks the model, runs the tool calls it makes, and repeats until the
+model answers in plain text. Transient model errors retry with backoff; after
+`maxToolRounds` tool rounds the model is asked once more with no tools, forcing
+a final answer. The driver implements `Interact` (how the model call is issued
+and cancelled, how progress is shown) and owns sessions and persistence.
+
+The default toolset is `runCode` (write, compile, and run a Jo program in the
+sandbox), three read-only skill tools (`skillsList` / `skillsRead` /
+`skillsSearch`), and three memory tools (below). Large tool outputs are elided
+to a bounded excerpt; the full output is logged to `logs/runs.jsonl`.
+
+## Context and memory
+
+What the model sees each request is composed by the agent's **`Context`** — a
+per-session value and the framework's only context-engineering surface:
+
+```
+interface Context
+  def append(message: Message): Unit                       // record a transcript event
+  def render(interact: Interact): String ~ List[Message]   // compose this request
+  def mark(): Unit                                         // turn start (for rollback)
+  def rollback(): Unit                                     // drop since mark
+end
+```
+
+Two strategies ship, named by their transcript policy:
+
+- **`WindowedContext`** (default): system = `AGENT.md` + a volatile memory
+  block; messages = a sliding window of recent turns (~24k chars, whole turns).
+- **`SummarizingContext`**: old turns are distilled into a rolling summary by an
+  extra model call (its own `distiller` model — can be a cheaper one) instead of
+  dropped, triggered by high/low water marks.
+
+**Memory** is a string→string map the *LLM itself* curates via `updateMemory` /
+`readMemory` / `listMemory`; it is rendered into every request and persists per
+session (`<id>.memory.json`, written at turn commit). Which keys to keep is
+steered by your `AGENT.md`, not by the framework. The full transcript is always
+archived as append-only JSONL under `logs/` for audit — context is constructed,
+never replayed wholesale. Design notes: `context.md`.
+
+## Make it yours
+
+Copy an agent directory, then:
+
+**Prompt and knowledge.** Edit `AGENT.md` (used verbatim as the stable system
+prompt) and drop reference files into `skills/` — the agent browses them with
+the read-only skill tools.
+
+**Grant capabilities (the usual path).** Give the *LLM* a new typed ability
+inside the sandbox: declare the capability in `sandbox/api`, widen `runTask`'s
+`receives`, and construct the implementation in `sandbox/runtime` (impls get the
+`Sandbox` for logging/env/resource caps — never the model). Ungranted abilities
+fail to compile in the model's code.
+
+**Add host tools (advanced).** Tools run in the loop process, *outside* the
+sandbox, so keep them narrow. A tool is data plus a handler — typed parameters,
+no hand-written JSON schema:
+
+```jo
+def textLength(): Tool =
+  Tool:
+    "textLength"
+    "Return the number of characters in a string."
+    [strParam("text", "The text to measure")]
+    input =>
+      val n = input.string("text").size
+      new RunOutcome("\{n}", "measured · \{n} chars")
+```
+
+Offer it by editing the toolset line in your agent's `Config.agent`:
+
+```jo
+val tools = Defaults.tools() ++ memoryTools(memory) ++ [textLength()]
+```
+
+`Config.jo` is the agent's whole configuration surface — plain functions,
+centered on `agent(brain, memory, initial)`: the per-session assembly of the
+base prompt (from `AGENT.md`), the toolset (base tools + the session's memory
+tools), the context strategy, and the turn budget. It is *this* agent's
+configuration, not framework code, so it assumes freely — edit it to change any
+of those (an agent with different assumptions, e.g. a sub-agent, constructs
+`Agent` directly). Around it sit `model()`, the knobs (`maxToolRounds`,
+`maxRetries`), and driver-specific settings (web session idle time, Telegram
+allowlist). The common cases delegate to the shared `harpe.Defaults` (base
+tools, env-selected model, name extraction). There are no registration hooks: to
+change behavior, change the code.
+
+**Choose the model.** `harpe.Model` is provider-agnostic; `Defaults.model()`
+selects by env:
+
+| `PROVIDER`            | Key                 | `MODEL` default   | Extra                       |
+|-----------------------|---------------------|-------------------|-----------------------------|
+| `anthropic` (default) | `ANTHROPIC_API_KEY` | `claude-opus-4-6` | —                           |
+| `openai`              | `OPENAI_API_KEY`    | `gpt-4o`          | `OPENAI_BASE_URL` (optional — Groq, llama.cpp, …) |
+
+Or edit `Config.model()` to return any `Model` — `harpe.models.echo()` is a
+keyless dummy for wiring tests. A new provider is one file: a class that
+`view Model` plus a factory.
+
+**Restyle the web page.** `web/assets/index.html` is a plain self-contained
+page, served from disk and read per request — edits show on browser refresh, no
+rebuild.
+
+## How the sandbox is wired
+
+The model's per-turn program (`sandbox/guest`) depends on your `api` and
+`runtime`, and links the entry to your runtime:
 
 ```toml
-# example/sandbox/guest/jo.toml
+# sandbox/guest/jo.toml
 [main.dependencies]
 sandbox-api     = { path = "../api" }
 sandbox-runtime = { path = "../runtime", link = true }
@@ -95,173 +195,28 @@ sandbox-runtime = { path = "../runtime", link = true }
 "SandboxAPI.runTask" = "UserTask.runTask"
 ```
 
-`SandboxRuntime.main` (in `sandbox/runtime`) builds the host-side `Sandbox`,
-constructs the granted capability implementations (passing them the `Sandbox`),
-and calls `runTask`. The `Sandbox` gives impls logging / env / resource caps
-(`limitMemoryMb`, `limitCpuSeconds`) / (future) comms but is **never** passed to
-`runTask`, so the model can't name it. Setting the caps before `runTask` is how
-an agent bounds the guest's memory and CPU from inside the runtime — irreversible
-limits the model's own code cannot raise. (Namespaces follow
-the sandbox roles: `SandboxAPI`, `SandboxRuntime`, and the guest's `UserTask`.)
+`SandboxRuntime.main` builds the host-side `Sandbox`, constructs the granted
+capability impls, sets resource caps (`limitMemoryMb` / `limitCpuSeconds` —
+irreversible; the model's code cannot raise them), and calls `runTask`. On each
+`runCode` the driver writes the program to `sandbox/guest/src/Task.jo`, builds
+it, runs it under a wall-clock timeout (process-group kill), and feeds stdout —
+or the compile/timeout error — back to the model.
 
-## Extending an agent: capabilities vs. tools
+## Development
 
-There are two ways to give an agent more power, and they are not the same:
-
-- **Capabilities (the usual path).** Grant the *LLM* a new typed ability inside
-  the sandbox: declare a capability interface, widen `runTask`'s `receives` in
-  `sandbox/api`, and construct its implementation in `sandbox/runtime` (the impl
-  gets the `Sandbox` for logging/env/comms). The model invokes it from the Jo it
-  writes, and the compile-time check keeps ungranted abilities unreachable.
-- **Tools (advanced).** Change the *host-side* tools the loop offers the model
-  (`runCode`, the skill tools, …). These run outside the sandbox, so reach for
-  them rarely — see "Defining and customizing tools" below.
-
-## The turn loop (`harpe.cli`)
-
-1. read a line from the user
-2. ask the LLM with the agent's `AGENT.md` as the system prompt (verbatim), and
-   `runCode(code)` plus three read-only reference tools over the skills dir —
-   `skillsList()`, `skillsRead(name)`, `skillsSearch(query)`. The model learns
-   each tool from the `tools=` API, so the prompt needn't describe them. The skill
-   tools only let it read its own knowledge files; it still *acts* only via
-   `runCode`
-3. on a `runCode` call: write the program to `sandbox/guest/src/Task.jo`, build
-   it with `jo build --spec sandbox/guest/jo.toml`, run the compiled program
-   under a wall-clock timeout (a stuck build or infinite loop is killed —
-   process group and all), and feed its stdout (or the compile/timeout error)
-   back to the LLM
-4. repeat until the LLM replies with text, then print the reply
-
-The compile step is the security checkpoint: a program that names a capability
-the agent didn't grant fails to compile, so it never runs.
-
-The loop is bounded and resilient: a transient model error (rate limit, 5xx,
-connection blip) is retried with exponential backoff (`maxRetries`), and each
-turn is capped at `maxToolRounds` tool-call rounds — once spent, the model is
-asked once more with no tools, forcing a final answer. Both are `defer def`
-hooks an agent can override through its `jo.toml`.
-
-## Defining and customizing tools
-
-A tool is a `harpe.tools.Tool` (`harpe/src/tools/Tool.jo`): a name, a description,
-typed parameters, and a host-side handler. Parameters are modeled in Jo
-(`ParamType` / `ToolParam`) — the `spec` method derives the Anthropic JSON schema,
-and handlers read arguments via a typed `ToolInput`, so tool authors never
-hand-write JSON:
-
-```scala
-Tool:
-  "textLength"
-  "Return the number of characters in a string."
-  [strParam("text", "The text to measure")]
-  input =>
-    val n = input.string("text").size
-    new RunOutcome("\{n}", "measured · \{n} chars")
-```
-
-The toolset offered to the model is `defaultTools() ++ extraTools()`. Both are
-`defer def` hooks in `harpe.cli` with sensible defaults, so an agent customizes
-the toolset **purely through its `jo.toml`** — the same compile-time linking that
-wires `jo.main` and the sandbox's `runTask`, no custom `main` required:
-
-```toml
-# my-agent/jo.toml
-[main.dependencies]
-harpe-cli = { path = "../cli" }
-[main.links]
-"jo.main"              = "harpe.cli.main"
-"harpe.cli.extraTools" = "MyAgent.extraTools"   # ADD tools to the built-ins
-# "harpe.cli.defaultTools" = "MyAgent.allTools" # or REPLACE the base set entirely
-```
-
-```jo
-// my-agent/src/MyAgent.jo
-namespace MyAgent
-import harpe.tools.*
-
-// Add `receives workspace` (and `import harpe.workspace`) if your tools need to
-// resolve paths against the agent's working directory.
-def extraTools(): List[Tool] = [ /* your Tool values */ ]
-```
-
-`defaultTools` defaults to `runCode` + the read-only skill tools; overriding it
-gives full control, including whether and how `runCode` exists. Compose with the
-`runCodeTool` / `skillTools` builders in `harpe.tools`, or supply entirely custom
-`Tool`s. A mismatched link signature is a compile-time error.
-
-Host tools run in the loop process, outside the sandbox, so keep them narrow —
-the typed sandbox (widening `runTask`'s `receives`) remains the place to grant
-the model new ways to *act* on the world.
-
-## Choosing the model
-
-The chat model is a provider-agnostic `harpe.models.Model` — `reply(system,
-history, tools)` returning the assistant's next message. The loop owns the
-conversation (a Jo `List[Message]`) and runs the tools; each provider impl only
-translates to/from its own wire format, so swapping providers touches nothing
-else.
-
-The default `model()` hook reads env vars to select a provider at runtime:
-
-| `PROVIDER`    | Key needed          | `MODEL` default    | Extra vars             |
-|---------------|---------------------|--------------------|------------------------|
-| `anthropic` (default) | `ANTHROPIC_API_KEY` | `claude-opus-4-6` | —                 |
-| `openai`      | `OPENAI_API_KEY`    | `gpt-4o`           | `OPENAI_BASE_URL` (optional) |
-
-`OPENAI_BASE_URL` lets you point the OpenAI provider at any compatible endpoint —
-Groq, Together AI, a local llama.cpp server, etc. Leave it unset for the default
-OpenAI API.
-
-The hook itself is a `defer def` and can be replaced entirely through `jo.toml`:
-
-```toml
-[main.links]
-"harpe.cli.model" = "harpe.models.echo"   # dummy model — test the cli, no API key
-# "harpe.cli.model" = "MyAgent.model"     # or your own custom Model factory
-```
-
-`harpe.models.echo` replies with the last user message, so the whole loop can be
-driven in a test without a provider or key. A new provider is one file: a class
-that `view Model` plus a factory `def <name>(...): Model`.
-
-## Run the example
+The core library has a pure test suite (no network, no tty):
 
 ```sh
-cd example
-pip install -r requirements.txt        # anthropic + openai; readline etc. are stdlib
-cp .env.example .env                   # set ANTHROPIC_API_KEY (or OPENAI_API_KEY)
-jo run                                  # chat in your terminal
-```
-
-To use OpenAI or a compatible endpoint instead of Anthropic:
-
-```sh
-# .env
-PROVIDER=openai
-OPENAI_API_KEY=sk-...
-MODEL=gpt-4o
-# OPENAI_BASE_URL=https://api.groq.com/openai/v1   # optional
+cd agent && jo test
 ```
 
 ## Status / next
 
-Working and verified: the framework packages build; the example agent builds;
-the loop runs and the per-turn build+run pipeline works (`ready`).
+Working: all three agents, the sandbox pipeline, retries/budgets, bounded tool
+results, per-session memory with persistence and resume (web/Telegram), and the
+pluggable `Context` layer with windowing and summarizing strategies.
 
-Robustness (done): host-side wall-clock timeout + process-group kill on the
-guest build/run; in-guest memory/CPU caps via the `Sandbox` runtime
-(`limitMemoryMb` / `limitCpuSeconds`); transient-error retries with backoff; a
-per-turn tool-call budget.
-
-Next increments:
-- **Context-window management** — token budget + pluggable compaction
-  (drop-oldest / summarize / tool-output elision) between the loop and the model.
-- **Streaming + token/usage accounting** — widen the `Model` return; surface
-  per-turn tokens/cost.
-- **More `Sandbox` facilities** — agent↔sandbox messaging alongside logging/env.
-- **Reusable capabilities** — e.g. an `FS` capability an agent can grant the LLM,
-  with an impl backed by the `Sandbox`.
-- request-driven / monitoring triggers; sessions under `data/` (resume/replay);
-  confirmation for irreversible actions; polish (markdown rendering).
-```
+Next: streaming + token/usage accounting (calibrate context budgets with real
+tokens); more `Sandbox` facilities (agent↔sandbox messaging) and reusable
+capabilities (e.g. a typed `FS`); CLI session resume; confirmation for
+irreversible actions.

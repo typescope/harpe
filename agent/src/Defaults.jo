@@ -1,0 +1,87 @@
+//[ Defaults.jo
+  !
+  ! Convenient defaults for wiring an agent, shared by the cli/web/telegram
+  ! drivers. These are plain functions, not hooks: an agent customizes itself by
+  ! editing its own `src/Config.jo` (each driver has one), which delegates here
+  ! for the common cases and diverges by simply writing code.
+//]
+
+namespace harpe
+
+import harpe.ffi.getenv
+import harpe.ffi.sysMod
+import harpe.ffi.fileExists
+import harpe.ffi.jsonMod
+import harpe.models.*
+import harpe.tools.*
+import os
+
+section Defaults
+  //[ The base toolset: `runCode` (logging full runs to `logs/runs.jsonl`) plus
+    ! the read-only skill tools over the agent's `skills/`. The per-session
+    ! memory tools are added by the drivers, since they capture session state.
+    !
+    ! `runCode` runs as the account named by `sandbox/sandbox.conf`'s `run_user`
+    ! (if any) so its egress can be filtered by uid (see `docs/sandbox.md`).
+  //]
+  def tools(): List[Tool] receives workspace =
+    val logRun: py.Dict => Unit = entry =>
+      os.makedirs(workspace.relative("logs"))
+      val f = py.open(workspace.relative("logs/runs.jsonl"), "a")
+      f.write(jsonMod.dumps(entry).asString + "\n")
+      f.close()
+
+    val runTool = runCodeTool(workspace.guestDir, logRun, runAsUser = SandboxConfig.runUser())
+
+    [runTool] ++ skillTools(workspace.skillsDir)
+
+  //[ The chat model, selected by env vars:
+    !
+    !   PROVIDER          "anthropic" (default) or "openai"
+    !   MODEL             model id — defaults to "claude-opus-4-6" for Anthropic,
+    !                     "gpt-4o" for OpenAI
+    !   ANTHROPIC_API_KEY required when PROVIDER=anthropic
+    !   OPENAI_API_KEY    required when PROVIDER=openai
+    !   OPENAI_BASE_URL   optional base URL for OpenAI-compatible endpoints
+    !                     (Groq, Together AI, local llama.cpp, …); leave unset
+    !                     for the default OpenAI API
+  //]
+  def model(): Model receives IO.stdout =
+    val provider = getenv("PROVIDER", "anthropic")
+    if provider == "openai" then
+      val key = getenv("OPENAI_API_KEY", "")
+      if key == "" then
+        println "Error: OPENAI_API_KEY is not set (put it in .env or the environment)."
+        sysMod.exit(1)
+      openai(key, getenv("MODEL", "gpt-4o"), getenv("OPENAI_BASE_URL", ""))
+    else
+      val key = getenv("ANTHROPIC_API_KEY", "")
+      if key == "" then
+        println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
+        sysMod.exit(1)
+      anthropic(key, getenv("MODEL", "claude-opus-4-6"))
+
+  //[ The agent's display name, extracted from AGENT.md: its first Markdown H1,
+    ! else a generic default.
+  //]
+  def extractAgentName(): String receives workspace =
+    val text = workspace.read("AGENT.md") rescue None => ""
+
+    for line in text.lines do
+      val t = line.trim
+      if t.startsWith("# ") then return t.substring(2, t.size).trim
+
+    "Harpe Agent"
+
+  //[ Preflight: an agent must run from its working directory — the folder holding
+    ! its `jo.toml` and a `sandbox/` — so the tools resolve paths against it.
+    ! Prints a clear error and returns false on a mislaunch.
+  //]
+  def checkAgentDir(): Bool receives IO.stdout =
+    if fileExists("jo.toml") && os.path.isdir("sandbox") then
+      true
+
+    else
+      println "Error: run this from an agent's working directory — a folder containing its jo.toml and a sandbox/ directory."
+      false
+end

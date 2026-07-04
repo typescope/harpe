@@ -1,0 +1,77 @@
+//[ Session.jo
+  !
+  ! The Telegram driver's live conversation object (`Session`) and its storage layout
+  ! (the `Session` section): one conversation per Telegram chat, keyed by its numeric
+  ! `chat.id`, persisted as `logs/sessions/<chatId>.jsonl` under the workspace. The
+  ! chat id is the natural session key — it is stable across messages and survives
+  ! restarts, so a chat resumes its history simply by reappearing.
+  !
+  ! Like the web driver, this layout is a *driver* decision kept out of the shared
+  ! `harpe.SessionLog` (which owns only the per-message record schema): the section
+  ! maps a chat id to its file (`forSession` to append, `load` to read back).
+//]
+
+namespace harpe.telegram
+
+import harpe.*
+
+//[ One live conversation: its chat id, its append log, its agent (which owns
+  ! the context and therefore the running transcript window), and its working
+  ! memory.
+  !
+  ! Each session has a FIFO `queue` drained by its own dedicated worker thread, so
+  ! turns for different chats run concurrently while turns within one chat stay
+  ! ordered and serialized. Only that worker touches the session's state, so no
+  ! lock is needed around it.
+//]
+private class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
+  val queue = py.module("queue").Queue()
+  private var pending: List[Message] = []
+
+  //[ Begin a user turn: mark the context's rollback point and append the user's
+    ! message. The message is remembered so `commit` can archive the whole turn.
+  //]
+  def beginTurn(text: String): Unit =
+    val userMsg: Message = UserText(text)
+    pending = [userMsg]
+    agent.context.mark()
+    agent.context.append(userMsg)
+
+  //[ Commit a completed turn: append the user message plus the turn's delta (the
+    ! engine-produced messages) to the transcript archive, and persist memory.
+  //]
+  def commit(delta: List[Message]): Unit =
+    log.append(time.now(), pending ++ delta)
+    saveMemory()
+
+  //[ Abandon a cancelled/failed turn: restore the context's pre-turn window.
+    ! Memory is still persisted — it is deliberate and not rolled back with the
+    ! transcript.
+  //]
+  def rollback(): Unit =
+    agent.context.rollback()
+    saveMemory()
+
+  //[ Persist the working memory beside the transcript archive. Runs on the chat's
+    ! worker thread; `memoryPath` is a pure derivation, so no `workspace` capability
+    ! is needed.
+  //]
+  def saveMemory(): Unit =
+    if !memory.isEmpty then Memory.save(log.memoryPath, memory)
+end
+
+section Session
+  //[ The file backing this chat's session. //]
+  def sessionPath(chatId: String): String receives workspace =
+    workspace.relative("logs/sessions/" + chatId + ".jsonl")
+
+  //[ An append log for this chat's session (its file is created lazily). //]
+  def forSession(chatId: String): SessionLog receives workspace =
+    new SessionLog(sessionPath(chatId))
+
+  //[ Reconstruct this chat's conversation from disk; `[]` if it has no file yet,
+    ! so a chat seen for the first time starts empty.
+  //]
+  def load(chatId: String): List[Message] receives workspace =
+    SessionLog.loadFile(sessionPath(chatId))
+end

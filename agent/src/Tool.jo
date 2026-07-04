@@ -1,0 +1,118 @@
+//[ Tool.jo
+  !
+  ! The Jo-modeled tool abstraction: a `Tool` is a name + prose + typed
+  ! parameters + a host-side handler. Tool authors describe inputs in Jo
+  ! (`ParamType` / `ToolParam`); each `harpe.models` provider renders its own wire
+  ! spec from this model, so `Tool` stays provider-neutral and authors never
+  ! hand-write JSON. Handlers read arguments via the typed `ToolInput` and
+  ! return a `RunOutcome`.
+//]
+
+namespace harpe
+
+//[ RunOutcome
+  !
+  ! A tool result: `result` is the text fed back to the model; `summary` is the
+  ! one-line status shown in the console.
+//]
+class RunOutcome(result: String, summary: String)
+
+//[ Tool parameter type
+  !
+  ! The JSON-schema type of a tool input parameter, modeled in Jo so tool
+  ! authors never hand-write JSON schema.
+//]
+union ParamType = StrParam | IntParam | BoolParam | NumParam
+
+//[ Tool parameter
+  !
+  ! One input parameter of a tool: its name, type, human description, and
+  ! whether it is required.
+//]
+class ToolParam(name: String, paramType: ParamType, description: String, required: Bool)
+
+//[ Input in a tool call
+  !
+  ! Typed access to the arguments the model supplied for a tool call, so
+  ! handlers read `input.string("code")` instead of poking a raw py.Dict.
+//]
+class ToolInput(raw: py.Dict)
+  def string(name: String): String = raw.get(name, "").asString
+  def stringOr(name: String, fallback: String): String = raw.get(name, fallback).asString
+
+  def int(name: String): Int = intOr(name, 0)
+  def intOr(name: String, fallback: Int): Int = raw.get(name, fallback).asInt
+
+  def bool(name: String): Bool = boolOr(name, false)
+  def boolOr(name: String, fallback: Bool): Bool = raw.get(name, fallback).asBool
+
+  def num(name: String): Float = numOr(name, 0.0)
+  def numOr(name: String, fallback: Float): Float = raw.get(name, fallback).asFloat
+end
+
+//[ A tool
+  !
+  ! One LLM-facing tool: a Jo description (name, prose, typed params) plus the
+  ! host-side handler invoked when the model calls it. `run` gets the call's
+  ! typed input and returns the outcome — result text fed back to the model
+  ! plus a one-line console summary. Agents build these to extend the toolset;
+  ! advanced agents build the whole set (including `runCode`).
+//]
+class Tool(
+  name: String,
+  description: String,
+  params: List[ToolParam],
+  run: ToolInput => RunOutcome
+)
+
+//[ Run a tool, turning an unexpected host exception into an error `RunOutcome`
+  ! instead of letting it abort the whole turn. A well-behaved tool returns a
+  ! `RunOutcome`; this is the backstop for one that raises. The failure is fed
+  ! back to the model as a tool result — so the model can react — rather than
+  ! crashing the turn (or the driver).
+//]
+def runSafely(tool: Tool, input: ToolInput): RunOutcome =
+  match py.try(tool.run(input))
+  case Ok(outcome) => outcome
+
+  case Err(e) =>
+    new RunOutcome(
+      "The tool '\{tool.name}' failed: \{e.message}",
+      "error · \{tool.name}")
+
+//[ A required string parameter — the common case when defining a tool. //]
+def strParam(name: String, description: String): ToolParam =
+  new ToolParam(name, StrParam, description, true)
+
+//[ A required integer parameter. //]
+def intParam(name: String, description: String): ToolParam =
+  new ToolParam(name, IntParam, description, true)
+
+//[ A required boolean parameter. //]
+def boolParam(name: String, description: String): ToolParam =
+  new ToolParam(name, BoolParam, description, true)
+
+//[ A required number (float) parameter. //]
+def numParam(name: String, description: String): ToolParam =
+  new ToolParam(name, NumParam, description, true)
+
+//[ Bound a tool result's text to at most `maxChars`, keeping the head and the tail
+  ! and marking the elided middle (a program's setup is at the start, its errors and
+  ! final output at the end — both worth keeping). Text within the limit is returned
+  ! unchanged.
+  !
+  ! This bounds only what the model sees; a tool that elides is expected to preserve
+  ! the full artifact elsewhere (e.g. `runCode` writes it to `logs/runs.jsonl`), so
+  ! nothing is lost from the record — this is the "reference, don't inline" rule.
+//]
+def elide(text: String, maxChars: Int): String =
+  if text.size <= maxChars then
+    text
+
+  else
+    val headLen = maxChars / 2
+    val tailLen = maxChars - headLen
+    val head = text.substring(0, headLen)
+    val tail = text.substring(text.size - tailLen, text.size)
+    val elided = text.size - headLen - tailLen
+    "\{head}\n…[\{elided} characters elided]…\n\{tail}"

@@ -1,0 +1,67 @@
+//[ TelegramInteract.jo
+  !
+  ! The Telegram driver's `Interact` implementation — the seam between the shared
+  ! turn engine and a Telegram chat. Telegram is a discrete-message channel with
+  ! no live progress stream, so unlike the web driver (which streams every
+  ! `TurnEvent` as NDJSON) this one surfaces only a "typing…" chat action while
+  ! the model or a tool is working, and leaves the final answer to the caller.
+  ! Fatal outcomes are reported by the poll loop, not here.
+  !
+  ! There is no cancellation: `cancelled` is always false and `pause` simply waits
+  ! out a retry backoff. A later phase could wire a per-chat "stop" command.
+//]
+
+namespace harpe.telegram
+
+import harpe.*
+import harpe.turn.*
+
+private class TelegramInteract(client: TelegramClient, chatId: String)
+  view Interact
+
+  //[ A plain (non-cancellable) model call; the turn engine retries transient
+    ! errors itself.
+  //]
+  def ask(model: Model, system: String, messages: List[Message], tools: List[Tool]): Option[ReplyResult] =
+    Some(model.reply(system, messages, tools))
+
+  def cancelled: Bool = false
+
+  def pause(seconds: Float): Bool =
+    py.module("time").sleep(seconds)
+    false
+
+  //[ Reflect engine progress as a "typing" indicator. The user-visible answer and
+    ! any failure message are sent by the poll loop, so most events are silent
+    ! here — a Telegram chat can't carry per-step status without spamming it.
+  //]
+  def emit(event: TurnEvent): Unit =
+    match event
+    case ModelRequestStarted(attempt, maxAttempts) =>
+      client.sendChatAction(chatId, "typing")
+
+    case ModelRequestEnded =>
+      pass
+
+    case TransientError(detail, delaySeconds) =>
+      pass
+
+    case RequestFailed(detail) =>
+      pass
+
+    case RetriesExhausted(detail, attempts) =>
+      pass
+
+    case ToolBudgetReached(budget) =>
+      pass
+
+    case ToolCallStarted(name) =>
+      client.sendChatAction(chatId, "typing")
+
+    case ToolCallEnded(name, summary) =>
+      pass
+
+    case ContextCompacted(droppedMessages) =>
+      pass
+  end
+end

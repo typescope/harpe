@@ -6,15 +6,12 @@
 namespace harpe.cli
 
 import jo.IO.stdout
+import harpe.*
 import harpe.ffi.*
-import harpe.tools.*
-import harpe.models.*
 import harpe.turn.*
-import harpe.Workspace
-import harpe.workspace
 
 //[ The CLI's interaction //]
-private class ConsoleInteract(brain: Model, sysPrompt: String, out: String => Unit, historyFile: String)
+private class ConsoleInteract(out: String => Unit, historyFile: String)
   view Interact
 
   private val interrupt = threadingMod.Event()
@@ -32,6 +29,18 @@ private class ConsoleInteract(brain: Model, sysPrompt: String, out: String => Un
     val rl = py.module("readline")
     if fileExists(historyFile) then rl.read_history_file(historyFile)
 
+    // Ctrl-C quits cleanly from anywhere. Capture the terminal's cooked-mode
+    // settings now so the handler can restore them: a turn puts the terminal in
+    // cbreak mode (for the ESC watcher), and exiting from there would otherwise
+    // leave the user's shell in a broken state. Installed on the main thread, as
+    // Python requires.
+    val cooked = termiosMod.tcgetattr(0)
+    onSigint: (signum: Int, frame: py.Dynamic) =>
+      termiosMod.tcsetattr(0, termiosMod.TCSADRAIN, cooked)
+      sysMod.stdout.write("\nGoodbye.\n")
+      sysMod.stdout.flush()
+      val _ = sysMod.exit(0)
+
     println """
 
           .--.
@@ -45,15 +54,25 @@ private class ConsoleInteract(brain: Model, sysPrompt: String, out: String => Un
 
     """
 
-    println "Type a message to start. Ctrl-D or 'quit' to exit."
+    println "Type a message to start. Ctrl-C, Ctrl-D, or 'quit' to exit."
 
-  def userInput(): String =
+  //[ Read one line from the user. `None` signals end-of-input (Ctrl-D / EOF),
+    ! on which the caller should exit.
+  //]
+  def userInput(): Option[String] =
     println ""
     // Keep the prompt a single line with no embedded newline, so readline can
     // redraw it correctly when navigating history with the up/down arrows.
-    val line = py.input("You ▸ ")
-    saveInputHistory()
-    line.trim
+    // Ctrl-C is handled by the SIGINT handler (quit); Ctrl-D surfaces here as
+    // EOFError, which py.try catches so we exit cleanly instead of crashing.
+    match py.try(py.input("You ▸ "))
+    case Ok(line) =>
+      saveInputHistory()
+      Some(line.trim)
+
+    case Err(_) =>
+      println ""
+      None
 
   def agentResponse(text: String): Unit =
     println ""
@@ -68,6 +87,13 @@ private class ConsoleInteract(brain: Model, sysPrompt: String, out: String => Un
     val _ = py.try(py.module("readline").write_history_file(historyFile))
 
   def turn[T](f: () => T): T =
+    // Reset the ESC-watcher state so interruption works on every turn: the
+    // previous turn left `stopWatch` set (stopping its watcher) and may have
+    // left `interrupt` set (if ESC was pressed). Without clearing, the watcher
+    // would exit immediately and a prior ESC would instantly cancel this turn.
+    interrupt.clear()
+    stopWatch.clear()
+
     val savedTerm = ConsoleInteract.enterCbreak()
     ConsoleInteract.startEscWatcher(interrupt, stopWatch)
 
@@ -78,9 +104,9 @@ private class ConsoleInteract(brain: Model, sysPrompt: String, out: String => Un
 
     res
 
-  def ask(history: List[Message], tools: List[Tool]): Option[ReplyResult] =
+  def ask(model: Model, system: String, messages: List[Message], tools: List[Tool]): Option[ReplyResult] =
     ConsoleInteract.callInterruptible: this, () =>
-      brain.reply(sysPrompt, history, tools)
+      model.reply(system, messages, tools)
 
   def emit(event: TurnEvent): Unit = with IO.stdout = out in
     match event
@@ -111,6 +137,9 @@ private class ConsoleInteract(brain: Model, sysPrompt: String, out: String => Un
     case ToolCallEnded(name, summary) =>
       spinner.stop()
       println "  · \{summary}"
+
+    case ContextCompacted(droppedMessages) =>
+      println "  · context compacted (\{droppedMessages} messages summarized)"
 
   def cancelled: Bool = interrupt.is_set().asBool
 

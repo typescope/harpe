@@ -1,0 +1,127 @@
+//[ Session.jo
+  !
+  ! The web driver's live conversation object (`Session`) and its storage layout
+  ! (the `Session` section): conversations live as `logs/sessions/<id>.jsonl` under
+  ! the workspace, one file per session, keyed by the id that also appears in its
+  ! `/c/<id>` URL.
+  !
+  ! This layout is a *driver* decision, kept out of the shared `harpe.SessionLog`
+  ! (which only owns the per-message record schema). The section maps an id to its
+  ! file (`forSession` to append, `load` to read back via `SessionLog.loadFile`) and
+  ! scans the directory to list past sessions for the picker. Ids are time-sortable,
+  ! so newest-first is just a reverse id sort.
+//]
+
+namespace harpe.web
+
+import harpe.ffi.jsonMod
+import harpe.ffi.readFile
+import harpe.ffi.threadingMod
+import harpe.*
+
+//[ One live conversation: its id, its append log, its agent (which owns the
+  ! context and therefore the running transcript window), and its working memory.
+  ! A lock serializes turns within the session so its state stays consistent
+  ! under concurrent requests.
+//]
+class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
+  val lock = threadingMod.Lock()
+
+  //[ Set (via `POST /api/stop`) to request cancellation of the running turn;
+    ! the engine notices between model calls and tool executions. Cleared when
+    ! the next turn begins.
+  //]
+  val stop = threadingMod.Event()
+
+  var lastActive: Float = time.now()
+  private var pending: List[Message] = []
+
+  //[ Begin a user turn: clear any stale stop request, mark the context's
+    ! rollback point, and append the user's message. The message is remembered
+    ! so `commit` can archive the whole turn.
+  //]
+  def beginTurn(text: String): Unit =
+    stop.clear()
+    lastActive = time.now()
+    val userMsg: Message = UserText(text)
+    pending = [userMsg]
+    agent.context.mark()
+    agent.context.append(userMsg)
+
+  //[ Commit a completed turn: append the user message plus the turn's delta (the
+    ! engine-produced messages) to the transcript archive, and persist memory.
+  //]
+  def commit(delta: List[Message]): Unit =
+    log.append(time.now(), pending ++ delta)
+    saveMemory()
+
+  //[ Abandon a cancelled/failed turn: restore the context's pre-turn window.
+    ! Memory is still persisted — it is deliberate and not rolled back with the
+    ! transcript.
+  //]
+  def rollback(): Unit =
+    agent.context.rollback()
+    saveMemory()
+
+  //[ Persist the working memory beside the transcript archive. //]
+  def saveMemory(): Unit =
+    if !memory.isEmpty then Memory.save(log.memoryPath, memory)
+end
+
+//[ Lightweight metadata for one persisted session, used to populate the session
+  ! picker without loading the whole conversation: the id (also its URL), a human
+  ! title (the first user message), and the start time.
+//]
+class SessionMeta(id: String, title: String, time: Float)
+
+section Session
+  //[ The file backing the session with this id. //]
+  def sessionPath(id: String): String receives workspace =
+    workspace.relative("logs/sessions/" + id + ".jsonl")
+
+  //[ An append log for this id's session (its file is created lazily). //]
+  def forSession(id: String): SessionLog receives workspace =
+    new SessionLog(sessionPath(id))
+
+  //[ Reconstruct this id's conversation from disk; `[]` if it has no file yet,
+    ! so a freshly-minted (or unknown) id loads as an empty conversation.
+  //]
+  def load(id: String): List[Message] receives workspace =
+    SessionLog.loadFile(sessionPath(id))
+
+  //[ The persisted sessions, newest first — id, title, and start time.
+    !
+    ! Scans the sessions directory and reads each file's head for a title (its
+    ! first user message) and start time, without loading whole conversations.
+  //]
+  def listSessions(): List[SessionMeta] receives workspace =
+    val dir = workspace.relative("logs/sessions")
+    var metas: List[SessionMeta] = []
+
+    if os.path.isdir(dir) then
+      for nameDyn in os.listdir(dir) do
+        val name = nameDyn.asString
+        if name.endsWith(".jsonl") then
+          metas = metas + readMeta(os.path.join(dir, name), name.substring(0, name.size - 6))
+
+    metas.sortBy(m => m.id).reverse
+
+  //[ One session's metadata, read from the head of its file. //]
+  private def readMeta(path: String, id: String): SessionMeta =
+    var title = ""
+    var startTime = 0.0
+    var sawFirst = false
+
+    for line in readFile(path).lines do
+      val s = line.trim
+      if s != "" then
+        val d = jsonMod.loads(s).cast[py.Dict]
+        if !sawFirst then
+          startTime = d.get("time", 0.0).asFloat
+          sawFirst = true
+
+        if title == "" && d.get("role", "").asString == "user" then
+          title = d.get("text", "").asString
+
+    new SessionMeta(id, if title == "" then "New chat" else title, startTime)
+end

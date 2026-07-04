@@ -9,6 +9,9 @@
 
 namespace harpe
 
+import harpe.ffi.fileExists
+import harpe.ffi.readFile
+
 //[ Workspace
   !
   ! An agent's working directory and the conventional layout the built-in tools
@@ -18,8 +21,15 @@ namespace harpe
 class Workspace(root: String)
   def guestDir: String  = os.path.join(root, "sandbox/guest")
   def skillsDir: String = os.path.join(root, "skills")
-  def agentMd: String   = os.path.join(root, "AGENT.md")
   def relative(path: String): String = os.path.join(root, path)
+
+  //[ The text of a workspace file (`path` relative to the root), or `None` if
+    ! the file does not exist. A call site that wants a graceful default writes
+    ! `workspace.read("AGENT.md") rescue None => ""`.
+  //]
+  def read(path: String): Option[String] =
+    val p = relative(path)
+    if fileExists(p) then Some(readFile(p)) else None
 end
 
 //[ The agent's working directory, provided to tool builders as context. //]

@@ -1,100 +1,58 @@
 //[ Config.jo
   !
-  ! Configuration for the cli agent
+  ! This agent's configuration — plain functions, meant to be edited. The common
+  ! cases delegate to the shared `harpe.Defaults`; customize by changing the code
+  ! here (e.g. append your own tools with `Defaults.tools() ++ [myTool]`, or
+  ! replace `Defaults.model()` with any `Model`).
 //]
 
 namespace harpe.cli
 
-import harpe.ffi.getenv
-import harpe.ffi.sysMod
-import harpe.ffi.readFile
-import harpe.ffi.fileExists
-import harpe.ffi.jsonMod
-import harpe.models.*
-import harpe.tools.*
-import harpe.Workspace
-import harpe.workspace
-
+import harpe.*
+import harpe.tools.memoryTools
+import harpe.context.WindowedContext
 
 section Config
-  //[ The system prompt is the agent's AGENT.md, used verbatim — fully visible and
-    ! editable by the agent author.
+  //[ Assemble this agent for one session — the central place where its pieces
+    ! come together: AGENT.md as the base prompt, the base tools plus the tools
+    ! curating this session's memory, a sliding-window context over the memory
+    ! and the replayed transcript (`[]` for a fresh session), and the turn
+    ! budget.
     !
-    ! The framework injects nothing.
+    ! This is THIS agent's configuration, not framework code, so it assumes
+    ! freely — edit it to change the prompt source, the toolset, or the context
+    ! strategy (e.g. a `SummarizingContext` with a cheap distiller model). An
+    ! agent with different assumptions (a sub-agent, say) constructs `Agent`
+    ! directly.
+    !
+    ! The parameters are deliberately NOT configuration: `memory` and `initial`
+    ! are the per-session inputs, and `brain` is a process-lifecycle resource —
+    ! the driver constructs it once at startup, where a missing API key fails
+    ! fast with a clear message, and all sessions share it. (`model()` is
+    ! `receives IO.stdout` for exactly that reason: it prints and exits, which
+    ! a server's request path could neither do nor be allowed to by the effect
+    ! system.)
   //]
-  def systemPrompt(): String receives workspace =
-    if fileExists(workspace.agentMd) then readFile(workspace.agentMd) else ""
+  def agent(brain: Model, memory: Memory, initial: List[Message]): Agent receives workspace =
+    val basePrompt = workspace.read("AGENT.md") rescue None => ""
+    val tools = Defaults.tools() ++ memoryTools(memory)
+    val context = new WindowedContext(basePrompt, memory, initial)
+    new Agent(brain, tools, context)
 
-  //[ extra tools
-    !
-    ! Deferred hook for ADDING tools. The default is none; an agent overrides it
-    ! in its jo.toml — `[main.links] "harpe.cli.extraTools" = "MyAgent.myTools"` —
-    ! to offer its own tools alongside the built-ins. Its impl `receives workspace`,
-    ! so it can resolve paths against the agent's working directory.
+  //[ The chat model, selected by env (PROVIDER / MODEL / API keys — see
+    ! `Defaults.model`). Replace with any `Model`, e.g. `harpe.models.echo()`
+    ! for a keyless dummy.
   //]
-  defer def extraTools(): List[Tool] receives workspace = []
+  def model(): Model receives IO.stdout = Defaults.model()
 
-  //[ default tools
-    !
-    ! Deferred hook for the BASE toolset (runCode + the read-only skill tools). An
-    ! agent that wants full control — including whether and how `runCode` exists —
-    ! overrides it: `[main.links] "harpe.cli.defaultTools" = "MyAgent.myTools"`.
+  //[ Cap on tool-call rounds in a single turn. Once spent, the model is asked
+    ! once more with NO tools, so it must answer with text — bounding runaway
+    ! turns (and API spend).
   //]
-  defer def defaultTools(): List[Tool] receives workspace =
-    val runTool = runCodeTool: workspace.guestDir, entry =>
-      os.makedirs(workspace.relative("logs"))
-      val f = py.open(workspace.relative("logs/runs.jsonl"), "a")
-      f.write(jsonMod.dumps(entry).asString + "\n")
-      f.close()
+  def maxToolRounds(): Int = 50
 
-    [runTool] ++ skillTools(workspace.skillsDir)
-
-
-  //[ All tools including extra tools and default tools  //]
-  def tools: List[Tool] receives workspace = defaultTools ++ extraTools
-
-  //[ The LLM model
-    !
-    ! Deferred hook selecting the chat model. Controlled by env vars:
-    !
-    !   PROVIDER          "anthropic" (default) or "openai"
-    !   MODEL             model id — defaults to "claude-opus-4-6" for Anthropic,
-    !                     "gpt-4o" for OpenAI
-    !   ANTHROPIC_API_KEY required when PROVIDER=anthropic
-    !   OPENAI_API_KEY    required when PROVIDER=openai
-    !   OPENAI_BASE_URL   optional base URL for OpenAI-compatible endpoints
-    !                     (Groq, Together AI, local llama.cpp, …); leave unset
-    !                     for the default OpenAI API
+  //[ How many times to retry a transient model error (rate limit, 5xx,
+    ! connection blip) before giving up the turn, with exponential backoff.
   //]
-  defer def model(): Model receives IO.stdout =
-    val provider = getenv("PROVIDER", "anthropic")
-    if provider == "openai" then
-      val key = getenv("OPENAI_API_KEY", "")
-      if key == "" then
-        println "Error: OPENAI_API_KEY is not set (put it in .env or the environment)."
-        sysMod.exit(1)
-      openai(key, getenv("MODEL", "gpt-4o"), getenv("OPENAI_BASE_URL", ""))
-    else
-      val key = getenv("ANTHROPIC_API_KEY", "")
-      if key == "" then
-        println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
-        sysMod.exit(1)
-      anthropic(key, getenv("MODEL", "claude-opus-4-6"))
-
-  //[ maxToolRounds
-    !
-    ! Cap on tool-call rounds in a single turn. Once spent, the model is asked once
-    ! more with NO tools, so it must answer with text — bounding runaway turns (and
-    ! API spend) from a model that keeps calling tools forever. Override in jo.toml:
-    ! `[main.links] "harpe.cli.maxToolRounds" = "MyAgent.maxToolRounds"`.
-  //]
-  defer def maxToolRounds(): Int = 50
-
-  //[ maxRetries
-    !
-    ! How many times to retry a transient model error (rate limit, 5xx, connection
-    ! blip) before giving up the turn, with exponential backoff between attempts.
-    ! Override in jo.toml like `maxToolRounds`.
-  //]
-  defer def maxRetries(): Int = 4
+  def maxRetries(): Int = 4
 end

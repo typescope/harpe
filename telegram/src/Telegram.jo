@@ -1,0 +1,289 @@
+//[ Telegram.jo
+  !
+  ! The Telegram agent loop (the Harpe "conversational" trigger, over a Telegram
+  ! bot) and its entry point. `jo run` with `jo.main = harpe.telegram.main` starts
+  ! an outbound long-poll against the Bot API: each incoming text message is one
+  ! turn of the shared engine (`harpe.turn.runTurn`), driven by `TelegramInteract`.
+  !
+  ! Unlike the web driver there is no HTTP server — Telegram lets the bot pull
+  ! updates, so nothing needs to be publicly reachable. The poll thread only
+  ! filters and dispatches: each chat has its own FIFO queue drained by a
+  ! dedicated worker thread, so turns for different chats run concurrently while a
+  ! single chat's turns stay ordered. The poll loop never blocks on a turn.
+//]
+
+namespace harpe.telegram
+
+import jo.IO.stdout
+import harpe.ffi.*
+import harpe.*
+import harpe.turn.*
+import os
+
+//[ The entry point //]
+def main(): Unit receives stdout =
+  if Defaults.checkAgentDir() then
+    loadDotenv(".env")
+    val wspace = new Workspace(os.path.abspath("."))
+    with workspace = wspace in serve()
+
+private def serve(): Unit receives stdout, workspace =
+  val token = Config.botToken()
+  val brain = Config.model()
+  val allowed = Config.allowedSenders()
+  val client = new TelegramClient(token)
+
+  // Startup identity check: confirm the token works and show which bot is live,
+  // so a bad/duplicate token fails here with a clear message rather than a
+  // silent, unresponsive poll loop.
+  val me = client.getMe()
+  if !me.get("ok", false).asBool then
+    println "Error: Telegram getMe failed — check TELEGRAM_BOT_TOKEN."
+    println "  \{client.detail(me)}"
+    sysMod.exit(1)
+
+  val result = me.get("result").cast[py.Dict]
+  val username = result.get("username").asString
+  val botId = result.get("id").asInt
+  val bot = new TelegramBot(brain, client, allowed, username, botId)
+
+  println "Harpe ▸ \{Config.agentName()} is live on Telegram as @\{username} (Ctrl-C to stop)"
+
+  if allowed.isEmpty then
+    println "  ⚠ TELEGRAM_ALLOWED_SENDERS is empty — all messages are rejected until you add sender ids."
+
+  // Stop cleanly on Ctrl-C instead of dumping a traceback out of the poll loop.
+  shutdownOnSigint("\nHarpe ▸ shutting down.")
+
+  bot.run()
+
+//[ The bot: holds the model, prompt, toolset, the network client, and the
+  ! sender allowlist, plus a registry of resident sessions keyed by chat id. It
+  ! polls for updates and drives one turn per incoming message. `allowed` is the
+  ! set of permitted sender (user) ids — authorization is by who sends, not where.
+//]
+private class TelegramBot(
+    brain: Model, client: TelegramClient, allowed: List[String],
+    botUsername: String, botId: Int)
+
+  // Resident sessions, chatId -> Session. A chat not yet touched this run is
+  // loaded from disk on first message. Guarded by `registryLock` for the one
+  // genuinely concurrent interaction: the poll thread enqueuing to a session
+  // versus a worker reaping its idle session (see `dispatch`/`workerLoop`).
+  private val registry = py.dict()
+  private val registryLock = threadingMod.Lock()
+
+  //[ The long-poll loop: fetch updates, advance the offset past each one, and
+    ! dispatch text messages. `getUpdates` blocks until messages arrive or the
+    ! poll times out, so this loop idles cheaply.
+  //]
+  def run(): Unit receives stdout, workspace =
+    var offset = 0
+
+    while true do
+      match client.getUpdates(offset, Config.pollSeconds())
+      case Polled(updates) =>
+        for updateDyn in updates do
+          val update = updateDyn.cast[py.Dict]
+          offset = update.get("update_id").asInt + 1
+          handleUpdate(update)
+
+      case PollFailed(reason) =>
+        // Surface the reason (a 409 usually means a second poller or a webhook)
+        // and back off, so a persistent failure is a slow, visible retry rather
+        // than a silent hot loop.
+        println "  · getUpdates failed: \{reason} (retrying in 3s)"
+        py.module("time").sleep(3.0)
+    end
+
+  //[ Handle one update: ignore anything that is not a plain text message with an
+    ! identifiable sender (edits, joins, callbacks, photos, anonymous-admin and
+    ! channel posts with no `from`, …); enforce the sender allowlist; then run a
+    ! turn.
+    !
+    ! Authorization is by sender id. An unlisted sender is told their id only in a
+    ! private chat — in a group the bot may see many strangers' messages, so it
+    ! ignores them silently (logging to the console) rather than spamming a
+    ! rejection into the group.
+  //]
+  private def handleUpdate(update: py.Dict): Unit receives stdout, workspace =
+    if !update.contains("message") then return
+
+    val message = update.get("message").cast[py.Dict]
+    if !message.contains("text") then return
+    if !message.contains("from") then return
+
+    val chat = message.get("chat").cast[py.Dict]
+    val chatId = "\{chat.get("id").asInt}"
+    val chatType = chat.get("type", "private").asString
+    val senderId = "\{message.get("from").cast[py.Dict].get("id").asInt}"
+    val text = message.get("text").asString
+
+    // In a group, only take a turn when the bot is addressed — an @mention, a
+    // /command, or a reply to the bot — with that prefix stripped. Non-addressed
+    // chatter is ignored. (With privacy mode on, the bot only receives addressed
+    // messages anyway; this gate makes the behavior the same either way, and
+    // strips the mention/command so the model sees a clean prompt.) In a private
+    // chat every message is for the bot.
+    var effectiveText = text
+    if chatType == "group" || chatType == "supergroup" then
+      match addressedText(message, text)
+      case Some(t) => effectiveText = t
+      case None    => return
+
+    if effectiveText.trim == "" then return
+
+    if !isAllowed(senderId) then
+      if chatType == "private" then
+        client.sendMessage(chatId,
+          "You are not authorized to use this agent.\nYour user id is \{senderId} — ask the operator to add it to TELEGRAM_ALLOWED_SENDERS.")
+
+      println "  · rejected message from unlisted sender \{senderId} in \{chatType} \{chatId}"
+      return
+
+    // Hand the message to the chat's own worker queue and return immediately, so
+    // the poll loop keeps fetching updates while the turn runs.
+    dispatch(chatId, effectiveText)
+
+  //[ For a group message, the text to act on if the bot is addressed — a reply to
+    ! the bot, an @mention, or a /command (not aimed at another bot) — with that
+    ! mention/command prefix stripped. `None` when the message is not for the bot.
+  //]
+  private def addressedText(message: py.Dict, text: String): Option[String] =
+    val t = text.trim
+
+    if isReplyToBot(message) then
+      Some(t)
+
+    else if lower(t).contains("@" + lower(botUsername)) then
+      Some(stripMention(t).trim)
+
+    else if t.startsWith("/") then
+      commandText(t)
+
+    else
+      None
+
+  //[ Is this message a reply to one of the bot's own messages? //]
+  private def isReplyToBot(message: py.Dict): Bool =
+    if !message.contains("reply_to_message") then
+      false
+    else
+      val replied = message.get("reply_to_message").cast[py.Dict]
+      replied.contains("from") && replied.get("from").cast[py.Dict].get("id", 0).asInt == botId
+
+  //[ The text after a leading `/command` (or `/command@thisbot`), or `None` if the
+    ! command is explicitly targeted at a different bot (`/command@otherbot`).
+  //]
+  private def commandText(t: String): Option[String] =
+    val parts = py.dynamic(t).split(py.none, 1).cast[py.List]
+    val cmd = parts.get(0).asString
+    val rest = if parts.size > 1 then parts.get(1).asString else ""
+    val at = py.dynamic(cmd).find("@").asInt
+
+    if at < 0 then
+      Some(rest.trim)
+
+    else
+      val target = cmd.substring(at + 1, cmd.size)
+      if lower(target) == lower(botUsername) then Some(rest.trim) else None
+
+  //[ Remove every `@botUsername` mention (case-insensitively) from the text. //]
+  private def stripMention(t: String): String =
+    val re = py.module("re")
+    re.sub("@" + re.escape(botUsername).asString, "", t, flags = re.IGNORECASE).asString
+
+  private def lower(s: String): String = py.dynamic(s).lower().asString
+
+  //[ Enqueue a message for its chat, creating the session (and its worker) on
+    ! first contact. Under `registryLock` so the enqueue is atomic with a worker's
+    ! reap decision: either the message lands in a live session's queue, or the
+    ! session was reaped and we build a fresh one — never a message dropped into a
+    ! dead queue. Session load (disk) happens outside the lock; only the poll
+    ! thread creates, so the check-then-create needs no extra guard.
+  //]
+  private def dispatch(chatId: String, text: String): Unit receives workspace =
+    registryLock.acquire()
+    val live = registry.contains(chatId)
+    if live then
+      registry.get(chatId).cast[Session].queue.put(py.dynamic(text))
+    registryLock.release()
+
+    if !live then
+      val log = Session.forSession(chatId)
+      val memory = Memory.load(log.memoryPath)
+      // `Session.load` caps the replayed transcript (a RAM backstop); the full
+      // transcript stays on disk. The session's agent is assembled by Config.
+      val agent = Config.agent:
+        brain
+        memory
+        Session.load(chatId)
+
+      val session = new Session(chatId, log, agent, memory)
+      registryLock.acquire()
+      registry.set(chatId, session)
+      session.queue.put(py.dynamic(text))
+      registryLock.release()
+      startWorker(chatId, session)
+
+  //[ The chat's worker: drain its queue, running one turn per message in arrival
+    ! order. Runs on a dedicated daemon thread, so a long turn blocks only this
+    ! chat, not the poll loop or other chats. A crashing turn is contained — the
+    ! chat is told, and the worker keeps serving — rather than killing the thread.
+    !
+    ! When no message arrives for `idleSeconds`, the worker reaps itself: under
+    ! `registryLock` it re-checks the queue is still empty (guarding against a
+    ! message enqueued in the race window), removes the session, and exits. The
+    ! next message from this chat recreates the session from disk.
+  //]
+  private def workerLoop(chatId: String, session: Session): Unit =
+    var running = true
+    while running do
+      match py.try(session.queue.get(timeout = Config.idleSeconds()))
+      case Ok(item) =>
+        match py.try(processTurn(session, item.asString))
+        case Ok(_)  => pass
+        case Err(_) =>
+          val _ = py.try(client.sendMessage(session.id, "Sorry — an internal error occurred."))
+
+      case Err(_) =>
+        // get() timed out (queue empty for idleSeconds): try to reap.
+        registryLock.acquire()
+        val reap = session.queue.empty().asBool
+        if reap then registry.pop(chatId)
+        registryLock.release()
+
+        if reap then running = false
+
+  //[ Run one turn and send its answer. On a failed request the chat is told
+    ! plainly; a cancelled/failed turn is rolled back so history stays valid. Only
+    ! the session's own worker calls this, so its `history` needs no lock.
+  //]
+  private def processTurn(session: Session, text: String): Unit =
+    val interact = new TelegramInteract(client, session.id)
+
+    session.beginTurn(text)
+
+    match session.agent.runTurn(interact, Config.maxToolRounds, Config.maxRetries)
+    case Answered(delta, answer) =>
+      session.commit(delta)
+      client.sendMessage(session.id, answer)
+
+    case Interrupted =>
+      session.rollback()
+
+    case Failed =>
+      session.rollback()
+      client.sendMessage(session.id, "Sorry — the request failed. Please try again.")
+
+  //[ Start a chat's dedicated worker on a daemon thread (dies with the process). //]
+  private def startWorker(chatId: String, session: Session): Unit =
+    val loop = () => workerLoop(chatId, session)
+    val thread = threadingMod.Thread(target = loop, daemon = true)
+    thread.start()
+
+  //[ Is this sender permitted? An empty allowlist admits no one. //]
+  private def isAllowed(senderId: String): Bool =
+    allowed.find(x => x == senderId) is Some(_)
+end
+

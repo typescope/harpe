@@ -1,0 +1,70 @@
+//[ Interact.jo
+  !
+  ! The turn protocol — the types through which a turn is driven and observed.
+  ! The engine itself is `Agent.runTurn` (see `Agent.jo`); a driver implements
+  ! `Interact` to own how the model call is issued/cancelled and how progress is
+  ! presented, and consumes a `TurnResult`.
+//]
+
+namespace harpe.turn
+
+import harpe.*
+
+//[ Interact
+  !
+  ! Cooperative interaction for a turn.
+//]
+interface Interact
+  //[ Ask `model` for one reply
+    !
+    ! A cancellable call to `model.reply` over the already-composed `(system,
+    ! messages, tools)`: the model's reply (or a typed error) as
+    ! `Some(ReplyResult)`, or `None` if the request was cancelled. The engine
+    ! (`Agent.runTurn`) owns *what* is sent — it composes the request via the
+    ! agent's context and passes the agent's model; the impl owns *how* the call
+    ! is issued and cancelled, keeping that machinery — threads, interrupt
+    ! polling — out of the engine.
+  //]
+  def ask(model: Model, system: String, messages: List[Message], tools: List[Tool]): Option[ReplyResult]
+
+  //[ Has cancellation been requested? //]
+  def cancelled: Bool
+
+  //[ Pause for up to `seconds`
+    !
+    ! return true if cancellation fires during the wait, so a long backoff can
+    ! be abandoned promptly.
+  //]
+  def pause(seconds: Float): Bool
+
+  //[ Handle a turn event   //]
+  def emit(event: TurnEvent): Unit
+end
+
+//[ TurnEvent
+  !
+  ! Everything the engine wants to surface during a turn, as data — the handler
+  ! decides how (or whether) to present it. `*Started`/`*Ended` pairs bracket a
+  ! blocking call, so a handler can drive a spinner/progress indicator around it.
+//]
+union TurnEvent =
+    ModelRequestStarted(attempt: Int, maxAttempts: Int)   // attempt 0 = first try
+  | ModelRequestEnded
+  | TransientError(detail: String, delaySeconds: Float)   // about to wait, then retry
+  | RequestFailed(detail: String)                          // fatal — the turn is lost
+  | RetriesExhausted(detail: String, attempts: Int)        // gave up after retrying
+  | ToolBudgetReached(budget: Int)                         // no tools offered; forcing a final answer
+  | ToolCallStarted(name: String)
+  | ToolCallEnded(name: String, summary: String)
+  | ContextCompacted(droppedMessages: Int)                 // old turns distilled into the context's summary
+
+//[ The outcome of one user turn
+  !
+  ! An answer — with the turn's *delta*, the messages the engine produced this
+  ! turn (assistant replies and tool-result batches, in order), so the driver
+  ! can archive them — or an interruption, or a failed request.
+//]
+union TurnResult =
+    Answered(delta: List[Message], text: String)
+  | Interrupted
+  | Failed

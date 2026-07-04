@@ -1,0 +1,43 @@
+//[ SandboxConfig.jo
+  !
+  ! The sandbox's own configuration file, `sandbox/sandbox.conf` — kept inside the
+  ! agent's `sandbox/` directory so the security posture is inspectable and
+  ! auditable right next to the code it guards.
+  !
+  ! Format is `key = value`, one per line, with `#` comments. Currently one key:
+  !
+  !     # A low-privilege account the guest's `runCode` program runs as, so its
+  !     # egress can be filtered by uid (see docs/sandbox.md, nftables). Requires
+  !     # the agent to run as root. Absent = run as the current user.
+  !     run_user = harpe-sandbox
+  !
+  ! Later the same file can carry declarative filesystem-restriction rules.
+//]
+
+namespace harpe
+
+import harpe.ffi.fileExists
+import harpe.ffi.readFile
+
+section SandboxConfig
+  //[ The account the guest run should drop to, or `None` if unset. //]
+  def runUser(): Option[String] receives workspace =
+    get("run_user")
+
+  //[ The value for `key` in `sandbox/sandbox.conf`, or `None` if the file or key
+    ! is absent.
+  //]
+  private def get(key: String): Option[String] receives workspace =
+    val path = workspace.relative("sandbox/sandbox.conf")
+    if !fileExists(path) then return None
+
+    for line in readFile(path).lines do
+      val t = line.trim
+      if t != "" && !t.startsWith("#") then
+        val parts = py.dynamic(t).split("=", 1).cast[py.List]
+        if parts.size == 2 && parts.get(0).asString.trim == key then
+          val v = parts.get(1).asString.trim
+          if v != "" then return Some(v)
+
+    None
+end

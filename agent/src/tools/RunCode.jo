@@ -1,44 +1,146 @@
 //[ RunCode.jo
   !
-  ! The `runCode` tool: write the model's program to the guest sandbox, compile
-  ! it (the security checkpoint), run the compiled program, and capture the
-  ! result — timed and reported to the caller's run-log sink. Reusable across
-  ! agent types. This audit trail is the program-execution log, distinct from the
-  ! conversational session history; the concrete logging policy is injected, not
-  ! hard-coded here.
+  ! The `runCode` tool: compile the model's program against the agent sandbox and
+  ! run it, capturing the result — timed and reported to the caller's run-log
+  ! sink. This audit trail is the program-execution log, distinct from the
+  ! conversational session history; the concrete logging policy is injected.
+  !
+  ! How it compiles — and why it is concurrency-safe. Building the guest package
+  ! once (`jo build`, the user's one-time prep) records the *exact* compiler
+  ! invocation in the target's `.done` sidecar: the backend, every `--lib`
+  ! (checking libraries) and `--link-lib` (link libraries) pointing at the
+  ! dependencies' already-built, read-only `.sast`, the `--link` map, and the
+  ! source/`-o`/`--sast` paths — one argument per line. `runCode` replays that
+  ! invocation with only the source, output, and `--sast` swapped for per-run
+  ! paths, so it compiles the ONE program against immutable prebuilt libraries.
+  !
+  ! Because the libraries are read-only and every run writes its own source,
+  ! output, and sast dir, concurrent runs never touch shared state — no warming,
+  ! no per-run package copy, no dependency re-resolution. A semaphore still bounds
+  ! how many compiler/interpreter processes run at once.
 //]
 
 namespace harpe.tools
 
+import harpe.*
 import harpe.ffi.*
 
+private def shutilMod: py.Dynamic = py.module("shutil")
+private def tempfileMod: py.Dynamic = py.module("tempfile")
+
+//[ Locate the compiler-invocation record left by `jo build` for the guest — the
+  ! `*.py.done` sidecar next to the built target. `None` if the guest has not been
+  ! built yet.
+//]
+private def findDoneFile(guestDir: String): Option[String] =
+  val hits = globMod.glob(os.path.join(guestDir, ".build/*/jo-*/target/*.py.done")).cast[py.List]
+  if hits.size == 0 then None else Some(hits.get(0).asString)
+
+//[ Replay the recorded invocation (`lines`, one argument per line) with this
+  ! run's paths swapped in: the source file (the lone `.jo` positional), the `-o`
+  ! output, and the `--sast` output directory. Everything else — the compiler
+  ! path, backend, `--lib`/`--link-lib`, `--link` map — is reused verbatim.
+//]
+private def replayArgs(lines: List[String], runSrc: String, runOut: String, runSast: String): py.List =
+  val args = py.list()
+
+  val Output = 0 // -o
+  val Sast = 1   // --sast
+
+  var mode = -1   // the previous flag whose value to replace next
+
+  for line in lines if line != "" do
+    if mode == Output then
+      args.append(py.dynamic(runOut))
+      mode = -1
+
+    else if mode == Sast then
+      args.append(py.dynamic(runSast))
+      mode = -1
+
+    else if line == "-o" then
+      args.append(py.dynamic(line))
+      mode = Output
+
+    else if line == "--sast" then
+      args.append(py.dynamic(line))
+      mode = Sast
+
+    else if line.endsWith(".jo") then
+      continue
+
+    else
+      args.append(py.dynamic(line))
+  end
+
+  args.append(py.dynamic(runSrc))
+  args
+
+//[ One bounded, isolated run: acquire a build slot, compile+run in a fresh temp
+  ! directory, then delete it and release the slot — always, even on failure. If
+  ! the guest has not been built, return a clear message instead (no build here).
+//]
 private def runCode(
     code: String,
     guestDir: String,
+    gate: py.Dynamic,
     logRun: py.Dict => Unit,
     buildTimeout: Float,
-    runTimeout: Float)
+    runTimeout: Float,
+    maxResultChars: Int,
+    runAsUser: Option[String])
+: RunOutcome =
+  match findDoneFile(guestDir)
+  case None =>
+    new RunOutcome(
+      "The sandbox is not built. Run `jo build` in the guest package once before starting the agent.",
+      "sandbox not built")
+
+  case Some(donePath) =>
+    gate.acquire()
+    val runDir = tempfileMod.mkdtemp(prefix = "run-").asString
+    val outcome = py.try(buildAndRun(code, donePath, runDir, logRun, buildTimeout, runTimeout, runAsUser))
+    val _ = py.try(shutilMod.rmtree(runDir, ignore_errors = true))
+    gate.release()
+
+    // Bound only the text the model sees; `buildAndRun` has already logged the full
+    // output/error to the run log, so nothing is lost from the record.
+    match outcome
+    case Ok(outc) => new RunOutcome(elide(outc.result, maxResultChars), outc.summary)
+    case Err(e)   => new RunOutcome("The run failed unexpectedly: \{e.message}", "internal error")
+
+//[ Compile and run `code` in `runDir` by replaying the recorded invocation from
+  ! `donePath`, logging the outcome.
+//]
+private def buildAndRun(
+    code: String,
+    donePath: String,
+    runDir: String,
+    logRun: py.Dict => Unit,
+    buildTimeout: Float,
+    runTimeout: Float,
+    runAsUser: Option[String])
 : RunOutcome =
   // Build one structured record per run — the time and the program under test,
   // plus the fields specific to how the run ended — and hand it to the injected
-  // sink. What becomes of the record (a file, some other store, the network, or
-  // nothing at all) is the caller's policy, not this tool's concern.
+  // sink. What becomes of the record is the caller's policy, not this tool's.
   def log(fields: ..(Any ~ Any)): Unit =
     val entry = py.dict("time" ~ time.now(), "code" ~ code)
     for k ~ v in fields do entry.set(k, v)
     logRun(entry)
 
-  // The guest package's layout: where to write the program, what to build, and
-  // where its compiled output lands.
-  val guestSrc  = os.path.join(guestDir, "src/Task.jo")
-  val guestSpec = os.path.join(guestDir, "jo.toml")
-  val buildGlob = os.path.join(guestDir, ".build/*/jo-*/target/*.py")
+  val runSrc  = os.path.join(runDir, "Task.jo")
+  val runOut  = os.path.join(runDir, "out.py")
+  val runSast = os.path.join(runDir, "sast")
 
-  writeFile(guestSrc, code)
+  os.makedirs(runSast)
+  writeFile(runSrc, code)
+
+  val args = replayArgs(readFile(donePath).lines, runSrc, runOut, runSast)
 
   // 1. Compile — the security checkpoint — timed, bounded, and error-captured.
   val t0 = time.now()
-  val build = runCapped(py.list("jo", "build", "--spec", guestSpec), buildTimeout)
+  val build = runCapped(args, buildTimeout)
   val compileSeconds = round2(time.now() - t0)
 
   if build.timedOut then
@@ -63,14 +165,19 @@ private def runCode(
       "The program did not compile (\{compileSeconds}s):\n\{compileError}",
       "did not compile · \{compileSeconds}s")
 
-  // 2. Run the compiled program directly, timed and bounded.
-  val targets: py.List = globMod.glob(buildGlob).cast[py.List]
-  if targets.size == 0 then
+  // 2. Run the compiled program (its path is the `-o` we just supplied).
+  if !os.path.isfile(runOut) then
     return new RunOutcome("The program compiled but no executable was found.", "no executable produced")
 
-  val targetPy = targets.get(0).asString
+  // When the run drops to another user, that user must be able to traverse the
+  // run dir and read the compiled program (mkdtemp is 0700, owned by us).
+  if runAsUser is Some(_) then
+    val osMod = py.module("os")
+    osMod.chmod(runDir, 493)   // 0o755 — traverse + read the directory
+    osMod.chmod(runOut, 420)   // 0o644 — read the compiled program
+
   val t1 = time.now()
-  val run = runCapped(py.list("python3", targetPy), runTimeout)
+  val run = runCapped(py.list("python3", runOut), runTimeout, runAsUser)
   val runSeconds = round2(time.now() - t1)
 
   if run.timedOut then
@@ -86,13 +193,13 @@ private def runCode(
       "timed out · ran \{runSeconds}s")
 
   val runReturnCode = run.returnCode
-  val runOut = run.out.trim
+  val runOutText = run.out.trim
   val runErr = stripAnsi(run.err).trim
 
   val result =
     if runReturnCode != 0 then "The program crashed:\n\{runErr}"
-    else if runOut == "" then "(the program produced no output)"
-    else runOut
+    else if runOutText == "" then "(the program produced no output)"
+    else runOutText
 
   val summary =
     if runReturnCode != 0 then "crashed · compiled \{compileSeconds}s, ran \{runSeconds}s"
@@ -109,25 +216,53 @@ private def runCode(
 
 //[ The core "act" tool: compile + run a Jo program against the agent sandbox.
   !
-  ! `buildTimeout` / `runTimeout` are host-side wall-clock backstops (seconds): a
-  ! guest stuck compiling or in an infinite loop is killed (process group and
-  ! all) rather than hanging the loop. They are the outer bound; finer in-guest
-  ! memory/CPU caps belong in the sandbox runtime (`harpe.sandbox`). An agent that
-  ! overrides `defaultTools` can pass its own values.
+  ! Requires the guest package to have been built once (`jo build`), which records
+  ! the compiler invocation this tool replays. Until then, calls return a "sandbox
+  ! not built" message rather than building anything themselves.
   !
-  ! `logRun` is the injected audit sink: it receives one structured record per
-  ! run (time, code, compile/run timings, output or error). The tool does not
-  ! decide where that goes — the caller supplies the policy.
+  ! `buildTimeout` / `runTimeout` are host-side wall-clock backstops (seconds): a
+  ! guest stuck compiling or in an infinite loop is killed (process group and all)
+  ! rather than hanging the loop. Finer in-guest memory/CPU caps belong in the
+  ! sandbox runtime (`harpe.sandbox`).
+  !
+  ! `maxConcurrent` bounds how many builds+runs proceed at once (each spawns a
+  ! compiler + interpreter process); further calls wait for a slot. Concurrent
+  ! calls are isolated by construction — each compiles its own source against the
+  ! shared, read-only dependency libraries — so they never corrupt each other.
+  !
+  ! `logRun` is the injected audit sink: one structured record per run (time,
+  ! code, compile/run timings, output or error). Where it goes is the caller's
+  ! policy.
+  !
+  ! `maxResultChars` bounds the result text returned to the model (middle-elided,
+  ! head + tail kept) so one large program output cannot flood the context. The
+  ! full, un-elided output is still written to `logRun`, so nothing is lost.
+  !
+  ! `runAsUser` (when set) runs the compiled program as that account, so an
+  ! nftables egress rule can filter its traffic by uid (see `docs/sandbox.md`).
+  ! It requires the agent to run as root; a non-existent account fails fast here.
 //]
 def runCodeTool(
     guestDir: String,
     logRun: py.Dict => Unit,
     buildTimeout: Float = 120.0,
-    runTimeout: Float = 30.0)
+    runTimeout: Float = 30.0,
+    maxConcurrent: Int = 4,
+    maxResultChars: Int = 4000,
+    runAsUser: Option[String] = None)
 : Tool =
+  val gate = threadingMod.Semaphore(maxConcurrent)
+
+  // Fail fast at startup on a misconfigured run user, rather than on the first
+  // `runCode` call.
+  if runAsUser is Some(name) then
+    match py.try(py.module("pwd").getpwnam(name))
+    case Err(_) => abort "sandbox run_user '\{name}' not found — create the account or remove run_user from sandbox/sandbox.conf"
+    case Ok(_)  => pass
+
   new Tool(
     "runCode",
     "Write a Jo program (namespace UserTask, def runTask), compile it against the agent sandbox, and run it. Returns the program's stdout, or the compile error if it does not build.",
     [strParam("code", "The Jo source code to compile and run")],
-    input => runCode(input.string("code"), guestDir, logRun, buildTimeout, runTimeout)
+    input => runCode(input.string("code"), guestDir, gate, logRun, buildTimeout, runTimeout, maxResultChars, runAsUser)
   )

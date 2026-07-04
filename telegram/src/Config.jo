@@ -1,0 +1,110 @@
+//[ Config.jo
+  !
+  ! This agent's configuration — plain functions, meant to be edited. The common
+  ! cases delegate to the shared `harpe.Defaults`; customize by changing the code
+  ! here (e.g. append your own tools with `Defaults.tools() ++ [myTool]`, or
+  ! replace `Defaults.model()` with any `Model`). Two settings are
+  ! Telegram-specific and read from the environment: the bot token and the
+  ! sender allowlist.
+//]
+
+namespace harpe.telegram
+
+import harpe.ffi.getenv
+import harpe.ffi.sysMod
+import harpe.*
+import harpe.tools.memoryTools
+import harpe.context.WindowedContext
+
+section Config
+  //[ The agent's display name, shown by the driver. //]
+  def agentName(): String receives workspace = Defaults.extractAgentName()
+
+  //[ Assemble this agent for one session — the central place where its pieces
+    ! come together: AGENT.md as the base prompt, the base tools plus the tools
+    ! curating this session's memory, a sliding-window context over the memory
+    ! and the replayed transcript (`[]` for a fresh session), and the turn
+    ! budget.
+    !
+    ! This is THIS agent's configuration, not framework code, so it assumes
+    ! freely — edit it to change the prompt source, the toolset, or the context
+    ! strategy (e.g. a `SummarizingContext` with a cheap distiller model). An
+    ! agent with different assumptions (a sub-agent, say) constructs `Agent`
+    ! directly.
+    !
+    ! The parameters are deliberately NOT configuration: `memory` and `initial`
+    ! are the per-session inputs, and `brain` is a process-lifecycle resource —
+    ! the driver constructs it once at startup, where a missing API key fails
+    ! fast with a clear message, and all sessions share it. (`model()` is
+    ! `receives IO.stdout` for exactly that reason: it prints and exits, which
+    ! a server's request path could neither do nor be allowed to by the effect
+    ! system.)
+  //]
+  def agent(brain: Model, memory: Memory, initial: List[Message]): Agent receives workspace =
+    val basePrompt = workspace.read("AGENT.md") rescue None => ""
+    val tools = Defaults.tools() ++ memoryTools(memory)
+    val context = new WindowedContext(basePrompt, memory, initial)
+    new Agent(brain, tools, context)
+
+  //[ The chat model, selected by env (PROVIDER / MODEL / API keys — see
+    ! `Defaults.model`). Replace with any `Model`, e.g. `harpe.models.echo()`
+    ! for a keyless dummy.
+  //]
+  def model(): Model receives IO.stdout = Defaults.model()
+
+  //[ Cap on tool-call rounds in a single turn. Once spent, the model is asked
+    ! once more with NO tools, so it must answer with text — bounding runaway
+    ! turns (and API spend).
+  //]
+  def maxToolRounds(): Int = 50
+
+  //[ How many times to retry a transient model error (rate limit, 5xx,
+    ! connection blip) before giving up the turn, with exponential backoff.
+  //]
+  def maxRetries(): Int = 4
+
+  //[ The Telegram bot token, from `TELEGRAM_BOT_TOKEN` (obtained from @BotFather).
+    ! Required — the driver exits with a clear message if it is unset.
+  //]
+  def botToken(): String receives IO.stdout =
+    val token = getenv("TELEGRAM_BOT_TOKEN", "")
+    if token == "" then
+      println "Error: TELEGRAM_BOT_TOKEN is not set (get one from @BotFather, put it in .env)."
+      sysMod.exit(1)
+    token
+
+  //[ The allowlist of SENDER (user) ids permitted to use the agent, from
+    ! `TELEGRAM_ALLOWED_SENDERS` — a comma-separated list of numeric user ids
+    ! (e.g. "12345678,98765432").
+    !
+    ! Authorization is by who sends the message (`message.from.id`), not by which
+    ! chat it arrives in — so an allowed user is served in a DM or in any group,
+    ! and no one else is, even inside a group the bot can see. A bot is publicly
+    ! reachable and this agent runs code, so access is closed by default: an EMPTY
+    ! list rejects everyone. In a private chat the driver tells an unrecognised
+    ! user their own id so the operator can add it here.
+  //]
+  def allowedSenders(): List[String] =
+    val raw = getenv("TELEGRAM_ALLOWED_SENDERS", "")
+    var out: List[String] = []
+
+    if raw.trim != "" then
+      for partDyn in py.dynamic(raw).split(",").cast[py.List] do
+        val part = partDyn.asString.trim
+        if part != "" then out = out + part
+
+    out
+
+  //[ How long a single `getUpdates` long poll waits (seconds) before returning
+    ! empty and looping again.
+  //]
+  def pollSeconds(): Int = 50
+
+  //[ How long a chat's worker thread sits idle (no new messages) before it is
+    ! reaped — its thread exits and the session leaves the resident registry. The
+    ! next message from that chat simply recreates it, reloading history from
+    ! disk. This bounds threads/memory to *active* chats rather than every chat
+    ! seen since startup. Default 15 minutes.
+  //]
+  def idleSeconds(): Float = 900.0
+end

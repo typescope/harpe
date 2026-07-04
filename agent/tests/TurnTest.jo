@@ -1,10 +1,10 @@
 //[ TurnTest.jo
   !
-  ! Unit tests for the `harpe.turn` engine (`runTurn`). The engine is pure — its
+  ! Unit tests for the turn engine (`Agent.runTurn`). The engine is pure — its
   ! model call is an injected `Responder`, its output an injected `emit`, and its
   ! cancellation a plain event — so each scenario scripts a `Responder`, records
   ! the emitted `TurnEvent`s, and asserts the resulting `TurnResult` + event
-  ! sequence. No model, no network, no tty.
+  ! sequence. No network, no tty.
   !
   ! Each scenario is summarized as "<result> | <event,tags>" so the expectation
   ! is a single deterministic string (no timings).
@@ -13,9 +13,10 @@
 namespace TurnTest
 
 import jo.IO.stdout
+import harpe.*
 import harpe.turn.*
-import harpe.models.*
-import harpe.tools.*
+import harpe.models.echo
+import harpe.context.WindowedContext
 
 // A reply carrying only text (no tool calls).
 private def textReply(s: String): Option[ReplyResult] =
@@ -37,6 +38,7 @@ private def eventTag(e: TurnEvent): String =
   case ToolBudgetReached(_)      => "budget"
   case ToolCallStarted(n)        => "tool+\{n}"
   case ToolCallEnded(n, _)       => "tool-\{n}"
+  case ContextCompacted(_)       => "compact"
 
 private def resultTag(r: TurnResult): String =
   match r
@@ -57,6 +59,11 @@ private def joinPy(xs: py.List): String =
 private def echoTool(): Tool =
   Tool("echo", "echo tool", [], input => new RunOutcome("echoed", "echo · ran"))
 
+// A tool that raises instead of returning — the engine must contain it via
+// `runSafely` and keep the turn going.
+private def boomTool(): Tool =
+  Tool("boom", "always throws", [], input => abort "kaboom")
+
 type Responder = (List[Message], List[Tool]) => Option[ReplyResult]
 
 // Interrupt fakes — no threads, no real sleeping, so the engine's cancellation
@@ -66,8 +73,8 @@ private class TestInteract(responder: Responder, state: State)
 
   val log = py.list()
 
-  def ask(history: List[Message], tools: List[Tool]): Option[ReplyResult] =
-    responder(history, tools)
+  def ask(model: Model, system: String, messages: List[Message], tools: List[Tool]): Option[ReplyResult] =
+    responder(messages, tools)
 
   def emit(event: TurnEvent): Unit = log.append: eventTag(event)
 
@@ -78,11 +85,20 @@ end
 
 private class State(cancelled: Bool, pause: Bool)
 
-// Drive one turn and summarize it as "<result> | <events>".
+// Drive one turn and summarize it as "<result> | <events>". The agent's brain is
+// the no-network echo model — the scripted TestInteract.ask never touches it.
 private def scenario(tools: List[Tool], maxToolRounds: Int, maxRetries: Int, responder: Responder, state: State): String =
   val interact = new TestInteract(responder, state)
-  val res = runTurn(List.empty[Message], tools, maxToolRounds, maxRetries, interact)
+  val context = new WindowedContext("", new Memory, List.empty[Message])
+  val agent = new Agent(echo(), tools, context)
+  val res = agent.runTurn(interact, maxToolRounds, maxRetries)
   "\{resultTag(res)} | \{joinPy(interact.log)}"
+
+private def msgTag(m: Message): String =
+  match m
+  case UserText(_) => "user"
+  case Assistant(_, calls) => if calls.isEmpty then "text" else "calls"
+  case ToolResults(_) => "results"
 
 private def check(label: String, actual: String, expected: String): Unit receives stdout =
   assert: actual == expected, "\{label}: expected [\{expected}] but got [\{actual}]"
@@ -180,3 +196,40 @@ def run(): Unit receives stdout =
     "I cancelled-during-backoff"
     scenario: tools, 50, 4, (h, t) => Some(new Transient("blip")), State(cancelled = false, pause = true)
     "Interrupted | start,end,transient"
+
+  // A tool that raises does NOT crash the turn: `runSafely` turns the exception
+  // into an error result the model sees, and the next (text) reply ends the turn.
+  val stepJ = py.list(0)
+  val askJ: Responder = (h, t) =>
+    val n = stepJ.get(0).asInt
+    stepJ.set(0, n + 1)
+    if n == 0 then toolReply("boom") else textReply("recovered")
+
+  check:
+    "J tool-error-continues"
+    scenario: [boomTool()], 50, 4, askJ, live
+    expected = "Answered(recovered) | start,end,tool+boom,tool-boom,start,end"
+
+  // The turn's delta carries exactly the engine-produced messages, in order:
+  // assistant tool-call, tool results, final assistant text.
+  val stepK = py.list(0)
+  val askK: Responder = (h, t) =>
+    val n = stepK.get(0).asInt
+    stepK.set(0, n + 1)
+    if n == 0 then toolReply("echo") else textReply("done")
+
+  val ctxK = new WindowedContext("", new Memory, List.empty[Message])
+  val agentK = new Agent(echo(), tools, ctxK)
+  val resK = agentK.runTurn(new TestInteract(askK, live), 50, 4)
+
+  var deltaShape = ""
+
+  if resK is Answered(delta, _) then
+    for m in delta do
+      if deltaShape != "" then deltaShape = deltaShape + ","
+      deltaShape = deltaShape + msgTag(m)
+
+  check:
+    "K delta-shape"
+    deltaShape
+    expected = "calls,results,text"

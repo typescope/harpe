@@ -20,13 +20,16 @@ namespace harpe
 import harpe.ffi.jsonMod
 import harpe.ffi.fileExists
 import harpe.ffi.readFile
-import harpe.models.*
-import harpe.tools.*
+import harpe.util.truncate
 
 class SessionLog
   private val logFile: py.Dynamic
 
+  //[ The transcript-archive path this log writes to. //]
+  val path: String
+
   def SessionLog(path: String) =
+    this.path = path
     os.makedirs(os.path.dirname(path))
     this.logFile = py.open(path, "a")
 
@@ -42,9 +45,26 @@ class SessionLog
     logFile.flush()
 
   def close(): Unit = logFile.close()
+
+  //[ The sibling memory-snapshot path for this session
+    ! (`<base>.jsonl` → `<base>.memory.json`).
+  //]
+  def memoryPath: String =
+    if path.endsWith(".jsonl") then
+      path.substring(0, path.size - 6) + ".memory.json"
+    else
+      path + ".memory.json"
 end
 
 section SessionLog
+  //[ A generous safety cap (characters) on how much of a persisted transcript a
+    ! driver reads back into memory when a session resumes — a RAM backstop against a
+    ! pathologically long session, not a tuning knob. It is deliberately large enough
+    ! that normal sessions are never truncated; the model-context/send budget is a
+    ! separate concern owned by `render`. The full transcript always stays on disk.
+  //]
+  def maxResumeChars: Int = 1000000
+
   //[ The path for a new session's log, fixed at session start.
     !
     ! `logs/sessions/<yyyy>/<mm>/<dd>/<hh-mm-ss>.jsonl`, resolved against the
@@ -60,6 +80,10 @@ section SessionLog
     ! The inverse of `append` (`messageToDict`), and deliberately layout-agnostic:
     ! the caller supplies the file path, so where sessions live on disk is the
     ! driver's policy, not this serializer's. Returns `[]` if the file is absent.
+    !
+    ! The result is capped to `maxResumeChars` (dropping whole oldest turns) as a
+    ! RAM backstop against a pathologically long session; the file on disk is
+    ! untouched. The cap is generous, so normal sessions are returned in full.
   //]
   def loadFile(path: String): List[Message] =
     if !fileExists(path) then []
@@ -68,7 +92,7 @@ section SessionLog
       for line in readFile(path).lines do
         if line.trim != "" then
           msgs = msgs + dictToMessage(jsonMod.loads(line).cast[py.Dict])
-      msgs
+      truncate(msgs, maxResumeChars)
 
   //[ The inverse of `messageToDict`: one stored record back into a `Message`. //]
   private def dictToMessage(d: py.Dict): Message =

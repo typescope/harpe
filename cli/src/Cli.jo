@@ -1,0 +1,87 @@
+//[ Cli.jo
+  !
+  ! The CLI agent loop (the Harpe "conversational" trigger) and its entry
+  ! points. Each turn it:
+  !
+  !   1. reads a line from the user
+  !   2. asks the LLM, offering the configured tools (default: runCode plus the
+  !      read-only skill tools)
+  !   3. dispatches each tool call to its handler and feeds the result back
+  !   4. repeats until the LLM replies with text, then prints the reply
+  !
+  ! `jo.main = harpe.cli.main` wires an agent to the loop.
+  !
+//]
+
+namespace harpe.cli
+
+import jo.IO.stdout
+import harpe.ffi.loadDotenv
+import harpe.*
+import harpe.turn.*
+import os
+import time
+
+//[ The entry point   //]
+def main(): Unit receives stdout =
+  if Defaults.checkAgentDir() then
+    loadDotenv(".env")
+    val wspace = new Workspace(os.path.abspath("."))
+    with workspace = wspace in runChat()
+
+private def runChat(): Unit receives stdout, workspace =
+  val brain = Config.model()
+
+  // The agent for this run — assembled by the agent's own Config. Its working
+  // memory is in-process for the run (the CLI has no session resume), and the
+  // context starts on an empty transcript.
+  val memory = new Memory
+  val agent = Config.agent:
+    brain
+    memory
+    List.empty[Message]
+
+  val inputHistory = workspace.relative("logs/inputs.txt")
+  val interact = new ConsoleInteract(stdout, inputHistory)
+
+  interact.init()
+
+  // Where this session's conversation is serialized; fixed at session start. Memory
+  // is saved beside it (`sessionLog.memoryPath`) for inspection — the CLI does not
+  // resume, so it is written but never loaded.
+  val sessionLog = SessionLog.newLog()
+
+  while true do
+    // `None` is end-of-input (Ctrl-D); a blank line or a Ctrl-C'd prompt is
+    // `Some("")`, which just re-prompts.
+    val userInput = interact.userInput() rescue None => break
+
+    if userInput == "quit" || userInput == "exit" then break
+
+    if userInput == "" then continue
+
+    val userMsg: Message = UserText(userInput)
+    agent.context.mark()
+    agent.context.append(userMsg)
+
+    val res = interact.turn: () =>
+      agent.runTurn(interact, Config.maxToolRounds, Config.maxRetries)
+
+    if res is Answered(delta, text) then
+      sessionLog.append(time.now(), [userMsg] ++ delta)
+      interact.agentResponse(text)
+
+    else
+      // Discard the cancelled/failed turn so the conversation stays valid.
+      agent.context.rollback()
+      if res is Interrupted then println "  ⎋ interrupted"
+      else println "  · request failed"
+
+    // Persist memory regardless of outcome (it is not rolled back with a turn).
+    if !memory.isEmpty then Memory.save(sessionLog.memoryPath, memory)
+  end
+
+  sessionLog.close()
+
+  println "Goodbye."
+end
