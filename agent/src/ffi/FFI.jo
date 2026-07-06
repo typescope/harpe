@@ -71,36 +71,40 @@ def loadDotenv(path: String): Unit =
 //]
 class Capped(returnCode: Int, out: String, err: String, timedOut: Bool)
 
+//[ The minimal environment for running untrusted guest code: `PATH` only, so the
+  ! interpreter (and any `run.sh` confinement tool) can still be found. EVERY
+  ! other variable is dropped — the provider keys and every other host secret —
+  ! rather than guessing which are sensitive. A `sandbox/run.sh` wrapper adds back
+  ! whatever the guest legitimately needs.
+//]
+def guestEnv(): py.Dict =
+  val env = py.dict()
+  val path = osMod.environ.cast[py.Dict].get("PATH", py.none)
+
+  if !py.isNone(path) then env.set("PATH", path)
+
+  env
+
 //[ Run a subprocess with a wall-clock timeout. The child is started in its own
   ! session, so on expiry the whole process group is SIGKILLed — a spinning or
   ! forking guest cannot outlive the timeout. This is the host-side backstop a
-  ! stuck guest cannot disable; in-guest memory/CPU caps live in the sandbox
-  ! runtime (`harpe.sandbox`), which the guest also cannot raise.
+  ! stuck guest cannot disable; OS-level confinement (resource caps, filesystem,
+  ! network, uid drop) lives OUTSIDE the process in an optional `sandbox/run.sh`
+  ! wrapper (see `docs/sandbox.md`).
+  !
+  ! `env` sets the child's environment: the default `py.none` inherits the
+  ! parent's — used for the trusted build/compile step, which needs the toolchain
+  ! env. Pass `guestEnv()` when running untrusted guest code, so it inherits none
+  ! of the host's secrets.
 //]
-def runCapped(args: py.List, timeoutSecs: Float, asUser: Option[String] = None): Capped =
-  // Optionally drop to a low-privilege account for the child (Popen's own
-  // `user`/`group`/`extra_groups`, applied safely in the child before exec). The
-  // uid is what an nftables egress rule keys on. Requires the parent to run as
-  // root; without privilege the drop fails and the run errors — fail-closed.
-  var uid: Any = py.none
-  var gid: Any = py.none
-  var groups: Any = py.none
-
-  if asUser is Some(name) then
-    val pw = py.module("pwd").getpwnam(name)
-    uid = pw.pw_uid
-    gid = pw.pw_gid
-    groups = py.list()          // drop root's supplementary groups too
-
+def runCapped(args: py.List, timeoutSecs: Float, env: Any = py.none): Capped =
   val proc = subprocessMod.Popen(
     args,
     stdout = subprocessMod.PIPE,
     stderr = subprocessMod.PIPE,
     text = true,
     start_new_session = true,
-    user = uid,
-    group = gid,
-    extra_groups = groups
+    env = env
   )
 
   match py.try(proc.communicate(timeout = timeoutSecs))

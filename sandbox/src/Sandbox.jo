@@ -7,8 +7,14 @@
   ! capability check prevents the model from ever naming it.
   !
   ! Facilities: structured logging, the runtime environment (string key/values),
-  ! in-process resource caps (memory / CPU) the runtime sets before running guest
-  ! code, and (future) agent <-> sandbox communication.
+  ! and (future) agent <-> sandbox communication.
+  !
+  ! OS-level confinement — resource caps, filesystem/network restriction, uid
+  ! drop — is deliberately NOT here. It lives OUTSIDE the process, in an optional
+  ! `sandbox/run.sh` wrapper the operator writes (ulimit, landrun, bwrap, docker,
+  ! setpriv, …). See `docs/sandbox.md`. Keeping it external means the confinement
+  ! is battle-tested tooling the operator already trusts, not framework code they
+  ! have to.
 //]
 
 namespace harpe.sandbox
@@ -17,7 +23,6 @@ namespace harpe.sandbox
 // than depending on `harpe`, so the agent's sandbox runtime can pull it alone.
 private def sysMod: py.Dynamic = py.module("sys")
 private def osMod: py.Dynamic = py.module("os")
-private def resourceMod: py.Dynamic = py.module("resource")
 
 //[ Sandbox
   !
@@ -33,52 +38,6 @@ interface Sandbox
 
   //[ A runtime environment value, or `fallback` when unset. //]
   def envOr(key: String, fallback: String): String
-
-  //[ Cap the address space (virtual memory) of this process to `mb` megabytes.
-    !
-    ! POSIX rlimit: once lowered it cannot be raised, so guest code running
-    ! afterwards cannot escape it. `mb` must be positive. //]
-  def limitMemoryMb(mb: Int): Unit
-
-  //[ Cap the CPU time (seconds) this process may consume; the kernel kills it on
-    !
-    ! overrun (SIGXCPU). Irreversible once set, like `limitMemoryMb`. Pair it with
-    ! the host's wall-clock timeout: this catches CPU-bound loops, the host
-    ! catches hangs. `seconds` must be positive. //]
-  def limitCpuSeconds(seconds: Int): Unit
-
-  //[ Confine this process's filesystem via Landlock (Linux only).
-    !
-    ! Only `readable` paths are readable (read+execute, so shared libraries still
-    ! load) and only `writable` paths are writable; everything else — the agent's
-    ! `.env`, `~/.ssh`, other sessions' logs — becomes inaccessible. Irreversible
-    ! and inherited across `execve`, so guest code and anything it spawns are
-    ! confined.
-    !
-    ! `readable` MUST include Python's own installation and package directories
-    ! (`sys.prefix`, `sys.base_prefix`, any site-packages) or the interpreter can
-    ! no longer import the stdlib or C extensions once restricted — derive them
-    ! at runtime rather than hardcoding `/usr`, so venv/pyenv installs work.
-    !
-    ! Opt-in defense in depth beneath the compile-time gate: call it in
-    ! `SandboxRuntime.main` before `runTask`. Fail-closed: a non-Linux OS, or a
-    ! kernel without Landlock, ABORTS the run rather than proceeding unprotected
-    ! — if you ask for restriction and it cannot be enforced, the guest does not
-    ! run.
-  //]
-  def restrictFilesystem(readable: List[String], writable: List[String]): Unit
-
-  //[ Deny all TCP networking for this process via Landlock (Linux only).
-    !
-    ! No exfiltration, no C2 — for a guest that has no business on the network.
-    ! Landlock gates TCP only (not UDP, and not by IP): this is the all-or-nothing
-    ! switch. IP-restricted egress is a separate mechanism (a dedicated run user +
-    ! nftables — see `docs/sandbox.md`), which is why it is its own method rather
-    ! than folded into `restrictFilesystem`. Fail-closed: a non-Linux OS, or a
-    ! kernel below Landlock ABI v4 (6.7), ABORTS the run rather than proceeding
-    ! with the network still open.
-  //]
-  def denyNetwork(): Unit
 end
 
 //[ Build the default Sandbox: logs to stderr, reads env from the process
@@ -102,29 +61,4 @@ private class SandboxImpl
 
   def envOr(key: String, fallback: String): String =
     osMod.environ.cast[py.Dict].get(key, fallback).asString
-
-  def limitMemoryMb(mb: Int): Unit =
-    assert: mb > 0, "limitMemoryMb: mb must be positive"
-    val bytes = mb * 1024 * 1024
-    resourceMod.setrlimit(resourceMod.RLIMIT_AS, py.list(bytes, bytes))
-
-  def limitCpuSeconds(seconds: Int): Unit =
-    assert: seconds > 0, "limitCpuSeconds: seconds must be positive"
-    resourceMod.setrlimit(resourceMod.RLIMIT_CPU, py.list(seconds, seconds))
-
-  // Fail-closed: if a requested restriction cannot be enforced (non-Linux OS, or
-  // a kernel without the needed Landlock support), abort rather than run the
-  // guest unprotected. The agent author opted in; silently continuing would be
-  // the dangerous outcome.
-  def restrictFilesystem(readable: List[String], writable: List[String]): Unit =
-    if Landlock.restrictFilesystem(readable, writable) then
-      log("info", "filesystem restricted (Landlock)")
-    else
-      abort "restrictFilesystem: Landlock unavailable (non-Linux OS or kernel < 5.13) — refusing to run the guest unprotected"
-
-  def denyNetwork(): Unit =
-    if Landlock.denyNetwork() then
-      log("info", "network denied (Landlock)")
-    else
-      abort "denyNetwork: Landlock TCP gating unavailable (non-Linux OS or kernel < 6.7) — refusing to run the guest unprotected"
 end

@@ -9,6 +9,10 @@ import SandboxAPI
 // would be constructed here too — `new FooImpl(sandbox)` — and granted to the
 // guest via `with Foo.foo = fooImpl in ...`. The `Sandbox` itself is never
 // passed to `runTask`, so the LLM cannot name it.
+//
+// OS-level confinement is NOT applied here — it lives outside the process, in
+// an optional `sandbox/run.sh` wrapper the runner invokes around this program
+// (see docs/sandbox.md).
 def main(): Unit receives stdout =
   val sandbox: Sandbox = Sandbox.create()
 

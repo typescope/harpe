@@ -88,7 +88,7 @@ private def runCode(
     buildTimeout: Float,
     runTimeout: Float,
     maxResultChars: Int,
-    runAsUser: Option[String])
+    runScript: String)
 : RunOutcome =
   match findDoneFile(guestDir)
   case None =>
@@ -99,7 +99,7 @@ private def runCode(
   case Some(donePath) =>
     gate.acquire()
     val runDir = tempfileMod.mkdtemp(prefix = "run-").asString
-    val outcome = py.try(buildAndRun(code, donePath, runDir, logRun, buildTimeout, runTimeout, runAsUser))
+    val outcome = py.try(buildAndRun(code, donePath, runDir, logRun, buildTimeout, runTimeout, runScript))
     val _ = py.try(shutilMod.rmtree(runDir, ignore_errors = true))
     gate.release()
 
@@ -119,7 +119,7 @@ private def buildAndRun(
     logRun: py.Dict => Unit,
     buildTimeout: Float,
     runTimeout: Float,
-    runAsUser: Option[String])
+    runScript: String)
 : RunOutcome =
   // Build one structured record per run — the time and the program under test,
   // plus the fields specific to how the run ended — and hand it to the injected
@@ -169,15 +169,25 @@ private def buildAndRun(
   if !os.path.isfile(runOut) then
     return new RunOutcome("The program compiled but no executable was found.", "no executable produced")
 
-  // When the run drops to another user, that user must be able to traverse the
-  // run dir and read the compiled program (mkdtemp is 0700, owned by us).
-  if runAsUser is Some(_) then
+  // A `sandbox/run.sh` wrapper (defense in depth) owns how the program runs — the
+  // interpreter, any uid drop, and OS-level confinement (ulimit/landrun/bwrap/…).
+  // When present, run the guest through it (`run.sh <out.py>`) and make the run
+  // artifacts readable to whatever uid it may drop to (mkdtemp is 0700, ours).
+  // Absent: run the system Python directly. See docs/sandbox.md.
+  val useRunSh = os.path.isfile(runScript)
+
+  if useRunSh then
     val osMod = py.module("os")
     osMod.chmod(runDir, 493)   // 0o755 — traverse + read the directory
     osMod.chmod(runOut, 420)   // 0o644 — read the compiled program
 
+  val runCmd = if useRunSh then py.list(runScript, runOut) else py.list("python3", runOut)
+
+  // Untrusted guest code runs with a minimal PATH-only environment (guestEnv),
+  // inheriting none of the host's secrets. The build step above keeps the full
+  // env — it is the trusted compiler needing the toolchain.
   val t1 = time.now()
-  val run = runCapped(py.list("python3", runOut), runTimeout, runAsUser)
+  val run = runCapped(runCmd, runTimeout, env = guestEnv())
   val runSeconds = round2(time.now() - t1)
 
   if run.timedOut then
@@ -238,9 +248,11 @@ private def buildAndRun(
   ! head + tail kept) so one large program output cannot flood the context. The
   ! full, un-elided output is still written to `logRun`, so nothing is lost.
   !
-  ! `runAsUser` (when set) runs the compiled program as that account, so an
-  ! nftables egress rule can filter its traffic by uid (see `docs/sandbox.md`).
-  ! It requires the agent to run as root; a non-existent account fails fast here.
+  ! Defense in depth is external: if `sandbox/run.sh` (next to the guest package)
+  ! exists and is executable, each run goes through it — `run.sh <out.py>` — and
+  ! the script owns the interpreter, uid drop, and OS confinement (ulimit,
+  ! landrun, bwrap, docker, …). Absent, the guest runs under the system Python.
+  ! See `docs/sandbox.md`.
 //]
 def runCodeTool(
     guestDir: String,
@@ -248,21 +260,23 @@ def runCodeTool(
     buildTimeout: Float = 120.0,
     runTimeout: Float = 30.0,
     maxConcurrent: Int = 4,
-    maxResultChars: Int = 4000,
-    runAsUser: Option[String] = None)
+    maxResultChars: Int = 4000)
 : Tool =
   val gate = threadingMod.Semaphore(maxConcurrent)
 
-  // Fail fast at startup on a misconfigured run user, rather than on the first
-  // `runCode` call.
-  if runAsUser is Some(name) then
-    match py.try(py.module("pwd").getpwnam(name))
-    case Err(_) => abort "sandbox run_user '\{name}' not found — create the account or remove run_user from sandbox/sandbox.conf"
-    case Ok(_)  => pass
+  // The optional run.sh wrapper sits at sandbox/run.sh — i.e. next to the guest
+  // package. If it exists it must be executable, or every run would fail
+  // obscurely; catch that once at startup rather than per call.
+  val runScript = os.path.join(os.path.dirname(guestDir), "run.sh")
+
+  if os.path.isfile(runScript) then
+    val osMod = py.module("os")
+    if !osMod.access(runScript, osMod.X_OK).asBool then
+      abort "sandbox run.sh exists but is not executable — run `chmod +x \{runScript}` (see docs/sandbox.md)"
 
   new Tool(
     "runCode",
     "Write a Jo program (namespace UserTask, def runTask), compile it against the agent sandbox, and run it. Returns the program's stdout, or the compile error if it does not build.",
     [strParam("code", "The Jo source code to compile and run")],
-    input => runCode(input.string("code"), guestDir, gate, logRun, buildTimeout, runTimeout, maxResultChars, runAsUser)
+    input => runCode(input.string("code"), guestDir, gate, logRun, buildTimeout, runTimeout, maxResultChars, runScript)
   )
