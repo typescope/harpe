@@ -196,11 +196,12 @@ sandbox-runtime = { path = "../runtime", link = true }
 ```
 
 `SandboxRuntime.main` builds the host-side `Sandbox`, constructs the granted
-capability impls, sets resource caps (`limitMemoryMb` / `limitCpuSeconds` —
-irreversible; the model's code cannot raise them), and calls `runTask`. On each
-`runCode` the driver writes the program to `sandbox/guest/src/Task.jo`, builds
-it, runs it under a wall-clock timeout (process-group kill), and feeds stdout —
-or the compile/timeout error — back to the model.
+capability impls, and calls `runTask`. On each `runCode` the driver compiles and
+runs the program in an isolated temp directory, under a wall-clock timeout
+(process-group kill) and with the provider keys scrubbed from its environment,
+then feeds stdout — or the compile/timeout error — back to the model. OS-level confinement (resource caps, filesystem/network, uid drop) is
+opt-in and external — an executable `sandbox/run.sh` wrapper of your choice
+(`ulimit`, `landrun`, `bwrap`, `docker`, …). See [docs/sandbox.md](docs/sandbox.md).
 
 ## Development
 

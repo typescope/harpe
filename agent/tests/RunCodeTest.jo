@@ -3,14 +3,14 @@
   ! Integration tests for the `runCode` tool (`harpe.tools`). Unlike the pure
   ! `runTurn` tests, `runCode` actually compiles and runs a guest program, so
   ! these drive `runCodeTool` against an on-disk sandbox fixture
-  ! (`agent/sandbox-fixtures/basic/`, kept outside the `tests/` source glob) and assert a
-  ! normalized outcome tag — covering the host wall-clock timeout and the sandbox
-  ! resource caps end to end. They shell out to `jo build` + `python3`, so they
-  ! are slower than the unit tests.
+  ! (`agent/sandbox-fixtures/basic/`, kept outside the `tests/` source glob) and
+  ! assert a normalized outcome tag — covering the host wall-clock timeout, the
+  ! `sandbox/run.sh` seam, and provider-key env scrub end to end. They shell out
+  ! to `jo build` + `python3`, so they are slower than the unit tests.
   !
-  ! The fixture's `SandboxRuntime` reads its memory/CPU caps from the environment
-  ! (`HARPE_TEST_MEM_MB` / `HARPE_TEST_CPU_SECONDS`), which the guest inherits at
-  ! spawn, so one driver can vary the caps per scenario.
+  ! The fixture ships an executable `sandbox/run.sh`, so every run here goes
+  ! through it. It is silent by default; with `HARPE_TEST_PROBE` set it echoes
+  ! whether `ANTHROPIC_API_KEY` leaked into the child (it must not).
 //]
 
 namespace RunCodeTest
@@ -72,10 +72,12 @@ private def concurrentCheck(tool: Tool, n: Int): Unit receives stdout =
 
   for t in threads do t.join()
 
+  // The fixture's run.sh prepends a marker line, so each result ends with — but
+  // is not exactly — its own number; clobbering would leave the wrong number last.
   var j = 0
   var allOk = true
   while j < n do
-    if results.get(j).asString != "\{j}" then allOk = false
+    if !results.get(j).asString.endsWith("\n\{j}") then allOk = false
     j = j + 1
 
   assert: allOk, "concurrent-isolation: parallel runs clobbered each other's output"
@@ -99,10 +101,6 @@ def run(): Unit receives stdout =
   val fast  = runCodeTool(guestDir, noLog, 120.0, 5.0)   // 5s run backstop
   val quick = runCodeTool(guestDir, noLog, 120.0, 2.0)   // 2s run backstop
 
-  // Generous caps for the well-behaved cases.
-  os.environ.set("HARPE_TEST_MEM_MB", "512")
-  os.environ.set("HARPE_TEST_CPU_SECONDS", "30")
-
   // A well-formed program runs and produces output.
   check("normal", tag(exec(fast, guest("  println 42\n"))), "ran")
 
@@ -113,11 +111,14 @@ def run(): Unit receives stdout =
   // A program that does not type-check is caught at the compile checkpoint.
   check("compile-error", tag(exec(fast, guest("  println undefinedThing\n"))), "compile-error")
 
-  // An infinite loop is killed by the host wall-clock timeout (CPU cap is high,
-  // so the host backstop is what fires).
+  // An infinite loop is killed by the host wall-clock timeout.
   check("host-timeout", tag(exec(quick, guest("  var i = 0\n  while i >= 0 do i = i + 1\n"))), "timeout")
 
-  // A memory hog trips the sandbox runtime's address-space cap and crashes.
-  os.environ.set("HARPE_TEST_MEM_MB", "256")
-  val memHog = guest("  var s = \"x\"\n  while s.size < 500000000 do s = s + s\n  println s.size\n")
-  check("sandbox-memcap", tag(exec(fast, memHog)), "crash")
+  // The run.sh seam is honored and the child env is scrubbed: the guest runs with
+  // a minimal PATH-only environment, so a planted host secret comes back empty in
+  // the wrapper's marker line, and the program still runs through the wrapper.
+  os.environ.set("ANTHROPIC_API_KEY", "SECRET-should-not-leak")
+  val probed = exec(fast, guest("  println 42\n")).result
+  assert: probed.contains("harpe-run-sh key=[]"), "env-scrub: host secret leaked into the guest — got [\{probed}]"
+  assert: probed.contains("42"), "run.sh seam: program output missing — got [\{probed}]"
+  println "  ok run-sh-scrub"

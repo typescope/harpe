@@ -21,8 +21,8 @@ section Defaults
     ! the read-only skill tools over the agent's `skills/`. The per-session
     ! memory tools are added by the drivers, since they capture session state.
     !
-    ! `runCode` runs as the account named by `sandbox/sandbox.conf`'s `run_user`
-    ! (if any) so its egress can be filtered by uid (see `docs/sandbox.md`).
+    ! OS-level confinement for `runCode` is external and opt-in: an executable
+    ! `sandbox/run.sh` wrapper, if present, owns it (see `docs/sandbox.md`).
   //]
   def tools(): List[Tool] receives workspace =
     val logRun: py.Dict => Unit = entry =>
@@ -31,7 +31,7 @@ section Defaults
       f.write(jsonMod.dumps(entry).asString + "\n")
       f.close()
 
-    val runTool = runCodeTool(workspace.guestDir, logRun, runAsUser = SandboxConfig.runUser())
+    val runTool = runCodeTool(workspace.guestDir, logRun)
 
     [runTool] ++ skillTools(workspace.skillsDir)
 
