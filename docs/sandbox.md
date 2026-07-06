@@ -1,120 +1,129 @@
 # The Harpe sandbox — security model
 
 A Harpe agent is an LLM that acts **only** by writing Jo programs that are
-compiled and run each turn. This document describes the layers that contain
-those programs, from the always-on gate to the opt-in defense-in-depth.
+compiled and run each turn. Its security rests on a foundation the framework
+enforces for you, plus three OS-level restrictions you add for defense in depth.
 
-The design point worth stating up front: **OS-level confinement lives outside
-the framework, in a shell script you write.** Harpe does not ship a bespoke
-Landlock/seccomp implementation you would have to trust — it hands you a seam
-(`sandbox/run.sh`) where you drop in `docker`, `bwrap`, `landrun`, `firejail`,
-`setpriv`, or plain `ulimit`: tooling your ops team already audits. Confinement
-you can read beats confinement you can't.
+## Runner Interface
 
-## Layer 0 — the compile-time capability gate (always on)
+The runner compiles and runs each guest program in an isolated temp directory,
+applying two protections around every build/run that the guest cannot disable:
 
-The model's program (`sandbox/guest`) is compiled **without the runtime API**:
-its `jo.toml` has no `--use-runtime-api`, so guest Jo cannot name `py.*`, `os`,
-or any capability the agent did not grant. Granting an ability and proving it
-safe are the same act: you declare a capability interface, widen `runTask`'s
-`receives` in `sandbox/api`, and construct its implementation in
-`sandbox/runtime`. A program that names an ungranted capability **fails to
-compile, so it never runs** — the compile step is the security checkpoint.
+- **Wall-clock timeout + process-group kill.** Each build/run is time-bounded; on
+  expiry the whole process group is SIGKILLed, so a stuck build or an infinite
+  loop — even one that forks — cannot hang the agent. Tool output is size-bounded.
+- **Environment scrub.** Guest code runs with a minimal `PATH`-only environment;
+  every host variable is dropped, secret or not, so a breach inherits none of the
+  agent's secrets. (The trusted compile step keeps the full toolchain env; only
+  untrusted runs are scrubbed.)
+
+## Compile-time sandboxing — the capability gate
+
+The foundation. The model's program (`sandbox/guest`) is compiled *without* the
+runtime API: its `jo.toml` has no `--use-runtime-api`, so guest Jo cannot name
+`py.*`, `os`, or any capability the agent did not grant. Granting an ability and
+proving it safe are the same act — you declare a capability interface, widen
+`runTask`'s `receives` in `sandbox/api`, and construct its impl in
+`sandbox/runtime`. A program that names an ungranted capability *fails to
+compile, so it never runs* — the compile step is the security checkpoint.
 
 This is strong against a program that plays by the rules, but it is a single
-wall: a compiler soundness bug, or a bug in a capability *implementation* (which
-runs with full power inside the guest process), would breach it. The remaining
-layers are defense in depth for exactly that case.
+wall: a compiler soundness bug, or a bug in a capability implementation (which
+runs with full power inside the guest process), would breach it — which is
+exactly what the OS-level restrictions below defend against.
 
-## Layer 1 — host-side backstops (always on)
+## The three OS-level restrictions (opt-in, external)
 
-Two things the guest cannot disable, applied by the runner (`runCapped`) around
-every build and run:
+For defense in depth beneath the type gate, there are three things worth
+restricting — what the guest may **consume**, **read/write**, and **reach**:
 
-- **Wall-clock timeout + process-group kill.** The compiled program runs under a
-  time limit; on expiry the whole process group is SIGKILLed, so a stuck build
-  or an infinite loop — even one that forks — cannot hang the agent. Tool output
-  fed back to the model is size-bounded.
-- **Environment scrub.** Guest code runs with a minimal environment — only
-  `PATH`, so the interpreter and any `run.sh` tool are found. Every host variable
-  is dropped, secret or not (the provider keys, and anything else in the agent's
-  env), rather than guessing which are sensitive. A capability that needs a
-  secret gets it added back deliberately in `run.sh`. (The trusted build/compile
-  step keeps the full toolchain env; only untrusted guest *runs* are scrubbed.)
+1. **Resource quotas**
+2. **Filesystem restriction**
+3. **Network filtering**
 
-## Layer 2 — the `sandbox/run.sh` wrapper (opt-in, external, your choice of tool)
+Each is a separate layer you enable independently. All three are enforced
+*outside* the framework — Harpe ships no bespoke Landlock/seccomp code you would
+have to trust — through one seam and the OS tool you prefer.
 
-Beneath the type-level gate, this is the OS-level containment layer — and it is
-deliberately **not framework code**. If an executable `sandbox/run.sh` exists,
-the runner launches each guest program through it:
+**The seam — `sandbox/run.sh`.** If an executable `sandbox/run.sh` exists, the
+runner launches each guest program through it (`run.sh <out.py>` instead of
+`python3 <out.py>`); the script sets up confinement and `exec`s the interpreter.
+Absent → plain `python3` with just the background protections. Each driver ships
+a `sandbox/run.sh.example`; enable it by renaming to `run.sh` and `chmod +x`.
 
-```
-sandbox/run.sh <path-to-compiled-out.py>
-```
+Its contract is tiny: `$1` is the compiled `.py`, the run directory is
+`dirname "$1"`, and you finish with `exec <python> "$@"`. Because confinement is
+applied *around* `exec`, it is inherited by the guest and everything it spawns —
+the property that makes `docker`/`bwrap`/Landlock containment sound. (The guest
+already arrives with a minimal `PATH`-only environment; add back anything it
+needs here.) The recipes for each layer below go in that script.
 
-instead of `python3 <out.py>`. The script owns **everything** about how the
-program runs — the Python interpreter, any privilege drop, and OS confinement —
-and then `exec`s it. Absent, the guest runs under the system Python with just
-the layer-0/1 protections. Each driver ships a `sandbox/run.sh.example` with
-ready-to-adapt blocks; enable it by renaming to `run.sh` and `chmod +x`.
+**Lightweight by default, but bring your own stack.** The recipes here use
+lightweight OS primitives — `ulimit`, Landlock (via `landrun`), namespaces (via
+`bwrap`), `nftables` — with no daemon and minimal setup, which is the right
+starting point for most agents. But `run.sh` only wraps the `exec`, so it is
+equally the place to hand the guest to a heavier isolation stack you already run:
+a container (Docker, Podman) or a microVM / sandboxed runtime (Firecracker, Kata,
+gVisor). Whatever you `exec` into, the guest and its children are confined by it.
 
-**The contract** is tiny:
+### Layer 1 · Resource quotas
 
-- `$1` is the absolute path to the compiled program (a `.py`).
-- The run directory is `dirname "$1"` — bind-mount it for container wrappers.
-- Do your setup, then `exec <python> "$@"`.
-- The runner already handed the guest a minimal environment (only `PATH`); add
-  back anything it needs here.
-
-Because the restriction is applied *around* `exec`, it is inherited by the guest
-and everything it spawns — the same property that makes `docker`/`bwrap`/Landlock
-containment sound.
-
-### Examples (adapt one)
-
-**Resource limits, no dependency** — the in-process rlimits Harpe used to apply
-are one `ulimit` line each, and clearer here:
+Cap memory, CPU, and process count so a runaway program cannot exhaust the host.
+The built-in wall-clock timeout catches *hangs*; these catch *consumption*. One
+`ulimit` line each, no dependency:
 
 ```sh
-#!/bin/sh
 ulimit -v 1048576   # ~1 GiB address space (RLIMIT_AS)
 ulimit -t 30        # 30 CPU-seconds (RLIMIT_CPU)
+ulimit -u 64        # max processes — fork-bomb guard
 exec python3 "$@"
 ```
 
-**Filesystem + network confinement** — with [landrun](https://github.com/Zouuup/landrun)
-(a Landlock CLI, no daemon), the guest reads only what you list and cannot touch
-the network:
+For hierarchical, accounted limits use cgroups —
+`systemd-run --scope -p MemoryMax=1G -p CPUQuota=100% python3 "$@"`, or a
+container's `--memory`/`--cpus`.
+
+### Layer 2 · Filesystem restriction
+
+Keep the guest from reading your secrets (`.env`, `~/.ssh`, other sessions' logs)
+and from writing outside a scratch directory.
+
+Allowlist with [landrun](https://github.com/Zouuup/landrun) (a Landlock CLI, no
+daemon) — deny everything not listed:
 
 ```sh
 exec landrun --ro /usr /lib /lib64 /etc --rw "$(dirname "$1")" -- python3 "$@"
 ```
 
-or with bubblewrap:
+or with bubblewrap (bind-mount allowlist + a private `/tmp`):
 
 ```sh
 exec bwrap \
   --ro-bind /usr /usr --ro-bind /lib /lib --ro-bind /lib64 /lib64 \
   --proc /proc --dev /dev --tmpfs /tmp \
-  --bind "$(dirname "$1")" "$(dirname "$1")" \
-  --unshare-net -- python3 "$@"
+  --bind "$(dirname "$1")" "$(dirname "$1")" -- python3 "$@"
 ```
 
-**Full container isolation** — docker gives a fresh filesystem, its own env, and
-`--network none` in one line (mount the run dir so `out.py` is visible):
+Or lean on plain Unix permissions: run as a dedicated user (see Layer 3) that
+does not own your files; with `.env`/`~/.ssh` at `600`/`700`, the kernel denies
+the guest access with zero extra config. Coarser than an allowlist (world-readable
+files stay readable), but fully external.
+
+### Layer 3 · Network filtering
+
+Two distinct needs: cut the network entirely, or allow only specific
+destinations.
+
+**Cut it entirely** — a network namespace with no interfaces:
 
 ```sh
-exec docker run --rm --network none \
-  -v "$(dirname "$1"):$(dirname "$1"):ro" python:3.12-slim python3 "$@"
+exec bwrap ... --unshare-net -- python3 "$@"      # bubblewrap
+# or a container:  docker run --rm --network none ... python3 "$@"
 ```
 
-## IP-restricted egress — drop to a uid, filter with nftables
-
-When the guest legitimately needs *some* network but must be held to specific
-destinations, the wrapper drops to a dedicated low-privilege account and the
-operator filters that account's traffic with nftables.
-
-In `run.sh`, drop the uid before exec:
+**Allowlist destinations** — reach some hosts, deny the rest. Run the guest as a
+dedicated low-privilege account and filter *that account's* traffic with
+nftables. Drop the uid in `run.sh`:
 
 ```sh
 exec setpriv --reuid=harpe-sandbox --regid=harpe-sandbox --clear-groups python3 "$@"
@@ -126,8 +135,8 @@ Create the account once (no login, no home):
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin harpe-sandbox
 ```
 
-Then an nftables ruleset that allows only chosen destinations for that uid and
-drops the rest:
+Then an nftables ruleset that allows chosen destinations for that uid and drops
+the rest:
 
 ```
 table inet harpe {
@@ -155,8 +164,9 @@ table inet harpe {
 sudo nft -f harpe.nft
 ```
 
-Because the guest process carries `harpe-sandbox`'s uid, `meta skuid` matches it
-and the policy applies to exactly the guest's traffic, nothing else on the host.
+Because the guest process carries `harpe-sandbox`'s uid, `meta skuid` matches
+exactly its traffic and nothing else on the host. The same dedicated user also
+gives you the Layer 2 filesystem confinement for free.
 
 **On the privilege to switch uids.** `setpriv`/`runuser` moving to a *different*
 user needs authority the runner must already hold — full root (crude), systemd
@@ -167,19 +177,17 @@ namespace (`newuidmap`) delegation. This is an operator/DevOps decision, made in
 use `sudo`, name a single runas user — `ALL=(harpe-sandbox)`, never `(ALL,
 !root)`, the shape behind CVE-2019-14287 — and pin the command.)
 
-Filesystem confinement can lean on the same dedicated user for free: run as an
-account that does not own your secrets, keep `.env`/`~/.ssh` at `600`/`700`, and
-standard Unix permissions deny the guest access — coarser than Landlock's
-allowlist, but external and zero-config once the uid drop is in place.
-
 ## Summary
 
-| Layer | What it stops | On by default | Where |
-|-------|---------------|---------------|-------|
-| 0 · compile-time gate | naming ungranted abilities | yes | `sandbox/` compile |
-| 1 · timeout + env scrub | hangs, infinite loops, secret inheritance | yes | `runCapped` (host) |
-| 2 · `run.sh` wrapper | fs / network / resources / uid — your tool | opt-in | `sandbox/run.sh` |
+Always on (framework): the compile-time capability gate, the wall-clock timeout,
+and the environment scrub. On top of that, three restrictions you enable in
+`sandbox/run.sh`, independently:
 
-Layers 0–1 hold for every agent. An agent handling anything sensitive enables
-`run.sh` with the confinement tool its environment trusts; one that needs
-controlled network egress drops a uid there and filters it with nftables.
+| Layer | Restriction | Enforce with |
+|-------|-------------|--------------|
+| 1 | resource quotas | `ulimit` / cgroups |
+| 2 | filesystem restriction | `landrun` / `bwrap` / dedicated uid |
+| 3 | network filtering | `--unshare-net`, or uid + nftables |
+
+An agent handling anything sensitive adds the layers its environment calls for —
+each a few lines in `run.sh`, using the OS tool your team already trusts.
