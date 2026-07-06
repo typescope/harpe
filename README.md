@@ -44,7 +44,7 @@ harpe/
       Memory.jo          #   the agent-curated working-memory store
       SessionLog.jo      #   the append-only transcript archive (audit)
       Workspace.jo       #   the agent working dir (context param)
-      Interact.jo        #   `harpe.turn`: how a turn is driven/observed
+      Interact.jo        #   interact with turn logic
       models/            #   `harpe.models`: anthropic / openai / echo
       tools/             #   `harpe.tools`: runCode, skill tools, memory tools
       context/           #   `harpe.context`: WindowedContext, SummarizingContext

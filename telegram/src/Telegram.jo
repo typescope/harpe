@@ -3,7 +3,7 @@
   ! The Telegram agent loop (the Harpe "conversational" trigger, over a Telegram
   ! bot) and its entry point. `jo run` with `jo.main = harpe.telegram.main` starts
   ! an outbound long-poll against the Bot API: each incoming text message is one
-  ! turn of the shared engine (`harpe.turn.runTurn`), driven by `TelegramInteract`.
+  ! turn of the shared engine, driven by `TelegramInteract`.
   !
   ! Unlike the web driver there is no HTTP server — Telegram lets the bot pull
   ! updates, so nothing needs to be publicly reachable. The poll thread only
@@ -17,7 +17,6 @@ namespace harpe.telegram
 import jo.IO.stdout
 import harpe.ffi.*
 import harpe.*
-import harpe.turn.*
 import os
 
 //[ The entry point //]
@@ -286,4 +285,3 @@ private class TelegramBot(
   private def isAllowed(senderId: String): Bool =
     allowed.find(x => x == senderId) is Some(_)
 end
-

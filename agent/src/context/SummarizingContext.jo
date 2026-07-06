@@ -10,8 +10,6 @@ namespace harpe.context
 import harpe.*
 import harpe.util.truncate
 import harpe.util.transcriptChars
-import harpe.turn.Interact
-import harpe.turn.ContextCompacted
 
 //[ Like `WindowedContext`, but with model-assisted distillation of old turns.
   !
@@ -84,7 +82,7 @@ class SummarizingContext(
         if res is Reply(message) then
           summary = message.text.trim
           transcript = kept
-          interact.emit: ContextCompacted(dropCount)
+          interact.emit: turns.ContextCompacted(dropCount)
 
       case None => pass
 end

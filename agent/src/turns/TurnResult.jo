@@ -1,0 +1,18 @@
+//[ TurnResult.jo
+  !
+  ! The outcome of one user turn
+//]
+namespace harpe.turns
+
+import harpe.Message
+
+//[ The outcome of one user turn
+  !
+  ! An answer — with the turn's *delta*, the messages the engine produced this
+  ! turn (assistant replies and tool-result batches, in order), so the driver
+  ! can archive them — or an interruption, or a failed request.
+//]
+union TurnResult =
+    Answered(delta: List[Message], text: String)
+  | Interrupted
+  | Failed
