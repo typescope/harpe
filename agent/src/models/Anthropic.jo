@@ -16,7 +16,7 @@ private def toolSpec(t: Tool): py.Dict =
   val properties = py.dict()
   val required = py.list()
   for p in t.params do
-    properties.set(p.name, py.dict("type" ~ jsonType(p.paramType), "description" ~ p.description))
+    properties.set(p.name, py.dict("type" ~ p.paramType.jsonType, "description" ~ p.description))
     if p.required then required.append(p.name)
   end
 

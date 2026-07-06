@@ -23,6 +23,17 @@ class RunOutcome(result: String, summary: String)
   ! authors never hand-write JSON schema.
 //]
 union ParamType = StrParam | IntParam | BoolParam | NumParam
+  //[ Map a `ParamType` to its JSON-schema type string.
+    !
+    ! Shared by all provider impls so each one can render tool specs without
+    ! duplicating this mapping.
+  //]
+  def jsonType: String =
+    match this
+    case StrParam  => "string"
+    case IntParam  => "integer"
+    case BoolParam => "boolean"
+    case NumParam  => "number"
 
 //[ Tool parameter
   !
