@@ -20,7 +20,11 @@ import harpe.turn.*
 
 //[ An agent: what thinks, what it can do, what it sees, and its turn policy. //]
 class Agent(brain: Model, tools: List[Tool], context: Context)
+  def runTurn(interact: Interact, maxToolRounds: Int, maxRetries: Int): TurnResult =
+    Agent.runTurn(brain, tools, context, interact, maxToolRounds, maxRetries)
+end
 
+section Agent
   //[ Drive one user turn
     !
     ! Call the model (with retries), run any tool calls it requests, and repeat
@@ -37,7 +41,7 @@ class Agent(brain: Model, tools: List[Tool], context: Context)
     ! transport policy — how often a transient model error is retried — so it is
     ! an argument, not part of the agent.
   //]
-  def runTurn(interact: Interact, maxToolRounds: Int, maxRetries: Int): TurnResult =
+  def runTurn(brain: Model, tools: List[Tool], context: Context, interact: Interact, maxToolRounds: Int, maxRetries: Int): TurnResult =
     var delta: List[Message] = []
     var rounds = 0
     var result: TurnResult = Failed
