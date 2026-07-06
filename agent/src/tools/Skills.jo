@@ -12,7 +12,7 @@
 
 namespace harpe.tools
 
-import harpe.*
+import harpe.tools.Tool
 import harpe.ffi.*
 
 //[ Collect (relativeName ~ fullPath) for every file under skillsDir.
@@ -55,7 +55,7 @@ private def skillsListText(skillsDir: String): String =
   val names = collectSkills(skillsDir).map(pair => pair.fst)
   if names.isEmpty then "(no skills found)" else names.join("\n")
 
-private def skillsReadOutcome(skillsDir: String, name: String): RunOutcome =
+private def skillsReadOutcome(skillsDir: String, name: String): Tool.RunOutcome =
   // Resolve and confine the path to the skills directory (no escaping via "..").
   val absPath = os.path.abspath(os.path.normpath(os.path.join(skillsDir, name)))
   val absDir  = os.path.abspath(skillsDir)
@@ -66,14 +66,14 @@ private def skillsReadOutcome(skillsDir: String, name: String): RunOutcome =
     else false
 
   if !isSafe then
-    return new RunOutcome("Access denied: path outside skills directory", "denied · \{name}")
+    return new Tool.RunOutcome("Access denied: path outside skills directory", "denied · \{name}")
 
   if os.path.isfile(absPath) then
     match py.try(py.open(absPath, "r").read())
-      case Ok(c)  => new RunOutcome(c.asString, "read · \{name}")
-      case Err(_) => new RunOutcome("Skill \{name} could not be read as text.", "unreadable · \{name}")
+      case Ok(c)  => new Tool.RunOutcome(c.asString, "read · \{name}")
+      case Err(_) => new Tool.RunOutcome("Skill \{name} could not be read as text.", "unreadable · \{name}")
   else
-    new RunOutcome("Skill not found: \{name}", "not found · \{name}")
+    new Tool.RunOutcome("Skill not found: \{name}", "not found · \{name}")
 
 private def skillsSearchText(skillsDir: String, query: String): String =
   val files = collectSkills(skillsDir)
@@ -104,18 +104,18 @@ def skillTools(skillsDir: String): List[Tool] =
     "skillsList"
     "List the names of all available skill files (read-only reference docs). Each name includes its file extension (e.g. .md, .jo)."
     []
-    input => new RunOutcome(skillsListText(skillsDir), "listed skills")
+    input => new Tool.RunOutcome(skillsListText(skillsDir), "listed skills")
 
   val readTool = Tool:
     "skillsRead"
     "Read a skill file by its full name including extension. Returns the file contents."
-    [strParam("name", "The full skill file name including extension, as returned by skillsList (e.g. \"jo-cheat-sheet.md\")")]
+    [Tool.strParam("name", "The full skill file name including extension, as returned by skillsList (e.g. \"jo-cheat-sheet.md\")")]
     input => skillsReadOutcome(skillsDir, input.string("name"))
 
   val searchTool = Tool:
     "skillsSearch"
     "Case-insensitive search across all skill files. Returns matching lines as 'name:lineNumber: text'."
-    [strParam("query", "Substring to search for (case-insensitive)")]
-    input => new RunOutcome(skillsSearchText(skillsDir, input.string("query")), "searched · \{input.string("query")}")
+    [Tool.strParam("query", "Substring to search for (case-insensitive)")]
+    input => new Tool.RunOutcome(skillsSearchText(skillsDir, input.string("query")), "searched · \{input.string("query")}")
 
   [listTool, readTool, searchTool]

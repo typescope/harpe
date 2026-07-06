@@ -11,8 +11,11 @@
 
 namespace harpe.models
 
-import harpe.ffi.*
-import harpe.*
+import harpe.ffi.jsonMod
+
+import harpe.models.Model.*
+import harpe.tools.Tool
+import harpe.tools.Tool.*
 
 private section openai
   //[ One tool's OpenAI function spec, derived from the Jo `Tool` model. //]
@@ -104,7 +107,7 @@ private class OpenAIModel(client: py.Dynamic, model: String)
         tools = toolSpecs
 
     match attempt
-    case Ok(response) => Reply: openai.parseReply(response)
+    case Ok(response) => Model.Reply: openai.parseReply(response)
     case Err(err)     => classifyError(err)
 end
 

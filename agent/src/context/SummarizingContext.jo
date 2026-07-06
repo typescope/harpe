@@ -10,6 +10,8 @@ namespace harpe.context
 import harpe.*
 import harpe.util.truncate
 import harpe.util.transcriptChars
+import harpe.models.Model
+import harpe.models.Model.*
 
 //[ Like `WindowedContext`, but with model-assisted distillation of old turns.
   !
@@ -77,7 +79,7 @@ class SummarizingContext(
       val dropped = transcript.take(dropCount)
       val request: Message = distillRequest(summary, dropped)
 
-      match interact.ask(distiller, distillSystem(), [request], List.empty[Tool])
+      match interact.ask(distiller, distillSystem(), [request], [])
       case Some(res) =>
         if res is Reply(message) then
           summary = message.text.trim

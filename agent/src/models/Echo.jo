@@ -9,6 +9,9 @@ namespace harpe.models
 
 import harpe.*
 
+import harpe.models.Model.*
+import harpe.tools.Tool
+
 private class EchoModel
   view Model
 
@@ -16,7 +19,7 @@ private class EchoModel
     var last = ""
     for m in history do
       if m is UserText(text) then last = text
-    new Reply(new Assistant("echo: \{last}", List.empty[ToolCall]))
+    Reply: Assistant("echo: \{last}", [])
 end
 
 //[ Build the echo model (no provider, no API key). //]
