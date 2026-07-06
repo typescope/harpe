@@ -18,7 +18,14 @@ namespace harpe
 
 import harpe.turn.*
 
-//[ An agent: what thinks, what it can do, what it sees, and its turn policy. //]
+//[ An simple agent: what thinks, what it can do, what it sees, and its turn policy.
+  !
+  ! If the user wants customization, just create a different agent class. There
+  ! is no need to inherit this class. In fact, Jo does not support inheritance.
+  !
+  ! To reuse the turn logic in a custom agent class, call `Agent.runTurn`
+  ! directly.
+//]
 class Agent(brain: Model, tools: List[Tool], context: Context)
   def runTurn(interact: Interact, maxToolRounds: Int, maxRetries: Int): TurnResult =
     Agent.runTurn(brain, tools, context, interact, maxToolRounds, maxRetries)
