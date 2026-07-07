@@ -16,40 +16,26 @@ import harpe.Tool
 import harpe.Tool.*
 
 
-//[ Ttl
-  !
-  ! The two ephemeral-cache lifetimes Anthropic supports: 5 minutes (the API
-  ! default) and 1 hour (2x write cost, held across longer idle gaps). A closed
-  ! set, so the policy can't name a TTL the API doesn't accept.
-//]
-union Ttl = FiveMinutes | OneHour
-
 //[ Cache
   !
   ! Prompt-cache policy for the Anthropic provider. `NoCache` sends no cache
-  ! breakpoints (every request is priced in full). `Ephemeral` opts into
+  ! breakpoints (every request is priced in full).
+  !
+  ! The two ephemeral-cache lifetimes Anthropic supports: 5 minutes (default)
+  ! and 1 hour (2x write cost, held across longer idle gaps).
+  !
   ! Anthropic's prompt caching — breakpoints are placed on the tool list + system
   ! prompt and on the last transcript message, so the (append-only) transcript
-  ! prefix is read back cheaply across a turn's tool loop; the transient tail
+  ! prefix is read back cheaply across a turn's tool loop. The transient tail
   ! stays uncached.
 //]
-union Cache = NoCache | Ephemeral(ttl: Ttl)
-
-//[ The `cache_control` block for a policy, or `None` when caching is off. The
-  ! 5-minute TTL is the API default, so only a 1-hour TTL is sent explicitly.
-//]
-private def cacheControl(cache: Cache): Option[py.Dict] =
-  if cache is Ephemeral(ttl) then
-    val cc = py.dict("type" ~ "ephemeral")
-    if ttl is OneHour then cc.set("ttl", "1h")
-    Some(cc)
-  else
-    None
-
-//[ Put a cache breakpoint on the last block of a content-block list. //]
-private def markLastBlock(blocks: py.List, cc: py.Dict): Unit =
-  if blocks.size > 0 then
-    blocks.get(blocks.size - 1).cast[py.Dict].set("cache_control", cc)
+union AnthropicCache = NoCache | FiveMinutes | OneHour
+  def toDict: py.Dict =
+    match this
+    case OneHour => py.dict("type" ~ "ephemeral", "ttl" ~ "1h")
+    case FiveMinutes => py.dict("type" ~ "ephemeral")
+    case NoCache => abort "NoCache"
+end
 
 //[ One tool's Anthropic spec, derived from the Jo `Tool` model. //]
 private def toolSpec(t: Tool): py.Dict =
@@ -68,23 +54,25 @@ private def toolSpec(t: Tool): py.Dict =
 
 //[ The conversation as Anthropic's `messages` array (content-block format).
   !
-  ! When `markLast` is `Some(cc)`, a cache breakpoint is placed on the last
+  ! When `cache` is not `NoCache`, a cache breakpoint is placed on the last
   ! content block of the final history message: the provider caches the whole
   ! transcript prefix, and later requests in the same turn (which only append)
-  ! read it back. A `UserText` is promoted to a one-element text-block list so it
-  ! can carry the marker (Anthropic accepts either form).
+  ! read it back.
+  !
+  ! A `UserText` is promoted to a one-element text-block list so it can carry
+  ! the marker (Anthropic accepts either form).
 //]
-private def toMessages(history: List[Message], markLast: Option[py.Dict]): py.List =
+private def toMessages(history: List[Message], cache: AnthropicCache): py.List =
   val msgs = py.list()
   val lastIdx = history.size - 1
   var i = 0
 
   for m in history do
-    val cc: Option[py.Dict] = if i == lastIdx then markLast else None
+    val shouldCache = i == lastIdx && cache is !NoCache
 
     if m is UserText(text) then
-      if cc is Some(ccd) then
-        val block = py.dict("type" ~ "text", "text" ~ text, "cache_control" ~ ccd)
+      if shouldCache then
+        val block = py.dict("type" ~ "text", "text" ~ text, "cache_control" ~ cache.toDict)
         msgs.append(py.dict("role" ~ "user", "content" ~ py.list(block)))
       else
         msgs.append(py.dict("role" ~ "user", "content" ~ text))
@@ -98,7 +86,8 @@ private def toMessages(history: List[Message], markLast: Option[py.Dict]): py.Li
         content.append:
           py.dict("type" ~ "tool_use", "id" ~ c.id, "name" ~ c.name, "input" ~ c.input.raw)
 
-      if cc is Some(ccd) then markLastBlock(content, ccd)
+      if shouldCache then
+        content[content.size - 1]["cache_control"] = cache.toDict
 
       msgs.append(py.dict("role" ~ "assistant", "content" ~ content))
 
@@ -109,7 +98,8 @@ private def toMessages(history: List[Message], markLast: Option[py.Dict]): py.Li
           py.dict("type" ~ "tool_result", "tool_use_id" ~ r.id, "content" ~ r.content)
       end
 
-      if cc is Some(ccd) then markLastBlock(content, ccd)
+      if shouldCache then
+        content[content.size - 1]["cache_control"] = cache.toDict
 
       msgs.append: py.dict("role" ~ "user", "content" ~ content)
 
@@ -142,15 +132,14 @@ private def parseReply(response: py.Dynamic): Assistant =
   else
     new Assistant(text.trim, calls)
 
-private class AnthropicModel(client: py.Dynamic, model: String, cache: Cache)
+private class AnthropicModel(client: py.Dynamic, model: String, cache: AnthropicCache)
   view Model
 
   def reply(rendered: Rendered, tools: List[Tool]): ReplyResult =
     val toolSpecs = py.list()
     for t in tools do toolSpecs.append(toolSpec(t))
 
-    val cc = cacheControl(cache)
-    val messages = toMessages(rendered.messages, cc)
+    val messages = toMessages(rendered.messages, cache)
 
     // The transient tail (working memory) goes AFTER the cached transcript, as a
     // trailing user message with no breakpoint — so editing memory reprocesses
@@ -162,12 +151,12 @@ private class AnthropicModel(client: py.Dynamic, model: String, cache: Cache)
     // prompt (the stable, session-long prefix); when off, system is a plain
     // string, byte-identical to an uncached request.
     val attempt =
-      if cc is Some(ccd) then
+      if cache is !NoCache then
         py.try:
           client.messages.create:
             model = model
             max_tokens = 8096
-            system = py.list(py.dict("type" ~ "text", "text" ~ rendered.system, "cache_control" ~ ccd))
+            system = py.list(py.dict("type" ~ "text", "text" ~ rendered.system, "cache_control" ~ cache.toDict))
             messages = messages
             tools = toolSpecs
       else
@@ -186,16 +175,9 @@ end
 
 //[ Build an Anthropic-backed model from an API key, model id, and cache policy.
   !
-  ! `cache` selects prompt caching: `Ephemeral(FiveMinutes)` is the recommended
-  ! default (in an agent loop the prompt prefix always repeats within a turn, so
-  ! caching is strictly cheaper); `Ephemeral(OneHour)` holds the cache across the
-  ! idle gaps of a chat session (2x write cost, more reads to pay off); `NoCache`
-  ! disables it. The framework's default wiring (`Defaults.model`) reads this from
-  ! the `PROMPT_CACHE` env var, defaulting to `Ephemeral(FiveMinutes)`.
-  !
   ! The client gets an explicit request timeout, and its INTERNAL retries are
   ! disabled (`max_retries = 0`): the turn engine owns the retry/backoff policy,
   ! and hidden SDK retries would silently multiply it.
 //]
-def anthropic(apiKey: String, model: String, cache: Cache): Model =
+def anthropic(apiKey: String, model: String, cache: AnthropicCache): Model =
   new AnthropicModel(py.module("anthropic").Anthropic(api_key = apiKey, timeout = 600.0, max_retries = 0), model, cache)

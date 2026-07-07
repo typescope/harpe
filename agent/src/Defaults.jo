@@ -65,11 +65,11 @@ section Defaults
       anthropic(key, getenv("MODEL", "claude-opus-4-6"), cachePolicy())
 
   //[ The Anthropic prompt-cache policy from PROMPT_CACHE (default "5m"). //]
-  private def cachePolicy(): Cache =
+  private def cachePolicy(): AnthropicCache =
     match getenv("PROMPT_CACHE", "5m")
     case "off" => NoCache
-    case "1h"  => Ephemeral(OneHour)
-    case _     => Ephemeral(FiveMinutes)
+    case "1h"  => OneHour
+    case _     => FiveMinutes
 
   //[ The agent's display name, extracted from AGENT.md: its first Markdown H1,
     ! else a generic default.
