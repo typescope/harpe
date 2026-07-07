@@ -69,7 +69,7 @@ section Agent
       // applied once here, not in each concrete Interact.
       val rendered = context.render(interact)
 
-      match fetchReply(brain, rendered.fst, rendered.snd, offer, maxRetries, interact)
+      match fetchReply(brain, rendered, offer, maxRetries, interact)
         case Stopped =>
           result = Interrupted
           break
@@ -150,7 +150,7 @@ private def backoffSeconds(attempt: Int): Float =
   ! Progress and errors are reported through `interact.emit`.
 //]
 private def fetchReply(
-    model: Model, system: String, messages: List[Message], tools: List[Tool],
+    model: Model, rendered: Rendered, tools: List[Tool],
     maxRetries: Int, interact: Interact)
 : Fetched =
 
@@ -160,7 +160,7 @@ private def fetchReply(
   while true do
     interact.emit: ModelRequestStarted(attempt, maxRetries)
 
-    val maybe = interact.ask(model, system, messages, tools)
+    val maybe = interact.ask(model, rendered, tools)
 
     interact.emit: ModelRequestEnded
 

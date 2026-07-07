@@ -96,15 +96,23 @@ end
 private class OpenAIModel(client: py.Dynamic, model: String)
   view Model
 
-  def reply(system: String, history: List[Message], tools: List[Tool]): ReplyResult =
+  def reply(rendered: Rendered, tools: List[Tool]): ReplyResult =
     val toolSpecs = py.list()
     for t in tools do toolSpecs.append(openai.toolSpec(t))
+
+    val messages = openai.toMessages(rendered.system, rendered.messages)
+
+    // The transient tail (working memory) rides after the transcript as a final
+    // user message. OpenAI-compatible endpoints cache long prompt prefixes
+    // automatically, so no explicit cache markers are needed here.
+    if rendered.transient != "" then
+      messages.append(py.dict("role" ~ "user", "content" ~ rendered.transient))
 
     val attempt = py.try:
       client.chat.completions.create:
         model = model
         max_tokens = 8096
-        messages = openai.toMessages(system, history)
+        messages = messages
         tools = toolSpecs
 
     match attempt

@@ -10,6 +10,7 @@
 namespace harpe
 
 import harpe.Model.Message
+import harpe.Model.Rendered
 import harpe.Model.ReplyResult
 import harpe.Tool
 import harpe.Tool.ToolResult
@@ -22,7 +23,7 @@ import harpe.Tool.ToolCall
   ! message (or a typed error). Stateless: the loop keeps the history.
 //]
 interface Model
-  def reply(system: String, history: List[Message], tools: List[Tool]): ReplyResult
+  def reply(rendered: Rendered, tools: List[Tool]): ReplyResult
 end
 
 section Model
@@ -35,6 +36,19 @@ section Model
       UserText(text: String)
     | Assistant(text: String, calls: List[ToolCall])
     | ToolResults(results: List[ToolResult])
+
+  //[ Rendered
+    !
+    ! What the model sees for one request, composed by a `Context`: the stable
+    ! `system` prompt, the `messages` transcript window, and a `transient` tail.
+    !
+    ! `transient` is per-request context (currently the agent's working memory)
+    ! placed AFTER the transcript — past any provider cache breakpoint — so
+    ! editing it never invalidates the cached transcript prefix. It carries no
+    ! operator authority (it renders as user content, not system), and it is `""`
+    ! when there is nothing to append.
+  //]
+  class Rendered(system: String, messages: List[Message], transient: String)
 
   //[ ReplyResult
     !

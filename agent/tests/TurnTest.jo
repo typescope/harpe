@@ -76,8 +76,8 @@ private class TestInteract(responder: Responder, state: State)
 
   val log = py.list()
 
-  def ask(model: Model, system: String, messages: List[Message], tools: List[Tool]): Option[ReplyResult] =
-    responder(messages, tools)
+  def ask(model: Model, rendered: Rendered, tools: List[Tool]): Option[ReplyResult] =
+    responder(rendered.messages, tools)
 
   def emit(event: TurnEvent): Unit = log.append: eventTag(event)
 

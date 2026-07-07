@@ -16,7 +16,7 @@ namespace harpe.telegram
 import harpe.Interact
 import harpe.Model
 import harpe.Model.ReplyResult
-import harpe.Model.Message
+import harpe.Model.Rendered
 import harpe.Tool
 import harpe.turns.TurnEvent
 import harpe.turns.ModelRequestStarted
@@ -35,8 +35,8 @@ private class TelegramInteract(client: TelegramClient, chatId: String)
   //[ A plain (non-cancellable) model call; the turn engine retries transient
     ! errors itself.
   //]
-  def ask(model: Model, system: String, messages: List[Message], tools: List[Tool]): Option[ReplyResult] =
-    Some(model.reply(system, messages, tools))
+  def ask(model: Model, rendered: Rendered, tools: List[Tool]): Option[ReplyResult] =
+    Some(model.reply(rendered, tools))
 
   def cancelled: Bool = false
 

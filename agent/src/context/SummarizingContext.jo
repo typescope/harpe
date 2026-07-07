@@ -39,10 +39,14 @@ class SummarizingContext(
   def append(message: Message): Unit =
     transcript = transcript + message
 
-  //[ Compact if over the high-water mark, then compose: base prompt, summary of
-    ! distilled turns, memory block, and the retained recent turns.
+  //[ Compact if over the high-water mark, then compose: the base prompt and the
+    ! distilled summary as `system`, the retained recent turns as the messages,
+    ! and the volatile memory block as the transient tail (after the transcript,
+    ! so a memory edit leaves the cached prefix intact). The summary stays in
+    ! `system`: a compaction rewrites the message window at the same moment, so
+    ! keeping the summary cached with the base prompt costs nothing.
   //]
-  def render(interact: Interact): String ~ List[Message] =
+  def render(interact: Interact): Rendered =
     if transcriptChars(transcript) > highWaterChars then compact(interact)
 
     val mem = memory.snapshot()
@@ -50,9 +54,9 @@ class SummarizingContext(
 
     if summary != "" then system = system + "\n\n" + summaryBlock(summary)
 
-    if !mem.isEmpty then system = system + "\n\n" + memoryBlock(mem)
+    val transient = if mem.isEmpty then "" else memoryBlock(mem)
 
-    system ~ transcript
+    new Rendered(system, transcript, transient)
 
   def mark(): Unit =
     markedTranscript = transcript
@@ -78,7 +82,7 @@ class SummarizingContext(
       val dropped = transcript.take(dropCount)
       val request: Message = distillRequest(summary, dropped)
 
-      match interact.ask(distiller, distillSystem(), [request], [])
+      match interact.ask(distiller, new Rendered(distillSystem(), [request], ""), [])
       case Some(res) =>
         if res is Reply(message) then
           summary = message.text.trim

@@ -45,6 +45,9 @@ section Defaults
     !   OPENAI_BASE_URL   optional base URL for OpenAI-compatible endpoints
     !                     (Groq, Together AI, local llama.cpp, …); leave unset
     !                     for the default OpenAI API
+    !   PROMPT_CACHE      Anthropic prompt caching: "5m" (default), "1h", or
+    !                     "off". Ignored by OpenAI (it caches long prefixes on
+    !                     its own).
   //]
   def model(): Model receives IO.stdout =
     val provider = getenv("PROVIDER", "anthropic")
@@ -59,7 +62,14 @@ section Defaults
       if key == "" then
         println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
         sysMod.exit(1)
-      anthropic(key, getenv("MODEL", "claude-opus-4-6"))
+      anthropic(key, getenv("MODEL", "claude-opus-4-6"), cachePolicy())
+
+  //[ The Anthropic prompt-cache policy from PROMPT_CACHE (default "5m"). //]
+  private def cachePolicy(): Cache =
+    match getenv("PROMPT_CACHE", "5m")
+    case "off" => NoCache
+    case "1h"  => Ephemeral(OneHour)
+    case _     => Ephemeral(FiveMinutes)
 
   //[ The agent's display name, extracted from AGENT.md: its first Markdown H1,
     ! else a generic default.

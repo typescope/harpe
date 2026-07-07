@@ -10,29 +10,33 @@
   ! Two strategies are provided, named by their transcript policy:
   ! `WindowedContext` (the default) drops turns that fall out of its window;
   ! `SummarizingContext` distills them into a rolling summary via the model.
-  ! Both render the base system prompt (AGENT.md) plus a volatile memory block —
-  ! memory is orthogonal to the strategy: a store the agent maintains through
-  ! tools, which any strategy may render.
+  ! Both render the base system prompt (AGENT.md) as the stable `system`, and the
+  ! volatile working memory as the `transient` tail (after the transcript, so a
+  ! memory edit never invalidates the cached prefix) — memory is orthogonal to
+  ! the strategy: a store the agent maintains through tools, which any strategy
+  ! may render.
 //]
 
 namespace harpe
 
 import harpe.Interact
 import harpe.Model.Message
+import harpe.Model.Rendered
 
 //[ A context-management strategy: owns the transcript, composes each request. //]
 interface Context
   //[ Record a transcript event: user text, an assistant reply, or tool results. //]
   def append(message: Message): Unit
 
-  //[ Compose what the model sees for this request: `(system, messages)`.
+  //[ Compose what the model sees for this request: a `Rendered` bundling the
+    ! system prompt, the transcript window, and a transient tail.
     !
     ! Called once per model request. May be effectful — an impl can use
     ! `interact` to call the model first (e.g. summarize old turns) and mutate
     ! its own state, under the turn's cancellation and event stream; the default
     ! is pure and ignores it.
   //]
-  def render(interact: Interact): String ~ List[Message]
+  def render(interact: Interact): Rendered
 
   //[ Mark the start of a user turn, so a cancelled/failed turn can roll back. //]
   def mark(): Unit
