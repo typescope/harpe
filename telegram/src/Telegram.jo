@@ -22,9 +22,6 @@ import harpe.Workspace
 import harpe.Memory
 import harpe.Defaults
 import harpe.Model
-import harpe.turns.Answered
-import harpe.turns.Interrupted
-import harpe.turns.Failed
 
 //[ The entry point //]
 def main(): Unit receives stdout =
@@ -266,21 +263,7 @@ private class TelegramBot(
     ! the session's own worker calls this, so its `history` needs no lock.
   //]
   private def processTurn(session: Session, text: String): Unit =
-    val interact = new TelegramInteract(client, session.id)
-
-    session.beginTurn(text)
-
-    match session.agent.runTurn(interact, Config.maxToolRounds, Config.maxRetries)
-    case Answered(delta, answer) =>
-      session.commit(delta)
-      client.sendMessage(session.id, answer)
-
-    case Interrupted =>
-      session.rollback()
-
-    case Failed =>
-      session.rollback()
-      client.sendMessage(session.id, "Sorry — the request failed. Please try again.")
+    session.runTurn(text, client, Config.maxToolRounds, Config.maxRetries)
 
   //[ Start a chat's dedicated worker on a daemon thread (dies with the process). //]
   private def startWorker(chatId: String, session: Session): Unit =

@@ -20,6 +20,9 @@ import harpe.workspace
 import harpe.Model
 import harpe.Model.Message
 import harpe.Model.UserText
+import harpe.turns.Answered
+import harpe.turns.Interrupted
+import harpe.turns.Failed
 
 
 //[ One live conversation: its chat id, its append log, its agent (which owns
@@ -38,16 +41,31 @@ private class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
   //[ Begin a user turn: mark the context's rollback point and append the user's
     ! message. The message is remembered so `commit` can archive the whole turn.
   //]
-  def beginTurn(text: String): Unit =
+  def runTurn(text: String, client: TelegramClient, maxToolRounds: Int, maxRetries: Int): Unit =
     val userMsg: Message = UserText(text)
     pending = [userMsg]
     agent.context.mark()
     agent.context.append(userMsg)
 
+    val interact = new TelegramInteract(client, this.id)
+
+    match agent.runTurn(interact, maxToolRounds, maxRetries)
+    case Answered(delta, answer) =>
+      commit(delta)
+      client.sendMessage(this.id, answer)
+
+    case Interrupted =>
+      rollback()
+
+    case Failed =>
+      rollback()
+      client.sendMessage(this.id, "Sorry — the request failed. Please try again.")
+
+
   //[ Commit a completed turn: append the user message plus the turn's delta (the
     ! engine-produced messages) to the transcript archive, and persist memory.
   //]
-  def commit(delta: List[Message]): Unit =
+  private def commit(delta: List[Message]): Unit =
     log.append(time.now(), pending ++ delta)
     saveMemory()
 
@@ -55,7 +73,7 @@ private class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
     ! Memory is still persisted — it is deliberate and not rolled back with the
     ! transcript.
   //]
-  def rollback(): Unit =
+  private def rollback(): Unit =
     agent.context.rollback()
     saveMemory()
 
@@ -63,7 +81,7 @@ private class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
     ! worker thread; `memoryPath` is a pure derivation, so no `workspace` capability
     ! is needed.
   //]
-  def saveMemory(): Unit =
+  private def saveMemory(): Unit =
     if !memory.isEmpty then Memory.save(log.memoryPath, memory)
 end
 
