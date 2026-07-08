@@ -22,14 +22,13 @@ import harpe.Tool.*
 
 
 // A reply carrying only text (no tool calls).
-private def textReply(s: String): Option[ReplyResult] =
-  Some(new Reply(new Assistant(s, List.empty[ToolCall])))
+private def textReply(s: String): ReplyResult =
+  Reply: Assistant(s, [])
 
 // A reply asking to call the named tool once.
-private def toolReply(name: String): Option[ReplyResult] =
+private def toolReply(name: String): ReplyResult =
   val call = ToolCall: "id", name, ToolInput(py.dict())
-  Some:
-    Reply: Assistant("", [call])
+  Reply: Assistant("", [call])
 
 private def eventTag(e: TurnEvent): String =
   match e
@@ -67,17 +66,12 @@ private def echoTool(): Tool =
 private def boomTool(): Tool =
   Tool("boom", "always throws", [], input => abort "kaboom")
 
-type Responder = (List[Message], List[Tool]) => Option[ReplyResult]
-
 // Interrupt fakes — no threads, no real sleeping, so the engine's cancellation
 // paths are testable deterministically.
-private class TestInteract(responder: Responder, state: State)
+private class TestInteract(state: State)
   view Interact
 
   val log = py.list()
-
-  def ask(model: Model, rendered: Rendered, tools: List[Tool]): Option[ReplyResult] =
-    responder(rendered.messages, tools)
 
   def emit(event: TurnEvent): Unit = log.append: eventTag(event)
 
@@ -90,11 +84,11 @@ private class State(cancelled: Bool, pause: Bool)
 
 // Drive one turn and summarize it as "<result> | <events>". The agent's brain is
 // the no-network echo model — the scripted TestInteract.ask never touches it.
-private def scenario(tools: List[Tool], maxToolRounds: Int, maxRetries: Int, responder: Responder, state: State): String =
-  val interact = new TestInteract(responder, state)
-  val context = new WindowedContext("", new Memory, List.empty[Message])
-  val agent = new Agent(echo(), tools, context)
-  val res = agent.runTurn(interact, maxToolRounds, maxRetries)
+private def scenario(tools: List[Tool], maxToolRounds: Int, maxRetries: Int, model: Model, state: State): String =
+  val interact = new TestInteract(state)
+  val context = new WindowedContext("", new Memory, [])
+  val agent = new Agent(model, tools, context)
+  val res = agent.runTurn(UserText("dummy message"), interact, maxToolRounds, maxRetries)
   "\{resultTag(res)} | \{joinPy(interact.log)}"
 
 private def msgTag(m: Message): String =
@@ -119,13 +113,13 @@ def run(): Unit receives stdout =
       tools
       maxToolRounds = 50
       maxRetries = 4
-      responder = (h, t) => textReply("hi")
+      model = (h, t) => textReply("hi")
       state = live
     expected = "Answered(hi) | start,end"
 
   // One tool call is run, then the next reply (text) ends the turn.
   val stepB = py.list(0)
-  val askB: Responder = (h, t) =>
+  val askB: Model = (h, t) =>
     val n = stepB.get(0).asInt
     stepB.set(0, n + 1)
     if n == 0 then toolReply("echo") else textReply("done")
@@ -138,7 +132,7 @@ def run(): Unit receives stdout =
   // Tool budget: once spent (maxToolRounds=1) the model is re-asked with no
   // tools and must answer with text. The scripted model returns text only when
   // offered no tools.
-  val askC: Responder = (h, t) =>
+  val askC: Model = (h, t) =>
     if t.isEmpty then textReply("final") else toolReply("echo")
 
   check:
@@ -153,15 +147,9 @@ def run(): Unit receives stdout =
       tools
       maxToolRounds = 50
       maxRetries = 4
-      responder = (h, t) => Some: Fatal("bad key")
+      model = (h, t) => Fatal("bad key")
       state = live
     expected = "Failed | start,end,failed"
-
-  // A cancelled request (None from the responder) interrupts the turn.
-  check:
-    "E cancelled"
-    scenario: tools, 50, 4, (h, t) => None, live
-    expected = "Interrupted | start,end"
 
   // Transient with no retry budget (maxRetries=0) gives up immediately — no
   // backoff wait.
@@ -171,17 +159,17 @@ def run(): Unit receives stdout =
       tools
       maxToolRounds = 50
       maxRetries = 0
-      responder = (h, t) => Some: Transient("rate limited")
+      model = (h, t) => Transient("rate limited")
       state = live
     expected = "Failed | start,end,exhausted"
 
   // Transient once, then success: exercises the backoff + retry path. With a
   // fake Interrupt, `pause` returns instantly — no real 1s wait.
   val stepG = py.list(0)
-  val askG: Responder = (h, t) =>
+  val askG: Model = (h, t) =>
     val n = stepG.get(0).asInt
     stepG.set(0, n + 1)
-    if n == 0 then Some(new Transient("blip")) else textReply("recovered")
+    if n == 0 then new Transient("blip") else textReply("recovered")
 
   check:
     "G transient-then-success"
@@ -197,13 +185,13 @@ def run(): Unit receives stdout =
   // Cancellation fires during the backoff pause → the retry is abandoned.
   check:
     "I cancelled-during-backoff"
-    scenario: tools, 50, 4, (h, t) => Some(new Transient("blip")), State(cancelled = false, pause = true)
+    scenario: tools, 50, 4, (h, t) => new Transient("blip"), State(cancelled = false, pause = true)
     "Interrupted | start,end,transient"
 
   // A tool that raises does NOT crash the turn: `runSafely` turns the exception
   // into an error result the model sees, and the next (text) reply ends the turn.
   val stepJ = py.list(0)
-  val askJ: Responder = (h, t) =>
+  val askJ: Model = (h, t) =>
     val n = stepJ.get(0).asInt
     stepJ.set(0, n + 1)
     if n == 0 then toolReply("boom") else textReply("recovered")
@@ -216,14 +204,14 @@ def run(): Unit receives stdout =
   // The turn's delta carries exactly the engine-produced messages, in order:
   // assistant tool-call, tool results, final assistant text.
   val stepK = py.list(0)
-  val askK: Responder = (h, t) =>
+  val askK: Model = (h, t) =>
     val n = stepK.get(0).asInt
     stepK.set(0, n + 1)
     if n == 0 then toolReply("echo") else textReply("done")
 
-  val ctxK = new WindowedContext("", new Memory, List.empty[Message])
-  val agentK = new Agent(echo(), tools, ctxK)
-  val resK = agentK.runTurn(new TestInteract(askK, live), 50, 4)
+  val ctxK = new WindowedContext("", new Memory, [])
+  val agentK = new Agent(askK, tools, ctxK)
+  val resK = agentK.runTurn(UserText("dummy text"), new TestInteract(live), 50, 4)
 
   var deltaShape = ""
 
@@ -235,4 +223,4 @@ def run(): Unit receives stdout =
   check:
     "K delta-shape"
     deltaShape
-    expected = "calls,results,text"
+    expected = "user,calls,results,text"

@@ -29,8 +29,6 @@ private def check(label: String, cond: Bool): Unit receives stdout =
 private class NoInteract
   view Interact
 
-  def ask(model: Model, rendered: Rendered, tools: List[Tool]): Option[ReplyResult] = None
-
   def emit(event: TurnEvent): Unit = pass
 
   def cancelled: Bool = false
@@ -38,17 +36,10 @@ private class NoInteract
   def pause(seconds: Float): Bool = false
 end
 
-// A scripted distiller: returns `result` for every ask, recording each request's
-// prompt text and any ContextCompacted events.
-private class ScriptedInteract(result: Option[ReplyResult])
+private class CompactInteract
   view Interact
 
-  val prompts = py.list()
   var compactions = 0
-
-  def ask(model: Model, rendered: Rendered, tools: List[Tool]): Option[ReplyResult] =
-    if rendered.messages.get(0) is UserText(t) then prompts.append(t)
-    result
 
   def emit(event: TurnEvent): Unit =
     if event is ContextCompacted(_) then compactions = compactions + 1
@@ -58,8 +49,18 @@ private class ScriptedInteract(result: Option[ReplyResult])
   def pause(seconds: Float): Bool = false
 end
 
+private class Distiller(result: ReplyResult)
+  view Model
+
+  val prompts = py.list()
+
+  def reply(rendered: Rendered, tools: List[Tool]): ReplyResult =
+    if rendered.messages.get(0) is UserText(t) then prompts.append(t)
+    result
+end
+
 private def user(t: String): Message = UserText(t)
-private def asst(t: String): Message = Assistant(t, List.empty[ToolCall])
+private def asst(t: String): Message = Assistant(t, [])
 
 // A short exchange turn: 8 chars under the truncate/transcriptChars measure.
 private def turn8(u: String, a: String): List[Message] = [user(u), asst(a)]
@@ -67,14 +68,14 @@ private def turn8(u: String, a: String): List[Message] = [user(u), asst(a)]
 // A turn that calls a tool: user, assistant tool_use, tool result, assistant text.
 private def toolTurn(u: String, code: String, out: String): List[Message] =
   val call = ToolCall("id", "runCode", ToolInput(py.dict("code" ~ code)))
-  [UserText(u), Assistant("", [call]), ToolResults([ToolResult("id", out)]), Assistant("done", List.empty[ToolCall])]
+  [UserText(u), Assistant("", [call]), ToolResults([ToolResult("id", out)]), Assistant("done", [])]
 
 def run(): Unit receives stdout =
   val nix = new NoInteract
 
   // --- WindowedContext: memory rendered as the transient tail ---
   val mem = new Memory
-  val ctx = new WindowedContext("BASE", mem, List.empty[Message])
+  val ctx = new WindowedContext("BASE", mem, [])
   ctx.append(user("hi"))
   ctx.append(asst("hello"))
 
@@ -129,15 +130,20 @@ def run(): Unit receives stdout =
   check("truncate never orphans a tool result", !(kept.get(0) is ToolResults(_)))
 
   // --- SummarizingContext: 8-char turns, high water 30, low water 16 ---
-  val distiller = new ScriptedInteract(Some(Reply(Assistant("DISTILLED", List.empty[ToolCall]))))
+  val distiller =
+    val reply = Reply: Assistant("DISTILLED", [])
+    new Distiller(reply)
+
+  val interact = new CompactInteract
+
   val smem = new Memory
-  val sctx = new SummarizingContext("BASE", smem, List.empty[Message], echo(), 30, 16)
+  val sctx = new SummarizingContext("BASE", smem, [], distiller, 30, 16)
 
   for m in turn8("AAAA", "aaaa") ++ turn8("BBBB", "bbbb") ++ turn8("CCCC", "cccc") do
     sctx.append(m)
 
   // 3 turns = 24 chars, under the high-water mark: no distillation.
-  val under = sctx.render(distiller)
+  val under = sctx.render(interact)
   check("summarizing: under high water passes the transcript through", under.messages.size == 6)
   check("summarizing: no summary before any compaction", !under.system.contains("Conversation summary"))
   check("summarizing: no distillation call under high water", distiller.prompts.size == 0)
@@ -147,7 +153,7 @@ def run(): Unit receives stdout =
 
   // 5 turns = 40 chars > 30: compact down to the low-water window (2 turns).
   smem.set("goal", "win")
-  val over = sctx.render(distiller)
+  val over = sctx.render(interact)
   check("summarizing: compaction keeps the low-water window", over.messages.size == 4)
   check("summarizing: window starts at the first kept turn", over.messages.get(0) is UserText("DDDD"))
   check("summarizing: one distillation call", distiller.prompts.size == 1)
@@ -155,14 +161,14 @@ def run(): Unit receives stdout =
   check("summarizing: base stays at the front", over.system.startsWith("BASE"))
   check("summarizing: memory renders in the transient tail", over.transient.contains("win"))
   check("summarizing: memory does not leak into the system prompt", !over.system.contains("win"))
-  check("summarizing: compaction event emitted", distiller.compactions == 1)
+  check("summarizing: compaction event emitted", interact.compactions == 1)
 
   val excerpt = distiller.prompts.get(0).asString
   check("summarizing: dropped turns are in the excerpt", excerpt.contains("AAAA") && excerpt.contains("CCCC"))
   check("summarizing: kept turns are not in the excerpt", !excerpt.contains("DDDD"))
 
   // Hysteresis: the next request is under the mark again — no new call.
-  val settled = sctx.render(distiller)
+  val settled = sctx.render(interact)
   check("summarizing: no re-distillation while under high water", distiller.prompts.size == 1)
   check("summarizing: summary persists across requests", settled.system.contains("DISTILLED"))
 
@@ -170,15 +176,17 @@ def run(): Unit receives stdout =
   for m in turn8("FFFF", "ffff") ++ turn8("GGGG", "gggg") do
     sctx.append(m)
 
-  val again = sctx.render(distiller)
-  check("summarizing: second compaction", distiller.compactions == 2)
+  val again = sctx.render(interact)
+  check("summarizing: second compaction", interact.compactions == 2)
   val second = distiller.prompts.get(1).asString
   check("summarizing: prior summary folded into the next request", second.contains("Current summary") && second.contains("DISTILLED"))
   check("summarizing: newly dropped turns in the second excerpt", second.contains("DDDD"))
 
   // A failed distillation call skips compaction: the oversized window is sent as-is.
-  val failing = new ScriptedInteract(Some(Fatal("boom")))
-  val fctx = new SummarizingContext("BASE", new Memory, List.empty[Message], echo(), 30, 16)
+  val failing = new CompactInteract
+  val fctx =
+    val model = new Distiller(Fatal("boom"))
+    new SummarizingContext("BASE", new Memory, [], model, 30, 16)
 
   for m in turn8("AAAA", "aaaa") ++ turn8("BBBB", "bbbb") ++ turn8("CCCC", "cccc") ++ turn8("DDDD", "dddd") ++ turn8("EEEE", "eeee") do
     fctx.append(m)
@@ -188,18 +196,11 @@ def run(): Unit receives stdout =
   check("summarizing: failed distillation produces no summary", !unshrunk.system.contains("Conversation summary"))
   check("summarizing: failed distillation emits no compaction", failing.compactions == 0)
 
-  // A cancelled distillation call (None) skips the same way.
-  val cancelledAsk = new ScriptedInteract(None)
-  val cctx = new SummarizingContext("BASE", new Memory, List.empty[Message], echo(), 30, 16)
-
-  for m in turn8("AAAA", "aaaa") ++ turn8("BBBB", "bbbb") ++ turn8("CCCC", "cccc") ++ turn8("DDDD", "dddd") ++ turn8("EEEE", "eeee") do
-    cctx.append(m)
-
-  check("summarizing: cancelled distillation leaves the window intact", cctx.render(cancelledAsk).messages.size == 10)
-
   // mark/rollback restores both the window and the summary.
-  val rdistiller = new ScriptedInteract(Some(Reply(Assistant("DISTILLED", List.empty[ToolCall]))))
-  val rctx = new SummarizingContext("BASE", new Memory, List.empty[Message], echo(), 30, 16)
+  val interact2 = new CompactInteract
+  val rctx =
+    val model = new Distiller(Reply(Assistant("DISTILLED", [])))
+    new SummarizingContext("BASE", new Memory, [], model, 30, 16)
 
   for m in turn8("AAAA", "aaaa") ++ turn8("BBBB", "bbbb") ++ turn8("CCCC", "cccc") do
     rctx.append(m)
@@ -209,9 +210,9 @@ def run(): Unit receives stdout =
   for m in turn8("DDDD", "dddd") ++ turn8("EEEE", "eeee") do
     rctx.append(m)
 
-  check("summarizing: compaction happened before rollback", rctx.render(rdistiller).messages.size == 4)
+  check("summarizing: compaction happened before rollback", rctx.render(interact2).messages.size == 4)
 
   rctx.rollback()
-  val restored = rctx.render(rdistiller)
+  val restored = rctx.render(interact2)
   check("summarizing: rollback restores the pre-turn window", restored.messages.size == 6)
   check("summarizing: rollback restores the pre-turn summary", !restored.system.contains("Conversation summary"))

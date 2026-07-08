@@ -128,7 +128,7 @@ private def parseReply(response: py.Dynamic): Assistant =
   val stop = response.stop_reason
 
   if !stop.isNone && stop.asString == "max_tokens" then
-    new Assistant((text + "\n\n[Reply truncated: max_tokens reached.]").trim, List.empty[ToolCall])
+    new Assistant((text + "\n\n[Reply truncated: max_tokens reached.]").trim, [])
   else
     new Assistant(text.trim, calls)
 

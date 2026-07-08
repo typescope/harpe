@@ -101,6 +101,6 @@ def run(): Unit receives stdout =
 
   // --- persistence flow: a tool writes memory, it survives save + reload ---
   val ppath = os.path.join(py.module("tempfile").mkdtemp().asString, "s.memory.json")
-  toolNamed(mtools, "updateMemory").run(ToolInput(py.dict("key" ~ "note", "value" ~ "remember this")))
+  val _ = toolNamed(mtools, "updateMemory").run(ToolInput(py.dict("key" ~ "note", "value" ~ "remember this")))
   Memory.save(ppath, mem)
   check("tool-written memory persists across save/load", Memory.load(ppath).get("note") == "remember this")
