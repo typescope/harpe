@@ -31,16 +31,14 @@ def main(): Unit receives stdout =
     with workspace = wspace in runChat()
 
 private def runChat(): Unit receives stdout, workspace =
-  val brain = Config.model()
-
   // The agent for this run — assembled by the agent's own Config. Its working
   // memory is in-process for the run (the CLI has no session resume), and the
   // context starts on an empty transcript.
   val memory = new Memory
   val agent = Config.agent:
-    brain
+    Config.model
     memory
-    List.empty[Message]
+    history = []
 
   val inputHistory = workspace.relative("logs/inputs.txt")
   val interact = new ConsoleInteract(stdout, inputHistory)

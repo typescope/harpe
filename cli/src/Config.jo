@@ -38,10 +38,10 @@ section Config
     ! a server's request path could neither do nor be allowed to by the effect
     ! system.)
   //]
-  def agent(brain: Model, memory: Memory, initial: List[Message]): Agent receives workspace =
+  def agent(brain: Model, memory: Memory, history: List[Message]): Agent receives workspace =
     val basePrompt = workspace.read("AGENT.md") rescue None => ""
     val tools = Defaults.tools() ++ memoryTools(memory)
-    val context = new WindowedContext(basePrompt, memory, initial)
+    val context = new WindowedContext(basePrompt, memory, history)
     new Agent(brain, tools, context)
 
   //[ The chat model, selected by env (PROVIDER / MODEL / API keys — see
