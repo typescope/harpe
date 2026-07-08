@@ -90,7 +90,7 @@ private class ConsoleInteract(out: String => Unit, historyFile: String)
     os.makedirs("data")
     val _ = py.try(py.module("readline").write_history_file(historyFile))
 
-  def turn[T](f: () => T): T =
+  def turn(f: () => TurnResult): TurnResult =
     // Reset the ESC-watcher state so interruption works on every turn: the
     // previous turn left `stopWatch` set (stopping its watcher) and may have
     // left `interrupt` set (if ESC was pressed). Without clearing, the watcher
@@ -101,7 +101,9 @@ private class ConsoleInteract(out: String => Unit, historyFile: String)
     val savedTerm = ConsoleInteract.enterCbreak()
     ConsoleInteract.startEscWatcher(interrupt, stopWatch)
 
-    val res = f()
+    val res = ConsoleInteract.callInterruptible(this, f) rescue None =>
+      spinner.stop()
+      Interrupted
 
     ConsoleInteract.restoreTerminal(savedTerm)
     stopWatch.set()
@@ -162,13 +164,13 @@ private section ConsoleInteract
   // ============================================
 
   // True if stdin has a byte ready within `timeout` seconds.
-  private[cli] def stdinReady(timeout: Float): Bool =
+  def stdinReady(timeout: Float): Bool =
     val res = selectMod.select(py.list(0), py.list(), py.list(), timeout)
     res[0].cast[py.List].size > 0
 
   // Background thread: set `interrupt` when the user presses ESC (a lone ESC,
   // not an escape sequence like an arrow key). Stops when `stop` is set.
-  private[cli] def startEscWatcher(interrupt: py.Dynamic, stop: py.Dynamic): Unit =
+  def startEscWatcher(interrupt: py.Dynamic, stop: py.Dynamic): Unit =
     val watcher = () =>
       while !stop.is_set().asBool && !interrupt.is_set().asBool do
         if stdinReady(0.1) then
@@ -178,4 +180,27 @@ private section ConsoleInteract
             if !stdinReady(0.02) then interrupt.set()
     val thread = threadingMod.Thread(target = watcher, daemon = true)
     thread.start()
+
+  // Run `work` on a background thread; return Some(result), or None if `interrupt`
+  // fires first (the abandoned worker finishes in the background). This is what
+  // lets a long model call be cancelled by ESC — the engine just sees the Option.
+  def callInterruptible[T](interact: Interact, work: () => T): Option[T] =
+    val box  = py.list(py.none)
+    val done = threadingMod.Event()
+    val worker = () =>
+      box.set(0, work())
+      done.set()
+    val thread = threadingMod.Thread(target = worker, daemon = true)
+    thread.start()
+
+    var out: Option[T] = None
+    var waiting = true
+    while waiting do
+      if done.wait(0.05).asBool then
+        out = Some(box.get(0).cast[T])
+        waiting = false
+      else if interact.cancelled then
+        waiting = false
+    out
+
 end
