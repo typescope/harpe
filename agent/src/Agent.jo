@@ -31,8 +31,8 @@ import harpe.Tool.*
   ! directly.
 //]
 class Agent(brain: Model, tools: List[Tool], context: Context)
-  def runTurn(interact: Interact, maxToolRounds: Int, maxRetries: Int): TurnResult =
-    Agent.runTurn(brain, tools, context, interact, maxToolRounds, maxRetries)
+  def runTurn(userMsg: Message, interact: Interact, maxToolRounds: Int, maxRetries: Int): TurnResult =
+    Agent.runTurn(userMsg, brain, tools, context, interact, maxToolRounds, maxRetries)
 end
 
 section Agent
@@ -52,10 +52,17 @@ section Agent
     ! transport policy — how often a transient model error is retried — so it is
     ! an argument, not part of the agent.
   //]
-  def runTurn(brain: Model, tools: List[Tool], context: Context, interact: Interact, maxToolRounds: Int, maxRetries: Int): TurnResult =
-    var delta: List[Message] = []
+  def runTurn(
+      userMsg: Message, brain: Model, tools: List[Tool], context: Context,
+      interact: Interact, maxToolRounds: Int, maxRetries: Int)
+  : TurnResult =
+
+    var delta: List[Message] = [userMsg]
     var rounds = 0
     var result: TurnResult = Failed
+
+    context.mark()
+    context.append(userMsg)
 
     while true do
       // Once the tool budget is spent, offer no tools so the model must reply with
@@ -72,10 +79,12 @@ section Agent
       match fetchReply(brain, rendered, offer, maxRetries, interact)
         case Stopped =>
           result = Interrupted
+          context.rollback()
           break
 
         case GaveUp =>
           result = Failed
+          context.rollback()
           break
 
         case Got(reply) =>
@@ -106,8 +115,10 @@ section Agent
             interact.emit: ToolCallEnded(toolName, outcome.summary)
 
             toolResults = toolResults + ToolResult(call.id, outcome.result)
+          end
 
           if cancelled || interact.cancelled then
+            context.rollback()
             result = Interrupted
             break
 

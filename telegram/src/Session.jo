@@ -36,20 +36,15 @@ import harpe.turns.Failed
 //]
 private class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
   val queue = py.module("queue").Queue()
-  private var pending: List[Message] = []
 
   //[ Begin a user turn: mark the context's rollback point and append the user's
     ! message. The message is remembered so `commit` can archive the whole turn.
   //]
   def runTurn(text: String, client: TelegramClient, maxToolRounds: Int, maxRetries: Int): Unit =
-    val userMsg: Message = UserText(text)
-    pending = [userMsg]
-    agent.context.mark()
-    agent.context.append(userMsg)
-
+    val userMsg = UserText(text)
     val interact = new TelegramInteract(client, this.id)
 
-    match agent.runTurn(interact, maxToolRounds, maxRetries)
+    match agent.runTurn(userMsg, interact, maxToolRounds, maxRetries)
     case Answered(delta, answer) =>
       commit(delta)
       client.sendMessage(this.id, answer)
@@ -66,7 +61,7 @@ private class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
     ! engine-produced messages) to the transcript archive, and persist memory.
   //]
   private def commit(delta: List[Message]): Unit =
-    log.append(time.now(), pending ++ delta)
+    log.append(time.now(), delta)
     saveMemory()
 
   //[ Abandon a cancelled/failed turn: restore the context's pre-turn window.
@@ -74,7 +69,6 @@ private class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
     ! transcript.
   //]
   private def rollback(): Unit =
-    agent.context.rollback()
     saveMemory()
 
   //[ Persist the working memory beside the transcript archive. Runs on the chat's

@@ -59,20 +59,16 @@ private def runChat(): Unit receives stdout, workspace =
 
     if userInput == "" then continue
 
-    val userMsg: Message = UserText(userInput)
-    agent.context.mark()
-    agent.context.append(userMsg)
+    val userMsg = UserText(userInput)
 
     val res = interact.turn: () =>
-      agent.runTurn(interact, Config.maxToolRounds, Config.maxRetries)
+      agent.runTurn(userMsg, interact, Config.maxToolRounds, Config.maxRetries)
 
     if res is Answered(delta, text) then
-      sessionLog.append(time.now(), [userMsg] ++ delta)
+      sessionLog.append(time.now(), delta)
       interact.agentResponse(text)
 
     else
-      // Discard the cancelled/failed turn so the conversation stays valid.
-      agent.context.rollback()
       if res is Interrupted then println "  ⎋ interrupted"
       else println "  · request failed"
 

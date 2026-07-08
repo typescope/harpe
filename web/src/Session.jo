@@ -44,7 +44,6 @@ class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
   val stop = threadingMod.Event()
 
   var lastActive: Float = time.now()
-  private var pending: List[Message] = []
 
   //[ Begin a user turn: clear any stale stop request, mark the context's
     ! rollback point, and append the user's message. The message is remembered
@@ -53,16 +52,13 @@ class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
   def runTurn(text: String, sink: Sink, maxToolRounds: Int, maxRetries: Int): Unit =
     stop.clear()
     lastActive = time.now()
-    val userMsg: Message = UserText(text)
-    pending = [userMsg]
-    agent.context.mark()
-    agent.context.append(userMsg)
+    val userMsg = UserText(text)
 
     this.lock.acquire()
 
     val interact = new WebInteract(sink, this.stop)
 
-    match agent.runTurn(interact, maxToolRounds, maxRetries)
+    match agent.runTurn(userMsg, interact, maxToolRounds, maxRetries)
     case Answered(delta, answer) =>
       this.commit(delta)
       sink(py.dict("type" ~ "answer", "text" ~ answer))
@@ -81,7 +77,7 @@ class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
     ! engine-produced messages) to the transcript archive, and persist memory.
   //]
   private def commit(delta: List[Message]): Unit =
-    log.append(time.now(), pending ++ delta)
+    log.append(time.now(), delta)
     saveMemory()
 
   //[ Abandon a cancelled/failed turn: restore the context's pre-turn window.
@@ -89,7 +85,6 @@ class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
     ! transcript.
   //]
   private def rollback(): Unit =
-    agent.context.rollback()
     saveMemory()
 
   //[ Persist the working memory beside the transcript archive. //]
