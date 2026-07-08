@@ -41,12 +41,6 @@ type Sink = py.Dict => Unit
 private class WebInteract(sink: Sink, stop: py.Dynamic)
   view Interact
 
-  //[ A plain blocking model call; the turn engine retries transient errors and
-    ! checks `cancelled` between calls, so a stop applies at the next boundary.
-  //]
-  def ask(model: Model, rendered: Rendered, tools: List[Tool]): Option[ReplyResult] =
-    Some(model.reply(rendered, tools))
-
   def cancelled: Bool = stop.is_set().asBool
 
   def pause(seconds: Float): Bool = stop.wait(seconds).asBool

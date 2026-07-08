@@ -82,14 +82,11 @@ class SummarizingContext(
       val dropped = transcript.take(dropCount)
       val request: Message = distillRequest(summary, dropped)
 
-      match interact.ask(distiller, new Rendered(distillSystem(), [request], ""), [])
-      case Some(res) =>
-        if res is Reply(message) then
-          summary = message.text.trim
-          transcript = kept
-          interact.emit: turns.ContextCompacted(dropCount)
-
-      case None => pass
+      val res = distiller.reply(new Rendered(distillSystem(), [request], ""), [])
+      if res is Reply(message) then
+        summary = message.text.trim
+        transcript = kept
+        interact.emit: turns.ContextCompacted(dropCount)
 end
 
 //[ The distilled-history block, between the stable base prompt and the memory

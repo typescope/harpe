@@ -12,23 +12,11 @@ import harpe.Model.Rendered
 import harpe.Model.ReplyResult
 import harpe.Tool
 
-//[ Interact
+//[ UI interaction during a turn
   !
   ! Cooperative interaction for a turn.
 //]
 interface Interact
-  //[ Ask `model` for one reply
-    !
-    ! A cancellable call to `model.reply` over the already-composed `rendered`
-    ! request and offered `tools`: the model's reply (or a typed error) as
-    ! `Some(ReplyResult)`, or `None` if the request was cancelled. The engine
-    ! (`Agent.runTurn`) owns *what* is sent — it composes the request via the
-    ! agent's context and passes the agent's model; the impl owns *how* the call
-    ! is issued and cancelled, keeping that machinery — threads, interrupt
-    ! polling — out of the engine.
-  //]
-  def ask(model: Model, rendered: Rendered, tools: List[Tool]): Option[ReplyResult]
-
   //[ Has cancellation been requested? //]
   def cancelled: Bool
 

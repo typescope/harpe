@@ -160,13 +160,9 @@ private def fetchReply(
   while true do
     interact.emit: ModelRequestStarted(attempt, maxRetries)
 
-    val maybe = interact.ask(model, rendered, tools)
+    val res = model.reply(rendered, tools)
 
     interact.emit: ModelRequestEnded
-
-    val res = maybe rescue None =>
-      outcome = Stopped
-      break
 
     match res
       case Reply(message) =>
