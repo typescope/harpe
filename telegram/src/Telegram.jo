@@ -244,7 +244,7 @@ private class TelegramBot(
     while running do
       match py.try(session.queue.get(timeout = Config.idleSeconds()))
       case Ok(item) =>
-        match py.try(processTurn(session, item.asString))
+        match py.try(session.runTurn(item.asString, client, Config.maxToolRounds, Config.maxRetries))
         case Ok(_)  => pass
         case Err(_) =>
           val _ = py.try(client.sendMessage(session.id, "Sorry — an internal error occurred."))
@@ -257,13 +257,6 @@ private class TelegramBot(
         registryLock.release()
 
         if reap then running = false
-
-  //[ Run one turn and send its answer. On a failed request the chat is told
-    ! plainly; a cancelled/failed turn is rolled back so history stays valid. Only
-    ! the session's own worker calls this, so its `history` needs no lock.
-  //]
-  private def processTurn(session: Session, text: String): Unit =
-    session.runTurn(text, client, Config.maxToolRounds, Config.maxRetries)
 
   //[ Start a chat's dedicated worker on a daemon thread (dies with the process). //]
   private def startWorker(chatId: String, session: Session): Unit =
