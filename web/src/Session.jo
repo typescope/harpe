@@ -24,6 +24,9 @@ import harpe.workspace
 import harpe.Model
 import harpe.Model.Message
 import harpe.Model.UserText
+import harpe.turns.Answered
+import harpe.turns.Interrupted
+import harpe.turns.Failed
 
 
 //[ One live conversation: its id, its append log, its agent (which owns the
@@ -47,7 +50,7 @@ class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
     ! rollback point, and append the user's message. The message is remembered
     ! so `commit` can archive the whole turn.
   //]
-  def beginTurn(text: String): Unit =
+  def runTurn(text: String, sink: Sink, maxToolRounds: Int, maxRetries: Int): Unit =
     stop.clear()
     lastActive = time.now()
     val userMsg: Message = UserText(text)
@@ -55,10 +58,29 @@ class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
     agent.context.mark()
     agent.context.append(userMsg)
 
+    this.lock.acquire()
+
+    val interact = new WebInteract(sink, this.stop)
+
+    match agent.runTurn(interact, maxToolRounds, maxRetries)
+    case Answered(delta, answer) =>
+      this.commit(delta)
+      sink(py.dict("type" ~ "answer", "text" ~ answer))
+
+    case Interrupted =>
+      this.rollback()
+      sink(py.dict("type" ~ "interrupted"))
+
+    case Failed =>
+      this.rollback()
+      sink(py.dict("type" ~ "failed"))
+
+    this.lock.release()
+
   //[ Commit a completed turn: append the user message plus the turn's delta (the
     ! engine-produced messages) to the transcript archive, and persist memory.
   //]
-  def commit(delta: List[Message]): Unit =
+  private def commit(delta: List[Message]): Unit =
     log.append(time.now(), pending ++ delta)
     saveMemory()
 
@@ -66,12 +88,12 @@ class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
     ! Memory is still persisted — it is deliberate and not rolled back with the
     ! transcript.
   //]
-  def rollback(): Unit =
+  private def rollback(): Unit =
     agent.context.rollback()
     saveMemory()
 
   //[ Persist the working memory beside the transcript archive. //]
-  def saveMemory(): Unit =
+  private def saveMemory(): Unit =
     if !memory.isEmpty then Memory.save(log.memoryPath, memory)
 end
 

@@ -31,9 +31,6 @@ import harpe.Model
 import harpe.Model.Assistant
 import harpe.Model.Message
 import harpe.Model.UserText
-import harpe.turns.Answered
-import harpe.turns.Interrupted
-import harpe.turns.Failed
 
 class ChatServer(brain: Model, name: String, wspace: Workspace)
   // Resident sessions, id -> Session. Persisted sessions not yet touched this
@@ -108,7 +105,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
       if minted then sink(py.dict("type" ~ "session", "id" ~ session.id))
 
-      runOneTurn(session, text, sink)
+      session.runTurn(text, sink, Config.maxToolRounds, Config.maxRetries)
 
     py.list()
 
@@ -125,28 +122,6 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     registryLock.release()
 
     respondJson(startResp, py.dict("ok" ~ true))
-
-  private def runOneTurn(session: Session, text: String, sink: Sink): Unit =
-    session.lock.acquire()
-
-    val interact = new WebInteract(sink, session.stop)
-
-    session.beginTurn(text)
-
-    match session.agent.runTurn(interact, Config.maxToolRounds, Config.maxRetries)
-    case Answered(delta, answer) =>
-      session.commit(delta)
-      sink(py.dict("type" ~ "answer", "text" ~ answer))
-
-    case Interrupted =>
-      session.rollback()
-      sink(py.dict("type" ~ "interrupted"))
-
-    case Failed =>
-      session.rollback()
-      sink(py.dict("type" ~ "failed"))
-
-    session.lock.release()
 
   //[ A fresh session under a newly-minted, time-sortable id. //]
   private def createSession(): Session receives workspace =
