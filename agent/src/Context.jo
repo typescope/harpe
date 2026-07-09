@@ -33,17 +33,13 @@ interface Context
     !
     ! Called once per model request. May be effectful — an impl can use
     ! `interact` to call the model first (e.g. summarize old turns) and mutate
-    ! its own state, under the turn's cancellation and event stream; the default
-    ! is pure and ignores it.
+    ! its own state, under the turn's cancellation and event stream.
   //]
   def render(interact: Interact): Rendered
 
   //[ Mark the start of a user turn, so a cancelled/failed turn can roll back. //]
   def mark(): Unit
 
-  //[ Drop transcript events recorded since `mark`. Working memory is
-    ! deliberately NOT rolled back — a memory edit is an intentional act,
-    ! independent of the turn's outcome.
-  //]
+  //[ Drop transcript events recorded since `mark`.   //]
   def rollback(): Unit
 end

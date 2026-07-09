@@ -1,11 +1,14 @@
 //[ Tool.jo
   !
-  ! The Jo-modeled tool abstraction: a `Tool` is a name + prose + typed
-  ! parameters + a host-side handler. Tool authors describe inputs in Jo
-  ! (`ParamType` / `ToolParam`); each `harpe.models` provider renders its own wire
-  ! spec from this model, so `Tool` stays provider-neutral and authors never
-  ! hand-write JSON. Handlers read arguments via the typed `ToolInput` and
-  ! return a `RunOutcome`.
+  ! The tool abstraction
+  !
+  ! A `Tool` is a name + prose + typed parameters + a host-side handler.
+  !
+  ! Tool authors describe inputs in Jo. Each provider renders its own wire spec
+  ! from this model, so `Tool` stays provider-neutral and authors never
+  ! hand-write JSON.
+  !
+  ! Handlers read arguments via the typed `ToolInput` and return a `RunOutcome`.
 //]
 
 namespace harpe
@@ -28,10 +31,10 @@ class Tool(
 )
 
 section Tool
-  //[ RunOutcome
+  //[ A tool result
     !
-    ! A tool result: `result` is the text fed back to the model; `summary` is the
-    ! one-line status shown in the console.
+    ! - `result` is the text fed back to the model
+    ! - `summary` is the one-line status shown in the console
   //]
   class RunOutcome(result: String, summary: String)
 

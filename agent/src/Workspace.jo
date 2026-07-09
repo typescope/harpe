@@ -15,17 +15,22 @@ import harpe.ffi.readFile
 //[ Workspace
   !
   ! An agent's working directory and the conventional layout the built-in tools
-  ! assume: `sandbox/guest` (the program runCode writes + builds) and `skills/`
-  ! (the read-only reference files).
+  ! assume: `sandbox/guest` and `skills/`.
 //]
 class Workspace(root: String)
   def guestDir: String  = os.path.join(root, "sandbox/guest")
   def skillsDir: String = os.path.join(root, "skills")
   def relative(path: String): String = os.path.join(root, path)
 
-  //[ The text of a workspace file (`path` relative to the root), or `None` if
-    ! the file does not exist. A call site that wants a graceful default writes
-    ! `workspace.read("AGENT.md") rescue None => ""`.
+  //[ The text of a workspace file
+    !
+    ! `path` is relative to the `root`.
+    !
+    ! Returns `None` if the file does not exist.
+    !
+    ! A call site that wants a graceful default writes:
+    !
+    !     workspace.read("AGENT.md") rescue None => ""
   //]
   def read(path: String): Option[String] =
     val p = relative(path)
