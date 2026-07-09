@@ -40,5 +40,18 @@ type Value = (String | Float | IntVal | BoolVal) :- [IntVal, BoolVal]
   ! `runCode`'s `runCodeCategory`). Derive it from the producer's namespace, but
   ! then keep it STABLE: downstream consumers filter on it, so it is a data
   ! contract — not something to re-tie to the code on every refactor.
+  !
+  ! SEVERITY CONVENTION (optional). Most records are pure data — the outcome lives
+  ! in the fields (`"compiled" ~ false`) or the category, so they carry NO
+  ! severity. A record that instead has a human-facing diagnostic message uses ONE
+  ! reserved field key — `"info"`, `"warning"`, or `"error"` — whose value is that
+  ! message. The `Logger.info` / `warn` / `error` helpers write it:
+  !
+  !     logger.warn("harpe.model", "rate limited, retrying", "attempt" ~ 3)
+  !
+  ! The three keys are reserved for this and mutually exclusive (structured context
+  ! goes in other fields — note `runCode` uses `"compileError"`, not `"error"`).
+  ! Filter by key existence: `jq 'select(has("error"))'`, or
+  ! `select(has("warning") or has("error"))` for warn-and-up.
 //]
 class Entry(time: Float, category: String, fields: Map[String, Value])

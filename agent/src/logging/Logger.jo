@@ -29,6 +29,21 @@ interface Logger
     for k ~ v in fields do map = map.add(k, v)
     logEntry(new Entry(time.now(), category, map))
 
+  //[ Log a diagnostic message at a severity — the reserved-key convention on
+    ! `Entry`. `message` becomes the `info`/`warning`/`error` field; any extra
+    ! structured context goes in `fields`:
+    !
+    !     logger.warn("harpe.model", "rate limited, retrying", "attempt" ~ 3)
+  //]
+  def info(category: String, message: String, fields: ..(String ~ Value)): Unit =
+    log(category, "info" ~ message, ..fields)
+
+  def warn(category: String, message: String, fields: ..(String ~ Value)): Unit =
+    log(category, "warning" ~ message, ..fields)
+
+  def error(category: String, message: String, fields: ..(String ~ Value)): Unit =
+    log(category, "error" ~ message, ..fields)
+
   def logEntry(entry: Entry): Unit
 
   def close(): Unit
