@@ -18,7 +18,7 @@ import harpe.Model.*
 import harpe.Tool
 import harpe.Tool.*
 
-private section openai
+private section OpenAI
   //[ One tool's OpenAI function spec, derived from the Jo `Tool` model. //]
   def toolSpec(t: Tool): py.Dict =
     val properties = py.dict()
@@ -101,9 +101,9 @@ private class OpenAIModel(client: py.Dynamic, model: String)
 
   def reply(rendered: Rendered, tools: List[Tool]): ReplyResult =
     val toolSpecs = py.list()
-    for t in tools do toolSpecs.append(openai.toolSpec(t))
+    for t in tools do toolSpecs.append(OpenAI.toolSpec(t))
 
-    val messages = openai.toMessages(rendered.system, rendered.messages)
+    val messages = OpenAI.toMessages(rendered.system, rendered.messages)
 
     // The transient tail (working memory) rides after the transcript as a final
     // user message. OpenAI-compatible endpoints cache long prompt prefixes
@@ -119,7 +119,7 @@ private class OpenAIModel(client: py.Dynamic, model: String)
         tools = toolSpecs
 
     match attempt
-    case Ok(response) => Model.Reply: openai.parseReply(response)
+    case Ok(response) => Model.Reply: OpenAI.parseReply(response)
     case Err(err)     => classifyError(err)
 end
 
