@@ -1,181 +1,113 @@
-# The Harpe logging infrastructure
+# Logging in your Harpe agent
 
-Harpe's logging layer (`agent/src/logging/`) is a small **structured event log**:
-each record is a typed value, not a formatted string, and *where* and *how* it is
-stored is decided by a pluggable backend. It is the foundation the framework — and
-you — build observability on: the `runCode` audit trail today, and billing, usage,
-and stats tomorrow, all from the same event stream.
+Your agent keeps a **structured log**: one typed event per thing that happens —
+every `runCode` execution out of the box, plus anything you log from the tools you
+write. Each event is a record (typed fields, not free text) tagged with the session
+it came from, which makes it the raw material for usage reports, billing, and stats.
 
-Two ideas keep it decoupled and extensible:
+*Where* those events go is not fixed. A `Logger` — the thing you install once —
+decides the format and the destination. The framework ships one that appends JSON
+lines to a file, but you can point the same events at a database or a metrics
+service instead (see [Sending logs somewhere else](#sending-logs-somewhere-else)).
+The examples below assume that default JSON file where they show concrete output;
+swap in your own `Logger` and the events are identical, only their storage changes.
 
-- **Standardize the record, not the content.** Every event is an `Entry` with a
-  time, a category, and an open bag of typed fields. The framework never names
-  *your* fields.
-- **Standardize the interchange, make the backend pluggable.** Producers hand
-  `Entry`s to a `Logger`; a `Logger` owns the format (JSON, sqlite, logfmt, a
-  metrics API) and the destination (a file, a database, a socket). Producers and
-  backends vary independently — `N + M`, not `N × M`.
+## Where your events go (default)
 
-## The record
+Out of the box the installed `Logger` is `JsonlLogger`, which appends every event
+as one JSON line to `logs/agent.jsonl` under your agent's working directory:
 
-```jo
-class Entry(time: Float, category: String, fields: Map[String, Value])
-
-type Value = (String | Float | IntVal | BoolVal | Map[String, Value]) :- [IntVal, BoolVal]
+```json
+{"time":1720531200.4,"category":"harpe.tools.runCode","code":"…","compiled":true,"exitCode":0,"compileSeconds":1.2,"runSeconds":0.3,"output":"…","context":{"session":"20260709T101500-ab12"}}
 ```
 
-An `Entry` is **when** it happened, **which** category it belongs to, and its
-named **fields**. A field `Value` is a scalar — text, number, integer, boolean —
-or a nested `Map` of them. Scalars go in bare; the duck-type adapters box `Int`
-and `Bool` on the way in, so a producer never writes a wrapper:
-
-```jo
-logger.log("harpe.tools.runCode", "code" ~ src, "exitCode" ~ 0, "compiled" ~ true, "compileSeconds" ~ 1.2)
-```
-
-The block-call form reads well when there are several fields:
-
-```jo
-logger.log:
-  "harpe.tools.runCode"
-  "code"           ~ src
-  "compiled"       ~ true
-  "exitCode"       ~ 0
-```
-
-(Jo forbids more than one numeric/boolean primitive in a union, which is why
-`Int` and `Bool` are boxed as `IntVal`/`BoolVal` behind the adapters; you never
-see that at a call site.)
-
-## Category — the schema tag
-
-A **category** is a stable, dotted, reverse-namespaced identifier, like a logger
-name: `"harpe.tools.runCode"` (namespace + producer). It does three jobs:
-
-- **Uniqueness in an open set.** Any producer — third-party included — can mint a
-  category; reverse-namespacing keeps them from colliding.
-- **Subtree filtering.** `jq 'select(.category | startswith("harpe.tools"))'`
-  slices all tool events; `startswith("harpe.")` all framework events.
-- **Schema tag.** Entries sharing a category share the same field shape, so a
-  consumer can rely on the columns being there.
-
-Because downstream consumers filter on it, a category is a **data contract**:
-derive it from the namespace once, then keep it stable across refactors. Each
-producer owns its category as a named constant (namespace-level `val` is not a
-thing in Jo — use `def`):
-
-```jo
-private def runCodeCategory: String = "harpe.tools.runCode"
-```
-
-## Severity — a field convention, not a level
-
-Most records are pure data: the outcome lives in the fields
-(`"compiled" ~ false`) or the category, so they carry **no** severity — there is
-no constant-`info` noise. A record that instead has a human-facing diagnostic
-message uses one reserved field key — `"info"`, `"warning"`, or `"error"` — whose
-value *is* the message. The helpers write it:
-
-```jo
-logger.warn("harpe.model", "rate limited, retrying", "attempt" ~ 3)
-// → {"time":…, "category":"harpe.model", "attempt":3, "warning":"rate limited, retrying"}
-```
-
-Those three keys are reserved and mutually exclusive; structured context goes in
-sibling fields. Filter by key existence: `jq 'select(has("error"))'`, or
-`select(has("warning") or has("error"))` for warn-and-up.
-
-## Context — who / which session
-
-Records often need the *ambient* "which user, which session" of a turn. That is
-application-defined, so the framework carries it as an open `Map` and stamps it
-onto every entry — nested under a single key, never merged flat, so it can never
-collide with a producer's own fields:
-
-```jo
-Logging.withContext("context", Map("session" ~ id), () => agent.runTurn(...))
-// every entry the turn emits gains:  "context": { "session": "…" }
-```
-
-`withContext` decorates the ambient logger for the dynamic extent of the work, so
-it composes and nests. Drivers set it at the turn boundary; producers stay
-oblivious.
-
-## The channel and the backend
-
-Producers emit through one context parameter; a driver installs the backend once
-and closes it on exit.
-
-```jo
-param logger: Logger
-
-section Logging
-  def withLogger[T](backend: Logger, work: () => T receives logger): T
-  def withContext[T](key: String, context: Map[String, Value], work: () => T receives logger): T
-  def discard: Logger    // a no-op logger
-end
-```
-
-A driver's `main` wraps its run loop:
-
-```jo
-Logging.withLogger(new JsonlLogger(workspace.relative("logs/agent.jsonl")), () => serve())
-```
-
-`withLogger` installs the backend behind a `SerialLogger` — a lock wrapper that
-serializes writes, so a backend need not be thread-safe (runs are concurrent).
-
-### Tools read the logger live
-
-A tool does not capture a logger when it is built; `Tool.run` is
-`ToolInput => RunOutcome receives logger`, so it reads the *ambient* logger at
-call time. That is what lets a per-turn `withContext` reach an already-built tool.
-The consequence: a turn must execute inside a `with logger` scope on its thread —
-the cli loop, each web request, and each telegram chat-worker all establish one.
-(See [context-params-and-threads](#context-parameters-and-threads).)
-
-## The `Logger` interface — and writing a backend
-
-```jo
-interface Logger
-  def log(category: String, fields: ..(String ~ Value)): Unit   // default: builds the Entry
-  def info(category: String, message: String, fields: ..(String ~ Value)): Unit   // default
-  def warn(category: String, message: String, fields: ..(String ~ Value)): Unit   // default
-  def error(category: String, message: String, fields: ..(String ~ Value)): Unit  // default
-  def logEntry(entry: Entry): Unit   // the one method a backend implements
-  def close(): Unit
-end
-```
-
-`log`/`info`/`warn`/`error` are defaults that assemble an `Entry`; a backend
-implements only `logEntry` (and `close`). The framework ships one backend,
-`JsonlLogger(path)`, which appends every category to a **single** JSON file with
-`category` as a field — one file keeps consumption simple (`jq` slices by
-category), and it stays a plain append.
-
-A third party adds a backend by implementing `logEntry`. Backends compose by
-decoration — `SerialLogger` and `ContextLogger` are exactly that, a `Logger`
-wrapping a `Logger`. Routing by category, fan-out to several sinks, a sqlite
-table: each is a small `Logger` you write, so the framework ships none of them.
-
-```jo
-class SqliteLogger(db: Connection)
-  view Logger
-  def logEntry(entry: Entry): Unit = ...   // INSERT time, category, json(fields)
-  def close(): Unit = db.close()
-end
-```
-
-## Building on top: billing, usage, stats
-
-The log is an append-only stream of typed events keyed by category and tagged with
-session context. That is a general substrate; observability features are consumers
-of it, added in one of two places.
-
-**Offline, over the JSONL.** Because every record is one self-describing JSON line
-with a `category` and a `context`, ordinary tools answer most questions:
+With events in a JSON file, read them with anything that speaks JSON — `jq` is quickest:
 
 ```sh
+# every runCode event, newest last
+jq 'select(.category=="harpe.tools.runCode")' logs/agent.jsonl
+
+# just the failures
+jq 'select(.category=="harpe.tools.runCode" and .compiled==false)' logs/agent.jsonl
+```
+
+Wherever the events go, each has the same shape: a **`category`** (what kind
+of event), a **`time`**, the event's own fields, and a **`context`** identifying
+the session/chat it happened in. `runCode` events carry `code`, `compiled`,
+`compileSeconds`, and — depending on the outcome — `runSeconds`, `exitCode`,
+`output`, or a `compileError`.
+
+## Logging from your own tool
+
+When you write a tool, the logger is already in scope inside the handler — just
+call it. Import the channel and pick a category named after your agent:
+
+```jo
+import harpe.logging.logger
+import harpe.Tool
+import harpe.Tool.*
+
+def weatherTool(): Tool =
+  new Tool("weather", "Look up the weather in a city",
+    [Tool.strParam("city", "the city")],
+    input => lookUp(input.string("city")))
+
+// The handler's work goes in a small function; it may use `logger` freely.
+private def lookUp(city: String): RunOutcome receives logger =
+  logger.info("myagent.tools.weather", "looked up weather", "city" ~ city)
+  new RunOutcome("Sunny in \{city}", "weather · \{city}")
+```
+
+Add it in your `Config.jo`:
+
+```jo
+val tools = Defaults.tools() ++ [weatherTool()]
+```
+
+Now every call to your tool writes a `myagent.tools.weather` record, already
+stamped with the session it ran in.
+
+### What to log
+
+- **Facts as fields, bare.** `logger.log("myagent.tools.weather", "city" ~ city, "hits" ~ 3, "cached" ~ true)`.
+  Strings, numbers, and booleans go in directly — no wrappers.
+- **Messages with a severity.** For something an operator should notice, use the
+  helpers: `logger.info`, `logger.warn`, `logger.error`.
+
+  ```jo
+  logger.warn("myagent.model", "rate limited, retrying", "attempt" ~ 3)
+  ```
+
+  The message lands under an `"info"`/`"warning"`/`"error"` key; extra fields ride
+  alongside. Pull them out later with `jq 'select(has("error"))'`.
+
+### Naming your category
+
+A category is a **stable, dotted name** — like a logger name — that identifies the
+kind of record: `"myagent.tools.weather"`. Prefix it with your agent's name so it
+never collides with the framework's `harpe.*` categories, and so you can filter a
+whole subtree at once (`jq 'select(.category | startswith("myagent"))'`). Keep it
+stable once you've written queries against it — treat it as a data contract, not
+something to rename when you move code. Define it once as a constant near the tool:
+
+```jo
+private def weatherCategory: String = "myagent.tools.weather"
+```
+
+## Reading and querying
+
+With the default JSON file, each event is one self-describing line, so ordinary
+tools answer most questions. (Point events at a database instead and you'd write
+the equivalent queries in SQL — same fields, same categories.) A few `jq` starting
+points:
+
+```sh
+# how many runs per session
+jq -s 'group_by(.context.session) | map({session: .[0].context.session, runs: length})' logs/agent.jsonl
+
+# all warnings and errors, across every category
+jq 'select(has("warning") or has("error"))' logs/agent.jsonl
+
 # total compile+run seconds per session
 jq -s 'map(select(.category=="harpe.tools.runCode"))
        | group_by(.context.session)
@@ -183,54 +115,99 @@ jq -s 'map(select(.category=="harpe.tools.runCode"))
               seconds: (map(.compileSeconds + (.runSeconds // 0)) | add)})' logs/agent.jsonl
 ```
 
-Good for reports, dashboards fed from the file, and after-the-fact auditing.
+## Sending logs somewhere else
 
-**In-process, as a `Logger` decorator.** For live billing or metrics, wrap the
-base backend in a `Logger` that tallies as entries flow through, then delegates:
+By default your driver installs `JsonlLogger`. To change where events go, edit the
+one line in your driver's entry point (`Cli.jo` / `Web.jo` / `Telegram.jo`) that
+constructs it:
+
+```jo
+Logging.withLogger(new JsonlLogger(wspace.relative("logs/agent.jsonl")), () => serve())
+```
+
+Swap `JsonlLogger` for any `Logger` — including one you write. A `Logger` implements
+just `logEntry` (store one event) and `close`. An `entry` gives you `entry.time`,
+`entry.category`, and `entry.fields` to persist however you like:
+
+```jo
+class SqliteLogger(db: py.Dynamic)
+  view Logger
+
+  def logEntry(entry: Entry): Unit =
+    // insert entry.time, entry.category, and entry.fields (serialize as you wish)
+    ...
+
+  def close(): Unit = db.close()
+end
+```
+
+`agent/src/logging/JsonlLogger.jo` is a complete `Logger` to copy from — it shows
+how to turn `entry.fields` (including nested maps) into JSON. You can also **wrap**
+`JsonlLogger` instead of replacing it — see below.
+
+## Building usage, billing, and stats
+
+The log is a stream of typed events keyed by category and tagged with the session.
+Build reporting on it in one of two places.
+
+**Offline, over the stored events.** For dashboards, invoices, or audits, run `jq`
+(or any script) over `logs/agent.jsonl` — the queries above are the starting shapes.
+Group by `.context.session`, filter by `.category`, sum the fields you care about.
+
+**Live, as a wrapping `Logger`.** For real-time metering, wrap `JsonlLogger` in a
+`Logger` that tallies as events flow through, then delegates so they're still
+stored:
 
 ```jo
 class UsageMeter(inner: Logger, meter: Meter)
   view Logger
+
   def logEntry(entry: Entry): Unit =
-    meter.record(entry)      // update per-session counters, emit to a metrics service, …
+    meter.record(entry)      // update per-session counters / push to a metrics service
     inner.logEntry(entry)    // and still persist
+
   def close(): Unit = inner.close()
 end
 
-// install it in the driver, still writing to the file underneath:
+// in your driver's entry point:
 Logging.withLogger(new UsageMeter(new JsonlLogger(path), meter), () => serve())
 ```
 
-Because context is nested under `"context"`, the meter always knows *whose* event
-it is; because categories are stable schema tags, it can trust the fields it reads
-(`harpe.tools.runCode` → timings; a future `harpe.model` → token counts and cost).
+Every entry the meter sees carries its `context` (whose session it is) and a stable
+`category` (so it can trust the fields), which is all a per-session counter needs.
 
-**New signals are new producers.** Billing on model usage, for instance, needs a
-model wrapper that emits a `harpe.model` entry per call with `inputTokens`,
-`outputTokens`, and `cost`. The wrapper adds a category and fields; the meter and
-the JSONL pick it up with no plumbing change. That is the point of the single
-channel: new observables add producers and new destinations add backends, but the
-wiring — one `param`, one `withLogger`, one `withContext` — never grows.
+**Charge for a new thing → log a new category.** To bill on model usage, for
+example, emit an event from wherever you call the model:
 
-## Files
+```jo
+logger.log("myagent.model", "inputTokens" ~ inTok, "outputTokens" ~ outTok, "cost" ~ cost)
+```
 
-| File | What it holds |
-|------|---------------|
-| `Entry.jo` | `Entry`, `Value`, and the category + severity conventions |
-| `Logger.jo` | the `Logger` interface (`log`/`info`/`warn`/`error`/`logEntry`/`close`) |
-| `JsonlLogger.jo` | the shipped single-file JSON backend |
-| `NullLogger.jo` | the no-op backend (`Logging.discard`) |
-| `SerialLogger.jo` | the lock decorator installed by `withLogger` |
-| `ContextLogger.jo` | the context-nesting decorator installed by `withContext` |
-| `Logging.jo` | the `logger` param + `withLogger` / `withContext` / `discard` |
+Your `jq` reports and your `UsageMeter` pick it up with no other change — a new
+signal is just a new category, and the wiring (one file, one meter) stays put.
 
-## Context parameters and threads
+## Quick reference
 
-The logging channel is a Jo context parameter, which is dynamically scoped to the
-**calling thread** and does not cross into threads spawned underneath it. A driver
-that runs turns on worker threads (telegram) captures the base logger as a value
-and re-installs it on the worker; a thunk that should read the logger *dynamically*
-(rather than freeze the current one) must be typed `() => T receives logger`. These
-mechanics are the subject of the framework's threading notes; the takeaway for
-logging is that a turn always runs inside a `with logger` scope, and `withContext`
-layers onto it.
+```jo
+// emit (logger is in scope inside a tool handler)
+logger.log(category, "k" ~ v, ...)                 // a data event
+logger.info  / warn / error(category, message, ...) // a message at a severity
+
+// install a backend (in the driver's entry point)
+Logging.withLogger(backend, () => run())            // backend: any Logger
+Logging.discard                                     // a no-op logger (tests, logging off)
+
+// write a backend
+interface Logger
+  def logEntry(entry: Entry): Unit                  // the one method you implement
+  def close(): Unit
+end
+
+class Entry(time: Float, category: String, fields: Map[String, Value])
+```
+
+Field values are `String`, `Int`, `Float`, `Bool`, or a nested `Map` of them — all
+written bare at the call site.
+
+The framework tags each turn's events with their session automatically (via
+`Logging.withContext`); you only need this if you write your own driver loop.
