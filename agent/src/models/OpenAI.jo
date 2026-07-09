@@ -44,10 +44,11 @@ private section openai
     msgs.append(py.dict("role" ~ "system", "content" ~ system))
 
     for m in history do
-      if m is UserText(text) then
+      match m
+      case UserText(text) =>
         msgs.append(py.dict("role" ~ "user", "content" ~ text))
 
-      else if m is Assistant(text, calls) then
+      case Assistant(text, calls) =>
         val tcList = py.list()
         for c in calls do
           val fn = py.dict("name" ~ c.name, "arguments" ~ jsonMod.dumps(c.input.raw))
@@ -57,9 +58,11 @@ private section openai
         val msg = py.dict("role" ~ "assistant", "content" ~ text, "tool_calls" ~ tcList)
         msgs.append(msg)
 
-      else if m is ToolResults(results) then
+      case ToolResults(results) =>
         for r in results do
           msgs.append(py.dict("role" ~ "tool", "tool_call_id" ~ r.id, "content" ~ r.content))
+      end // match
+    end // for
 
     msgs
 

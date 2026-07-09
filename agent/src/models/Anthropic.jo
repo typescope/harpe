@@ -70,14 +70,15 @@ private def toMessages(history: List[Message], cache: AnthropicCache): py.List =
   for m in history do
     val shouldCache = i == lastIdx && cache is !NoCache
 
-    if m is UserText(text) then
+    match m
+    case UserText(text) =>
       if shouldCache then
         val block = py.dict("type" ~ "text", "text" ~ text, "cache_control" ~ cache.toDict)
         msgs.append(py.dict("role" ~ "user", "content" ~ py.list(block)))
       else
         msgs.append(py.dict("role" ~ "user", "content" ~ text))
 
-    else if m is Assistant(text, calls) then
+    case Assistant(text, calls) =>
       val content = py.list()
 
       if text != "" then content.append(py.dict("type" ~ "text", "text" ~ text))
@@ -91,19 +92,21 @@ private def toMessages(history: List[Message], cache: AnthropicCache): py.List =
 
       msgs.append(py.dict("role" ~ "assistant", "content" ~ content))
 
-    else if m is ToolResults(results) then
+    case ToolResults(results) =>
       val content = py.list()
       for r in results do
         content.append:
           py.dict("type" ~ "tool_result", "tool_use_id" ~ r.id, "content" ~ r.content)
-      end
 
       if shouldCache then
         content[content.size - 1]["cache_control"] = cache.toDict
 
       msgs.append: py.dict("role" ~ "user", "content" ~ content)
+    end // match
 
     i = i + 1
+  end // for
+
   msgs
 
 //[ Parse an Anthropic response's content blocks into an `Assistant` reply.
