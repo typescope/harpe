@@ -19,51 +19,22 @@
 
 namespace harpe.logging
 
-import harpe.ffi.threadingMod
-
 //[ The logging channel: every log entry is emitted through here. Provided by
   ! `Logging.withLogger`; picked up by producers via `receives logger`.
 //]
 param logger: Logger
 
-//[ A `Logger` that never records anything. For tests, and for running with
-  ! logging switched off.
-//]
-private class NullLogger
-  view Logger
-
-  def logEntry(entry: Entry): Unit = pass
-
-  def close(): Unit = pass
-end
-
-//[ Serializes another `Logger` under a lock so concurrent producers never
-  ! interleave. Installed by `withLogger` so backends need not be thread-safe.
-//]
-private class Locked(inner: Logger)
-  view Logger
-
-  private val lock = threadingMod.Lock()
-
-  def logEntry(entry: Entry): Unit =
-    lock.acquire()
-    inner.logEntry(entry)
-    lock.release()
-
-  def close(): Unit = inner.close()
-end
-
 section Logging
-  //[ A no-op logger — nothing is recorded. //]
-  def discard: Logger = new NullLogger
+  //[ A no-op logger — nothing is recorded (see `NullLogger`). //]
+  def discard: Logger = NullLogger
 
   //[ Run `work` with `backend` installed as the `logger` channel.
     !
-    ! Every `log` call is serialized under one lock, so `backend` need not be
-    ! thread-safe. The backend is closed when `work` returns.
+    ! Every `log` call is serialized (through a `SerialLogger`), so `backend` need
+    ! not be thread-safe. The backend is closed when `work` returns.
   //]
   def withLogger[T](backend: Logger, work: () => T receives logger): T =
-    val result = with logger = new Locked(backend) in work()
+    val result = with logger = new SerialLogger(backend) in work()
     backend.close()
     result
 end
