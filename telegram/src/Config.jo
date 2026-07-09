@@ -12,7 +12,6 @@ namespace harpe.telegram
 
 import harpe.Agent
 import harpe.workspace
-import harpe.logging.logger
 import harpe.Memory
 import harpe.Defaults
 import harpe.Model
@@ -46,7 +45,7 @@ section Config
     ! a server's request path could neither do nor be allowed to by the effect
     ! system.)
   //]
-  def agent(brain: Model, memory: Memory, initial: List[Message]): Agent receives workspace, logger =
+  def agent(brain: Model, memory: Memory, initial: List[Message]): Agent receives workspace =
     val basePrompt = workspace.read("AGENT.md") rescue None => ""
     val tools = Defaults.tools() ++ memoryTools(memory)
     val context = new WindowedContext(basePrompt, memory, initial)

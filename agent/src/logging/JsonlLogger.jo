@@ -38,11 +38,17 @@ class JsonlLogger(path: String)
   def close(): Unit = out.close()
 end
 
-//[ A field value as its underlying host scalar — the inverse of the `Value`
-  ! adapters, for JSON serialization. //]
+//[ A field value as its underlying host value — the inverse of the `Value`
+  ! adapters, for JSON serialization. A nested map becomes a nested JSON object.
+//]
 private def unwrap(v: Value): Any =
   match v
   case s: String  => s
   case f: Float   => f
   case IntVal(n)  => n
   case BoolVal(b) => b
+
+  case m: Map[String, Value] =>
+    val d = py.dict()
+    for k ~ vv in m.toList do d.set(k, unwrap(vv))
+    d

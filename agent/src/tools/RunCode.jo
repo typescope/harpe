@@ -247,8 +247,8 @@ private def buildAndRun(
   ! shared, read-only dependency libraries — so they never corrupt each other.
   !
   ! Each run emits one `harpe.tools.runCode` `Entry` (code, and the outcome's
-  ! compile/run timings, output or error) to the ambient `logger` channel — which the handler
-  ! closure captures here so it travels with the tool. Its format and destination
+  ! compile/run timings, output or error) to the ambient `logger` channel — read
+  ! at call time, so the turn's `Logging.withContext` tags reach it. Its format and destination
   ! are the `Logger` backend's policy — see `harpe.logging.Logging.withLogger`.
   !
   ! `maxResultChars` bounds the result text returned to the model (middle-elided,
@@ -267,7 +267,7 @@ def runCodeTool(
     runTimeout: Float = 30.0,
     maxConcurrent: Int = 4,
     maxResultChars: Int = 4000)
-: Tool receives logger =
+: Tool =
   val gate = threadingMod.Semaphore(maxConcurrent)
 
   // The optional run.sh wrapper sits at sandbox/run.sh — i.e. next to the guest

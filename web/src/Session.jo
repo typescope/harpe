@@ -21,6 +21,7 @@ import harpe.Agent
 import harpe.Memory
 import harpe.SessionLog
 import harpe.workspace
+import harpe.logging.logger
 import harpe.Model
 import harpe.Model.Message
 import harpe.Model.UserText
@@ -49,7 +50,7 @@ class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
     ! rollback point, and append the user's message. The message is remembered
     ! so `commit` can archive the whole turn.
   //]
-  def runTurn(text: String, sink: Sink, maxToolRounds: Int, maxRetries: Int): Unit =
+  def runTurn(text: String, sink: Sink, maxToolRounds: Int, maxRetries: Int): Unit receives logger =
     stop.clear()
     lastActive = time.now()
     val userMsg = UserText(text)

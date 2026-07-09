@@ -37,4 +37,15 @@ section Logging
     val result = with logger = new SerialLogger(backend) in work()
     backend.close()
     result
+
+  //[ Run `work` with a `context` sub-record stamped under `key` onto every log
+    ! entry it emits — the application-defined "which user / which session" of a
+    ! turn. Nesting under one `key` keeps it from ever colliding with a producer's
+    ! own fields; the key and content are the app's to choose. A driver wraps its
+    ! turn:
+    !
+    !     Logging.withContext("context", Map("session" ~ id), () => agent.runTurn(...))
+  //]
+  def withContext[T](key: String, context: Map[String, Value], work: () => T receives logger): T =
+    with logger = new ContextLogger(logger, key, context) in work()
 end

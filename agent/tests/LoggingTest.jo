@@ -90,6 +90,18 @@ def run(): Unit receives stdout =
   Logging.discard.log("runs", "code" ~ "z")
   check("discard is silent", true)
 
+  // --- withContext nests the context under its key, never flattening it ---
+  val cpath = os.path.join(dir, "ctx.jsonl")
+  val emit: () => Unit receives logger = () => logger.log("harpe.web", "note" ~ "hi")
+  val tagged: () => Unit receives logger =
+    () => Logging.withContext("context", Map("session" ~ "s1"), emit)
+  Logging.withLogger(new JsonlLogger(cpath), tagged)
+
+  val ctxRec = readRecords(cpath).get(0)
+  check("context nested under its key", ctxRec.get("context").cast[py.Dict].get("session", "").asString == "s1")
+  check("producer field untouched", ctxRec.get("note", "").asString == "hi")
+  check("context not flattened into fields", !ctxRec.contains("session"))
+
   py.module("shutil").rmtree(dir, ignore_errors = true)
 
 // A producer: emits through the ambient `logger` channel.

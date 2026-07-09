@@ -15,7 +15,8 @@ namespace harpe.logging
 class IntVal(value: Int)
 class BoolVal(value: Bool)
 
-//[ A loggable scalar: text, number, integer, or boolean.
+//[ A loggable value: a scalar (text, number, integer, boolean) or a nested `Map`
+  ! of them. Scalars go in bare — the adapters box `Int`/`Bool` on the way in:
   !
   !   logger.log
   !     "runs"
@@ -23,8 +24,10 @@ class BoolVal(value: Bool)
   !     "secs" ~ 1.5
   !     "exitCode" ~ n
   !     "ok" ~ true
+  !
+  ! The nested map lets a whole sub-record ride under one key (see `ContextLogger`).
 //]
-type Value = (String | Float | IntVal | BoolVal) :- [IntVal, BoolVal]
+type Value = (String | Float | IntVal | BoolVal | Map[String, Value]) :- [IntVal, BoolVal]
 
 //[ A log record: when it happened (`time`), its `category`, and named `fields`.
   !

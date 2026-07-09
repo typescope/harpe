@@ -41,8 +41,10 @@ private def tag(o: RunOutcome): String =
   else if o.summary.contains("ran") then "ran"
   else "other"
 
+// Self-provides a no-op logger, so it works on the spawned worker threads too
+// (context params don't cross threads). These tests assert on outcomes, not logs.
 private def exec(tool: Tool, code: String): RunOutcome =
-  tool.run(ToolInput(py.dict("code" ~ code)))
+  with logger = Logging.discard in tool.run(ToolInput(py.dict("code" ~ code)))
 
 // Wrap a runTask body in a minimal guest program.
 private def guest(body: String): String =
@@ -86,12 +88,6 @@ private def concurrentCheck(tool: Tool, n: Int): Unit receives stdout =
   println "  ok concurrent-isolation"
 
 def run(): Unit receives stdout =
-  // These tests assert on outcomes, not the audit trail, so install a no-op logger
-  // — the logging policy is the caller's to supply, and here we want none. It flows
-  // to `runCodeTool` (and the run it builds) as context, mirroring the drivers.
-  with logger = Logging.discard in body()
-
-private def body(): Unit receives stdout, logger =
   val guestDir = fixtureGuestDir()
 
   // The tool replays the invocation recorded by `jo build`, so the fixture must be

@@ -7,8 +7,15 @@
 //]
 
 import jo.IO.stdout
+import harpe.logging.Logging
+import harpe.logging.logger
 
+// Suites that drive tools/turns need a `logger` in scope; install a no-op one for
+// the whole harness (RunCodeTest self-provides on its worker threads).
 def main(): Unit receives stdout =
+  with logger = Logging.discard in suites()
+
+private def suites(): Unit receives stdout, logger =
   println "turn engine (unit):"
   TurnTest.run()
 

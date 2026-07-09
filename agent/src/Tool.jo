@@ -14,6 +14,7 @@
 namespace harpe
 
 import harpe.Tool.*
+import harpe.logging.logger
 
 //[ A tool
   !
@@ -27,7 +28,10 @@ class Tool(
   name: String,
   description: String,
   params: List[ToolParam],
-  run: ToolInput => RunOutcome
+  // `receives logger`, not captured: the handler reads the ambient logger at the
+  // call site (the turn loop), so per-turn context (see `Logging.withContext`)
+  // reaches it — rather than freezing the logger the tool was built with.
+  run: ToolInput => RunOutcome receives logger
 )
 
 section Tool
@@ -97,7 +101,7 @@ section Tool
     ! back to the model as a tool result — so the model can react — rather than
     ! crashing the turn (or the driver).
   //]
-  def runSafely(tool: Tool, input: ToolInput): RunOutcome =
+  def runSafely(tool: Tool, input: ToolInput): RunOutcome receives logger =
     match py.try(tool.run(input))
     case Ok(outcome) => outcome
 

@@ -24,6 +24,7 @@ import harpe.Defaults
 import harpe.Model
 import harpe.logging.Logging
 import harpe.logging.JsonlLogger
+import harpe.logging.Logger
 import harpe.logging.logger
 
 //[ The entry point //]
@@ -52,7 +53,9 @@ private def serve(): Unit receives stdout, workspace, logger =
   val result = me.get("result").cast[py.Dict]
   val username = result.get("username").asString
   val botId = result.get("id").asInt
-  val bot = new TelegramBot(brain, client, allowed, username, botId)
+  // Capture the ambient logger here (the poll thread's scope). Worker threads
+  // don't inherit it, so the bot re-installs it around each turn (see workerLoop).
+  val bot = new TelegramBot(brain, client, allowed, username, botId, logger)
 
   println "Harpe ▸ \{Config.agentName()} is live on Telegram as @\{username} (Ctrl-C to stop)"
 
@@ -71,7 +74,7 @@ private def serve(): Unit receives stdout, workspace, logger =
 //]
 private class TelegramBot(
     brain: Model, client: TelegramClient, allowed: List[String],
-    botUsername: String, botId: Int)
+    botUsername: String, botId: Int, baseLogger: Logger)
 
   // Resident sessions, chatId -> Session. A chat not yet touched this run is
   // loaded from disk on first message. Guarded by `registryLock` for the one
@@ -84,7 +87,7 @@ private class TelegramBot(
     ! dispatch text messages. `getUpdates` blocks until messages arrive or the
     ! poll times out, so this loop idles cheaply.
   //]
-  def run(): Unit receives stdout, workspace, logger =
+  def run(): Unit receives stdout, workspace =
     var offset = 0
 
     while true do
@@ -113,7 +116,7 @@ private class TelegramBot(
     ! ignores them silently (logging to the console) rather than spamming a
     ! rejection into the group.
   //]
-  private def handleUpdate(update: py.Dict): Unit receives stdout, workspace, logger =
+  private def handleUpdate(update: py.Dict): Unit receives stdout, workspace =
     if !update.contains("message") then return
 
     val message = update.get("message").cast[py.Dict]
@@ -209,7 +212,7 @@ private class TelegramBot(
     ! dead queue. Session load (disk) happens outside the lock; only the poll
     ! thread creates, so the check-then-create needs no extra guard.
   //]
-  private def dispatch(chatId: String, text: String): Unit receives workspace, logger =
+  private def dispatch(chatId: String, text: String): Unit receives workspace =
     registryLock.acquire()
     val live = registry.contains(chatId)
     if live then
@@ -248,7 +251,7 @@ private class TelegramBot(
     while running do
       match py.try(session.queue.get(timeout = Config.idleSeconds()))
       case Ok(item) =>
-        match py.try(session.runTurn(item.asString, client, Config.maxToolRounds, Config.maxRetries))
+        match py.try(runTurnLogged(chatId, session, item.asString))
         case Ok(_)  => pass
         case Err(_) =>
           val _ = py.try(client.sendMessage(session.id, "Sorry — an internal error occurred."))
@@ -261,6 +264,16 @@ private class TelegramBot(
         registryLock.release()
 
         if reap then running = false
+
+  //[ Run one turn on the worker thread, logged. The worker doesn't inherit the
+    ! poll thread's logger scope, so re-install the captured base logger and tag
+    ! every entry with the chat. The turn thunk is annotated `receives logger` so
+    ! it reads the decorated logger at call time (and `withContext` discharges it).
+  //]
+  private def runTurnLogged(chatId: String, session: Session, text: String): Unit =
+    val turn: () => Unit receives logger =
+      () => session.runTurn(text, client, Config.maxToolRounds, Config.maxRetries)
+    with logger = baseLogger in Logging.withContext("context", Map("chat" ~ chatId), turn)
 
   //[ Start a chat's dedicated worker on a daemon thread (dies with the process). //]
   private def startWorker(chatId: String, session: Session): Unit =
