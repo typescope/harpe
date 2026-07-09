@@ -27,12 +27,14 @@ import harpe.Agent
 import harpe.Memory
 import harpe.Workspace
 import harpe.workspace
+import harpe.stat.RunEvent
+import harpe.stat.logger
 import harpe.Model
 import harpe.Model.Assistant
 import harpe.Model.Message
 import harpe.Model.UserText
 
-class ChatServer(brain: Model, name: String, wspace: Workspace)
+class ChatServer(brain: Model, name: String, wspace: Workspace, logRun: RunEvent => Unit)
   // Resident sessions, id -> Session. Persisted sessions not yet touched this
   // run are loaded from disk on first access. The server is threaded (each
   // request on its own thread), so registry access is guarded by registryLock;
@@ -40,11 +42,15 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
   private val registry = py.dict()
   private val registryLock = threadingMod.Lock()
 
-  //[ The WSGI application: establish the workspace context, then route. //]
+  //[ The WSGI application: establish the request context, then route. Each
+    ! request runs on its own thread, which does not inherit the process's
+    ! context, so `workspace` and the run `logger` are re-provided here from the
+    ! server's fields — the same sink `Web.serve` installed for the whole run.
+  //]
   def handle(environ: py.Dynamic, startResp: py.Dynamic): py.List =
-    with workspace = wspace in route(environ, startResp)
+    with workspace = wspace, logger = logRun in route(environ, startResp)
 
-  private def route(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
+  private def route(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace, logger =
     val method = environ.get("REQUEST_METHOD", "GET").asString
     val path = environ.get("PATH_INFO", "/").asString
 
@@ -82,7 +88,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! browser can adopt the `/c/<id>` URL; a request that carries a `session`
     ! resumes it (from memory, or loaded from disk).
   //]
-  private def handleMessage(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
+  private def handleMessage(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace, logger =
     val body = jsonMod.loads(readBody(environ)).cast[py.Dict]
     val text = body.get("text", "").asString
     val reqId = body.get("session", "").asString
@@ -124,7 +130,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     respondJson(startResp, py.dict("ok" ~ true))
 
   //[ A fresh session under a newly-minted, time-sortable id. //]
-  private def createSession(): Session receives workspace =
+  private def createSession(): Session receives workspace, logger =
     val id = time.strftime("%Y%m%dT%H%M%S") + "-" + py.module("secrets").token_hex(2).asString
     val memory = new Memory
     val agent = Config.agent:
@@ -145,7 +151,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! concurrent first touches of the same id both load; the second registration
     ! wins — harmless, since the loser is dropped before running a turn.
   //]
-  private def openSession(id: String): Session receives workspace =
+  private def openSession(id: String): Session receives workspace, logger =
     registryLock.acquire()
     val resident: Option[Session] = if registry.contains(id) then Some(registry.get(id).cast[Session]) else None
     registryLock.release()

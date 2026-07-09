@@ -11,27 +11,26 @@ namespace harpe
 import harpe.ffi.getenv
 import harpe.ffi.sysMod
 import harpe.ffi.fileExists
-import harpe.ffi.jsonMod
 import harpe.models.*
 import harpe.tools.*
+import harpe.stat.logger
 import os
 
 section Defaults
-  //[ The base toolset: `runCode` (logging full runs to `logs/runs.jsonl`) plus
-    ! the read-only skill tools over the agent's `skills/`. The per-session
-    ! memory tools are added by the drivers, since they capture session state.
+  //[ The base toolset: `runCode` (each execution emitted to the ambient run
+    ! `logger`) plus the read-only skill tools over the agent's `skills/`. The
+    ! per-session memory tools are added by the drivers, since they capture
+    ! session state.
+    !
+    ! `logger` is the run-log sink the driver installs with
+    ! `harpe.stat.CodeRun.withRunLogger` (typically to `logs/runs.jsonl`); it
+    ! flows as context, like `workspace`, so nothing is threaded by hand.
     !
     ! OS-level confinement for `runCode` is external and opt-in: an executable
     ! `sandbox/run.sh` wrapper, if present, owns it (see `docs/sandbox.md`).
   //]
-  def tools(): List[Tool] receives workspace =
-    val logRun: py.Dict => Unit = entry =>
-      os.makedirs(workspace.relative("logs"))
-      val f = py.open(workspace.relative("logs/runs.jsonl"), "a")
-      f.write(jsonMod.dumps(entry).asString + "\n")
-      f.close()
-
-    val runTool = runCodeTool(workspace.guestDir, logRun)
+  def tools(): List[Tool] receives workspace, logger =
+    val runTool = runCodeTool(workspace.guestDir, logger)
 
     [runTool] ++ skillTools(workspace.skillsDir)
 

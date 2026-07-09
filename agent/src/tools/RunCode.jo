@@ -24,6 +24,7 @@ namespace harpe.tools
 
 import harpe.*
 import harpe.ffi.*
+import harpe.stat.*
 
 private def shutilMod: py.Dynamic = py.module("shutil")
 private def tempfileMod: py.Dynamic = py.module("tempfile")
@@ -84,7 +85,7 @@ private def runCode(
     code: String,
     guestDir: String,
     gate: py.Dynamic,
-    logRun: py.Dict => Unit,
+    logRun: RunEvent => Unit,
     buildTimeout: Float,
     runTimeout: Float,
     maxResultChars: Int,
@@ -116,18 +117,16 @@ private def buildAndRun(
     code: String,
     donePath: String,
     runDir: String,
-    logRun: py.Dict => Unit,
+    logRun: RunEvent => Unit,
     buildTimeout: Float,
     runTimeout: Float,
     runScript: String)
 : Tool.RunOutcome =
-  // Build one structured record per run — the time and the program under test,
-  // plus the fields specific to how the run ended — and hand it to the injected
-  // sink. What becomes of the record is the caller's policy, not this tool's.
-  def log(fields: ..(Any ~ Any)): Unit =
-    val entry = py.dict("time" ~ time.now(), "code" ~ code)
-    for k ~ v in fields do entry.set(k, v)
-    logRun(entry)
+  // Emit one structured `RunEvent` per run — the time, the program under test,
+  // and the `RunResult` capturing how it ended — to the injected sink. What
+  // becomes of the record is the caller's policy, not this tool's.
+  def log(result: RunResult): Unit =
+    logRun(new RunEvent(time.now(), code, result))
 
   val runSrc  = os.path.join(runDir, "Task.jo")
   val runOut  = os.path.join(runDir, "out.py")
@@ -144,23 +143,14 @@ private def buildAndRun(
   val compileSeconds = round2(time.now() - t0)
 
   if build.timedOut then
-    log(
-      "compiled"       ~ false,
-      "compileSeconds" ~ compileSeconds,
-      "timedOut"       ~ true,
-      "phase"          ~ "compile"
-    )
+    log(CompileTimedOut(compileSeconds))
     return new Tool.RunOutcome(
       "The build timed out after \{buildTimeout}s.",
       "build timed out · \{buildTimeout}s")
 
   if build.returnCode != 0 then
     val compileError = stripAnsi(build.err).trim
-    log(
-      "compiled"       ~ false,
-      "compileSeconds" ~ compileSeconds,
-      "compileError"   ~ compileError
-    )
+    log(CompileFailed(compileSeconds, compileError))
     return new Tool.RunOutcome(
       "The program did not compile (\{compileSeconds}s):\n\{compileError}",
       "did not compile · \{compileSeconds}s")
@@ -191,13 +181,7 @@ private def buildAndRun(
   val runSeconds = round2(time.now() - t1)
 
   if run.timedOut then
-    log(
-      "compiled"       ~ true,
-      "compileSeconds" ~ compileSeconds,
-      "runSeconds"     ~ runSeconds,
-      "timedOut"       ~ true,
-      "phase"          ~ "run"
-    )
+    log(RunTimedOut(compileSeconds, runSeconds))
     return new Tool.RunOutcome(
       "The program ran too long and was stopped after \{runTimeout}s (possible infinite loop).",
       "timed out · ran \{runSeconds}s")
@@ -215,13 +199,7 @@ private def buildAndRun(
     if runReturnCode != 0 then "crashed · compiled \{compileSeconds}s, ran \{runSeconds}s"
     else "ran · compiled \{compileSeconds}s, ran \{runSeconds}s"
 
-  log(
-    "compiled"       ~ true,
-    "compileSeconds" ~ compileSeconds,
-    "runSeconds"     ~ runSeconds,
-    "exitCode"       ~ runReturnCode,
-    "output"         ~ result
-  )
+  log(Ran(compileSeconds, runSeconds, runReturnCode, result))
   new Tool.RunOutcome(result, summary)
 
 //[ The core "act" tool: compile + run a Jo program against the agent sandbox.
@@ -240,9 +218,9 @@ private def buildAndRun(
   ! calls are isolated by construction — each compiles its own source against the
   ! shared, read-only dependency libraries — so they never corrupt each other.
   !
-  ! `logRun` is the injected audit sink: one structured record per run (time,
-  ! code, compile/run timings, output or error). Where it goes is the caller's
-  ! policy.
+  ! `logRun` is the injected audit sink: one structured `RunEvent` per run (time,
+  ! code, and the outcome's compile/run timings, output or error). Where it goes
+  ! is the caller's policy — see `harpe.stat.CodeRun.withRunLogger`.
   !
   ! `maxResultChars` bounds the result text returned to the model (middle-elided,
   ! head + tail kept) so one large program output cannot flood the context. The
@@ -256,7 +234,7 @@ private def buildAndRun(
 //]
 def runCodeTool(
     guestDir: String,
-    logRun: py.Dict => Unit,
+    logRun: RunEvent => Unit,
     buildTimeout: Float = 120.0,
     runTimeout: Float = 30.0,
     maxConcurrent: Int = 4,

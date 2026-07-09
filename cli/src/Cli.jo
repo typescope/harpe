@@ -18,6 +18,8 @@ namespace harpe.cli
 import jo.IO.stdout
 import harpe.*
 import harpe.ffi.loadDotenv
+import harpe.stat.CodeRun
+import harpe.stat.logger
 import harpe.Model.UserText
 import harpe.Model.Message
 import harpe.turns.Answered
@@ -28,9 +30,10 @@ def main(): Unit receives stdout =
   if Defaults.checkAgentDir() then
     loadDotenv(".env")
     val wspace = new Workspace(os.path.abspath("."))
-    with workspace = wspace in runChat()
+    with workspace = wspace in
+      CodeRun.withRunLogger("logs/runs.jsonl", () => runChat())
 
-private def runChat(): Unit receives stdout, workspace =
+private def runChat(): Unit receives stdout, workspace, logger =
   // The agent for this run — assembled by the agent's own Config. Its working
   // memory is in-process for the run (the CLI has no session resume), and the
   // context starts on an empty transcript.

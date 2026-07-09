@@ -1,0 +1,75 @@
+//[ StatTest.jo
+  !
+  ! Tests for the observability layer (`harpe.stat`): that a `RunEvent` flattens
+  ! to the right JSON record for each outcome, and that `CodeRun.withRunLogger`
+  ! installs a `logger` that appends one well-formed JSON line per event to the
+  ! named file — accumulating, not rewriting.
+//]
+
+namespace StatTest
+
+import jo.IO.stdout
+import harpe.*
+import harpe.ffi.*
+import harpe.stat.*
+
+private def check(label: String, cond: Bool): Unit receives stdout =
+  assert: cond, "\{label} failed"
+  println "  ok \{label}"
+
+// Read a run-log file back as one parsed dict per non-empty line.
+private def readRecords(path: String): List[py.Dict] =
+  var records: List[py.Dict] = []
+  for line in readFile(path).lines do
+    if line.trim != "" then records = records + jsonMod.loads(line).cast[py.Dict]
+
+  records
+
+def run(): Unit receives stdout =
+  // --- RunEvent.toDict: one flattened record per outcome variant ---
+  val ran = new RunEvent(100.0, "println 1", Ran(0.5, 1.2, 0, "1")).toDict
+  check("ran compiled", ran.get("compiled", false).asBool)
+  check("ran time", ran.get("time", 0.0).asFloat == 100.0)
+  check("ran code", ran.get("code", "").asString == "println 1")
+  check("ran compileSeconds", ran.get("compileSeconds", 0.0).asFloat == 0.5)
+  check("ran runSeconds", ran.get("runSeconds", 0.0).asFloat == 1.2)
+  check("ran exitCode", ran.get("exitCode", -1).asInt == 0)
+  check("ran output", ran.get("output", "").asString == "1")
+
+  val failed = new RunEvent(0.0, "oops", CompileFailed(0.3, "boom")).toDict
+  check("failed not compiled", !failed.get("compiled", true).asBool)
+  check("failed compileError", failed.get("compileError", "").asString == "boom")
+  check("failed no runSeconds", !failed.contains("runSeconds"))
+
+  val ctimeout = new RunEvent(0.0, "loop", CompileTimedOut(120.0)).toDict
+  check("compile-timeout not compiled", !ctimeout.get("compiled", true).asBool)
+  check("compile-timeout flagged", ctimeout.get("timedOut", false).asBool)
+  check("compile-timeout phase", ctimeout.get("phase", "").asString == "compile")
+
+  val rtimeout = new RunEvent(0.0, "loop", RunTimedOut(0.4, 30.0)).toDict
+  check("run-timeout compiled", rtimeout.get("compiled", false).asBool)
+  check("run-timeout flagged", rtimeout.get("timedOut", false).asBool)
+  check("run-timeout phase", rtimeout.get("phase", "").asString == "run")
+  check("run-timeout runSeconds", rtimeout.get("runSeconds", 0.0).asFloat == 30.0)
+
+  // --- withRunLogger: appends one JSON line per emitted event ---
+  val root = os.path.abspath(".build/stat-test")
+  val logPath = os.path.join(root, "logs/runs.jsonl")
+  if os.path.exists(logPath) then os.unlink(logPath)
+
+  // A fresh workspace rooted at the temp dir; withRunLogger resolves the file
+  // against it and creates logs/ on demand.
+  with workspace = new Workspace(root) in
+    CodeRun.withRunLogger("logs/runs.jsonl", () =>
+      logger(new RunEvent(1.0, "a", Ran(0.1, 0.2, 0, "ok")))
+      logger(new RunEvent(2.0, "b", CompileFailed(0.3, "nope")))
+    )
+
+  val records = readRecords(logPath)
+  check("two records written", records.size == 2)
+  check("first code", records.get(0).get("code", "").asString == "a")
+  check("first output", records.get(0).get("output", "").asString == "ok")
+  check("second code", records.get(1).get("code", "").asString == "b")
+  check("second compileError", records.get(1).get("compileError", "").asString == "nope")
+
+  os.unlink(logPath)

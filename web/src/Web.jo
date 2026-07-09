@@ -24,6 +24,8 @@ import harpe.ffi.sysMod
 import harpe.Workspace
 import harpe.Defaults
 import harpe.workspace
+import harpe.stat.CodeRun
+import harpe.stat.logger
 import os
 
 //[ The entry point //]
@@ -31,9 +33,10 @@ def main(): Unit receives stdout =
   if Defaults.checkAgentDir() then
     loadDotenv(".env")
     val wspace = new Workspace(os.path.abspath("."))
-    with workspace = wspace in serve()
+    with workspace = wspace in
+      CodeRun.withRunLogger("logs/runs.jsonl", () => serve())
 
-private def serve(): Unit receives stdout, workspace =
+private def serve(): Unit receives stdout, workspace, logger =
   // The chat page is the agent's own file, served from disk (see Server.route),
   // so the agent owns and customizes it. Fail fast with a pointer if it is missing.
   if !fileExists(workspace.relative("assets/index.html")) then
@@ -44,7 +47,7 @@ private def serve(): Unit receives stdout, workspace =
   val brain = Config.model()
   val name = Config.agentName()
 
-  val server = new ChatServer(brain, name, workspace)
+  val server = new ChatServer(brain, name, workspace, logger)
 
   val host = getenv("HOST", "127.0.0.1")
   val port = builtins.int(getenv("PORT", "8765")).asInt

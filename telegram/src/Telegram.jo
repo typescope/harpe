@@ -22,15 +22,18 @@ import harpe.Workspace
 import harpe.Memory
 import harpe.Defaults
 import harpe.Model
+import harpe.stat.CodeRun
+import harpe.stat.logger
 
 //[ The entry point //]
 def main(): Unit receives stdout =
   if Defaults.checkAgentDir() then
     loadDotenv(".env")
     val wspace = new Workspace(os.path.abspath("."))
-    with workspace = wspace in serve()
+    with workspace = wspace in
+      CodeRun.withRunLogger("logs/runs.jsonl", () => serve())
 
-private def serve(): Unit receives stdout, workspace =
+private def serve(): Unit receives stdout, workspace, logger =
   val token = Config.botToken()
   val brain = Config.model()
   val allowed = Config.allowedSenders()
@@ -80,7 +83,7 @@ private class TelegramBot(
     ! dispatch text messages. `getUpdates` blocks until messages arrive or the
     ! poll times out, so this loop idles cheaply.
   //]
-  def run(): Unit receives stdout, workspace =
+  def run(): Unit receives stdout, workspace, logger =
     var offset = 0
 
     while true do
@@ -109,7 +112,7 @@ private class TelegramBot(
     ! ignores them silently (logging to the console) rather than spamming a
     ! rejection into the group.
   //]
-  private def handleUpdate(update: py.Dict): Unit receives stdout, workspace =
+  private def handleUpdate(update: py.Dict): Unit receives stdout, workspace, logger =
     if !update.contains("message") then return
 
     val message = update.get("message").cast[py.Dict]
@@ -205,7 +208,7 @@ private class TelegramBot(
     ! dead queue. Session load (disk) happens outside the lock; only the poll
     ! thread creates, so the check-then-create needs no extra guard.
   //]
-  private def dispatch(chatId: String, text: String): Unit receives workspace =
+  private def dispatch(chatId: String, text: String): Unit receives workspace, logger =
     registryLock.acquire()
     val live = registry.contains(chatId)
     if live then

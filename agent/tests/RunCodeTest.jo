@@ -18,6 +18,7 @@ namespace RunCodeTest
 import jo.IO.stdout
 import harpe.*
 import harpe.tools.runCodeTool
+import harpe.stat.RunEvent
 import harpe.Tool.*
 import harpe.ffi.*
 
@@ -87,7 +88,7 @@ def run(): Unit receives stdout =
   val guestDir = fixtureGuestDir()
   // These tests assert on outcomes, not the audit trail, so inject a no-op sink
   // — the logging policy is the caller's to supply, and here we want none.
-  val noLog: py.Dict => Unit = _ => pass
+  val noLog: RunEvent => Unit = _ => pass
 
   // The tool replays the invocation recorded by `jo build`, so the fixture must be
   // built once up front (the user's normal one-time prep).
