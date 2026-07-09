@@ -5,10 +5,10 @@
   ! file, a database, a socket). Third-party code adds a backend by implementing
   ! `logEntry`; producers, which hold a `Logger` and call `log`, never change.
   !
-  ! The framework ships `JsonlLogger` (see JsonlLogger.jo), which writes one JSON
-  ! line per entry to `<dir>/<category>.jsonl`. Routing entries to different
-  ! targets by `category` is just another `Logger` impl a driver can write, so
-  ! none is provided.
+  ! The framework ships `JsonlLogger` (see JsonlLogger.jo), which appends every
+  ! entry as one JSON line to a single file (`category` a field). Routing entries
+  ! to different targets by `category` is just another `Logger` impl a driver can
+  ! write, so none is provided.
   !
   ! Backends need not be thread-safe: `Logging.withLogger` installs them behind a
   ! lock (see Logging.jo), since runs are concurrent.

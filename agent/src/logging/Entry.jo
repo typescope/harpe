@@ -26,5 +26,19 @@ class BoolVal(value: Bool)
 //]
 type Value = (String | Float | IntVal | BoolVal) :- [IntVal, BoolVal]
 
-//[ A log record   //]
+//[ A log record: when it happened (`time`), its `category`, and named `fields`.
+  !
+  ! CATEGORY CONVENTION. A category is a stable, dotted, reverse-namespaced
+  ! identifier for the KIND of record — like a logger name, e.g.
+  ! `"harpe.tools.runCode"` (namespace + producer). Namespacing keeps the OPEN set
+  ! collision-free (a third-party tool won't clash with a framework one) and lets
+  ! a consumer filter a whole subtree —
+  ! `jq 'select(.category | startswith("harpe.tools"))'`. Entries sharing a
+  ! category share field shape, so it doubles as the record's schema tag.
+  !
+  ! Each producer owns its category and defines it once as a named constant (see
+  ! `runCode`'s `runCodeCategory`). Derive it from the producer's namespace, but
+  ! then keep it STABLE: downstream consumers filter on it, so it is a data
+  ! contract — not something to re-tie to the code on every refactor.
+//]
 class Entry(time: Float, category: String, fields: Map[String, Value])

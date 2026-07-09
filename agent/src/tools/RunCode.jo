@@ -1,8 +1,8 @@
 //[ RunCode.jo
   !
   ! The `runCode` tool: compile the model's program against the agent sandbox and
-  ! run it, capturing the result — timed and emitted as a `runs` log entry to the
-  ! caller's injected channel. This audit trail is the program-execution log,
+  ! run it, capturing the result — timed and emitted as a `harpe.tools.runCode`
+  ! log entry to the caller's injected channel. This is the program-execution log,
   ! distinct from the conversational session history; the format and destination
   ! are the `Logger` backend's policy (see `harpe.logging`).
   !
@@ -29,6 +29,12 @@ import harpe.logging.*
 
 private def shutilMod: py.Dynamic = py.module("shutil")
 private def tempfileMod: py.Dynamic = py.module("tempfile")
+
+//[ The log category for this tool's records — one program compile+run each.
+  ! Reverse-namespaced (namespace + tool name) so it is unique in the open set and
+  ! filterable by prefix; see the category convention on `harpe.logging.Entry`.
+//]
+private def runCodeCategory: String = "harpe.tools.runCode"
 
 //[ Locate the compiler-invocation record left by `jo build` for the guest — the
   ! `*.py.done` sidecar next to the built target. `None` if the guest has not been
@@ -121,9 +127,9 @@ private def buildAndRun(
     runTimeout: Float,
     runScript: String)
 : Tool.RunOutcome receives logger =
-  // Each run emits one `runs` log entry — the program under test plus the fields
-  // specific to how it ended — to the injected channel. What becomes of the entry
-  // (its format, its destination) is the Logger backend's policy, not this tool's.
+  // Each run emits one `harpe.tools.runCode` log entry — the program under test
+  // plus the fields specific to how it ended — to the injected channel. What
+  // becomes of the entry (format, destination) is the Logger backend's policy.
 
   val runSrc  = os.path.join(runDir, "Task.jo")
   val runOut  = os.path.join(runDir, "out.py")
@@ -141,7 +147,7 @@ private def buildAndRun(
 
   if build.timedOut then
     logger.log:
-      "runs"
+      runCodeCategory
       "code"           ~ code
       "compiled"       ~ false
       "compileSeconds" ~ compileSeconds
@@ -154,7 +160,7 @@ private def buildAndRun(
   if build.returnCode != 0 then
     val compileError = stripAnsi(build.err).trim
     logger.log:
-      "runs"
+      runCodeCategory
       "code"           ~ code
       "compiled"       ~ false
       "compileSeconds" ~ compileSeconds
@@ -190,7 +196,7 @@ private def buildAndRun(
 
   if run.timedOut then
     logger.log:
-      "runs"
+      runCodeCategory
       "code"           ~ code
       "compiled"       ~ true
       "compileSeconds" ~ compileSeconds
@@ -215,7 +221,7 @@ private def buildAndRun(
     else "ran · compiled \{compileSeconds}s, ran \{runSeconds}s"
 
   logger.log:
-    "runs"
+    runCodeCategory
     "code"           ~ code
     "compiled"       ~ true
     "compileSeconds" ~ compileSeconds
@@ -240,8 +246,8 @@ private def buildAndRun(
   ! calls are isolated by construction — each compiles its own source against the
   ! shared, read-only dependency libraries — so they never corrupt each other.
   !
-  ! Each run emits one `runs` `Entry` (code, and the outcome's compile/run
-  ! timings, output or error) to the ambient `logger` channel, which the handler
+  ! Each run emits one `harpe.tools.runCode` `Entry` (code, and the outcome's
+  ! compile/run timings, output or error) to the ambient `logger` channel — which the handler
   ! closure captures here so it travels with the tool. Its format and destination
   ! are the `Logger` backend's policy — see `harpe.logging.Logging.withLogger`.
   !

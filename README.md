@@ -86,7 +86,8 @@ and cancelled, how progress is shown) and owns sessions and persistence.
 The default toolset is `runCode` (write, compile, and run a Jo program in the
 sandbox), three read-only skill tools (`skillsList` / `skillsRead` /
 `skillsSearch`), and three memory tools (below). Large tool outputs are elided
-to a bounded excerpt; the full output is logged to `logs/runs.jsonl`.
+to a bounded excerpt; the full output is logged to `logs/agent.jsonl` (one JSON
+line per event, filter by `category` with `jq`).
 
 ## Context and memory
 

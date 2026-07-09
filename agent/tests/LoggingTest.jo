@@ -2,9 +2,9 @@
   !
   ! Tests for the logging layer (`harpe.logging`): that `Logger.log` accepts bare
   ! typed pairs and assembles an `Entry` (via the `Value` adapters), that
-  ! `JsonlLogger` writes each category's entries as well-formed JSON to its own
-  ! file with values kept typed, and that `Logging.withLogger` installs a `logger`
-  ! that reaches producers.
+  ! `JsonlLogger` appends every category to one file as well-formed JSON — with
+  ! `category` a field and values kept typed — and that `Logging.withLogger`
+  ! installs a `logger` that reaches producers.
 //]
 
 namespace LoggingTest
@@ -47,29 +47,32 @@ def run(): Unit receives stdout =
   check("entry field count", rec.fields.size == 4)
   check("entry time stamped", rec.time > 0.0)
 
-  // --- JsonlLogger: one file per category, values kept typed ---
+  // --- JsonlLogger: all categories in one file, category a field, values typed ---
   val dir = os.path.abspath(".build/logging-test")
   py.module("shutil").rmtree(dir, ignore_errors = true)
+  val path = os.path.join(dir, "log.jsonl")
 
-  val jsonl = new JsonlLogger(dir)
+  val jsonl = new JsonlLogger(path)
   jsonl.log("runs", "code" ~ "x", "exitCode" ~ 0, "ok" ~ true, "secs" ~ 1.5)
   jsonl.log("runs", "code" ~ "y", "exitCode" ~ 1)
   jsonl.log("tools", "name" ~ "read")
   jsonl.close()
 
-  val runs = readRecords(os.path.join(dir, "runs.jsonl"))
-  check("runs file has both entries", runs.size == 2)
-  check("no category field in record", !runs.get(0).contains("category"))
-  check("string field", runs.get(0).get("code", "").asString == "x")
-  check("int field stays an int", runs.get(0).get("exitCode", -1).asInt == 0)
-  check("bool field stays a bool", runs.get(0).get("ok", false).asBool)
-  check("float field stays a float", runs.get(0).get("secs", 0.0).asFloat == 1.5)
-  check("entry time serialized", runs.get(0).get("time", 0.0).asFloat > 0.0)
+  val all = readRecords(path)
+  check("all entries in one file", all.size == 3)
 
-  // A different category lands in a different file — no assumption of one log.
-  val tools = readRecords(os.path.join(dir, "tools.jsonl"))
-  check("tools file separate", tools.size == 1)
-  check("tools field", tools.get(0).get("name", "").asString == "read")
+  val first = all.get(0)
+  check("category is a field", first.get("category", "").asString == "runs")
+  check("string field", first.get("code", "").asString == "x")
+  check("int field stays an int", first.get("exitCode", -1).asInt == 0)
+  check("bool field stays a bool", first.get("ok", false).asBool)
+  check("float field stays a float", first.get("secs", 0.0).asFloat == 1.5)
+  check("entry time serialized", first.get("time", 0.0).asFloat > 0.0)
+
+  // Categories coexist in the log, distinguished by the field (jq's job downstream).
+  val toolsRec = all.get(2)
+  check("other category same file", toolsRec.get("category", "").asString == "tools")
+  check("tools field", toolsRec.get("name", "").asString == "read")
 
   // --- withLogger: installs the `logger` channel for the wrapped work ---
   val cap = new Capture
