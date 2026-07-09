@@ -1,0 +1,35 @@
+//[ Logger.jo
+  !
+  ! Where log entries go — the extensible half of the logging design. A `Logger`
+  ! owns BOTH the format (JSON, sqlite, logfmt, a metrics API) and the target (a
+  ! file, a database, a socket). Third-party code adds a backend by implementing
+  ! `logEntry`; producers, which hold a `Logger` and call `log`, never change.
+  !
+  ! The framework ships `JsonlLogger` (see JsonlLogger.jo), which writes one JSON
+  ! line per entry to `<dir>/<category>.jsonl`. Routing entries to different
+  ! targets by `category` is just another `Logger` impl a driver can write, so
+  ! none is provided.
+  !
+  ! Backends need not be thread-safe: `Logging.withLogger` installs them behind a
+  ! lock (see Logging.jo), since runs are concurrent.
+//]
+
+namespace harpe.logging
+
+//[ A log target.
+  !
+  ! Producers call `log`, the convenient front door — `logger.log("runs", "code" ~
+  ! src, "exitCode" ~ n)` — which stamps the time, assembles the record, and hands
+  ! it to `logEntry`. Backends implement `logEntry` (and `close`, releasing any
+  ! resources at the end of the logging scope — `pass` if there are none).
+//]
+interface Logger
+  def log(category: String, fields: ..(String ~ Value)): Unit =
+    var map = Map.empty[String, Value]
+    for k ~ v in fields do map = map.add(k, v)
+    logEntry(new Entry(time.now(), category, map))
+
+  def logEntry(entry: Entry): Unit
+
+  def close(): Unit
+end

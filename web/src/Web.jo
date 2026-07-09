@@ -24,8 +24,9 @@ import harpe.ffi.sysMod
 import harpe.Workspace
 import harpe.Defaults
 import harpe.workspace
-import harpe.stat.CodeRun
-import harpe.stat.logger
+import harpe.logging.Logging
+import harpe.logging.JsonlLogger
+import harpe.logging.logger
 import os
 
 //[ The entry point //]
@@ -34,7 +35,7 @@ def main(): Unit receives stdout =
     loadDotenv(".env")
     val wspace = new Workspace(os.path.abspath("."))
     with workspace = wspace in
-      CodeRun.withRunLogger("logs/runs.jsonl", () => serve())
+      Logging.withLogger(new JsonlLogger(wspace.relative("logs")), () => serve())
 
 private def serve(): Unit receives stdout, workspace, logger =
   // The chat page is the agent's own file, served from disk (see Server.route),

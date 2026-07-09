@@ -1,0 +1,52 @@
+//[ JsonlLogger.jo
+  !
+  ! The framework's default `Logger` backend: append each entry as one JSON line
+  ! to `<dir>/<category>.jsonl`, so different categories land in different files.
+  ! This is the JSON-specific corner of the logging layer — the one place that
+  ! turns a record into a JSON object and touches the filesystem — kept apart so
+  ! no other layer assumes either.
+//]
+
+namespace harpe.logging
+
+import harpe.ffi.jsonMod
+import os
+
+//[ Write each entry as one JSON line to `<dir>/<category>.jsonl`.
+  !
+  ! Files are opened lazily on first use (per category) and kept open for the
+  ! scope; `dir` is created on demand.
+//]
+class JsonlLogger(dir: String)
+  view Logger
+
+  // category -> open append handle
+  private val files = py.dict()
+
+  def logEntry(entry: Entry): Unit =
+    val d = py.dict("time" ~ entry.time)
+    for k ~ v in entry.fields.toList do d.set(k, unwrap(v))
+
+    val f = handle(entry.category)
+    f.write(jsonMod.dumps(d).asString + "\n")
+    f.flush()
+
+  def close(): Unit =
+    for k in py.iter(files.keys()) do files.get(k).close()
+
+  private def handle(category: String): py.Dynamic =
+    if !files.contains(category) then
+      os.makedirs(dir)
+      files.set(category, py.open(os.path.join(dir, category + ".jsonl"), "a"))
+
+    files.get(category)
+end
+
+//[ A field value as its underlying host scalar — the inverse of the `Value`
+  ! adapters, for JSON serialization. //]
+private def unwrap(v: Value): Any =
+  match v
+  case s: String  => s
+  case f: Float   => f
+  case IntVal(n)  => n
+  case BoolVal(b) => b

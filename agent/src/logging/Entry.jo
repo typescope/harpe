@@ -1,0 +1,30 @@
+//[ Entry.jo
+  !
+  ! The one thing a log producer and a log backend share: a neutral,
+  ! format-agnostic record. It knows nothing about JSON, sqlite, files, or
+  ! targets — only the data. A producer (the `runCode` tool, or any third-party
+  ! tool) builds an `Entry`; a `Logger` decides how and where to store it.
+//]
+
+namespace harpe.logging
+
+//[ Boxes for the two primitives
+  !
+  ! Jo allows at most one numeric/boolean primitive per union.
+//]
+class IntVal(value: Int)
+class BoolVal(value: Bool)
+
+//[ A loggable scalar: text, number, integer, or boolean.
+  !
+  !   logger.log
+  !     "runs"
+  !     "code" ~ src
+  !     "secs" ~ 1.5
+  !     "exitCode" ~ n
+  !     "ok" ~ true
+//]
+type Value = (String | Float | IntVal | BoolVal) :- [IntVal, BoolVal]
+
+//[ A log record   //]
+class Entry(time: Float, category: String, fields: Map[String, Value])

@@ -22,8 +22,9 @@ import harpe.Workspace
 import harpe.Memory
 import harpe.Defaults
 import harpe.Model
-import harpe.stat.CodeRun
-import harpe.stat.logger
+import harpe.logging.Logging
+import harpe.logging.JsonlLogger
+import harpe.logging.logger
 
 //[ The entry point //]
 def main(): Unit receives stdout =
@@ -31,7 +32,7 @@ def main(): Unit receives stdout =
     loadDotenv(".env")
     val wspace = new Workspace(os.path.abspath("."))
     with workspace = wspace in
-      CodeRun.withRunLogger("logs/runs.jsonl", () => serve())
+      Logging.withLogger(new JsonlLogger(wspace.relative("logs")), () => serve())
 
 private def serve(): Unit receives stdout, workspace, logger =
   val token = Config.botToken()

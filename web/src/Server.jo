@@ -27,14 +27,14 @@ import harpe.Agent
 import harpe.Memory
 import harpe.Workspace
 import harpe.workspace
-import harpe.stat.RunEvent
-import harpe.stat.logger
+import harpe.logging.Logger
+import harpe.logging.logger
 import harpe.Model
 import harpe.Model.Assistant
 import harpe.Model.Message
 import harpe.Model.UserText
 
-class ChatServer(brain: Model, name: String, wspace: Workspace, logRun: RunEvent => Unit)
+class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
   // Resident sessions, id -> Session. Persisted sessions not yet touched this
   // run are loaded from disk on first access. The server is threaded (each
   // request on its own thread), so registry access is guarded by registryLock;
@@ -44,11 +44,12 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, logRun: RunEvent
 
   //[ The WSGI application: establish the request context, then route. Each
     ! request runs on its own thread, which does not inherit the process's
-    ! context, so `workspace` and the run `logger` are re-provided here from the
-    ! server's fields — the same sink `Web.serve` installed for the whole run.
+    ! context, so `workspace` and the `logger` are re-provided here from the
+    ! server's fields — the same `Logger` backend `Web.serve` installed for the
+    ! whole run.
   //]
   def handle(environ: py.Dynamic, startResp: py.Dynamic): py.List =
-    with workspace = wspace, logger = logRun in route(environ, startResp)
+    with workspace = wspace, logger = backend in route(environ, startResp)
 
   private def route(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace, logger =
     val method = environ.get("REQUEST_METHOD", "GET").asString

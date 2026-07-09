@@ -1,9 +1,10 @@
 //[ RunCode.jo
   !
   ! The `runCode` tool: compile the model's program against the agent sandbox and
-  ! run it, capturing the result — timed and reported to the caller's run-log
-  ! sink. This audit trail is the program-execution log, distinct from the
-  ! conversational session history; the concrete logging policy is injected.
+  ! run it, capturing the result — timed and emitted as a `runs` log entry to the
+  ! caller's injected channel. This audit trail is the program-execution log,
+  ! distinct from the conversational session history; the format and destination
+  ! are the `Logger` backend's policy (see `harpe.logging`).
   !
   ! How it compiles — and why it is concurrency-safe. Building the guest package
   ! once (`jo build`, the user's one-time prep) records the *exact* compiler
@@ -24,7 +25,7 @@ namespace harpe.tools
 
 import harpe.*
 import harpe.ffi.*
-import harpe.stat.*
+import harpe.logging.*
 
 private def shutilMod: py.Dynamic = py.module("shutil")
 private def tempfileMod: py.Dynamic = py.module("tempfile")
@@ -85,12 +86,11 @@ private def runCode(
     code: String,
     guestDir: String,
     gate: py.Dynamic,
-    logRun: RunEvent => Unit,
     buildTimeout: Float,
     runTimeout: Float,
     maxResultChars: Int,
     runScript: String)
-: Tool.RunOutcome =
+: Tool.RunOutcome receives logger =
   match findDoneFile(guestDir)
   case None =>
     new Tool.RunOutcome(
@@ -100,7 +100,7 @@ private def runCode(
   case Some(donePath) =>
     gate.acquire()
     val runDir = tempfileMod.mkdtemp(prefix = "run-").asString
-    val outcome = py.try(buildAndRun(code, donePath, runDir, logRun, buildTimeout, runTimeout, runScript))
+    val outcome = py.try(buildAndRun(code, donePath, runDir, buildTimeout, runTimeout, runScript))
     val _ = py.try(shutilMod.rmtree(runDir, ignore_errors = true))
     gate.release()
 
@@ -117,16 +117,13 @@ private def buildAndRun(
     code: String,
     donePath: String,
     runDir: String,
-    logRun: RunEvent => Unit,
     buildTimeout: Float,
     runTimeout: Float,
     runScript: String)
-: Tool.RunOutcome =
-  // Emit one structured `RunEvent` per run — the time, the program under test,
-  // and the `RunResult` capturing how it ended — to the injected sink. What
-  // becomes of the record is the caller's policy, not this tool's.
-  def log(result: RunResult): Unit =
-    logRun(new RunEvent(time.now(), code, result))
+: Tool.RunOutcome receives logger =
+  // Each run emits one `runs` log entry — the program under test plus the fields
+  // specific to how it ended — to the injected channel. What becomes of the entry
+  // (its format, its destination) is the Logger backend's policy, not this tool's.
 
   val runSrc  = os.path.join(runDir, "Task.jo")
   val runOut  = os.path.join(runDir, "out.py")
@@ -143,14 +140,25 @@ private def buildAndRun(
   val compileSeconds = round2(time.now() - t0)
 
   if build.timedOut then
-    log(CompileTimedOut(compileSeconds))
+    logger.log:
+      "runs"
+      "code"           ~ code
+      "compiled"       ~ false
+      "compileSeconds" ~ compileSeconds
+      "timedOut"       ~ true
+      "phase"          ~ "compile"
     return new Tool.RunOutcome(
       "The build timed out after \{buildTimeout}s.",
       "build timed out · \{buildTimeout}s")
 
   if build.returnCode != 0 then
     val compileError = stripAnsi(build.err).trim
-    log(CompileFailed(compileSeconds, compileError))
+    logger.log:
+      "runs"
+      "code"           ~ code
+      "compiled"       ~ false
+      "compileSeconds" ~ compileSeconds
+      "compileError"   ~ compileError
     return new Tool.RunOutcome(
       "The program did not compile (\{compileSeconds}s):\n\{compileError}",
       "did not compile · \{compileSeconds}s")
@@ -181,7 +189,14 @@ private def buildAndRun(
   val runSeconds = round2(time.now() - t1)
 
   if run.timedOut then
-    log(RunTimedOut(compileSeconds, runSeconds))
+    logger.log:
+      "runs"
+      "code"           ~ code
+      "compiled"       ~ true
+      "compileSeconds" ~ compileSeconds
+      "runSeconds"     ~ runSeconds
+      "timedOut"       ~ true
+      "phase"          ~ "run"
     return new Tool.RunOutcome(
       "The program ran too long and was stopped after \{runTimeout}s (possible infinite loop).",
       "timed out · ran \{runSeconds}s")
@@ -199,7 +214,14 @@ private def buildAndRun(
     if runReturnCode != 0 then "crashed · compiled \{compileSeconds}s, ran \{runSeconds}s"
     else "ran · compiled \{compileSeconds}s, ran \{runSeconds}s"
 
-  log(Ran(compileSeconds, runSeconds, runReturnCode, result))
+  logger.log:
+    "runs"
+    "code"           ~ code
+    "compiled"       ~ true
+    "compileSeconds" ~ compileSeconds
+    "runSeconds"     ~ runSeconds
+    "exitCode"       ~ runReturnCode
+    "output"         ~ result
   new Tool.RunOutcome(result, summary)
 
 //[ The core "act" tool: compile + run a Jo program against the agent sandbox.
@@ -218,13 +240,14 @@ private def buildAndRun(
   ! calls are isolated by construction — each compiles its own source against the
   ! shared, read-only dependency libraries — so they never corrupt each other.
   !
-  ! `logRun` is the injected audit sink: one structured `RunEvent` per run (time,
-  ! code, and the outcome's compile/run timings, output or error). Where it goes
-  ! is the caller's policy — see `harpe.stat.CodeRun.withRunLogger`.
+  ! Each run emits one `runs` `Entry` (code, and the outcome's compile/run
+  ! timings, output or error) to the ambient `logger` channel, which the handler
+  ! closure captures here so it travels with the tool. Its format and destination
+  ! are the `Logger` backend's policy — see `harpe.logging.Logging.withLogger`.
   !
   ! `maxResultChars` bounds the result text returned to the model (middle-elided,
   ! head + tail kept) so one large program output cannot flood the context. The
-  ! full, un-elided output is still written to `logRun`, so nothing is lost.
+  ! full, un-elided output is still written to `logger`, so nothing is lost.
   !
   ! Defense in depth is external: if `sandbox/run.sh` (next to the guest package)
   ! exists and is executable, each run goes through it — `run.sh <out.py>` — and
@@ -234,12 +257,11 @@ private def buildAndRun(
 //]
 def runCodeTool(
     guestDir: String,
-    logRun: RunEvent => Unit,
     buildTimeout: Float = 120.0,
     runTimeout: Float = 30.0,
     maxConcurrent: Int = 4,
     maxResultChars: Int = 4000)
-: Tool =
+: Tool receives logger =
   val gate = threadingMod.Semaphore(maxConcurrent)
 
   // The optional run.sh wrapper sits at sandbox/run.sh — i.e. next to the guest
@@ -256,5 +278,5 @@ def runCodeTool(
     "runCode",
     "Write a Jo program (namespace UserTask, def runTask), compile it against the agent sandbox, and run it. Returns the program's stdout, or the compile error if it does not build.",
     [Tool.strParam("code", "The Jo source code to compile and run")],
-    input => runCode(input.string("code"), guestDir, gate, logRun, buildTimeout, runTimeout, maxResultChars, runScript)
+    input => runCode(input.string("code"), guestDir, gate, buildTimeout, runTimeout, maxResultChars, runScript)
   )

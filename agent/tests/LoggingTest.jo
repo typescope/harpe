@@ -1,0 +1,87 @@
+//[ LoggingTest.jo
+  !
+  ! Tests for the logging layer (`harpe.logging`): that `Logger.log` accepts bare
+  ! typed pairs and assembles an `Entry` (via the `Value` adapters), that
+  ! `JsonlLogger` writes each category's entries as well-formed JSON to its own
+  ! file with values kept typed, and that `Logging.withLogger` installs a `logger`
+  ! that reaches producers.
+//]
+
+namespace LoggingTest
+
+import jo.IO.stdout
+import harpe.*
+import harpe.ffi.*
+import harpe.logging.*
+
+private def check(label: String, cond: Bool): Unit receives stdout =
+  assert: cond, "\{label} failed"
+  println "  ok \{label}"
+
+// Read a JSONL file back as one parsed dict per non-empty line.
+private def readRecords(path: String): List[py.Dict] =
+  var records: List[py.Dict] = []
+  for line in readFile(path).lines do
+    if line.trim != "" then records = records + jsonMod.loads(line).cast[py.Dict]
+
+  records
+
+// An in-memory Logger that keeps the entries it is handed.
+private class Capture
+  view Logger
+
+  var entries: List[Entry] = []
+
+  def logEntry(entry: Entry): Unit = entries = entries + entry
+
+  def close(): Unit = pass
+end
+
+def run(): Unit receives stdout =
+  // --- log: bare typed pairs assemble an Entry ---
+  val cap0 = new Capture
+  cap0.log("runs", "code" ~ "x", "exitCode" ~ 0, "ok" ~ true, "secs" ~ 1.5)
+  check("log builds one entry", cap0.entries.size == 1)
+  val rec = cap0.entries.get(0)
+  check("entry category", rec.category == "runs")
+  check("entry field count", rec.fields.size == 4)
+  check("entry time stamped", rec.time > 0.0)
+
+  // --- JsonlLogger: one file per category, values kept typed ---
+  val dir = os.path.abspath(".build/logging-test")
+  py.module("shutil").rmtree(dir, ignore_errors = true)
+
+  val jsonl = new JsonlLogger(dir)
+  jsonl.log("runs", "code" ~ "x", "exitCode" ~ 0, "ok" ~ true, "secs" ~ 1.5)
+  jsonl.log("runs", "code" ~ "y", "exitCode" ~ 1)
+  jsonl.log("tools", "name" ~ "read")
+  jsonl.close()
+
+  val runs = readRecords(os.path.join(dir, "runs.jsonl"))
+  check("runs file has both entries", runs.size == 2)
+  check("no category field in record", !runs.get(0).contains("category"))
+  check("string field", runs.get(0).get("code", "").asString == "x")
+  check("int field stays an int", runs.get(0).get("exitCode", -1).asInt == 0)
+  check("bool field stays a bool", runs.get(0).get("ok", false).asBool)
+  check("float field stays a float", runs.get(0).get("secs", 0.0).asFloat == 1.5)
+  check("entry time serialized", runs.get(0).get("time", 0.0).asFloat > 0.0)
+
+  // A different category lands in a different file — no assumption of one log.
+  val tools = readRecords(os.path.join(dir, "tools.jsonl"))
+  check("tools file separate", tools.size == 1)
+  check("tools field", tools.get(0).get("name", "").asString == "read")
+
+  // --- withLogger: installs the `logger` channel for the wrapped work ---
+  val cap = new Capture
+  Logging.withLogger(cap, () => emitOne())
+  check("withLogger installs logger", cap.entries.size == 1)
+
+  // discard is a no-op that never throws.
+  Logging.discard.log("runs", "code" ~ "z")
+  check("discard is silent", true)
+
+  py.module("shutil").rmtree(dir, ignore_errors = true)
+
+// A producer: emits through the ambient `logger` channel.
+private def emitOne(): Unit receives logger =
+  logger.log("runs", "code" ~ "hello")

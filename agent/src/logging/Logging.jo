@@ -1,0 +1,69 @@
+//[ Logging.jo
+  !
+  ! The logging channel and the scope that installs it. A producer emits with the
+  ! `logger` context parameter — `logger.log(entry("runs", …))` — from anywhere
+  ! that `receives logger`. `Logging.withLogger` is the one place that provides
+  ! it: it installs a chosen `Logger` backend (behind a lock, since runs are
+  ! concurrent) for the duration of the wrapped work, and closes it on return.
+  !
+  ! A single channel is deliberate. New observables — a new tool, new fields — add
+  ! producers, and new backends implement `Logger`, but the wiring below never
+  ! grows: one param, one scope. A driver picks the backend and wraps its main
+  ! loop:
+  !
+  !     Logging.withLogger(new JsonlLogger(workspace.relative("logs")), () => serve())
+  !
+  ! Because `logger` flows as context, `Defaults.tools` picks it up like
+  ! `workspace`.
+//]
+
+namespace harpe.logging
+
+import harpe.ffi.threadingMod
+
+//[ The logging channel: every log entry is emitted through here. Provided by
+  ! `Logging.withLogger`; picked up by producers via `receives logger`.
+//]
+param logger: Logger
+
+//[ A `Logger` that never records anything. For tests, and for running with
+  ! logging switched off.
+//]
+private class NullLogger
+  view Logger
+
+  def logEntry(entry: Entry): Unit = pass
+
+  def close(): Unit = pass
+end
+
+//[ Serializes another `Logger` under a lock so concurrent producers never
+  ! interleave. Installed by `withLogger` so backends need not be thread-safe.
+//]
+private class Locked(inner: Logger)
+  view Logger
+
+  private val lock = threadingMod.Lock()
+
+  def logEntry(entry: Entry): Unit =
+    lock.acquire()
+    inner.logEntry(entry)
+    lock.release()
+
+  def close(): Unit = inner.close()
+end
+
+section Logging
+  //[ A no-op logger — nothing is recorded. //]
+  def discard: Logger = new NullLogger
+
+  //[ Run `work` with `backend` installed as the `logger` channel.
+    !
+    ! Every `log` call is serialized under one lock, so `backend` need not be
+    ! thread-safe. The backend is closed when `work` returns.
+  //]
+  def withLogger[T](backend: Logger, work: () => T receives logger): T =
+    val result = with logger = new Locked(backend) in work()
+    backend.close()
+    result
+end
