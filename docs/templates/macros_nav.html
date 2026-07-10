@@ -1,0 +1,32 @@
+{% macro sidebar(current) %}
+<aside class="side">
+  <nav aria-label="Documentation">
+    {% for s in ["tutorial", "concepts"] %}
+      {% set sec = get_section(path = s ~ "/_index.md") %}
+      <div class="side-group">
+        <a class="side-title{% if current == sec.permalink %} active{% endif %}" href="{{ sec.permalink | safe }}">{{ sec.title }}</a>
+        <ul>
+        {% for p in sec.pages %}
+          <li><a{% if current == p.permalink %} class="active"{% endif %} href="{{ p.permalink | safe }}">{{ p.title }}</a></li>
+        {% endfor %}
+        </ul>
+      </div>
+    {% endfor %}
+  </nav>
+</aside>
+{% endmacro sidebar %}
+
+{% macro toc(page) %}
+{% if page.toc %}
+<aside class="toc">
+  <div class="toc-label">On this page</div>
+  <ul>
+  {% for h in page.toc %}
+    <li><a href="{{ h.permalink | safe }}">{{ h.title }}</a>
+      {% if h.children %}<ul>{% for c in h.children %}<li><a href="{{ c.permalink | safe }}">{{ c.title }}</a></li>{% endfor %}</ul>{% endif %}
+    </li>
+  {% endfor %}
+  </ul>
+</aside>
+{% endif %}
+{% endmacro toc %}

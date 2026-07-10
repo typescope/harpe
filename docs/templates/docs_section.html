@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% import "macros_nav.html" as nav %}
+{% block title %}{{ section.title }} · Harpe{% endblock title %}
+{% block description %}{{ section.description | default(value=config.description) }}{% endblock description %}
+{% block body_class %}docs-body{% endblock body_class %}
+
+{% block body %}
+<div class="wrap docs">
+  {{ nav::sidebar(current=section.permalink) }}
+
+  <article class="prose">
+    <h1>{{ section.title }}</h1>
+    {{ section.content | safe }}
+  </article>
+
+  {{ nav::toc(page=section) }}
+</div>
+{% endblock body %}

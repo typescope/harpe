@@ -43,7 +43,7 @@ hello/
 ```
 
 The scaffold has a few more files — `skills/`, `data/`, `logs/`, the Claude setup — but none of
-them matter for this walkthrough. [Concepts](@/tutorial/concepts.md#whats-in-an-agent-project) tours
+them matter for this walkthrough. [Concepts](@/tutorial/concepts.md#what-s-in-an-agent-project) tours
 the full shape and explains the three `sandbox/` projects.
 
 ## 2. Add your model key
