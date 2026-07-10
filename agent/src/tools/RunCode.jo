@@ -177,7 +177,7 @@ private def buildAndRun(
   // interpreter, any uid drop, and OS-level confinement (ulimit/landrun/bwrap/…).
   // When present, run the guest through it (`run.sh <out.py>`) and make the run
   // artifacts readable to whatever uid it may drop to (mkdtemp is 0700, ours).
-  // Absent: run the system Python directly. See docs/sandbox.md.
+  // Absent: run the system Python directly. See docs/concepts/sandbox.md.
   val useRunSh = os.path.isfile(runScript)
 
   if useRunSh then
@@ -259,7 +259,7 @@ private def buildAndRun(
   ! exists and is executable, each run goes through it — `run.sh <out.py>` — and
   ! the script owns the interpreter, uid drop, and OS confinement (ulimit,
   ! landrun, bwrap, docker, …). Absent, the guest runs under the system Python.
-  ! See `docs/sandbox.md`.
+  ! See `docs/concepts/sandbox.md`.
 //]
 def runCodeTool(
     guestDir: String,
@@ -278,7 +278,7 @@ def runCodeTool(
   if os.path.isfile(runScript) then
     val osMod = py.module("os")
     if !osMod.access(runScript, osMod.X_OK).asBool then
-      abort "sandbox run.sh exists but is not executable — run `chmod +x \{runScript}` (see docs/sandbox.md)"
+      abort "sandbox run.sh exists but is not executable — run `chmod +x \{runScript}` (see docs/concepts/sandbox.md)"
 
   new Tool(
     "runCode",

@@ -91,7 +91,7 @@ class RunOutcome(result, summary)
 The rule is **reference, don't inline**: return a bounded excerpt to the model and
 log the full artifact, so nothing is lost (this is what `runCode` does — the elided
 result to the model, the whole output to `logs/agent.jsonl`; see
-[docs/logging.md](docs/logging.md)).
+[logging.md](logging.md)).
 
 ```jo
 new RunOutcome(elide(output, 4000), "ran · 3.1s")
@@ -128,4 +128,4 @@ private def lookUp(city: String): RunOutcome receives logger =
 ```
 
 The event is stamped with the session automatically — ready for auditing or usage
-reports. See [docs/logging.md](docs/logging.md).
+reports. See [logging.md](logging.md).
