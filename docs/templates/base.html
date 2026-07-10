@@ -65,6 +65,14 @@
 
 <script>
   (function () {
+    // home page: reveal the header only after the user scrolls off the hero
+    var body = document.body;
+    if (body.classList.contains('home')) {
+      var onScroll = function () { body.classList.toggle('scrolled', window.scrollY > 80); };
+      onScroll();
+      window.addEventListener('scroll', onScroll, { passive: true });
+    }
+
     var card = document.getElementById('turn');
     var btn = document.getElementById('grantBtn');
     var chip = document.getElementById('paychip');

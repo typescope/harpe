@@ -66,6 +66,16 @@ header.nav {
   background: color-mix(in srgb, var(--bg) 80%, transparent);
   border-bottom: 1px solid var(--line-soft);
 }
+/* home: the hero carries the brand, so hide the header at the top and
+   slide it in once the user scrolls (docs pages keep the sticky header) */
+body.home header.nav {
+  position: fixed; left: 0; right: 0;
+  transform: translateY(-100%);
+  transition: transform .35s cubic-bezier(.2,.7,.3,1);
+  will-change: transform;
+}
+body.home.scrolled header.nav { transform: none; }
+@media (prefers-reduced-motion: reduce) { body.home header.nav { transition: none; } }
 .nav-in { display: flex; align-items: center; gap: 28px; height: 62px; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 640; letter-spacing: -0.01em; }
 .brand svg { display: block; }
@@ -100,17 +110,52 @@ header.nav {
 .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; align-items: center; }
 
 /* ---------- hero ---------- */
-.hero { position: relative; padding: 150px 0 132px; overflow: hidden; }
+.hero {
+  position: relative; overflow: hidden;
+  min-height: 100vh; min-height: 100dvh;
+  display: flex; flex-direction: column;
+}
 .hero::before {
-  content: ""; position: absolute; inset: -34% 0 auto 50%; transform: translateX(-50%);
-  width: 900px; height: 560px; z-index: 0; pointer-events: none;
-  background: radial-gradient(46% 56% at 50% 4%, var(--edge-tint), transparent 72%);
+  content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background: radial-gradient(680px 420px at 50% 42%, var(--edge-tint), transparent 70%);
+}
+.hero-center {
+  position: relative; z-index: 1; flex: 1 1 auto;
+  display: flex; align-items: center; justify-content: center;
+  padding: 88px 0 32px;
 }
 .hero-in {
-  position: relative; z-index: 1;
   display: flex; flex-direction: column; align-items: center; text-align: center;
 }
+.scroll-cue {
+  position: relative; z-index: 1; align-self: center; margin-bottom: 26px;
+  display: inline-flex; flex-direction: column; align-items: center; gap: 7px;
+  color: var(--faint); font-family: var(--mono);
+  font-size: 0.68rem; letter-spacing: 0.16em; text-transform: uppercase;
+  transition: color .15s;
+}
+.scroll-cue:hover { color: var(--edge); }
+.scroll-cue svg { width: 20px; height: 20px; }
+@media (prefers-reduced-motion: no-preference) {
+  .scroll-cue svg { animation: nudge 1.8s ease-in-out infinite; }
+  @keyframes nudge { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
+
+  /* the hero mark draws itself in — chip first, then the brackets */
+  .hero-mark rect, .hero-mark path {
+    stroke-dasharray: var(--len); stroke-dashoffset: var(--len);
+    animation: draw 1s cubic-bezier(.6,.05,.2,1) forwards;
+  }
+  .hero-mark rect { --len: 82; animation-delay: .2s; }
+  .hero-mark path { --len: 34; animation-delay: .62s; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+
+  /* ambient glow breathes */
+  .hero::before { animation: breathe 7s ease-in-out 1s infinite; }
+  @keyframes breathe { 0%, 100% { opacity: .72; } 50% { opacity: 1; } }
+}
+.hero-brand { display: flex; flex-direction: column; align-items: center; gap: 12px; }
 .hero-mark { filter: drop-shadow(0 6px 22px rgba(52,220,198,.28)); }
+.hero-wordmark { font-size: 1.55rem; font-weight: 660; letter-spacing: -0.005em; color: var(--ink); }
 h1.title {
   font-size: clamp(2.5rem, 5.4vw, 3.9rem);
   line-height: 1.03; letter-spacing: -0.028em; font-weight: 680;
