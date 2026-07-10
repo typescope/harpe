@@ -125,9 +125,10 @@ Two strategies ship, named by their transcript policy:
 **Memory** is a string→string map the *LLM itself* curates via `updateMemory` /
 `readMemory` / `listMemory`; it is rendered into every request and persists per
 session (`<id>.memory.json`, written at turn commit). Which keys to keep is
-steered by your `AGENT.md`, not by the framework. The full transcript is always
-archived as append-only JSONL under `logs/` for audit — context is constructed,
-never replayed wholesale. Developer guide: [docs/context.md](docs/context.md).
+steered by your `AGENT.md`, not by the framework — see
+[docs/memory.md](docs/memory.md). The full transcript is always archived as
+append-only JSONL under `logs/` for audit — context is constructed, never replayed
+wholesale. Developer guides: [context](docs/context.md), [memory](docs/memory.md).
 
 ## Make it yours
 

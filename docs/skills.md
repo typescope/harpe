@@ -19,7 +19,7 @@ Three ways an agent carries knowledge, for contrast:
 
 - **`AGENT.md`** — always-on instructions, in context every turn.
 - **skills** — on-demand reference *you* author (this page).
-- **[memory](context.md)** — volatile state the agent curates itself through the
+- **[memory](memory.md)** — volatile state the agent curates itself through the
   memory tools.
 
 ## Adding a skill
