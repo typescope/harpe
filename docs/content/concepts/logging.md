@@ -1,5 +1,7 @@
-# Logging in your Harpe agent
-
++++
+title = "Logging in your Harpe agent"
+weight = 8
++++
 Your agent keeps a **structured log**: one typed event per thing that happens —
 every `runCode` execution and every model call out of the box, plus anything you
 log from the tools you write. Each event is a record (typed fields, not free text)

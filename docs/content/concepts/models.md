@@ -1,5 +1,7 @@
-# Models
-
++++
+title = "Models"
+weight = 2
++++
 A model is the agent's brain — the LLM the turn loop asks for each reply. It is a
 thin, provider-agnostic interface: given the prompt, the conversation so far, and
 the offered tools, it returns the assistant's next message (or a typed error). It
@@ -69,7 +71,7 @@ end
 ```
 
 - **In:** a `Rendered` (`system` prompt, the transcript `messages`, and a
-  `transient` tail — composed by the [Context](context.md)) plus the tools on
+  `transient` tail — composed by the [Context](@/concepts/context.md)) plus the tools on
   offer this step.
 - **Out:** a `ReplyResult` —
 
@@ -85,7 +87,7 @@ retried with exponential backoff (up to the configured limit), `Fatal` gives up 
 turn. A model never retries internally.
 
 `Usage(inputTokens, outputTokens)` rides on every `Reply`. The loop logs it as the
-`harpe.model` event (see [logging](logging.md)) and feeds `inputTokens` to the
+`harpe.model` event (see [logging](@/concepts/logging.md)) and feeds `inputTokens` to the
 Context, so a token-budget strategy sizes on the provider's exact count.
 
 ## Writing your own model

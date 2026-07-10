@@ -1,5 +1,7 @@
-# Skills
-
++++
+title = "Skills"
+weight = 4
++++
 Skills are the agent's **reference material** — files it reads on demand while
 working. Drop a Markdown file (or any file) into your agent's `skills/` directory,
 and the agent can list, search, and read it through three built-in tools. Skills
@@ -19,7 +21,7 @@ Three ways an agent carries knowledge, for contrast:
 
 - **`AGENT.md`** — always-on instructions, in context every turn.
 - **skills** — on-demand reference *you* author (this page).
-- **[memory](memory.md)** — volatile state the agent curates itself through the
+- **[memory](@/concepts/memory.md)** — volatile state the agent curates itself through the
   memory tools.
 
 ## Adding a skill

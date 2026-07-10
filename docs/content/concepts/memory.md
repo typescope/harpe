@@ -1,9 +1,11 @@
-# Memory
-
++++
+title = "Memory"
+weight = 5
++++
 Memory is the agent's **working scratchpad** — a small key→value store the model
 maintains itself, shown back to it every turn and saved across sessions. It is the
 *durable* half of the loop's state; the transcript is the *ephemeral* half. When
-the [Context](context.md) windows or summarizes old turns away, whatever the agent
+the [Context](@/concepts/context.md) windows or summarizes old turns away, whatever the agent
 wrote to memory stays.
 
 ## Why it exists
@@ -52,7 +54,7 @@ All three feed the model, but they differ in who writes them and when they're se
 | | written by | in context | changes |
 |---|---|---|---|
 | **`AGENT.md`** | you | every turn | static |
-| **[skills](skills.md)** | you | on demand (the agent reads) | static |
+| **[skills](@/concepts/skills.md)** | you | on demand (the agent reads) | static |
 | **memory** | the agent | every turn | per session, live |
 
 Memory is the only one the *agent* authors — its own evolving notes, which is why

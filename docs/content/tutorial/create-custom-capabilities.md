@@ -1,5 +1,7 @@
-# Create a Custom Capability
-
++++
+title = "Create a Custom Capability"
+weight = 5
++++
 When the registry doesn't have what you need — an internal API, a private database, your
 billing system — you write the capability yourself. For most agents this is **inline**: an
 `interface` in `sandbox/api` and an implementation in `sandbox/runtime`. No separate
@@ -7,7 +9,7 @@ project, no `capabilities/` directory. Authoring one is the only time you write 
 an agent.
 
 This guide builds an **`email`** capability end to end. For where capabilities fit overall,
-see [Concepts](concepts.md).
+see [Concepts](@/tutorial/concepts.md).
 
 ## Step 1 — The interface (this *is* the grant)
 
@@ -80,7 +82,7 @@ EMAIL_KEY=...
 If a capability must scope to *who* the turn is for — a user or tenant id — it reads that
 **sandbox runtime context** the same way, from the per-turn environment the runtime sets,
 never from an argument the guest passes (which the model could forge). See
-[the compile-time sandbox](concepts.md#the-compile-time-sandbox).
+[the compile-time sandbox](@/tutorial/concepts.md#the-compile-time-sandbox).
 
 ## Step 3 — Irreversible actions: ask first
 
@@ -132,8 +134,8 @@ capabilities/
     runtime/  jo.toml + src/   # link library — the implementation (depends on ../api)
 ```
 
-The `api` project is a pure [check library](../usage/concepts/packages.md); the `runtime`
-project is a [link library](../usage/concepts/packages.md) that depends on it. An agent then
+The `api` project is a pure [check library](https://jo-lang.org/usage/concepts/packages); the `runtime`
+project is a [link library](https://jo-lang.org/usage/concepts/packages) that depends on it. An agent then
 *grants* the capability by depending on both — its interface from `sandbox/api`, its
 implementation from `sandbox/runtime`:
 
@@ -150,7 +152,7 @@ jo package --spec capabilities/email/api/jo.toml
 jo package --spec capabilities/email/runtime/jo.toml
 ```
 
-See [Publishing](../usage/guides/publishing.md). Start inline; promote to a package only when
+See [Publishing](https://jo-lang.org/usage/guides/publishing). Start inline; promote to a package only when
 a second agent needs the same capability.
 
 ## Design checklist
@@ -164,7 +166,7 @@ a second agent needs the same capability.
 
 ## Next steps
 
-- [Concepts](concepts.md) — how a turn works and why the capability grant is the whole
+- [Concepts](@/tutorial/concepts.md) — how a turn works and why the capability grant is the whole
   security boundary.
-- [Monitoring agent](monitoring-agent.md) — writes two inline capabilities (`inventory`,
+- [Monitoring agent](@/tutorial/monitoring-agent.md) — writes two inline capabilities (`inventory`,
   `reorder`) in a working agent.

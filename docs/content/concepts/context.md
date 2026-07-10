@@ -1,5 +1,7 @@
-# Context management
-
++++
+title = "Context management"
+weight = 6
++++
 A model's input is bounded, but a session can run indefinitely. So on every
 request *something* must decide what the model sees — the instructions, how much
 of the conversation, and the agent's working memory. That decision is the
@@ -80,7 +82,7 @@ next one compacts.
 
 The `transient` tail is the agent's **working memory** — a small key/value store
 it maintains itself through the memory tools, persisted across turns (see
-[memory](memory.md)). It is orthogonal to the strategy: whatever windows or
+[memory](@/concepts/memory.md)). It is orthogonal to the strategy: whatever windows or
 summarizes the transcript, memory is how the agent *deliberately* carries facts
 forward. Rendering it after the transcript keeps it cheap to edit — the right place
 for volatile state.

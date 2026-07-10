@@ -1,5 +1,7 @@
-# Build a Monitoring Agent
-
++++
+title = "Build a Monitoring Agent"
+weight = 4
++++
 We'll build an **inventory monitor**: every hour it scans the warehouse stock, enforces
 a policy written *in plain English by a non-programmer*, emails warnings, and places small
 reorders on its own — routing only the large, expensive ones to a human.
@@ -12,14 +14,14 @@ reorders on its own — routing only the large, expensive ones to a human.
                      │ queues large POs ──▶ buyer approves on their own time
 ```
 
-This is the same Jo project as the [conversational](conversational-agent.md) and
-[request-driven](request-driven-agent.md) agents — it just wakes on a **schedule** instead
+This is the same Jo project as the [conversational](@/tutorial/conversational-agent.md) and
+[request-driven](@/tutorial/request-driven-agent.md) agents — it just wakes on a **schedule** instead
 of a message or a request, and it remembers what it saw last time. Like the request-driven
 agent, **no human is in the loop**, so security is the capabilities you grant and oversight
 is the audit log. The one twist: a couple of its actions spend real money.
 
-> New to Harpe? Build the [hello-world agent](index.md) first, and keep
-> [Concepts](concepts.md) handy for the why.
+> New to Harpe? Build the [hello-world agent](@/tutorial/_index.md) first, and keep
+> [Concepts](@/tutorial/concepts.md) handy for the why.
 
 ## Why this needs an agent (not a cron script)
 
@@ -240,10 +242,10 @@ two things this monitoring workflow needs: it **runs itself** on a schedule, and
 the loop: the agent's authority is exactly the capabilities you granted, proven by the
 compiler. `inventory` can only read; `reorder` can only auto-spend within a typed ceiling
 and queues the rest. Everything else is caught in the audit log.
-See [how a turn works](concepts.md#how-a-turn-works) for the full picture.
+See [how a turn works](@/tutorial/concepts.md#how-a-turn-works) for the full picture.
 
 ## Next steps
 
-- [Create a custom capability](create-custom-capabilities.md) — build the `inventory` and `reorder` runtimes.
-- [Conversational](conversational-agent.md) · [Request-driven](request-driven-agent.md) — the other two kinds.
-- [Concepts](concepts.md) — the model underneath all three.
+- [Create a custom capability](@/tutorial/create-custom-capabilities.md) — build the `inventory` and `reorder` runtimes.
+- [Conversational](@/tutorial/conversational-agent.md) · [Request-driven](@/tutorial/request-driven-agent.md) — the other two kinds.
+- [Concepts](@/tutorial/concepts.md) — the model underneath all three.

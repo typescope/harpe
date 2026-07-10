@@ -1,5 +1,7 @@
-# Build a Request-Driven Agent
-
++++
+title = "Build a Request-Driven Agent"
+weight = 3
++++
 We'll build a **GitHub PR reviewer**: when a pull request opens, GitHub calls our agent
 over HTTP, the agent reads the diff, runs the tests, and posts a review comment.
 
@@ -11,14 +13,14 @@ GitHub ── POST /review {pr: 482} ──▶ agent
 ```
 
 A request-driven agent is the same Jo project as a
-[conversational](conversational-agent.md) one — it just wakes on an incoming request instead
+[conversational](@/tutorial/conversational-agent.md) one — it just wakes on an incoming request instead
 of a chat message, does its work, and returns. The request is usually an HTTP call (what we
 build here), but it can be any one-shot event a loop delivers, such as an inbound email.
 **No human is in the loop**: a webhook fires it, possibly hundreds of times a day. So security is entirely the **capabilities you grant
 at build time**, and oversight is the **audit log** — there's no one to pause and ask.
 
-> New to Harpe? Build the [hello-world agent](index.md) first, and keep
-> [Concepts](concepts.md) handy for the why.
+> New to Harpe? Build the [hello-world agent](@/tutorial/_index.md) first, and keep
+> [Concepts](@/tutorial/concepts.md) handy for the why.
 
 ## The whole thing
 
@@ -212,11 +214,11 @@ for every one of the thousands of requests with no one watching. The HTTP reques
 what *triggers* the turn; there's no session to carry forward — one request in, one result
 out. Because no human is in the loop, the rule is simple: **grant only capabilities narrow
 enough to be safe unattended, and read the audit log.** See
-[how a turn works](concepts.md#how-a-turn-works) for the full picture.
+[how a turn works](@/tutorial/concepts.md#how-a-turn-works) for the full picture.
 
 ## Next steps
 
-- [Monitoring agent](monitoring-agent.md) — same project, applied to a scheduled monitor.
-- [Conversational agent](conversational-agent.md) — if you skipped it, it's the gentlest intro.
-- [Create a custom capability](create-custom-capabilities.md) — wrap your own internal API as a capability.
-- [Concepts](concepts.md) — the model underneath all three.
+- [Monitoring agent](@/tutorial/monitoring-agent.md) — same project, applied to a scheduled monitor.
+- [Conversational agent](@/tutorial/conversational-agent.md) — if you skipped it, it's the gentlest intro.
+- [Create a custom capability](@/tutorial/create-custom-capabilities.md) — wrap your own internal API as a capability.
+- [Concepts](@/tutorial/concepts.md) — the model underneath all three.

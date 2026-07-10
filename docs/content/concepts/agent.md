@@ -1,5 +1,7 @@
-# The agent
-
++++
+title = "The agent"
+weight = 1
++++
 At the center of Harpe is the **Agent** — a small bundle plus a turn engine. The
 bundle is what makes an agent *this* agent; the engine drives one user turn to a
 final answer. Everything around it — sessions, persistence, the UI — belongs to
@@ -12,9 +14,9 @@ class Agent(brain: Model, tools: List[Tool], context: Context)
 
 An agent is four things (the fourth, its turn policy, is passed per turn):
 
-- a **brain** — the [model](models.md) it thinks with;
-- **tools** — its [capabilities](tools.md) (including the memory tools);
-- a **context** — the [strategy](context.md) that composes what the model sees each
+- a **brain** — the [model](@/concepts/models.md) it thinks with;
+- **tools** — its [capabilities](@/concepts/tools.md) (including the memory tools);
+- a **context** — the [strategy](@/concepts/context.md) that composes what the model sees each
   request;
 - a **turn policy** — how many tool rounds a turn may take.
 
@@ -27,12 +29,12 @@ stays provider- and UI-agnostic.
 
 The agent composes the framework's parts; each has its own guide:
 
-- **[Model](models.md)** — the LLM. Ask it for a reply; provider-agnostic.
-- **[Tools](tools.md)** — how the agent acts: `runCode` plus any you add.
-- **[Skills](skills.md)** — read-only reference the agent consults on demand.
-- **[Memory](memory.md)** — the durable key/value scratchpad the agent curates.
-- **[Context](context.md)** — what the model sees: prompt + transcript window + memory.
-- **[Logging](logging.md)** — the structured event stream (runs, model usage, your own).
+- **[Model](@/concepts/models.md)** — the LLM. Ask it for a reply; provider-agnostic.
+- **[Tools](@/concepts/tools.md)** — how the agent acts: `runCode` plus any you add.
+- **[Skills](@/concepts/skills.md)** — read-only reference the agent consults on demand.
+- **[Memory](@/concepts/memory.md)** — the durable key/value scratchpad the agent curates.
+- **[Context](@/concepts/context.md)** — what the model sees: prompt + transcript window + memory.
+- **[Logging](@/concepts/logging.md)** — the structured event stream (runs, model usage, your own).
 
 ## A turn, step by step
 
@@ -80,7 +82,7 @@ For the common case you write no engine code. A working agent is:
 
 - **`AGENT.md`** — the system prompt (role, instructions, pointers to skills/memory);
 - **`skills/`** — reference docs;
-- **`.env`** — the provider key (see [models](models.md));
+- **`.env`** — the provider key (see [models](@/concepts/models.md));
 - **`Config.jo`** — where the pieces are assembled, meant to be edited.
 
 The shipped `Config.jo` wires the defaults:
