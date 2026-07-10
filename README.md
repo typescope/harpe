@@ -83,6 +83,9 @@ model answers in plain text. Transient model errors retry with backoff; after
 a final answer. The driver implements `Interact` (how the model call is issued
 and cancelled, how progress is shown) and owns sessions and persistence.
 
+For the whole picture — the pieces, the turn logic, and how to configure or
+replace them — start with [docs/agent.md](docs/agent.md).
+
 The model is a provider-agnostic interface (Anthropic, OpenAI-compatible
 endpoints, or a keyless dummy), selected by env var and overridable in
 `Config.jo` — see [docs/models.md](docs/models.md).
