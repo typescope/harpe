@@ -1,5 +1,7 @@
-# The Harpe sandbox — security model
-
++++
+title = "Sandboxing"
+weight = 7
++++
 A Harpe agent is an LLM that acts **only** by writing Jo programs that are
 compiled and run each turn. Its security rests on a foundation the framework
 enforces for you, plus three OS-level restrictions you add for defense in depth.

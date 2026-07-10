@@ -11,27 +11,26 @@ namespace harpe
 import harpe.ffi.getenv
 import harpe.ffi.sysMod
 import harpe.ffi.fileExists
-import harpe.ffi.jsonMod
 import harpe.models.*
 import harpe.tools.*
 import os
 
 section Defaults
-  //[ The base toolset: `runCode` (logging full runs to `logs/runs.jsonl`) plus
-    ! the read-only skill tools over the agent's `skills/`. The per-session
-    ! memory tools are added by the drivers, since they capture session state.
+  //[ The base toolset: `runCode` plus the read-only skill tools over the agent's
+    ! `skills/`. The per-session memory tools are added by the drivers, since they
+    ! capture session state.
+    !
+    ! Building tools needs no `logger`: a tool reads the ambient logging channel at
+    ! call time, not build time (see `Tool.run`), so the driver installs the
+    ! backend once with `Logging.withLogger` and tags each turn with
+    ! `Logging.withContext`. `runCode`'s entries land wherever the chosen `Logger`
+    ! puts them, e.g. `logs/agent.jsonl`.
     !
     ! OS-level confinement for `runCode` is external and opt-in: an executable
-    ! `sandbox/run.sh` wrapper, if present, owns it (see `docs/sandbox.md`).
+    ! `sandbox/run.sh` wrapper, if present, owns it (see `docs/concepts/sandbox.md`).
   //]
   def tools(): List[Tool] receives workspace =
-    val logRun: py.Dict => Unit = entry =>
-      os.makedirs(workspace.relative("logs"))
-      val f = py.open(workspace.relative("logs/runs.jsonl"), "a")
-      f.write(jsonMod.dumps(entry).asString + "\n")
-      f.close()
-
-    val runTool = runCodeTool(workspace.guestDir, logRun)
+    val runTool = runCodeTool(workspace.guestDir)
 
     [runTool] ++ skillTools(workspace.skillsDir)
 
@@ -45,6 +44,9 @@ section Defaults
     !   OPENAI_BASE_URL   optional base URL for OpenAI-compatible endpoints
     !                     (Groq, Together AI, local llama.cpp, …); leave unset
     !                     for the default OpenAI API
+    !   PROMPT_CACHE      Anthropic prompt caching: "5m" (default), "1h", or
+    !                     "off". Ignored by OpenAI (it caches long prefixes on
+    !                     its own).
   //]
   def model(): Model receives IO.stdout =
     val provider = getenv("PROVIDER", "anthropic")
@@ -59,7 +61,14 @@ section Defaults
       if key == "" then
         println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
         sysMod.exit(1)
-      anthropic(key, getenv("MODEL", "claude-opus-4-6"))
+      anthropic(key, getenv("MODEL", "claude-opus-4-6"), cachePolicy())
+
+  //[ The Anthropic prompt-cache policy from PROMPT_CACHE (default "5m"). //]
+  private def cachePolicy(): AnthropicCache =
+    match getenv("PROMPT_CACHE", "5m")
+    case "off" => NoCache
+    case "1h"  => OneHour
+    case _     => FiveMinutes
 
   //[ The agent's display name, extracted from AGENT.md: its first Markdown H1,
     ! else a generic default.

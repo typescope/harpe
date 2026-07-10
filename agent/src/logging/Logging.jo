@@ -1,0 +1,51 @@
+//[ Logging.jo
+  !
+  ! The logging channel and the scope that installs it. A producer emits with the
+  ! `logger` context parameter — `logger.log(entry("runs", …))` — from anywhere
+  ! that `receives logger`. `Logging.withLogger` is the one place that provides
+  ! it: it installs a chosen `Logger` backend (behind a lock, since runs are
+  ! concurrent) for the duration of the wrapped work, and closes it on return.
+  !
+  ! A single channel is deliberate. New observables — a new tool, new fields — add
+  ! producers, and new backends implement `Logger`, but the wiring below never
+  ! grows: one param, one scope. A driver picks the backend and wraps its main
+  ! loop:
+  !
+  !     Logging.withLogger(new JsonlLogger(workspace.relative("logs")), () => serve())
+  !
+  ! Because `logger` flows as context, `Defaults.tools` picks it up like
+  ! `workspace`.
+//]
+
+namespace harpe.logging
+
+//[ The logging channel: every log entry is emitted through here. Provided by
+  ! `Logging.withLogger`; picked up by producers via `receives logger`.
+//]
+param logger: Logger
+
+section Logging
+  //[ A no-op logger — nothing is recorded (see `NullLogger`). //]
+  def discard: Logger = NullLogger
+
+  //[ Run `work` with `backend` installed as the `logger` channel.
+    !
+    ! Every `log` call is serialized (through a `SerialLogger`), so `backend` need
+    ! not be thread-safe. The backend is closed when `work` returns.
+  //]
+  def withLogger[T](backend: Logger, work: () => T receives logger): T =
+    val result = with logger = new SerialLogger(backend) in work()
+    backend.close()
+    result
+
+  //[ Run `work` with a `context` sub-record stamped under `key` onto every log
+    ! entry it emits — the application-defined "which user / which session" of a
+    ! turn. Nesting under one `key` keeps it from ever colliding with a producer's
+    ! own fields; the key and content are the app's to choose. A driver wraps its
+    ! turn:
+    !
+    !     Logging.withContext("context", Map("session" ~ id), () => agent.runTurn(...))
+  //]
+  def withContext[T](key: String, context: Map[String, Value], work: () => T receives logger): T =
+    with logger = new ContextLogger(logger, key, context) in work()
+end

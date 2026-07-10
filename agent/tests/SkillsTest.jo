@@ -10,17 +10,22 @@
   ! *outside* it), so the test is self-contained — no committed fixture files.
 //]
 
-namespace SkillsTest
+namespace harpe.test.SkillsTest
 
 import jo.IO.stdout
 import harpe.*
 import harpe.tools.*
+import harpe.Tool.*
 import harpe.ffi.*
-import os
+import harpe.logging.Logging
+import harpe.logging.logger
+
 
 private def callResult(tools: List[Tool], toolName: String, args: py.Dict): String =
-  if tools.find(t => t.name == toolName) is Some(t) then t.run(ToolInput(args)).result
-  else "no-such-tool"
+  // A no-op logger for the tool run; these tests assert on results, not logs.
+  with logger = Logging.discard in
+    if tools.find(t => t.name == toolName) is Some(t) then t.run(ToolInput(args)).result
+    else "no-such-tool"
 
 private def listSkills(tools: List[Tool]): String =
   callResult(tools, "skillsList", py.dict())

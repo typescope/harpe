@@ -1,0 +1,60 @@
+//[ Entry.jo
+  !
+  ! The one thing a log producer and a log backend share: a neutral,
+  ! format-agnostic record. It knows nothing about JSON, sqlite, files, or
+  ! targets — only the data. A producer (the `runCode` tool, or any third-party
+  ! tool) builds an `Entry`; a `Logger` decides how and where to store it.
+//]
+
+namespace harpe.logging
+
+//[ Boxes for the two primitives
+  !
+  ! Jo allows at most one numeric/boolean primitive per union.
+//]
+class IntVal(value: Int)
+class BoolVal(value: Bool)
+
+//[ A loggable value: a scalar (text, number, integer, boolean) or a nested `Map`
+  ! of them. Scalars go in bare — the adapters box `Int`/`Bool` on the way in:
+  !
+  !   logger.log
+  !     "runs"
+  !     "code" ~ src
+  !     "secs" ~ 1.5
+  !     "exitCode" ~ n
+  !     "ok" ~ true
+  !
+  ! The nested map lets a whole sub-record ride under one key (see `ContextLogger`).
+//]
+type Value = (String | Float | IntVal | BoolVal | Map[String, Value]) :- [IntVal, BoolVal]
+
+//[ A log record: when it happened (`time`), its `category`, and named `fields`.
+  !
+  ! CATEGORY CONVENTION. A category is a stable, dotted, reverse-namespaced
+  ! identifier for the KIND of record — like a logger name, e.g.
+  ! `"harpe.tools.runCode"` (namespace + producer). Namespacing keeps the OPEN set
+  ! collision-free (a third-party tool won't clash with a framework one) and lets
+  ! a consumer filter a whole subtree —
+  ! `jq 'select(.category | startswith("harpe.tools"))'`. Entries sharing a
+  ! category share field shape, so it doubles as the record's schema tag.
+  !
+  ! Each producer owns its category and defines it once as a named constant (see
+  ! `runCode`'s `runCodeCategory`). Derive it from the producer's namespace, but
+  ! then keep it STABLE: downstream consumers filter on it, so it is a data
+  ! contract — not something to re-tie to the code on every refactor.
+  !
+  ! SEVERITY CONVENTION (optional). Most records are pure data — the outcome lives
+  ! in the fields (`"compiled" ~ false`) or the category, so they carry NO
+  ! severity. A record that instead has a human-facing diagnostic message uses ONE
+  ! reserved field key — `"info"`, `"warning"`, or `"error"` — whose value is that
+  ! message. The `Logger.info` / `warn` / `error` helpers write it:
+  !
+  !     logger.warn("harpe.model", "rate limited, retrying", "attempt" ~ 3)
+  !
+  ! The three keys are reserved for this and mutually exclusive (structured context
+  ! goes in other fields — note `runCode` uses `"compileError"`, not `"error"`).
+  ! Filter by key existence: `jq 'select(has("error"))'`, or
+  ! `select(has("warning") or has("error"))` for warn-and-up.
+//]
+class Entry(time: Float, category: String, fields: Map[String, Value])

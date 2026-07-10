@@ -1,9 +1,10 @@
 //[ RunCode.jo
   !
   ! The `runCode` tool: compile the model's program against the agent sandbox and
-  ! run it, capturing the result — timed and reported to the caller's run-log
-  ! sink. This audit trail is the program-execution log, distinct from the
-  ! conversational session history; the concrete logging policy is injected.
+  ! run it, capturing the result — timed and emitted as a `harpe.tools.runCode`
+  ! log entry to the caller's injected channel. This is the program-execution log,
+  ! distinct from the conversational session history; the format and destination
+  ! are the `Logger` backend's policy (see `harpe.logging`).
   !
   ! How it compiles — and why it is concurrency-safe. Building the guest package
   ! once (`jo build`, the user's one-time prep) records the *exact* compiler
@@ -24,9 +25,16 @@ namespace harpe.tools
 
 import harpe.*
 import harpe.ffi.*
+import harpe.logging.*
 
 private def shutilMod: py.Dynamic = py.module("shutil")
 private def tempfileMod: py.Dynamic = py.module("tempfile")
+
+//[ The log category for this tool's records — one program compile+run each.
+  ! Reverse-namespaced (namespace + tool name) so it is unique in the open set and
+  ! filterable by prefix; see the category convention on `harpe.logging.Entry`.
+//]
+private def runCodeCategory: String = "harpe.tools.runCode"
 
 //[ Locate the compiler-invocation record left by `jo build` for the guest — the
   ! `*.py.done` sidecar next to the built target. `None` if the guest has not been
@@ -84,30 +92,29 @@ private def runCode(
     code: String,
     guestDir: String,
     gate: py.Dynamic,
-    logRun: py.Dict => Unit,
     buildTimeout: Float,
     runTimeout: Float,
     maxResultChars: Int,
     runScript: String)
-: RunOutcome =
+: Tool.RunOutcome receives logger =
   match findDoneFile(guestDir)
   case None =>
-    new RunOutcome(
+    new Tool.RunOutcome(
       "The sandbox is not built. Run `jo build` in the guest package once before starting the agent.",
       "sandbox not built")
 
   case Some(donePath) =>
     gate.acquire()
     val runDir = tempfileMod.mkdtemp(prefix = "run-").asString
-    val outcome = py.try(buildAndRun(code, donePath, runDir, logRun, buildTimeout, runTimeout, runScript))
+    val outcome = py.try(buildAndRun(code, donePath, runDir, buildTimeout, runTimeout, runScript))
     val _ = py.try(shutilMod.rmtree(runDir, ignore_errors = true))
     gate.release()
 
     // Bound only the text the model sees; `buildAndRun` has already logged the full
     // output/error to the run log, so nothing is lost from the record.
     match outcome
-    case Ok(outc) => new RunOutcome(elide(outc.result, maxResultChars), outc.summary)
-    case Err(e)   => new RunOutcome("The run failed unexpectedly: \{e.message}", "internal error")
+    case Ok(outc) => Tool.RunOutcome: Tool.elide(outc.result, maxResultChars), outc.summary
+    case Err(e)   => Tool.RunOutcome("The run failed unexpectedly: \{e.message}", "internal error")
 
 //[ Compile and run `code` in `runDir` by replaying the recorded invocation from
   ! `donePath`, logging the outcome.
@@ -116,18 +123,13 @@ private def buildAndRun(
     code: String,
     donePath: String,
     runDir: String,
-    logRun: py.Dict => Unit,
     buildTimeout: Float,
     runTimeout: Float,
     runScript: String)
-: RunOutcome =
-  // Build one structured record per run — the time and the program under test,
-  // plus the fields specific to how the run ended — and hand it to the injected
-  // sink. What becomes of the record is the caller's policy, not this tool's.
-  def log(fields: ..(Any ~ Any)): Unit =
-    val entry = py.dict("time" ~ time.now(), "code" ~ code)
-    for k ~ v in fields do entry.set(k, v)
-    logRun(entry)
+: Tool.RunOutcome receives logger =
+  // Each run emits one `harpe.tools.runCode` log entry — the program under test
+  // plus the fields specific to how it ended — to the injected channel. What
+  // becomes of the entry (format, destination) is the Logger backend's policy.
 
   val runSrc  = os.path.join(runDir, "Task.jo")
   val runOut  = os.path.join(runDir, "out.py")
@@ -144,36 +146,38 @@ private def buildAndRun(
   val compileSeconds = round2(time.now() - t0)
 
   if build.timedOut then
-    log(
-      "compiled"       ~ false,
-      "compileSeconds" ~ compileSeconds,
-      "timedOut"       ~ true,
+    logger.log:
+      runCodeCategory
+      "code"           ~ code
+      "compiled"       ~ false
+      "compileSeconds" ~ compileSeconds
+      "timedOut"       ~ true
       "phase"          ~ "compile"
-    )
-    return new RunOutcome(
+    return new Tool.RunOutcome(
       "The build timed out after \{buildTimeout}s.",
       "build timed out · \{buildTimeout}s")
 
   if build.returnCode != 0 then
     val compileError = stripAnsi(build.err).trim
-    log(
-      "compiled"       ~ false,
-      "compileSeconds" ~ compileSeconds,
+    logger.log:
+      runCodeCategory
+      "code"           ~ code
+      "compiled"       ~ false
+      "compileSeconds" ~ compileSeconds
       "compileError"   ~ compileError
-    )
-    return new RunOutcome(
+    return new Tool.RunOutcome(
       "The program did not compile (\{compileSeconds}s):\n\{compileError}",
       "did not compile · \{compileSeconds}s")
 
   // 2. Run the compiled program (its path is the `-o` we just supplied).
   if !os.path.isfile(runOut) then
-    return new RunOutcome("The program compiled but no executable was found.", "no executable produced")
+    return new Tool.RunOutcome("The program compiled but no executable was found.", "no executable produced")
 
   // A `sandbox/run.sh` wrapper (defense in depth) owns how the program runs — the
   // interpreter, any uid drop, and OS-level confinement (ulimit/landrun/bwrap/…).
   // When present, run the guest through it (`run.sh <out.py>`) and make the run
   // artifacts readable to whatever uid it may drop to (mkdtemp is 0700, ours).
-  // Absent: run the system Python directly. See docs/sandbox.md.
+  // Absent: run the system Python directly. See docs/concepts/sandbox.md.
   val useRunSh = os.path.isfile(runScript)
 
   if useRunSh then
@@ -191,14 +195,15 @@ private def buildAndRun(
   val runSeconds = round2(time.now() - t1)
 
   if run.timedOut then
-    log(
-      "compiled"       ~ true,
-      "compileSeconds" ~ compileSeconds,
-      "runSeconds"     ~ runSeconds,
-      "timedOut"       ~ true,
+    logger.log:
+      runCodeCategory
+      "code"           ~ code
+      "compiled"       ~ true
+      "compileSeconds" ~ compileSeconds
+      "runSeconds"     ~ runSeconds
+      "timedOut"       ~ true
       "phase"          ~ "run"
-    )
-    return new RunOutcome(
+    return new Tool.RunOutcome(
       "The program ran too long and was stopped after \{runTimeout}s (possible infinite loop).",
       "timed out · ran \{runSeconds}s")
 
@@ -215,14 +220,15 @@ private def buildAndRun(
     if runReturnCode != 0 then "crashed · compiled \{compileSeconds}s, ran \{runSeconds}s"
     else "ran · compiled \{compileSeconds}s, ran \{runSeconds}s"
 
-  log(
-    "compiled"       ~ true,
-    "compileSeconds" ~ compileSeconds,
-    "runSeconds"     ~ runSeconds,
-    "exitCode"       ~ runReturnCode,
+  logger.log:
+    runCodeCategory
+    "code"           ~ code
+    "compiled"       ~ true
+    "compileSeconds" ~ compileSeconds
+    "runSeconds"     ~ runSeconds
+    "exitCode"       ~ runReturnCode
     "output"         ~ result
-  )
-  new RunOutcome(result, summary)
+  new Tool.RunOutcome(result, summary)
 
 //[ The core "act" tool: compile + run a Jo program against the agent sandbox.
   !
@@ -240,23 +246,23 @@ private def buildAndRun(
   ! calls are isolated by construction — each compiles its own source against the
   ! shared, read-only dependency libraries — so they never corrupt each other.
   !
-  ! `logRun` is the injected audit sink: one structured record per run (time,
-  ! code, compile/run timings, output or error). Where it goes is the caller's
-  ! policy.
+  ! Each run emits one `harpe.tools.runCode` `Entry` (code, and the outcome's
+  ! compile/run timings, output or error) to the ambient `logger` channel — read
+  ! at call time, so the turn's `Logging.withContext` tags reach it. Its format and destination
+  ! are the `Logger` backend's policy — see `harpe.logging.Logging.withLogger`.
   !
   ! `maxResultChars` bounds the result text returned to the model (middle-elided,
   ! head + tail kept) so one large program output cannot flood the context. The
-  ! full, un-elided output is still written to `logRun`, so nothing is lost.
+  ! full, un-elided output is still written to `logger`, so nothing is lost.
   !
   ! Defense in depth is external: if `sandbox/run.sh` (next to the guest package)
   ! exists and is executable, each run goes through it — `run.sh <out.py>` — and
   ! the script owns the interpreter, uid drop, and OS confinement (ulimit,
   ! landrun, bwrap, docker, …). Absent, the guest runs under the system Python.
-  ! See `docs/sandbox.md`.
+  ! See `docs/concepts/sandbox.md`.
 //]
 def runCodeTool(
     guestDir: String,
-    logRun: py.Dict => Unit,
     buildTimeout: Float = 120.0,
     runTimeout: Float = 30.0,
     maxConcurrent: Int = 4,
@@ -272,11 +278,11 @@ def runCodeTool(
   if os.path.isfile(runScript) then
     val osMod = py.module("os")
     if !osMod.access(runScript, osMod.X_OK).asBool then
-      abort "sandbox run.sh exists but is not executable — run `chmod +x \{runScript}` (see docs/sandbox.md)"
+      abort "sandbox run.sh exists but is not executable — run `chmod +x \{runScript}` (see docs/concepts/sandbox.md)"
 
   new Tool(
     "runCode",
     "Write a Jo program (namespace UserTask, def runTask), compile it against the agent sandbox, and run it. Returns the program's stdout, or the compile error if it does not build.",
-    [strParam("code", "The Jo source code to compile and run")],
-    input => runCode(input.string("code"), guestDir, gate, logRun, buildTimeout, runTimeout, maxResultChars, runScript)
+    [Tool.strParam("code", "The Jo source code to compile and run")],
+    input => runCode(input.string("code"), guestDir, gate, buildTimeout, runTimeout, maxResultChars, runScript)
   )

@@ -1,0 +1,24 @@
+//[ Usage.jo
+  !
+  ! Token-usage logging shared by the provider models. Each provider extracts the
+  ! counts from its own response shape and calls `logUsage`, which emits one
+  ! `harpe.model` event — same category and fields for every provider, so billing
+  ! and auditing can sum across them. Because a model reads the `logger` at reply
+  ! time (not when it was built), the event is stamped with the turn's session
+  ! context automatically.
+//]
+
+namespace harpe.models
+
+import harpe.logging.logger
+
+//[ Emit one `harpe.model` usage event for a completed model call.
+  !
+//]
+private[harpe] def logUsage(provider: String, model: String, inputTokens: Int, outputTokens: Int): Unit receives logger =
+  logger.log:
+    "harpe.model"
+    "provider"     ~ provider
+    "model"        ~ model
+    "inputTokens"  ~ inputTokens
+    "outputTokens" ~ outputTokens

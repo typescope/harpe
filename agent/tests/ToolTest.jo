@@ -6,12 +6,13 @@
   ! letting it crash a turn.
 //]
 
-namespace ToolTest
+namespace harpe.test.ToolTest
 
 import jo.IO.stdout
 import harpe.tools.*
+import harpe.Tool.*
 import harpe.*
-import os
+import harpe.logging.logger
 
 private def check(label: String, cond: Bool): Unit receives stdout =
   assert: cond, "\{label} failed"
@@ -28,7 +29,7 @@ private def rep(c: String, n: Int): String =
 private def toolNamed(ts: List[Tool], name: String): Tool =
   ts.find(t => t.name == name) rescue None => abort "no tool named \{name}"
 
-def run(): Unit receives stdout =
+def run(): Unit receives stdout, logger =
   // --- typed ToolInput accessors read values of each schema type ---
   val full = ToolInput(py.dict("s" ~ "hi", "n" ~ 42, "b" ~ true, "f" ~ 3.5))
   check("string reads a string", full.string("s") == "hi")
@@ -101,6 +102,6 @@ def run(): Unit receives stdout =
 
   // --- persistence flow: a tool writes memory, it survives save + reload ---
   val ppath = os.path.join(py.module("tempfile").mkdtemp().asString, "s.memory.json")
-  toolNamed(mtools, "updateMemory").run(ToolInput(py.dict("key" ~ "note", "value" ~ "remember this")))
+  val _ = toolNamed(mtools, "updateMemory").run(ToolInput(py.dict("key" ~ "note", "value" ~ "remember this")))
   Memory.save(ppath, mem)
   check("tool-written memory persists across save/load", Memory.load(ppath).get("note") == "remember this")

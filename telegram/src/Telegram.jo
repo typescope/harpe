@@ -3,7 +3,7 @@
   ! The Telegram agent loop (the Harpe "conversational" trigger, over a Telegram
   ! bot) and its entry point. `jo run` with `jo.main = harpe.telegram.main` starts
   ! an outbound long-poll against the Bot API: each incoming text message is one
-  ! turn of the shared engine (`harpe.turn.runTurn`), driven by `TelegramInteract`.
+  ! turn of the shared engine, driven by `TelegramInteract`.
   !
   ! Unlike the web driver there is no HTTP server — Telegram lets the bot pull
   ! updates, so nothing needs to be publicly reachable. The poll thread only
@@ -16,18 +16,26 @@ namespace harpe.telegram
 
 import jo.IO.stdout
 import harpe.ffi.*
-import harpe.*
-import harpe.turn.*
-import os
+import harpe.Agent
+import harpe.workspace
+import harpe.Workspace
+import harpe.Memory
+import harpe.Defaults
+import harpe.Model
+import harpe.logging.Logging
+import harpe.logging.JsonlLogger
+import harpe.logging.Logger
+import harpe.logging.logger
 
 //[ The entry point //]
 def main(): Unit receives stdout =
   if Defaults.checkAgentDir() then
     loadDotenv(".env")
     val wspace = new Workspace(os.path.abspath("."))
-    with workspace = wspace in serve()
+    with workspace = wspace in
+      Logging.withLogger(new JsonlLogger(wspace.relative("logs/agent.jsonl")), () => serve())
 
-private def serve(): Unit receives stdout, workspace =
+private def serve(): Unit receives stdout, workspace, logger =
   val token = Config.botToken()
   val brain = Config.model()
   val allowed = Config.allowedSenders()
@@ -45,7 +53,9 @@ private def serve(): Unit receives stdout, workspace =
   val result = me.get("result").cast[py.Dict]
   val username = result.get("username").asString
   val botId = result.get("id").asInt
-  val bot = new TelegramBot(brain, client, allowed, username, botId)
+  // Capture the ambient logger here (the poll thread's scope). Worker threads
+  // don't inherit it, so the bot re-installs it around each turn (see workerLoop).
+  val bot = new TelegramBot(brain, client, allowed, username, botId, logger)
 
   println "Harpe ▸ \{Config.agentName()} is live on Telegram as @\{username} (Ctrl-C to stop)"
 
@@ -64,7 +74,7 @@ private def serve(): Unit receives stdout, workspace =
 //]
 private class TelegramBot(
     brain: Model, client: TelegramClient, allowed: List[String],
-    botUsername: String, botId: Int)
+    botUsername: String, botId: Int, baseLogger: Logger)
 
   // Resident sessions, chatId -> Session. A chat not yet touched this run is
   // loaded from disk on first message. Guarded by `registryLock` for the one
@@ -241,7 +251,7 @@ private class TelegramBot(
     while running do
       match py.try(session.queue.get(timeout = Config.idleSeconds()))
       case Ok(item) =>
-        match py.try(processTurn(session, item.asString))
+        match py.try(runTurnLogged(chatId, session, item.asString))
         case Ok(_)  => pass
         case Err(_) =>
           val _ = py.try(client.sendMessage(session.id, "Sorry — an internal error occurred."))
@@ -255,26 +265,15 @@ private class TelegramBot(
 
         if reap then running = false
 
-  //[ Run one turn and send its answer. On a failed request the chat is told
-    ! plainly; a cancelled/failed turn is rolled back so history stays valid. Only
-    ! the session's own worker calls this, so its `history` needs no lock.
+  //[ Run one turn on the worker thread, logged. The worker doesn't inherit the
+    ! poll thread's logger scope, so re-install the captured base logger and tag
+    ! every entry with the chat. The turn thunk is annotated `receives logger` so
+    ! it reads the decorated logger at call time (and `withContext` discharges it).
   //]
-  private def processTurn(session: Session, text: String): Unit =
-    val interact = new TelegramInteract(client, session.id)
-
-    session.beginTurn(text)
-
-    match session.agent.runTurn(interact, Config.maxToolRounds, Config.maxRetries)
-    case Answered(delta, answer) =>
-      session.commit(delta)
-      client.sendMessage(session.id, answer)
-
-    case Interrupted =>
-      session.rollback()
-
-    case Failed =>
-      session.rollback()
-      client.sendMessage(session.id, "Sorry — the request failed. Please try again.")
+  private def runTurnLogged(chatId: String, session: Session, text: String): Unit =
+    val turn: () => Unit receives logger =
+      () => session.runTurn(text, client, Config.maxToolRounds, Config.maxRetries)
+    with logger = baseLogger in Logging.withContext("context", Map("chat" ~ chatId), turn)
 
   //[ Start a chat's dedicated worker on a daemon thread (dies with the process). //]
   private def startWorker(chatId: String, session: Session): Unit =
@@ -286,4 +285,3 @@ private class TelegramBot(
   private def isAllowed(senderId: String): Bool =
     allowed.find(x => x == senderId) is Some(_)
 end
-

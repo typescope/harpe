@@ -1,0 +1,98 @@
+{% import "macros_svg.html" as macros_svg %}
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ config.title }}{% endblock title %}</title>
+  <meta name="description" content="{% block description %}{{ config.description }}{% endblock description %}">
+  <link rel="stylesheet" href="{{ get_url(path='style.css', trailing_slash=false) | safe }}">
+  <link rel="icon" href="{{ get_url(path='favicon.svg', trailing_slash=false) | safe }}">
+</head>
+<body class="{% block body_class %}{% endblock body_class %}">
+
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="{{ get_url(path='@/_index.md') | safe }}" aria-label="Harpe home">
+      {{ macros_svg::mark(size=26) }}
+      <b>harpe</b>
+    </a>
+    <nav class="nav-links">
+      <a href="{{ get_url(path='@/tutorial/_index.md') | safe }}">Docs</a>
+      <a class="nav-cta" href="{{ config.extra.github }}">GitHub ↗</a>
+    </nav>
+  </div>
+</header>
+
+{% block body %}{% endblock body %}
+
+<footer class="foot">
+  <div class="wrap">
+    <div class="foot-in">
+      <div class="foot-brand">
+        <a class="brand" href="{{ get_url(path='@/_index.md') | safe }}" aria-label="Harpe home">
+          {{ macros_svg::mark(size=24) }}
+          <b>harpe</b>
+        </a>
+        <p>An agent framework for Jo, where the compiler is the sandbox. Agents act only by writing typed programs against the capabilities you grant.</p>
+      </div>
+      <div class="foot-cols">
+        <div class="foot-col">
+          <h4>Learn</h4>
+          <a href="{{ get_url(path='@/tutorial/_index.md') | safe }}">Tutorial</a>
+          <a href="{{ get_url(path='@/concepts/_index.md') | safe }}">Concepts</a>
+        </div>
+        <div class="foot-col">
+          <h4>Build</h4>
+          <a href="{{ config.extra.github }}">CLI agent</a>
+          <a href="{{ config.extra.github }}">Web agent</a>
+          <a href="{{ config.extra.github }}">Telegram agent</a>
+        </div>
+        <div class="foot-col">
+          <h4>Project</h4>
+          <a href="{{ config.extra.github }}">GitHub</a>
+          <a href="https://jo-lang.org">Jo language ↗</a>
+          <a href="https://typescope.ai">TypeScope ↗</a>
+        </div>
+      </div>
+    </div>
+    <div class="foot-note">
+      <span>A <a href="https://typescope.ai">TypeScope</a> project · harpe.typescope.ai</span>
+      <span>Requires Jo 0.11.3+</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    // home page: reveal the header only after the user scrolls off the hero
+    var body = document.body;
+    if (body.classList.contains('home')) {
+      var onScroll = function () { body.classList.toggle('scrolled', window.scrollY > 80); };
+      onScroll();
+      window.addEventListener('scroll', onScroll, { passive: true });
+    }
+
+    var card = document.getElementById('turn');
+    var btn = document.getElementById('grantBtn');
+    var chip = document.getElementById('paychip');
+    if (card && btn) {
+      btn.addEventListener('click', function () {
+        var on = card.getAttribute('data-grant') === 'on';
+        card.setAttribute('data-grant', on ? 'off' : 'on');
+        btn.setAttribute('aria-pressed', String(!on));
+        if (chip) chip.classList.toggle('on', !on);
+      });
+    }
+    document.querySelectorAll('button.copy').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var t = b.getAttribute('data-copy') || '';
+        if (navigator.clipboard) navigator.clipboard.writeText(t);
+        var prev = b.textContent; b.textContent = 'Copied';
+        setTimeout(function () { b.textContent = prev; }, 1400);
+      });
+    });
+  })();
+</script>
+</body>
+</html>

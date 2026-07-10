@@ -9,14 +9,41 @@
 namespace harpe.models
 
 import harpe.ffi.*
-import harpe.*
+
+import harpe.Model
+import harpe.Model.*
+import harpe.Tool
+import harpe.Tool.*
+import harpe.logging.logger
+
+
+//[ Cache
+  !
+  ! Prompt-cache policy for the Anthropic provider. `NoCache` sends no cache
+  ! breakpoints (every request is priced in full).
+  !
+  ! The two ephemeral-cache lifetimes Anthropic supports: 5 minutes (default)
+  ! and 1 hour (2x write cost, held across longer idle gaps).
+  !
+  ! Anthropic's prompt caching — breakpoints are placed on the tool list + system
+  ! prompt and on the last transcript message, so the (append-only) transcript
+  ! prefix is read back cheaply across a turn's tool loop. The transient tail
+  ! stays uncached.
+//]
+union AnthropicCache = NoCache | FiveMinutes | OneHour
+  def toDict: py.Dict =
+    match this
+    case OneHour => py.dict("type" ~ "ephemeral", "ttl" ~ "1h")
+    case FiveMinutes => py.dict("type" ~ "ephemeral")
+    case NoCache => abort "NoCache"
+end
 
 //[ One tool's Anthropic spec, derived from the Jo `Tool` model. //]
 private def toolSpec(t: Tool): py.Dict =
   val properties = py.dict()
   val required = py.list()
   for p in t.params do
-    properties.set(p.name, py.dict("type" ~ jsonType(p.paramType), "description" ~ p.description))
+    properties.set(p.name, py.dict("type" ~ p.paramType.jsonType, "description" ~ p.description))
     if p.required then required.append(p.name)
   end
 
@@ -26,14 +53,33 @@ private def toolSpec(t: Tool): py.Dict =
     "input_schema" ~ py.dict("type" ~ "object", "properties" ~ properties, "required" ~ required)
   )
 
-//[ The conversation as Anthropic's `messages` array (content-block format). //]
-private def toMessages(history: List[Message]): py.List =
+//[ The conversation as Anthropic's `messages` array (content-block format).
+  !
+  ! When `cache` is not `NoCache`, a cache breakpoint is placed on the last
+  ! content block of the final history message: the provider caches the whole
+  ! transcript prefix, and later requests in the same turn (which only append)
+  ! read it back.
+  !
+  ! A `UserText` is promoted to a one-element text-block list so it can carry
+  ! the marker (Anthropic accepts either form).
+//]
+private def toMessages(history: List[Message], cache: AnthropicCache): py.List =
   val msgs = py.list()
-  for m in history do
-    if m is UserText(text) then
-      msgs.append(py.dict("role" ~ "user", "content" ~ text))
+  val lastIdx = history.size - 1
+  var i = 0
 
-    else if m is Assistant(text, calls) then
+  for m in history do
+    val shouldCache = i == lastIdx && cache is !NoCache
+
+    match m
+    case UserText(text) =>
+      if shouldCache then
+        val block = py.dict("type" ~ "text", "text" ~ text, "cache_control" ~ cache.toDict)
+        msgs.append(py.dict("role" ~ "user", "content" ~ py.list(block)))
+      else
+        msgs.append(py.dict("role" ~ "user", "content" ~ text))
+
+    case Assistant(text, calls) =>
       val content = py.list()
 
       if text != "" then content.append(py.dict("type" ~ "text", "text" ~ text))
@@ -42,15 +88,26 @@ private def toMessages(history: List[Message]): py.List =
         content.append:
           py.dict("type" ~ "tool_use", "id" ~ c.id, "name" ~ c.name, "input" ~ c.input.raw)
 
+      if shouldCache then
+        content[content.size - 1]["cache_control"] = cache.toDict
+
       msgs.append(py.dict("role" ~ "assistant", "content" ~ content))
 
-    else if m is ToolResults(results) then
+    case ToolResults(results) =>
       val content = py.list()
       for r in results do
         content.append:
           py.dict("type" ~ "tool_result", "tool_use_id" ~ r.id, "content" ~ r.content)
-      end
+
+      if shouldCache then
+        content[content.size - 1]["cache_control"] = cache.toDict
+
       msgs.append: py.dict("role" ~ "user", "content" ~ content)
+    end // match
+
+    i = i + 1
+  end // for
+
   msgs
 
 //[ Parse an Anthropic response's content blocks into an `Assistant` reply.
@@ -75,35 +132,62 @@ private def parseReply(response: py.Dynamic): Assistant =
   val stop = response.stop_reason
 
   if !stop.isNone && stop.asString == "max_tokens" then
-    new Assistant((text + "\n\n[Reply truncated: max_tokens reached.]").trim, List.empty[ToolCall])
+    new Assistant((text + "\n\n[Reply truncated: max_tokens reached.]").trim, [])
   else
     new Assistant(text.trim, calls)
 
-private class AnthropicModel(client: py.Dynamic, model: String)
+private class AnthropicModel(client: py.Dynamic, model: String, cache: AnthropicCache)
   view Model
 
-  def reply(system: String, history: List[Message], tools: List[Tool]): ReplyResult =
+  def reply(rendered: Rendered, tools: List[Tool]): ReplyResult receives logger =
     val toolSpecs = py.list()
     for t in tools do toolSpecs.append(toolSpec(t))
 
-    val attempt = py.try:
-      client.messages.create:
-        model = model
-        max_tokens = 8096
-        system = system
-        messages = toMessages(history)
-        tools = toolSpecs
+    val messages = toMessages(rendered.messages, cache)
+
+    // The transient tail (working memory) goes AFTER the cached transcript, as a
+    // trailing user message with no breakpoint — so editing memory reprocesses
+    // only the tail, never the cached prefix.
+    if rendered.transient != "" then
+      messages.append(py.dict("role" ~ "user", "content" ~ rendered.transient))
+
+    // A cache breakpoint on the system block covers the tool list + system
+    // prompt (the stable, session-long prefix); when off, system is a plain
+    // string, byte-identical to an uncached request.
+    val attempt =
+      if cache is !NoCache then
+        py.try:
+          client.messages.create:
+            model = model
+            max_tokens = 8096
+            system = py.list(py.dict("type" ~ "text", "text" ~ rendered.system, "cache_control" ~ cache.toDict))
+            messages = messages
+            tools = toolSpecs
+      else
+        py.try:
+          client.messages.create:
+            model = model
+            max_tokens = 8096
+            system = rendered.system
+            messages = messages
+            tools = toolSpecs
 
     match attempt
-    case Ok(response) => Reply: parseReply(response)
-    case Err(err)     => classifyError(err)
+    case Ok(response) =>
+      val u = response.usage
+      val inTok = u.input_tokens.asInt
+      val outTok = u.output_tokens.asInt
+      logUsage("anthropic", model, inTok, outTok)
+      Reply(parseReply(response), new Usage(inTok, outTok))
+
+    case Err(err) => classifyError(err)
 end
 
-//[ Build an Anthropic-backed model from an API key and model id.
+//[ Build an Anthropic-backed model from an API key, model id, and cache policy.
   !
   ! The client gets an explicit request timeout, and its INTERNAL retries are
   ! disabled (`max_retries = 0`): the turn engine owns the retry/backoff policy,
   ! and hidden SDK retries would silently multiply it.
 //]
-def anthropic(apiKey: String, model: String): Model =
-  new AnthropicModel(py.module("anthropic").Anthropic(api_key = apiKey, timeout = 600.0, max_retries = 0), model)
+def anthropic(apiKey: String, model: String, cache: AnthropicCache): Model =
+  new AnthropicModel(py.module("anthropic").Anthropic(api_key = apiKey, timeout = 600.0, max_retries = 0), model, cache)

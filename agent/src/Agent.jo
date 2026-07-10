@@ -16,11 +16,27 @@
 
 namespace harpe
 
-import harpe.turn.*
+import harpe.turns.*
+import harpe.logging.logger
+import harpe.Model
+import harpe.Model.*
+import harpe.Tool
+import harpe.Tool.*
 
-//[ An agent: what thinks, what it can do, what it sees, and its turn policy. //]
+//[ An simple agent: what thinks, what it can do, what it sees, and its turn policy.
+  !
+  ! If the user wants customization, just create a different agent class. There
+  ! is no need to inherit this class. In fact, Jo does not support inheritance.
+  !
+  ! To reuse the turn logic in a custom agent class, call `Agent.runTurn`
+  ! directly.
+//]
 class Agent(brain: Model, tools: List[Tool], context: Context)
+  def runTurn(userMsg: Message, interact: Interact, maxToolRounds: Int, maxRetries: Int): TurnResult receives logger =
+    Agent.runTurn(userMsg, brain, tools, context, interact, maxToolRounds, maxRetries)
+end
 
+section Agent
   //[ Drive one user turn
     !
     ! Call the model (with retries), run any tool calls it requests, and repeat
@@ -37,10 +53,17 @@ class Agent(brain: Model, tools: List[Tool], context: Context)
     ! transport policy — how often a transient model error is retried — so it is
     ! an argument, not part of the agent.
   //]
-  def runTurn(interact: Interact, maxToolRounds: Int, maxRetries: Int): TurnResult =
-    var delta: List[Message] = []
+  def runTurn(
+      userMsg: Message, brain: Model, tools: List[Tool], context: Context,
+      interact: Interact, maxToolRounds: Int, maxRetries: Int)
+  : TurnResult receives logger =
+
+    var delta: List[Message] = [userMsg]
     var rounds = 0
     var result: TurnResult = Failed
+
+    context.mark()
+    context.append(userMsg)
 
     while true do
       // Once the tool budget is spent, offer no tools so the model must reply with
@@ -54,16 +77,19 @@ class Agent(brain: Model, tools: List[Tool], context: Context)
       // applied once here, not in each concrete Interact.
       val rendered = context.render(interact)
 
-      match fetchReply(brain, rendered.fst, rendered.snd, offer, maxRetries, interact)
+      match fetchReply(brain, rendered, offer, maxRetries, interact)
         case Stopped =>
           result = Interrupted
+          context.rollback()
           break
 
         case GaveUp =>
           result = Failed
+          context.rollback()
           break
 
-        case Got(reply) =>
+        case Got(reply, usage) =>
+          context.observe(usage)
           context.append(reply)
           delta = delta + reply
 
@@ -91,8 +117,10 @@ class Agent(brain: Model, tools: List[Tool], context: Context)
             interact.emit: ToolCallEnded(toolName, outcome.summary)
 
             toolResults = toolResults + ToolResult(call.id, outcome.result)
+          end
 
           if cancelled || interact.cancelled then
+            context.rollback()
             result = Interrupted
             break
 
@@ -111,7 +139,7 @@ end
   ! The assistant message, a give-up (fatal error or retries exhausted), or an interruption.
 //]
 private union Fetched =
-    Got(message: Assistant)
+    Got(message: Assistant, usage: Usage)
   | GaveUp
   | Stopped
 
@@ -135,7 +163,7 @@ private def backoffSeconds(attempt: Int): Float =
   ! Progress and errors are reported through `interact.emit`.
 //]
 private def fetchReply(
-    model: Model, system: String, messages: List[Message], tools: List[Tool],
+    model: Model, rendered: Rendered, tools: List[Tool],
     maxRetries: Int, interact: Interact)
 : Fetched =
 
@@ -145,17 +173,13 @@ private def fetchReply(
   while true do
     interact.emit: ModelRequestStarted(attempt, maxRetries)
 
-    val maybe = interact.ask(model, system, messages, tools)
+    val res = model.reply(rendered, tools)
 
     interact.emit: ModelRequestEnded
 
-    val res = maybe rescue None =>
-      outcome = Stopped
-      break
-
     match res
-      case Reply(message) =>
-        outcome = Got(message)
+      case Reply(message, usage) =>
+        outcome = Got(message, usage)
         break
 
       case Fatal(detail) =>

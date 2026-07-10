@@ -11,16 +11,21 @@
 
 namespace harpe.models
 
-import harpe.ffi.*
-import harpe.*
+import harpe.ffi.jsonMod
 
-private section openai
+import harpe.Model
+import harpe.Model.*
+import harpe.Tool
+import harpe.Tool.*
+import harpe.logging.logger
+
+private section OpenAI
   //[ One tool's OpenAI function spec, derived from the Jo `Tool` model. //]
   def toolSpec(t: Tool): py.Dict =
     val properties = py.dict()
     val required = py.list()
     for p in t.params do
-      properties.set(p.name, py.dict("type" ~ jsonType(p.paramType), "description" ~ p.description))
+      properties.set(p.name, py.dict("type" ~ p.paramType.jsonType, "description" ~ p.description))
       if p.required then required.append(p.name)
     end
 
@@ -40,10 +45,11 @@ private section openai
     msgs.append(py.dict("role" ~ "system", "content" ~ system))
 
     for m in history do
-      if m is UserText(text) then
+      match m
+      case UserText(text) =>
         msgs.append(py.dict("role" ~ "user", "content" ~ text))
 
-      else if m is Assistant(text, calls) then
+      case Assistant(text, calls) =>
         val tcList = py.list()
         for c in calls do
           val fn = py.dict("name" ~ c.name, "arguments" ~ jsonMod.dumps(c.input.raw))
@@ -53,9 +59,11 @@ private section openai
         val msg = py.dict("role" ~ "assistant", "content" ~ text, "tool_calls" ~ tcList)
         msgs.append(msg)
 
-      else if m is ToolResults(results) then
+      case ToolResults(results) =>
         for r in results do
           msgs.append(py.dict("role" ~ "tool", "tool_call_id" ~ r.id, "content" ~ r.content))
+      end // match
+    end // for
 
     msgs
 
@@ -84,7 +92,7 @@ private section openai
     val finish = choice.finish_reason
 
     if !finish.isNone && finish.asString == "length" then
-      new Assistant((text + "\n\n[Reply truncated: max_tokens reached.]").trim, List.empty[ToolCall])
+      new Assistant((text + "\n\n[Reply truncated: max_tokens reached.]").trim, [])
     else
       new Assistant(text.trim, calls)
 end
@@ -92,20 +100,34 @@ end
 private class OpenAIModel(client: py.Dynamic, model: String)
   view Model
 
-  def reply(system: String, history: List[Message], tools: List[Tool]): ReplyResult =
+  def reply(rendered: Rendered, tools: List[Tool]): ReplyResult receives logger =
     val toolSpecs = py.list()
-    for t in tools do toolSpecs.append(openai.toolSpec(t))
+    for t in tools do toolSpecs.append(OpenAI.toolSpec(t))
+
+    val messages = OpenAI.toMessages(rendered.system, rendered.messages)
+
+    // The transient tail (working memory) rides after the transcript as a final
+    // user message. OpenAI-compatible endpoints cache long prompt prefixes
+    // automatically, so no explicit cache markers are needed here.
+    if rendered.transient != "" then
+      messages.append(py.dict("role" ~ "user", "content" ~ rendered.transient))
 
     val attempt = py.try:
       client.chat.completions.create:
         model = model
         max_tokens = 8096
-        messages = openai.toMessages(system, history)
+        messages = messages
         tools = toolSpecs
 
     match attempt
-    case Ok(response) => Reply: openai.parseReply(response)
-    case Err(err)     => classifyError(err)
+    case Ok(response) =>
+      val u = response.usage
+      val inTok = u.prompt_tokens.asInt
+      val outTok = u.completion_tokens.asInt
+      logUsage("openai", model, inTok, outTok)
+      Model.Reply(OpenAI.parseReply(response), new Usage(inTok, outTok))
+
+    case Err(err) => classifyError(err)
 end
 
 //[ Build an OpenAI-compatible model from an API key, model id, and base URL.

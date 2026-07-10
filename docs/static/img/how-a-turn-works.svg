@@ -1,0 +1,55 @@
+<svg viewBox="0 0 680 300" width="680" height="300" xmlns="http://www.w3.org/2000/svg" style="max-width:100%;height:auto;font-family:system-ui,sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#888"/>
+    </marker>
+    <marker id="arr-b" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#2c6fb0"/>
+    </marker>
+    <marker id="arr-r" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#c0392b"/>
+    </marker>
+  </defs>
+
+  <!-- ===== entry: trigger + gather context, merged ===== -->
+  <rect x="190" y="24" width="170" height="54" rx="8" fill="#fff" stroke="#d4d4d4" stroke-width="1.5"/>
+  <text x="275" y="48" text-anchor="middle" font-size="13" font-weight="600" fill="#333">Prepare LLM task</text>
+  <text x="275" y="64" text-anchor="middle" font-size="10" fill="#888">on a message · request · tick</text>
+
+  <!-- ===== terminal: reply (a process), emitted by the model ===== -->
+  <rect x="18" y="150" width="130" height="62" rx="8" fill="#eef6ee" stroke="#2f8f3a" stroke-width="1.5"/>
+  <text x="83" y="176" text-anchor="middle" font-size="13" font-weight="600" fill="#2f6b33">Handle result</text>
+  <text x="83" y="194" text-anchor="middle" font-size="10" fill="#5a8a5f">reply / respond / log</text>
+
+  <!-- ===== loop core ===== -->
+  <rect x="190" y="150" width="170" height="62" rx="8" fill="#fff" stroke="#d4d4d4" stroke-width="1.5"/>
+  <text x="275" y="176" text-anchor="middle" font-size="13" font-weight="600" fill="#333">LLM processing</text>
+  <text x="275" y="194" text-anchor="middle" font-size="10" fill="#888">a runCode call, or a result</text>
+
+  <rect x="400" y="150" width="104" height="62" rx="8" fill="#fff2b8" stroke="#b8860b" stroke-width="2"/>
+  <text x="452" y="176" text-anchor="middle" font-size="13" font-weight="700" fill="#8a6d1a">Compile</text>
+  <text x="452" y="194" text-anchor="middle" font-size="10" fill="#94782c">security checkpoint</text>
+
+  <rect x="548" y="150" width="110" height="62" rx="8" fill="#fff" stroke="#d4d4d4" stroke-width="1.5"/>
+  <text x="603" y="176" text-anchor="middle" font-size="13" font-weight="600" fill="#333">Run</text>
+  <text x="603" y="194" text-anchor="middle" font-size="10" fill="#888">runtime supplies caps</text>
+
+  <!-- ===== straight flow arrows ===== -->
+  <line x1="275" y1="78"  x2="275" y2="149" stroke="#888" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="360" y1="181" x2="399" y2="181" stroke="#888" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="380" y="170" text-anchor="middle" font-size="10" fill="#777">runCode</text>
+  <line x1="504" y1="181" x2="547" y2="181" stroke="#888" stroke-width="1.5" marker-end="url(#arr)"/>
+  <!-- exit: the model emits the reply when done -->
+  <line x1="190" y1="181" x2="149" y2="181" stroke="#888" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="169" y="140" text-anchor="middle" font-size="10" fill="#777">when done</text>
+
+  <!-- ===== compile-error loop: Compile -> Write ===== -->
+  <path d="M452,150 V118 Q452,110 444,110 H308 Q300,110 300,118 V148" fill="none"
+        stroke="#c0392b" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr-r)"/>
+  <text x="376" y="104" text-anchor="middle" font-size="10" fill="#c0392b">compile error</text>
+
+  <!-- ===== result loop: Run output -> back to the model ===== -->
+  <path d="M603,212 V250 Q603,258 595,258 H290 Q282,258 282,250 V214" fill="none"
+        stroke="#2c6fb0" stroke-width="1.6" marker-end="url(#arr-b)"/>
+  <text x="442" y="276" text-anchor="middle" font-size="10.5" fill="#2c6fb0">result → back to the LLM</text>
+</svg>

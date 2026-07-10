@@ -8,15 +8,17 @@
 namespace harpe.models
 
 import harpe.*
+import harpe.Model.*
+
 
 private class EchoModel
   view Model
 
-  def reply(system: String, history: List[Message], tools: List[Tool]): ReplyResult =
+  def reply(rendered: Rendered, tools: List[Tool]): ReplyResult =
     var last = ""
-    for m in history do
+    for m in rendered.messages do
       if m is UserText(text) then last = text
-    new Reply(new Assistant("echo: \{last}", List.empty[ToolCall]))
+    Reply(Assistant("echo: \{last}", []), new Usage(0, 0))
 end
 
 //[ Build the echo model (no provider, no API key). //]

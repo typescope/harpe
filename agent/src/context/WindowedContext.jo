@@ -9,17 +9,18 @@ namespace harpe.context
 
 import harpe.*
 import harpe.util.truncate
-import harpe.turn.Interact
+import harpe.Model.*
 
 //[ Budget (characters) for the recent transcript window (~4 chars/token); older
   ! whole turns are dropped to fit, and memory carries longer-term context.
 //]
 private def maxTranscriptChars(): Int = 24000
 
-//[ The default context: the stable base prompt (AGENT.md) first, the volatile
-  ! memory block at the system tail (so the cached prefix survives memory edits),
-  ! and a char-budget window of recent turns as the messages. `initial` seeds the
-  ! window (a resumed session's replayed transcript; `[]` for a fresh one).
+//[ The default context: the stable base prompt (AGENT.md) as `system`, a
+  ! char-budget window of recent turns as the messages, and the volatile memory
+  ! block as the transient tail — after the transcript, so a memory edit leaves
+  ! the cached transcript prefix intact. `initial` seeds the window (a resumed
+  ! session's replayed transcript; `[]` for a fresh one).
 //]
 class WindowedContext(baseSystem: String, memory: Memory, initial: List[Message])
   view Context
@@ -33,13 +34,14 @@ class WindowedContext(baseSystem: String, memory: Memory, initial: List[Message]
   //[ Pure — `interact` is unused. Reads the memory snapshot each call, so an
     ! `updateMemory` during a turn is visible to the next request.
   //]
-  def render(interact: Interact): String ~ List[Message] =
+  def render(interact: Interact): Rendered =
     val mem = memory.snapshot()
-    val system =
-      if mem.isEmpty then baseSystem
-      else baseSystem + "\n\n" + memoryBlock(mem)
+    val transient = if mem.isEmpty then "" else memoryBlock(mem)
 
-    system ~ truncate(transcript, maxTranscriptChars())
+    new Rendered(baseSystem, truncate(transcript, maxTranscriptChars()), transient)
+
+  // Sizes on a fixed char window, so reported usage is not needed.
+  def observe(usage: Usage): Unit = pass
 
   def mark(): Unit =
     marked = transcript

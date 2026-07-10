@@ -44,7 +44,7 @@ harpe/
       Memory.jo          #   the agent-curated working-memory store
       SessionLog.jo      #   the append-only transcript archive (audit)
       Workspace.jo       #   the agent working dir (context param)
-      Interact.jo        #   `harpe.turn`: how a turn is driven/observed
+      Interact.jo        #   interact with turn logic
       models/            #   `harpe.models`: anthropic / openai / echo
       tools/             #   `harpe.tools`: runCode, skill tools, memory tools
       context/           #   `harpe.context`: WindowedContext, SummarizingContext
@@ -83,10 +83,23 @@ model answers in plain text. Transient model errors retry with backoff; after
 a final answer. The driver implements `Interact` (how the model call is issued
 and cancelled, how progress is shown) and owns sessions and persistence.
 
+For the whole picture — the pieces, the turn logic, and how to configure or
+replace them — start with [docs/concepts/agent.md](docs/concepts/agent.md).
+
+The model is a provider-agnostic interface (Anthropic, OpenAI-compatible
+endpoints, or a keyless dummy), selected by env var and overridable in
+`Config.jo` — see [docs/concepts/models.md](docs/concepts/models.md).
+
 The default toolset is `runCode` (write, compile, and run a Jo program in the
 sandbox), three read-only skill tools (`skillsList` / `skillsRead` /
-`skillsSearch`), and three memory tools (below). Large tool outputs are elided
-to a bounded excerpt; the full output is logged to `logs/runs.jsonl`.
+`skillsSearch`) over the agent's `skills/` reference docs
+([docs/concepts/skills.md](docs/concepts/skills.md)), and three memory tools (below); write your own
+and add them in `Config.jo` — see [docs/concepts/tools.md](docs/concepts/tools.md). Large tool
+outputs are elided
+to a bounded excerpt; the full output is logged to `logs/agent.jsonl` (one JSON
+line per event, filter by `category` with `jq`). The logging layer is a
+structured event stream you can build billing/usage/stats on — see
+[docs/concepts/logging.md](docs/concepts/logging.md).
 
 ## Context and memory
 
@@ -95,10 +108,11 @@ per-session value and the framework's only context-engineering surface:
 
 ```
 interface Context
-  def append(message: Message): Unit                       // record a transcript event
-  def render(interact: Interact): String ~ List[Message]   // compose this request
-  def mark(): Unit                                         // turn start (for rollback)
-  def rollback(): Unit                                     // drop since mark
+  def append(message: Message): Unit               // record a transcript event
+  def render(interact: Interact): Rendered         // compose this request
+  def observe(usage: Usage): Unit                  // the last reply's token counts
+  def mark(): Unit                                 // turn start (for rollback)
+  def rollback(): Unit                             // drop since mark
 end
 ```
 
@@ -108,14 +122,16 @@ Two strategies ship, named by their transcript policy:
   block; messages = a sliding window of recent turns (~24k chars, whole turns).
 - **`SummarizingContext`**: old turns are distilled into a rolling summary by an
   extra model call (its own `distiller` model — can be a cheaper one) instead of
-  dropped, triggered by high/low water marks.
+  dropped, triggered when the provider's reported input-token count crosses a
+  high-water mark.
 
 **Memory** is a string→string map the *LLM itself* curates via `updateMemory` /
 `readMemory` / `listMemory`; it is rendered into every request and persists per
 session (`<id>.memory.json`, written at turn commit). Which keys to keep is
-steered by your `AGENT.md`, not by the framework. The full transcript is always
-archived as append-only JSONL under `logs/` for audit — context is constructed,
-never replayed wholesale. Design notes: `context.md`.
+steered by your `AGENT.md`, not by the framework — see
+[docs/concepts/memory.md](docs/concepts/memory.md). The full transcript is always archived as
+append-only JSONL under `logs/` for audit — context is constructed, never replayed
+wholesale. Developer guides: [context](docs/concepts/context.md), [memory](docs/concepts/memory.md).
 
 ## Make it yours
 
@@ -201,7 +217,7 @@ runs the program in an isolated temp directory, under a wall-clock timeout
 (process-group kill) and with the provider keys scrubbed from its environment,
 then feeds stdout — or the compile/timeout error — back to the model. OS-level confinement (resource caps, filesystem/network, uid drop) is
 opt-in and external — an executable `sandbox/run.sh` wrapper of your choice
-(`ulimit`, `landrun`, `bwrap`, `docker`, …). See [docs/sandbox.md](docs/sandbox.md).
+(`ulimit`, `landrun`, `bwrap`, `docker`, …). See [docs/concepts/sandbox.md](docs/concepts/sandbox.md).
 
 ## Development
 

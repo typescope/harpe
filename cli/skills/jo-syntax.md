@@ -167,7 +167,7 @@ val s = """
 val xs = [1, 2, 3]
 // empty list needs explicit type annotation
 val xs: List[Int] = []
-val xs = List.empty[Int]()
+val xs = List.empty[Int]
 
 // initialize a mutable list variable with 3 elements with value 5
 var xs = List.fill(3, 5)

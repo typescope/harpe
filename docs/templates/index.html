@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}Harpe — The only agent framework with compile-time sandboxing{% endblock title %}
+{% block body_class %}home{% endblock body_class %}
+
+{% block body %}
+{% set tutorial = get_url(path='@/tutorial/_index.md') %}
+{% set concepts = get_url(path='@/concepts/_index.md') %}
+<main id="top">
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-center wrap">
+      <div class="hero-in">
+        <div class="hero-brand reveal">
+          <svg class="hero-mark" width="70" height="70" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <rect x="4.5" y="4.5" width="23" height="23" rx="7" stroke="var(--edge)" stroke-width="2.2"/>
+            <path d="M13 11 l-4 5 l4 5 M19 11 l4 5 l-4 5" stroke="var(--edge)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="hero-wordmark">harpe</span>
+        </div>
+        <h1 class="title reveal d1">The only agent framework with <span class="edge">compile-time sandboxing.</span></h1>
+        <div class="cta-row reveal d2">
+          <a class="btn btn-primary" href="{{ tutorial | safe }}">
+            Build your first agent
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+        </div>
+      </div>
+    </div>
+    <a class="scroll-cue reveal d2" href="#demo" aria-label="Scroll down to see it compile">
+      <span>See it compile</span>
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+  </section>
+
+  <!-- DEMO -->
+  <section class="band demo" id="demo">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">See it compile</p>
+        <h2 class="sec-title">One turn, gated by the type checker.</h2>
+        <p class="sec-sub">The model wrote this program to answer. Grant the capability it needs — or don't — and watch what the compiler decides.</p>
+      </div>
+
+      <div class="card" id="turn" data-grant="off" role="group" aria-label="A turn, compiled live">
+        <div class="card-bar">
+          <span class="dots"><i></i><i></i><i></i></span>
+          <span class="card-title">flight-agent · turn</span>
+          <span class="card-turn">jo build</span>
+        </div>
+
+        <div class="chat">
+          <div class="msg you"><span class="who">you</span><span class="bubble">Book me the 9am SFO→JFK and put it on my card.</span></div>
+          <div class="msg bot"><span class="who">bot</span><span class="bubble">Writing a program to do that…</span></div>
+        </div>
+
+        <div class="code" aria-label="the Jo program the model wrote this turn">
+<pre><span class="ln"><span class="cmt">// written by the model — compiled before it runs</span></span><span class="ln"><span class="kw">def</span> <span class="fn">runTask</span>()<span class="pn">:</span> <span class="ty">Unit</span> <span class="kw">receives</span> stdout, booking, <span class="flag cap">payment</span> <span class="pn">=</span></span><span class="ln">  <span class="kw">val</span> seat <span class="pn">=</span> booking.<span class="fn">reserve</span>(<span class="str">"SFO"</span>, <span class="str">"JFK"</span>, <span class="str">"09:00"</span>)</span><span class="ln">  <span class="flag cap">payment</span>.<span class="fn">charge</span>(seat.price)     <span class="cmt">// needs the payment capability</span></span><span class="ln">  <span class="fn">println</span>(<span class="str">"Booked "</span> + seat.id)</span></pre>
+        </div>
+
+        <div class="verdict">
+          <div class="diag err">
+            <span class="file">flight-agent/turn/Task.jo:2:41</span><br>
+            <span class="emsg">error: capability <b>payment</b> is not granted to this agent</span><br>
+            <span class="caret">&nbsp;&nbsp;receives stdout, booking, payment<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;^^^^^^^</span><br>
+            <span class="stamp bad">✗ won't compile</span> <span class="run">— the charge never happens.</span>
+          </div>
+          <div class="diag ok">
+            <span class="okmsg">✓ type-checked against 3 granted capabilities</span><br>
+            <span class="stamp ok">✓ compiled</span> <span class="run">— runs this turn. “Booked UA482.”</span>
+          </div>
+        </div>
+
+        <div class="grant">
+          <div class="caps" aria-hidden="true">
+            <span class="chip on locked">stdout</span>
+            <span class="chip on">booking</span>
+            <span class="chip" id="paychip">payment</span>
+          </div>
+          <button class="toggle" id="grantBtn" type="button" aria-pressed="false">
+            Grant <b>payment</b>
+            <span class="switch" aria-hidden="true"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section class="band alt" id="how">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">How a turn works</p>
+        <h2 class="sec-title">Every message becomes a program the compiler gets to veto.</h2>
+        <p class="sec-sub">There's no tool-call free-for-all. The model's one and only move is to write Jo — and Jo has to type-check before anything happens.</p>
+      </div>
+      <div class="steps">
+        <div class="step"><div class="n">STEP 1</div><h3>You send a message</h3><p>A turn begins. The agent's standing instructions and memory come along for context.</p></div>
+        <div class="step"><div class="n">STEP 2</div><h3>The model writes Jo</h3><p>Its only tool is to author a small <code>runTask</code> program — the work it wants to do this turn.</p></div>
+        <div class="step"><div class="n">STEP 3</div><h3><code>jo</code> compiles it</h3><p>Against the granted capabilities. Reference one you don't have and compilation fails — right there.</p></div>
+        <div class="step"><div class="n">STEP 4</div><h3>It runs — or it doesn't</h3><p>A program that compiled runs. One that didn't never executed a line. The gate is the checkpoint.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- AUTHORITY -->
+  <section class="band">
+    <div class="wrap authority">
+      <blockquote>
+        The <span class="hl">receives</span> list <em>is</em> the agent's entire authority —
+        and it's re-proven on <span class="hl">every single turn</span>, not signed off once in review.
+      </blockquote>
+      <div class="receives" aria-label="a receives declaration">
+        <span class="lbl">// what this agent may touch</span>
+        <span class="g">receives stdout</span>   <span style="color:var(--code-mut)">// print</span><br>
+        <span class="g">receives booking</span>  <span style="color:var(--code-mut)">// reserve seats</span><br>
+        <span class="x">receives payment</span>  <span style="color:var(--code-mut)">// ✗ not granted</span><br>
+        <span style="color:var(--code-mut)">receives files, net, shell …</span> <span class="x">// ✗</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section class="band alt">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">What you get</p>
+        <h2 class="sec-title">A framework, three agents, and no hidden runtime.</h2>
+      </div>
+      <div class="features">
+        <div class="feat">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <h3>Capabilities, proven every turn</h3>
+          <p>Authority is a typed <code>receives</code> list, checked by the compiler each turn — not a policy file that drifts from the code.</p>
+        </div>
+        <div class="feat">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2" stroke="currentColor" stroke-width="1.7"/><path d="M8 21h8M12 18v3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M8 9l2.5 2L8 13M13 13h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <h3>Bring any model</h3>
+          <p>Anthropic or OpenAI, provider-agnostic behind one <code>Model</code> interface. Swap with an env var.</p>
+        </div>
+        <div class="feat">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2" stroke="currentColor" stroke-width="1.7"/><path d="M12 16v4M8 20h8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          <h3>Three agents, ready to run</h3>
+          <p>Terminal, browser, and Telegram drivers ship in the box. Copy one, edit its identity, done.</p>
+        </div>
+        <div class="feat">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 5h11l5 5v9a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M7 11h8M7 15h6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          <h3>Skills &amp; memory</h3>
+          <p>Read-only reference the agent consults on demand, plus a durable scratchpad it curates itself.</p>
+        </div>
+        <div class="feat">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 6l-5 6 5 6M16 6l5 6-5 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <h3>Just a Jo project</h3>
+          <p>Run it with <code>jo run</code>. No bespoke runtime, no framework magic — the toolchain you already have.</p>
+        </div>
+        <div class="feat">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3" stroke="currentColor" stroke-width="1.7"/><path d="M9 9h6v6H9z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+          <h3>Defense in depth</h3>
+          <p>The compile gate decides authority; an external OS sandbox confines the process. Two independent walls.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CLOSE -->
+  <section class="close-cta">
+    <div class="wrap">
+      <p class="eyebrow" style="text-align:center">Five minutes to a running agent</p>
+      <h2>Grant it a capability. Watch it compile.</h2>
+      <p>Scaffold a chat agent, hand it a <code>Clock</code>, and see the turn go green — all with the <code>jo</code> you just installed.</p>
+      <div class="cta-row" style="justify-content:center">
+        <a class="btn btn-primary" href="{{ tutorial | safe }}">Start the tutorial
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        <a class="btn btn-ghost" href="{{ config.extra.github }}">Browse the source</a>
+      </div>
+    </div>
+  </section>
+</main>
+{% endblock body %}
