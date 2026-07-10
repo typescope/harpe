@@ -89,8 +89,10 @@ endpoints, or a keyless dummy), selected by env var and overridable in
 
 The default toolset is `runCode` (write, compile, and run a Jo program in the
 sandbox), three read-only skill tools (`skillsList` / `skillsRead` /
-`skillsSearch`), and three memory tools (below); write your own and add them in
-`Config.jo` — see [docs/tools.md](docs/tools.md). Large tool outputs are elided
+`skillsSearch`) over the agent's `skills/` reference docs
+([docs/skills.md](docs/skills.md)), and three memory tools (below); write your own
+and add them in `Config.jo` — see [docs/tools.md](docs/tools.md). Large tool
+outputs are elided
 to a bounded excerpt; the full output is logged to `logs/agent.jsonl` (one JSON
 line per event, filter by `category` with `jq`). The logging layer is a
 structured event stream you can build billing/usage/stats on — see
