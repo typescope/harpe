@@ -1,0 +1,99 @@
+//[ GithubAPI.jo — GitHub PR Review API
+  !
+  ! The LLM writes Jo programs using these types to:
+  ! 1. Read PR metadata, file diffs, and repository source files
+  ! 2. Submit a review verdict (approve / request changes / comment)
+  ! 3. Post standalone comments on the PR
+  ! 4. Merge the PR
+//]
+
+namespace GithubAPI
+
+import jo.IO.stdout
+
+//[ Pull request metadata //]
+class PRInfo(
+  number: Int,
+  title: String,
+  body: String,
+  author: String,
+  baseBranch: String,
+  headBranch: String,
+  url: String,
+  state: String
+)
+
+//[ A changed file in the PR with its unified diff patch
+  !
+  ! status is one of: "added", "modified", "removed", "renamed"
+  ! patch is the unified diff text (empty for binary files)
+//]
+class FileDiff(
+  path: String,
+  status: String,
+  additions: Int,
+  deletions: Int,
+  patch: String
+)
+
+//[ A review comment targeting a specific line in a file //]
+class LineComment(
+  path: String,
+  line: Int,
+  body: String
+)
+
+//[ The overall verdict of a PR review //]
+union ReviewVerdict = Approve | RequestChanges | CommentOnly
+
+//[ GitHub PR interface — read PR data and perform review actions
+  !
+  ! All access is scoped to the PR loaded by the agent at startup.
+  ! All write methods call the real GitHub API immediately.
+//]
+interface GitHub
+  //[ Get PR metadata (number, title, body, author, branches, url, state) //]
+  def getPR(): PRInfo
+
+  //[ Get all file diffs in the PR (path, status, additions, deletions, patch) //]
+  def getDiffs(): List[FileDiff]
+
+  //[ Read a source file from the PR's head branch snapshot
+    !
+    ! path should be relative to the repository root (e.g., "src/foo.py")
+    ! Returns the file contents as a string, or empty string if not found.
+  //]
+  def readFile(path: String): String
+
+  //[ Submit a PR review — immediately posts to GitHub API
+    !
+    ! verdict:  Approve, RequestChanges, or CommentOnly
+    ! body:     overall review summary (required)
+    ! comments: inline line comments (may be empty)
+    !
+    ! Example:
+    ! val note = LineComment("src/main.py", 42, "Add a null check here")
+    ! github.submitReview(RequestChanges, "Please fix the null check.", [note])
+    ! github.submitReview(Approve, "LGTM!", [])
+  //]
+  def submitReview(verdict: ReviewVerdict, body: String, comments: List[LineComment]): Unit receives stdout
+
+  //[ Post a standalone issue-level comment — immediately posts to GitHub API //]
+  def addComment(body: String): Unit receives stdout
+
+  //[ Merge the PR — immediately merges via GitHub API
+    !
+    ! commitMessage: optional message for the merge commit (pass "" for default)
+    !
+    ! Example:
+    ! github.merge("Merging after approval")
+    ! github.merge("")
+  //]
+  def merge(commitMessage: String): Unit receives stdout
+end
+
+//[ GitHub capability provided by the runtime — do not construct directly //]
+param github: GitHub
+
+//[ LLM-generated entry point: review the PR and submit a verdict //]
+defer def reviewPR(): Unit receives stdout, github
