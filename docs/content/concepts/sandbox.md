@@ -1,5 +1,5 @@
 +++
-title = "The Harpe sandbox — security model"
+title = "Sandboxing"
 weight = 7
 +++
 A Harpe agent is an LLM that acts **only** by writing Jo programs that are

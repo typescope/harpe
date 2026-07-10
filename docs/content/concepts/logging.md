@@ -1,5 +1,5 @@
 +++
-title = "Logging in your Harpe agent"
+title = "Logging"
 weight = 8
 +++
 Your agent keeps a **structured log**: one typed event per thing that happens —
