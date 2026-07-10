@@ -13,6 +13,22 @@ service instead (see [Sending logs somewhere else](#sending-logs-somewhere-else)
 The examples below assume that default JSON file where they show concrete output;
 swap in your own `Logger` and the events are identical, only their storage changes.
 
+## Three properties
+
+The logging mechanism is built around three properties:
+
+- **Structural.** Every event is a typed record — a `category` and named fields,
+  not a formatted string. You *query and aggregate* it (per session, per category,
+  summing tokens) rather than grepping text.
+
+- **Extensible.** A new kind of event is a new category you emit; a new
+  destination is a `Logger` you install. The two are independent and the wiring
+  never grows — one channel carries everything, from `runCode` to your own tools.
+
+- **Contextual.** Every event is stamped automatically with the ambient context —
+  which session/chat produced it — so any slice ("this session's token usage")
+  falls straight out of the data.
+
 ## Where your events go (default)
 
 Out of the box the installed `Logger` is `JsonlLogger`, which appends every event
