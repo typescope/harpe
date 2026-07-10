@@ -14,6 +14,7 @@ import harpe.Model
 import harpe.Model.*
 import harpe.Tool
 import harpe.Tool.*
+import harpe.logging.logger
 
 
 //[ Cache
@@ -138,7 +139,7 @@ private def parseReply(response: py.Dynamic): Assistant =
 private class AnthropicModel(client: py.Dynamic, model: String, cache: AnthropicCache)
   view Model
 
-  def reply(rendered: Rendered, tools: List[Tool]): ReplyResult =
+  def reply(rendered: Rendered, tools: List[Tool]): ReplyResult receives logger =
     val toolSpecs = py.list()
     for t in tools do toolSpecs.append(toolSpec(t))
 
@@ -172,8 +173,12 @@ private class AnthropicModel(client: py.Dynamic, model: String, cache: Anthropic
             tools = toolSpecs
 
     match attempt
-    case Ok(response) => Reply: parseReply(response)
-    case Err(err)     => classifyError(err)
+    case Ok(response) =>
+      val u = response.usage
+      logUsage("anthropic", model, u.input_tokens.asInt, u.output_tokens.asInt)
+      Reply: parseReply(response)
+
+    case Err(err) => classifyError(err)
 end
 
 //[ Build an Anthropic-backed model from an API key, model id, and cache policy.

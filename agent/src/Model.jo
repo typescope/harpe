@@ -15,15 +15,18 @@ import harpe.Model.ReplyResult
 import harpe.Tool
 import harpe.Tool.ToolResult
 import harpe.Tool.ToolCall
+import harpe.logging.logger
 
 //[ Model
   !
-  ! A chat model. `reply` is a pure function of the system prompt, the
-  ! conversation so far, and the offered tools — returning the assistant's next
-  ! message (or a typed error). Stateless: the loop keeps the history.
+  ! A chat model. `reply` turns the system prompt, the conversation so far, and the
+  ! offered tools into the assistant's next message (or a typed error); stateless,
+  ! the loop keeps the history. `reply` `receives logger` — read at call time, not
+  ! captured when the model was built — so a provider can emit its token usage to
+  ! the turn's logging context (see `harpe.models.logUsage`).
 //]
 interface Model
-  def reply(rendered: Rendered, tools: List[Tool]): ReplyResult
+  def reply(rendered: Rendered, tools: List[Tool]): ReplyResult receives logger
 end
 
 section Model

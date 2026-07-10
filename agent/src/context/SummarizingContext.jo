@@ -11,6 +11,7 @@ import harpe.*
 import harpe.util.truncate
 import harpe.util.transcriptChars
 import harpe.Model.*
+import harpe.logging.logger
 
 //[ Like `WindowedContext`, but with model-assisted distillation of old turns.
   !
@@ -46,7 +47,7 @@ class SummarizingContext(
     ! `system`: a compaction rewrites the message window at the same moment, so
     ! keeping the summary cached with the base prompt costs nothing.
   //]
-  def render(interact: Interact): Rendered =
+  def render(interact: Interact): Rendered receives logger =
     if transcriptChars(transcript) > highWaterChars then compact(interact)
 
     val mem = memory.snapshot()
@@ -74,7 +75,7 @@ class SummarizingContext(
     ! transcript untouched) when the distillation call fails or is cancelled, or
     ! when nothing can be dropped (the window is a single oversized turn).
   //]
-  private def compact(interact: Interact): Unit =
+  private def compact(interact: Interact): Unit receives logger =
     val kept = truncate(transcript, lowWaterChars)
     val dropCount = transcript.size - kept.size
 

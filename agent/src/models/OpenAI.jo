@@ -17,6 +17,7 @@ import harpe.Model
 import harpe.Model.*
 import harpe.Tool
 import harpe.Tool.*
+import harpe.logging.logger
 
 private section OpenAI
   //[ One tool's OpenAI function spec, derived from the Jo `Tool` model. //]
@@ -99,7 +100,7 @@ end
 private class OpenAIModel(client: py.Dynamic, model: String)
   view Model
 
-  def reply(rendered: Rendered, tools: List[Tool]): ReplyResult =
+  def reply(rendered: Rendered, tools: List[Tool]): ReplyResult receives logger =
     val toolSpecs = py.list()
     for t in tools do toolSpecs.append(OpenAI.toolSpec(t))
 
@@ -119,8 +120,12 @@ private class OpenAIModel(client: py.Dynamic, model: String)
         tools = toolSpecs
 
     match attempt
-    case Ok(response) => Model.Reply: OpenAI.parseReply(response)
-    case Err(err)     => classifyError(err)
+    case Ok(response) =>
+      val u = response.usage
+      logUsage("openai", model, u.prompt_tokens.asInt, u.completion_tokens.asInt)
+      Model.Reply: OpenAI.parseReply(response)
+
+    case Err(err) => classifyError(err)
 end
 
 //[ Build an OpenAI-compatible model from an API key, model id, and base URL.

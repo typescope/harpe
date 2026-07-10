@@ -1,9 +1,10 @@
 # Logging in your Harpe agent
 
 Your agent keeps a **structured log**: one typed event per thing that happens —
-every `runCode` execution out of the box, plus anything you log from the tools you
-write. Each event is a record (typed fields, not free text) tagged with the session
-it came from, which makes it the raw material for usage reports, billing, and stats.
+every `runCode` execution and every model call out of the box, plus anything you
+log from the tools you write. Each event is a record (typed fields, not free text)
+tagged with the session it came from, which makes it the raw material for usage
+reports, billing, and stats.
 
 *Where* those events go is not fixed. A `Logger` — the thing you install once —
 decides the format and the destination. The framework ships one that appends JSON
@@ -33,9 +34,15 @@ jq 'select(.category=="harpe.tools.runCode" and .compiled==false)' logs/agent.js
 
 Wherever the events go, each has the same shape: a **`category`** (what kind
 of event), a **`time`**, the event's own fields, and a **`context`** identifying
-the session/chat it happened in. `runCode` events carry `code`, `compiled`,
-`compileSeconds`, and — depending on the outcome — `runSeconds`, `exitCode`,
-`output`, or a `compileError`.
+the session/chat it happened in. The two categories logged for you:
+
+- **`harpe.tools.runCode`** — one per program the agent runs: `code`, `compiled`,
+  `compileSeconds`, and — depending on the outcome — `runSeconds`, `exitCode`,
+  `output`, or a `compileError`.
+- **`harpe.model`** — one per model call: `provider`, `model`, `inputTokens`,
+  `outputTokens`. This is your token-usage feed for billing and auditing; it's
+  emitted by the built-in Anthropic/OpenAI models and tagged with the session that
+  made the call.
 
 ## Logging from your own tool
 
@@ -102,17 +109,18 @@ the equivalent queries in SQL — same fields, same categories.) A few `jq` star
 points:
 
 ```sh
+# tokens per session (the billing query)
+jq -s 'map(select(.category=="harpe.model"))
+       | group_by(.context.session)
+       | map({session: .[0].context.session,
+              inTokens:  (map(.inputTokens)  | add),
+              outTokens: (map(.outputTokens) | add)})' logs/agent.jsonl
+
 # how many runs per session
 jq -s 'group_by(.context.session) | map({session: .[0].context.session, runs: length})' logs/agent.jsonl
 
 # all warnings and errors, across every category
 jq 'select(has("warning") or has("error"))' logs/agent.jsonl
-
-# total compile+run seconds per session
-jq -s 'map(select(.category=="harpe.tools.runCode"))
-       | group_by(.context.session)
-       | map({session: .[0].context.session,
-              seconds: (map(.compileSeconds + (.runSeconds // 0)) | add)})' logs/agent.jsonl
 ```
 
 ## Sending logs somewhere else
@@ -175,16 +183,18 @@ Logging.withLogger(new UsageMeter(new JsonlLogger(path), meter), () => serve())
 
 Every entry the meter sees carries its `context` (whose session it is) and a stable
 `category` (so it can trust the fields), which is all a per-session counter needs.
+For billing, the `harpe.model` events give you `inputTokens`/`outputTokens` per
+call already — apply your price table to turn them into cost.
 
-**Charge for a new thing → log a new category.** To bill on model usage, for
-example, emit an event from wherever you call the model:
+**Charge for a new thing → log a new category.** Anything else you want to meter
+is just a new category you emit. To bill on, say, an external API a tool calls:
 
 ```jo
-logger.log("myagent.model", "inputTokens" ~ inTok, "outputTokens" ~ outTok, "cost" ~ cost)
+logger.log("myagent.tools.search", "queries" ~ n, "vendorCost" ~ cost)
 ```
 
-Your `jq` reports and your `UsageMeter` pick it up with no other change — a new
-signal is just a new category, and the wiring (one file, one meter) stays put.
+Your reports and your `UsageMeter` pick it up with no other change — a new signal
+is just a new category, and the wiring (one installed `Logger`) stays put.
 
 ## Quick reference
 
@@ -193,11 +203,11 @@ signal is just a new category, and the wiring (one file, one meter) stays put.
 logger.log(category, "k" ~ v, ...)                 // a data event
 logger.info  / warn / error(category, message, ...) // a message at a severity
 
-// install a backend (in the driver's entry point)
-Logging.withLogger(backend, () => run())            // backend: any Logger
-Logging.discard                                     // a no-op logger (tests, logging off)
+// install a Logger — where events go (in the driver's entry point)
+Logging.withLogger(myLogger, () => run())           // myLogger: any Logger
+Logging.discard                                     // a no-op Logger (tests, logging off)
 
-// write a backend
+// write your own Logger
 interface Logger
   def logEntry(entry: Entry): Unit                  // the one method you implement
   def close(): Unit

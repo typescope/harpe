@@ -22,6 +22,7 @@ namespace harpe
 import harpe.Interact
 import harpe.Model.Message
 import harpe.Model.Rendered
+import harpe.logging.logger
 
 //[ A context-management strategy: owns the transcript, composes each request. //]
 interface Context
@@ -32,10 +33,11 @@ interface Context
     ! system prompt, the transcript window, and a transient tail.
     !
     ! Called once per model request. May be effectful — an impl can use
-    ! `interact` to call the model first (e.g. summarize old turns) and mutate
-    ! its own state, under the turn's cancellation and event stream.
+    ! `interact` to call the model first (e.g. summarize old turns, whose token
+    ! usage it logs) and mutate its own state, under the turn's cancellation and
+    ! event stream.
   //]
-  def render(interact: Interact): Rendered
+  def render(interact: Interact): Rendered receives logger
 
   //[ Mark the start of a user turn, so a cancelled/failed turn can roll back. //]
   def mark(): Unit

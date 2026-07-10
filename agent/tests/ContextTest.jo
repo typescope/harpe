@@ -6,7 +6,7 @@
   ! windowing (pairing-safe, keeps the most recent turns).
 //]
 
-namespace ContextTest
+namespace harpe.test.ContextTest
 
 import jo.IO.stdout
 import harpe.*
@@ -17,6 +17,7 @@ import harpe.context.WindowedContext
 import harpe.context.SummarizingContext
 import harpe.models.echo
 import harpe.Model.*
+import harpe.logging.logger
 import harpe.Tool.*
 
 
@@ -70,7 +71,7 @@ private def toolTurn(u: String, code: String, out: String): List[Message] =
   val call = ToolCall("id", "runCode", ToolInput(py.dict("code" ~ code)))
   [UserText(u), Assistant("", [call]), ToolResults([ToolResult("id", out)]), Assistant("done", [])]
 
-def run(): Unit receives stdout =
+def run(): Unit receives stdout, logger =
   val nix = new NoInteract
 
   // --- WindowedContext: memory rendered as the transient tail ---
