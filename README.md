@@ -85,7 +85,8 @@ and cancelled, how progress is shown) and owns sessions and persistence.
 
 The default toolset is `runCode` (write, compile, and run a Jo program in the
 sandbox), three read-only skill tools (`skillsList` / `skillsRead` /
-`skillsSearch`), and three memory tools (below). Large tool outputs are elided
+`skillsSearch`), and three memory tools (below); write your own and add them in
+`Config.jo` — see [docs/tools.md](docs/tools.md). Large tool outputs are elided
 to a bounded excerpt; the full output is logged to `logs/agent.jsonl` (one JSON
 line per event, filter by `category` with `jq`). The logging layer is a
 structured event stream you can build billing/usage/stats on — see
@@ -98,10 +99,11 @@ per-session value and the framework's only context-engineering surface:
 
 ```
 interface Context
-  def append(message: Message): Unit                       // record a transcript event
-  def render(interact: Interact): String ~ List[Message]   // compose this request
-  def mark(): Unit                                         // turn start (for rollback)
-  def rollback(): Unit                                     // drop since mark
+  def append(message: Message): Unit               // record a transcript event
+  def render(interact: Interact): Rendered         // compose this request
+  def observe(usage: Usage): Unit                  // the last reply's token counts
+  def mark(): Unit                                 // turn start (for rollback)
+  def rollback(): Unit                             // drop since mark
 end
 ```
 
@@ -111,14 +113,15 @@ Two strategies ship, named by their transcript policy:
   block; messages = a sliding window of recent turns (~24k chars, whole turns).
 - **`SummarizingContext`**: old turns are distilled into a rolling summary by an
   extra model call (its own `distiller` model — can be a cheaper one) instead of
-  dropped, triggered by high/low water marks.
+  dropped, triggered when the provider's reported input-token count crosses a
+  high-water mark.
 
 **Memory** is a string→string map the *LLM itself* curates via `updateMemory` /
 `readMemory` / `listMemory`; it is rendered into every request and persists per
 session (`<id>.memory.json`, written at turn commit). Which keys to keep is
 steered by your `AGENT.md`, not by the framework. The full transcript is always
 archived as append-only JSONL under `logs/` for audit — context is constructed,
-never replayed wholesale. Design notes: `context.md`.
+never replayed wholesale. Developer guide: [docs/context.md](docs/context.md).
 
 ## Make it yours
 
