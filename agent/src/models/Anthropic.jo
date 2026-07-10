@@ -175,8 +175,10 @@ private class AnthropicModel(client: py.Dynamic, model: String, cache: Anthropic
     match attempt
     case Ok(response) =>
       val u = response.usage
-      logUsage("anthropic", model, u.input_tokens.asInt, u.output_tokens.asInt)
-      Reply: parseReply(response)
+      val inTok = u.input_tokens.asInt
+      val outTok = u.output_tokens.asInt
+      logUsage("anthropic", model, inTok, outTok)
+      Reply(parseReply(response), new Usage(inTok, outTok))
 
     case Err(err) => classifyError(err)
 end

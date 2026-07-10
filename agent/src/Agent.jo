@@ -88,7 +88,8 @@ section Agent
           context.rollback()
           break
 
-        case Got(reply) =>
+        case Got(reply, usage) =>
+          context.observe(usage)
           context.append(reply)
           delta = delta + reply
 
@@ -138,7 +139,7 @@ end
   ! The assistant message, a give-up (fatal error or retries exhausted), or an interruption.
 //]
 private union Fetched =
-    Got(message: Assistant)
+    Got(message: Assistant, usage: Usage)
   | GaveUp
   | Stopped
 
@@ -177,8 +178,8 @@ private def fetchReply(
     interact.emit: ModelRequestEnded
 
     match res
-      case Reply(message) =>
-        outcome = Got(message)
+      case Reply(message, usage) =>
+        outcome = Got(message, usage)
         break
 
       case Fatal(detail) =>

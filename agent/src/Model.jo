@@ -53,15 +53,24 @@ section Model
   //]
   class Rendered(system: String, messages: List[Message], transient: String)
 
+  //[ Usage
+    !
+    ! Token counts a provider reports for one call. The provider's own count, so
+    ! it needs no tokenizer and is exact. Carried on `Reply` so the loop can feed
+    ! `inputTokens` back to the `Context` (a token-budget `SummarizingContext`
+    ! compacts on it), and logged as the `harpe.model` event.
+  //]
+  class Usage(inputTokens: Int, outputTokens: Int)
+
   //[ ReplyResult
     !
-    ! The outcome of asking the model for a reply: the assistant message, or a
-    ! typed error. `Transient` errors (rate limits, 5xx, connection blips) are
-    ! worth retrying with backoff; `Fatal` ones (auth, bad request) are not. The
-    ! provider classifies the failure; the loop owns the retry policy.
+    ! The outcome of asking the model for a reply: the assistant message (with the
+    ! call's token usage), or a typed error. `Transient` errors (rate limits, 5xx,
+    ! connection blips) are worth retrying with backoff; `Fatal` ones (auth, bad
+    ! request) are not. The provider classifies the failure; the loop owns retries.
   //]
   union ReplyResult =
-      Reply(message: Assistant)
+      Reply(message: Assistant, usage: Usage)
     | Transient(detail: String)
     | Fatal(detail: String)
 end

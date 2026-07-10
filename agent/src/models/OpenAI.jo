@@ -122,8 +122,10 @@ private class OpenAIModel(client: py.Dynamic, model: String)
     match attempt
     case Ok(response) =>
       val u = response.usage
-      logUsage("openai", model, u.prompt_tokens.asInt, u.completion_tokens.asInt)
-      Model.Reply: OpenAI.parseReply(response)
+      val inTok = u.prompt_tokens.asInt
+      val outTok = u.completion_tokens.asInt
+      logUsage("openai", model, inTok, outTok)
+      Model.Reply(OpenAI.parseReply(response), new Usage(inTok, outTok))
 
     case Err(err) => classifyError(err)
 end

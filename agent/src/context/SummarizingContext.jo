@@ -9,36 +9,48 @@ namespace harpe.context
 
 import harpe.*
 import harpe.util.truncate
-import harpe.util.transcriptChars
 import harpe.Model.*
 import harpe.logging.logger
 
 //[ Like `WindowedContext`, but with model-assisted distillation of old turns.
   !
-  ! Compaction is hysteresis-triggered: when the window exceeds `highWaterChars`,
-  ! the oldest whole turns are folded into the summary until the window fits
-  ! `lowWaterChars` — rare, large compactions (`lowWaterChars` well below
-  ! `highWaterChars`), so the provider's cached prefix survives most requests.
+  ! Compaction is hysteresis-triggered on the provider's own reported token count:
+  ! when the last request's `inputTokens` exceeds `highWaterTokens`, the oldest
+  ! whole turns are folded into the summary until the window fits `lowWaterChars`
+  ! — rare, large compactions (low-water well below high-water), so the provider's
+  ! cached prefix survives most requests. Using the reported count (fed in via
+  ! `observe`) is exact and model-agnostic — no tokenizer, no stale context-window
+  ! table. It is REACTIVE: the count is known only after a reply, so an oversized
+  ! request may go out once before the next render compacts. The low-water target
+  ! is still measured in characters (`truncate` has no per-turn token counts) — a
+  ! rough "how much to keep" against the exact "when to act".
+  !
   ! The distillation is one extra call to `distiller` through the turn's
   ! `interact` (cancellable; surfaced as `ContextCompacted`). The distiller is
   ! the context's own model — it may be the agent's brain, or a cheaper model
   ! reserved for summarization. If the call fails or is cancelled, compaction is
-  ! skipped: the oversized window is sent as-is (the provider may reject it, as
-  ! with `WindowedContext`'s oversized final turn) and compaction is retried on
-  ! the next request.
+  ! skipped and retried on the next request.
 //]
 class SummarizingContext(
     baseSystem: String, memory: Memory, initial: List[Message],
-    distiller: Model, highWaterChars: Int, lowWaterChars: Int)
+    distiller: Model, highWaterTokens: Int, lowWaterChars: Int)
   view Context
 
   private var summary: String = ""
   private var transcript: List[Message] = initial
   private var markedTranscript: List[Message] = initial
   private var markedSummary: String = ""
+  private var markedInputTokens: Int = 0
+
+  // The provider's reported input-token count for the last request (0 until the
+  // first reply). Drives the compaction trigger; updated by `observe`.
+  private var lastInputTokens: Int = 0
 
   def append(message: Message): Unit =
     transcript = transcript + message
+
+  // Size the next compaction decision on the provider's exact token count.
+  def observe(usage: Usage): Unit = lastInputTokens = usage.inputTokens
 
   //[ Compact if over the high-water mark, then compose: the base prompt and the
     ! distilled summary as `system`, the retained recent turns as the messages,
@@ -48,7 +60,7 @@ class SummarizingContext(
     ! keeping the summary cached with the base prompt costs nothing.
   //]
   def render(interact: Interact): Rendered receives logger =
-    if transcriptChars(transcript) > highWaterChars then compact(interact)
+    if lastInputTokens > highWaterTokens then compact(interact)
 
     val mem = memory.snapshot()
     var system = baseSystem
@@ -62,13 +74,16 @@ class SummarizingContext(
   def mark(): Unit =
     markedTranscript = transcript
     markedSummary = summary
+    markedInputTokens = lastInputTokens
 
-  //[ Restores the summary too: a compaction rewrites the window, so rolling back
-    ! only the window would resurrect turns already folded into the summary.
+  //[ Restores the summary and the token count too: a compaction rewrites the
+    ! window, so rolling back only the window would resurrect turns already folded
+    ! into the summary — or leave a stale high token count that re-triggers it.
   //]
   def rollback(): Unit =
     transcript = markedTranscript
     summary = markedSummary
+    lastInputTokens = markedInputTokens
 
   //[ Fold the oldest whole turns into the rolling summary, keeping the window
     ! `truncate` would keep under the low-water budget. Skipped (leaving the
@@ -84,7 +99,7 @@ class SummarizingContext(
       val request: Message = distillRequest(summary, dropped)
 
       val res = distiller.reply(new Rendered(distillSystem(), [request], ""), [])
-      if res is Reply(message) then
+      if res is Reply(message, _) then
         summary = message.text.trim
         transcript = kept
         interact.emit: turns.ContextCompacted(dropCount)
