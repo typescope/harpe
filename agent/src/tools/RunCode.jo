@@ -30,6 +30,7 @@ import harpe.ffi.subprocess
 import harpe.ffi.builtins
 import harpe.ffi.file
 import harpe.ffi.text
+import harpe.ffi.json
 
 import harpe.*
 import harpe.logging.*
@@ -138,9 +139,10 @@ private def buildAndRun(
   // plus the fields specific to how it ended — to the injected channel. What
   // becomes of the entry (format, destination) is the Logger backend's policy.
 
-  val runSrc  = os.path.join(runDir, "Task.jo")
-  val runOut  = os.path.join(runDir, "out.py")
-  val runSast = os.path.join(runDir, "sast")
+  val runSrc   = os.path.join(runDir, "Task.jo")
+  val runOut   = os.path.join(runDir, "out.py")
+  val runSast  = os.path.join(runDir, "sast")
+  val runAudit = os.path.join(runDir, "audit.jsonl")
 
   os.makedirs(runSast)
   file.write(runSrc, code)
@@ -191,14 +193,22 @@ private def buildAndRun(
     val osMod = py.module("os")
     osMod.chmod(runDir, 493)   // 0o755 — traverse + read the directory
     osMod.chmod(runOut, 420)   // 0o644 — read the compiled program
+    // Pre-create the audit log world-writable, so a uid-dropping run.sh can still
+    // append to it (the dir is not writable to the dropped user).
+    file.write(runAudit, "")
+    osMod.chmod(runAudit, 438) // 0o666
 
   val runCmd = if useRunSh then py.list(runScript, runOut) else py.list("python3", runOut)
 
   // Untrusted guest code runs with a minimal PATH-only environment (guestEnv),
-  // inheriting none of the host's secrets. The build step above keeps the full
-  // env — it is the trusted compiler needing the toolchain.
+  // inheriting none of the host's secrets — plus the audit-log path the sandbox
+  // runtime writes its records to. The build step above keeps the full env — it is
+  // the trusted compiler needing the toolchain.
+  val runEnv = subprocess.guestEnv()
+  runEnv.set("HARPE_AUDIT_LOG", runAudit)
+
   val t1 = time.now()
-  val run = subprocess.runCapped(runCmd, runTimeout, env = subprocess.guestEnv())
+  val run = subprocess.runCapped(runCmd, runTimeout, env = runEnv)
   val runSeconds = builtins.round(time.now() - t1, 2)
 
   if run.timedOut then
@@ -217,6 +227,10 @@ private def buildAndRun(
   val runReturnCode = run.returnCode
   val runOutText = run.out.trim
   val runErr = text.stripAnsi(run.err).trim
+
+  // Replay the records the sandboxed program logged (a JSONL file it wrote to)
+  // through this (contextual) logger, so they carry the turn's session context.
+  replayAudit(runAudit)
 
   val result =
     if runReturnCode != 0 then "The program crashed:\n\{runErr}"
@@ -237,6 +251,21 @@ private def buildAndRun(
     "output"         ~ result
   new Tool.RunOutcome(result, summary)
 
+//[ Replay the sandbox's audit log through the ambient (contextual) `logger`.
+  !
+  ! The sandbox runtime logged its records as JSONL to `path` (named via
+  ! HARPE_AUDIT_LOG); each line is one `Entry`. Re-emitting them through this
+  ! logger — running inside the turn's context scope — stamps each with the
+  ! session, so a sandboxed program's records land in the log alongside the tool's
+  ! own. A malformed line is skipped rather than failing the run.
+//]
+private def replayAudit(path: String): Unit receives logger =
+  if file.exists(path) then
+    for line in file.read(path).lines if line.trim != "" do
+      match py.try(json.loads(line))
+      case Ok(d)  => logger.logEntry(entryFromDict(d.cast[py.Dict]))
+      case Err(_) => pass
+
 //[ The core "act" tool: compile + run a Jo program against the agent sandbox.
   !
   ! Requires the guest package to have been built once (`jo build`), which records
@@ -245,8 +274,9 @@ private def buildAndRun(
   !
   ! `buildTimeout` / `runTimeout` are host-side wall-clock backstops (seconds): a
   ! guest stuck compiling or in an infinite loop is killed (process group and all)
-  ! rather than hanging the loop. Finer in-guest memory/CPU caps belong in the
-  ! sandbox runtime (`harpe.sandbox`).
+  ! rather than hanging the loop. Finer OS-level confinement (memory/CPU caps,
+  ! filesystem, uid) lives outside the process in the optional `sandbox/run.sh`
+  ! wrapper (see docs/concepts/sandbox.md).
   !
   ! `maxConcurrent` bounds how many builds+runs proceed at once (each spawns a
   ! compiler + interpreter process); further calls wait for a slot. Concurrent

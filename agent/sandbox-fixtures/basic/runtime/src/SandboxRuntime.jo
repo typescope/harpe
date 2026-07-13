@@ -1,11 +1,20 @@
 namespace SandboxRuntime
 
 import jo.IO.stdout
+import harpe.logging.*
+import harpe.ffi.os
 import SandboxAPI
 
-// Minimal per-turn runtime for the runCode integration tests: just run the
-// guest. OS-level confinement (if any) is applied outside the process by the
-// fixture's `sandbox/run.sh` wrapper, which the tests use to verify the run.sh
-// seam and env scrub end to end.
+// Runtime for the runCode integration tests: install the audit channel (a JSONL
+// file the host names via HARPE_AUDIT_LOG and reads back), emit one record so the
+// emit path is exercised at runtime, then run the guest.
 def main(): Unit receives stdout =
+  Logging.withLogger(auditLogger(), () => run())
+
+private def run(): Unit receives stdout, logger =
+  logger.info("harpe.sandbox.runtime", "runtime ready")
   SandboxAPI.runTask()
+
+private def auditLogger(): Logger =
+  val path = os.getenv("HARPE_AUDIT_LOG", "")
+  if path == "" then Logging.discard else new JsonlLogger(path)

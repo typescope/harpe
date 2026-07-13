@@ -25,6 +25,12 @@ def ord(ch: Any): Int = module.ord(ch).asInt
 //[ The length of a Python object (string, list, bytes, …). //]
 def len(x: Any): Int = module.len(x).asInt
 
+//[ The name of a Python value's type (`"str"`, `"int"`, `"float"`, `"bool"`,
+  ! `"dict"`, …) — used to dispatch on a decoded JSON value.
+//]
+def typeName(x: Any): String =
+  module.getattr(module.callDynamic("type", x), "__name__").asString
+
 //[ The next item from a Python iterator, or `fallback` when exhausted. //]
 def next(it: Any, fallback: Any): py.Dynamic = module.next(it, fallback)
 

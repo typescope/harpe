@@ -113,6 +113,26 @@ def run(): Unit receives stdout =
   check("producer field untouched", ctxRec.get("note", "").asString == "hi")
   check("context not flattened into fields", !ctxRec.contains("session"))
 
+  // --- audit codec: how the sandbox's JSONL records are read back on the host ---
+  // A record written by a `JsonlLogger` (in the sandbox) is read as a dict and
+  // rebuilt into an `Entry` (by `runCode`) with its typed fields intact.
+  val apath = os.path.join(dir, "audit.jsonl")
+  val alog = new JsonlLogger(apath)
+  alog.log("harpe.sandbox.runtime", "info" ~ "ready", "count" ~ 3, "secs" ~ 1.5, "ok" ~ true)
+  alog.close()
+
+  val back = entryFromDict(readRecords(apath).get(0))
+  check("codec preserves category", back.category == "harpe.sandbox.runtime")
+  check("codec preserves field count", back.fields.size == 4)
+
+  match back.fields.getOpt("count")
+  case Some(IntVal(n)) => check("codec keeps int typed", n == 3)
+  case _               => check("codec int present", false)
+
+  match back.fields.getOpt("ok")
+  case Some(BoolVal(b)) => check("codec keeps bool typed", b)
+  case _                => check("codec bool present", false)
+
   py.module("shutil").rmtree(dir, ignore_errors = true)
 
 // A producer: emits through the ambient `logger` channel.
