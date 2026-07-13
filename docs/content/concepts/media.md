@@ -38,21 +38,24 @@ cheap (type and metadata only), and the bytes are read separately, on demand, vi
 `load` — so describing a large file never loads it.
 
 ```jo
-class Media(mimeType: String, meta: Map[String, Meta])
+class Media(mimeType: String, fileName: String, meta: Map[String, Meta])
 ```
+
+`mimeType` and `fileName` are intrinsic; everything else — `source`, `sizeBytes`,
+… — lives in `meta`.
 
 `meta` is structured, not a flat string map — a numeric value keeps its type
 (`type Meta = String | Int`):
 
 ```jo
 var meta = Map.empty[String, Meta]
-meta = meta.add("filename", "report.pdf")   // String
-meta = meta.add("pages", 12)                 // Int
+meta = meta.add("source", "report.pdf")   // String
+meta = meta.add("pages", 12)              // Int
 ```
 
-The key set (`filename`, `source`, `sizeBytes`, …) is a **convention**, not a
-schema: a provider stamps what it knows, a converter reads what it needs, and
-neither grows the type. Read a string-valued key with `media.metaString(key)`.
+The key set (`source`, `sizeBytes`, `pages`, …) is a **convention**, not a schema:
+a provider stamps what it knows, a converter reads what it needs, and neither grows
+the type. Read a string-valued key with `media.metaString(key)`.
 
 ## Providers: where bytes come from
 

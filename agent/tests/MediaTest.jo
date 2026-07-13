@@ -37,10 +37,7 @@ def run(): Unit receives stdout =
   match provider.resolve("data.csv")
   case Some(m) =>
     check("resolve gives a text MIME", m.mimeType.startsWith("text/"))
-
-    match m.metaString("filename")
-    case Some(fn) => check("filename metadata", fn == "data.csv")
-    case None     => check("filename metadata present", false)
+    check("file name is the basename", m.fileName == "data.csv")
 
     match m.metaString("source")
     case Some(src) => check("source metadata is the id", src == "data.csv")

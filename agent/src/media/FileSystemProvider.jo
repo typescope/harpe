@@ -51,16 +51,15 @@ section FileSystemProvider
     ! its content.
     !
     ! The MIME type is guessed from the name (falling back to
-    ! `application/octet-stream`); the metadata carries the original id, the base
-    ! filename, and the byte size (a stat, not a read).
+    ! `application/octet-stream`); the file name is the path's basename; the metadata
+    ! carries the original id and the byte size (a stat, not a read).
   //]
   private[media] def describe(absPath: String, id: String): Media =
     val mime = mimetypes.guessType(absPath) rescue None => "application/octet-stream"
 
     val meta: Map[String, Meta] = Map:
-      "filename" ~ os.path.basename(id)
       "source" ~ id
       "sizeBytes" ~ os.path.getsize(absPath)
 
-    new Media(mime, meta)
+    new Media(mime, os.path.basename(id), meta)
 end

@@ -22,18 +22,19 @@ namespace harpe.media
 //]
 type Meta = String | Int
 
-//[ A media descriptor: MIME type and typed metadata — not the content.
+//[ A media descriptor: MIME type, file name, and typed metadata — not the content.
   !
-  ! The MIME type is e.g. `"application/pdf"` or `"image/png"`. A `MediaProvider`
-  ! produces it from `resolve` (cheap: type and metadata only); the bytes are read
-  ! separately, on demand, via `MediaProvider.load`, so describing a large file
-  ! never loads it.
+  ! The MIME type is e.g. `"application/pdf"` or `"image/png"`; `fileName` is the
+  ! resource's name (`""` if it has none), which a converter can key off — for an
+  ! extension, say. A `MediaProvider` produces this from `resolve` (cheap: no
+  ! content read); the bytes are read separately, on demand, via
+  ! `MediaProvider.load`, so describing a large file never loads it.
 //]
-class Media(mimeType: String, meta: Map[String, Meta])
+class Media(mimeType: String, fileName: String, meta: Map[String, Meta])
   //[ Read a string-valued metadata key.
     !
     ! `None` if the key is absent or its value is not a string, e.g.
-    ! `media.metaString("filename")`.
+    ! `media.metaString("source")`.
   //]
   def metaString(key: String): Option[String] =
     match meta.getOpt(key)

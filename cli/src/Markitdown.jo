@@ -56,24 +56,16 @@ private def readFile(provider: MediaProvider, id: String): Tool.RunOutcome =
   ! than raised — an unreadable file is an expected outcome, not a bug.
 //]
 def markitdownConvert(media: Media, content: py.Dynamic): String =
-  val path = tempfile.writeBytes(content, suffixFor(media))
+  val suffix = os.extname(media.fileName)
+  val path = tempfile.writeBytes(content, suffix)
 
-  val result = py.try(convertPath(path))
-  val _      = py.try(os.unlink(path))
+  val result = py.try:
+    markitdown.MarkItDown()
+      .convert(path)
+      .text_content.asString
+
+  val _ = py.try(os.unlink(path))
 
   match result
   case Ok(text) => text
   case Err(e)   => "Could not read the file (\{media.mimeType}): \{e.message}"
-
-//[ Run markitdown on a staged file and return its Markdown text. //]
-private def convertPath(path: String): String =
-  markitdown.MarkItDown().convert(path).text_content.asString
-
-//[ The file suffix markitdown should treat the staged bytes as.
-  !
-  ! Taken from the media's original filename (e.g. `".pdf"`); empty when unknown.
-//]
-private def suffixFor(media: Media): String =
-  match media.metaString("filename")
-  case Some(name) => os.extname(name)
-  case None       => ""
