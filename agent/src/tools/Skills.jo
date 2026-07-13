@@ -15,6 +15,14 @@ import harpe.ffi.os
 import harpe.ffi.builtins
 
 import harpe.Tool
+import harpe.logging.logger
+
+//[ The audit-log category for the skills tools — one record per content read
+  ! (`skillsRead`/`skillsSearch`), tagged by `action`. Reverse-namespaced per the
+  ! `harpe.logging.Entry` category convention. A denied `..` traversal is recorded
+  ! too (the requested `name` is logged before confinement is checked).
+//]
+private def skillsCategory: String = "harpe.tools.skills"
 
 //[ Collect (relativeName ~ fullPath) for every file under skillsDir.
   !
@@ -56,7 +64,12 @@ private def skillsListText(skillsDir: String): String =
   val names = collectSkills(skillsDir).map(pair => pair.fst)
   if names.isEmpty then "(no skills found)" else names.join("\n")
 
-private def skillsReadOutcome(skillsDir: String, name: String): Tool.RunOutcome =
+private def skillsReadOutcome(skillsDir: String, name: String): Tool.RunOutcome receives logger =
+  logger.log:
+    skillsCategory
+    "action" ~ "read"
+    "name"   ~ name
+
   // Resolve and confine the path to the skills directory (no escaping via "..").
   val absPath = os.path.abspath(os.path.normpath(os.path.join(skillsDir, name)))
   val absDir  = os.path.abspath(skillsDir)
@@ -76,7 +89,12 @@ private def skillsReadOutcome(skillsDir: String, name: String): Tool.RunOutcome 
   else
     new Tool.RunOutcome("Skill not found: \{name}", "not found · \{name}")
 
-private def skillsSearchText(skillsDir: String, query: String): String =
+private def skillsSearchText(skillsDir: String, query: String): String receives logger =
+  logger.log:
+    skillsCategory
+    "action" ~ "search"
+    "query"  ~ query
+
   val files = collectSkills(skillsDir)
   val lowerQuery = query.toLower
   val maxHits = 30
