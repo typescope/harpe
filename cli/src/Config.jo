@@ -41,7 +41,7 @@ section Config
   //]
   def agent(brain: Model, memory: Memory, history: List[Message]): Agent receives workspace =
     val basePrompt = workspace.read("AGENT.md") rescue None => ""
-    val tools = Defaults.tools() ++ memoryTools(memory) ++ [fileTool(new FileSystemProvider(workspace.root))]
+    val tools = Defaults.tools() ++ memoryTools(memory) ++ [fileTool(FileSystemProvider.byPath(workspace.root))]
     val context = new WindowedContext(basePrompt, memory, history)
     new Agent(brain, tools, context)
 

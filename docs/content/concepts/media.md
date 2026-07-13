@@ -79,14 +79,30 @@ storage is the application's concern, not this seam's.
 
 ### The shipped provider
 
-The framework ships one: `FileSystemProvider`, over files under a root directory.
-The id is a path relative to that root, and resolution is **confined** to it — a
-`..` escape or an absolute path landing outside resolves to `None`, never a file
-elsewhere on the host. Point it at the agent's working directory:
+The framework ships `FileSystemProvider`, over files under a root directory. It
+addresses files by a **key** that a `keyToPath: String => String` mapping turns into
+a path relative to the root; resolution is then **confined** to the root — a `..`
+escape or an absolute path landing outside resolves to `None`, never a file
+elsewhere on the host.
 
-```jo
-val provider = new FileSystemProvider(workspace.root)
-```
+`keyToPath` is the access-control seam:
+
+- **Trusted / CLI** — the identity mapping, `FileSystemProvider.byPath(root)`: the
+  key *is* the path, because the user hands paths to the model directly.
+
+  ```jo
+  val provider = FileSystemProvider.byPath(workspace.root)
+  ```
+
+- **Multi-tenant / SaaS** — a lookup that maps opaque, unguessable handles to paths.
+  The model can only reach files it was explicitly granted; it cannot construct or
+  enumerate paths (the underlying path is not a valid key). Confinement to the root
+  still applies underneath, as defense in depth.
+
+  ```jo
+  // the app grants files under random handles, then:
+  val provider = new FileSystemProvider(root, key => grants.getOrElse(key, ""))
+  ```
 
 Sources that live elsewhere — an upload store, a bucket, a chat platform's file
 API — are yours to implement. That is the storage boundary: the framework handles
@@ -132,7 +148,7 @@ private def readFile(provider: MediaProvider, id: String): Tool.RunOutcome =
 
 ```jo
 // src/Config.jo — add it to the session toolset
-val tools = Defaults.tools() ++ memoryTools(memory) ++ [fileTool(new FileSystemProvider(workspace.root))]
+val tools = Defaults.tools() ++ memoryTools(memory) ++ [fileTool(FileSystemProvider.byPath(workspace.root))]
 ```
 
 Swapping the backend — an OCR engine, a local vision model — is a local edit to the

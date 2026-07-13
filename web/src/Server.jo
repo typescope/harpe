@@ -21,6 +21,7 @@
 //]
 
 namespace harpe.web
+import harpe.ffi.secrets
 import harpe.ffi.time
 import harpe.ffi.json
 import harpe.ffi.threading
@@ -141,7 +142,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
 
   //[ A fresh session under a newly-minted, time-sortable id. //]
   private def createSession(): Session receives workspace =
-    val id = time.strftime("%Y%m%dT%H%M%S") + "-" + py.module("secrets").token_hex(2).asString
+    val id = time.strftime("%Y%m%dT%H%M%S") + "-" + secrets.tokenHex(2)
     val memory = new Memory
     val agent = Config.agent:
       brain

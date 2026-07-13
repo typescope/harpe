@@ -1,45 +1,61 @@
 //[ FileSystemProvider.jo
   !
-  ! The shipped `MediaProvider`: files under a root directory. The id is a path
-  ! relative to `root`, and resolution is confined to it — a `..` escape or an
-  ! absolute path landing outside `root` resolves to `None`, never a file elsewhere
-  ! on the host. Point it at the agent's working directory
-  ! (`new FileSystemProvider(workspace.root)`) to let the model read the files it
-  ! ships with.
+  ! The shipped `MediaProvider`: files under a root directory, addressed by a key
+  ! that `keyToPath` turns into a path relative to `root`. Resolution is then
+  ! confined to `root` — a `..` escape or an absolute path landing outside resolves
+  ! to `None`, never a file elsewhere on the host.
+  !
+  ! `keyToPath` is the access-control seam:
+  !
+  !   - **Trusted / CLI** — the identity mapping (`FileSystemProvider.byPath`): the
+  !     key IS the path, because the user hands paths to the model directly.
+  !   - **Multi-tenant / SaaS** — a lookup that maps opaque, unguessable handles to
+  !     paths, so a model can only reach files it was explicitly granted; it cannot
+  !     construct or enumerate paths. Confinement to `root` still applies underneath,
+  !     as defense in depth.
 //]
 
 namespace harpe.media
+
 import harpe.ffi.os
 import harpe.ffi.mimetypes
 import harpe.ffi.file
 
-
-//[ A directory-rooted media source, confined to `root`. //]
-class FileSystemProvider(root: String)
+//[ A directory-rooted media source, confined to `root`, addressing files by a key
+  ! mapped to a relative path via `keyToPath`.
+//]
+class FileSystemProvider(root: String, keyToPath: String => String)
   view MediaProvider
 
   def resolve(id: String): Option[Media] =
-    match FileSystemProvider.confinedFile(root, id)
-    case Some(path) => Some(FileSystemProvider.describe(path, id))
-    case None       => None
+    val path = keyToPath(id)
+    match FileSystemProvider.confinedFile(root, path)
+    case Some(absPath) => Some(FileSystemProvider.describe(absPath, path))
+    case None          => None
 
   def load(id: String): py.Dynamic =
-    match FileSystemProvider.confinedFile(root, id)
-    case Some(path) => file.readBytes(path)
-    case None       => abort "FileSystemProvider: no readable file for id '\{id}'"
+    match FileSystemProvider.confinedFile(root, keyToPath(id))
+    case Some(absPath) => file.readBytes(absPath)
+    case None          => abort "FileSystemProvider: no readable file for key '\{id}'"
 end
 
 section FileSystemProvider
-  //[ The confined absolute path for `id` under `root`, or `None` if it escapes the
-    ! root or is not a regular file.
+  //[ Address files directly by their path relative to `root` — the identity
+    ! mapping, for a trusted caller that supplies paths (as the CLI user does when
+    ! typing a path to the model).
+  //]
+  def byPath(root: String): FileSystemProvider = new FileSystemProvider(root, id => id)
+
+  //[ The confined absolute path for the relative `path` under `root`, or `None` if
+    ! it escapes the root or is not a regular file.
     !
     ! `realpath` resolves symlinks so a link cannot point out; the trailing
     ! separator in the boundary check stops a sibling like `/root-evil` from passing
     ! as beneath `/root`.
   //]
-  private[media] def confinedFile(root: String, id: String): Option[String] =
+  private[media] def confinedFile(root: String, path: String): Option[String] =
     val base   = os.path.realpath(root)
-    val target = os.path.realpath(os.path.join(root, id))
+    val target = os.path.realpath(os.path.join(root, path))
 
     if (target == base || target.startsWith(base + "/")) && os.path.isfile(target) then
       Some(target)
@@ -52,14 +68,14 @@ section FileSystemProvider
     !
     ! The MIME type is guessed from the name (falling back to
     ! `application/octet-stream`); the file name is the path's basename; the metadata
-    ! carries the original id and the byte size (a stat, not a read).
+    ! carries the resolved `source` path and the byte size (a stat, not a read).
   //]
-  private[media] def describe(absPath: String, id: String): Media =
+  private[media] def describe(absPath: String, source: String): Media =
     val mime = mimetypes.guessType(absPath) rescue None => "application/octet-stream"
 
     val meta: Map[String, Meta] = Map:
-      "source" ~ id
+      "source" ~ source
       "sizeBytes" ~ os.path.getsize(absPath)
 
-    new Media(mime, os.path.basename(id), meta)
+    new Media(mime, os.path.basename(absPath), meta)
 end

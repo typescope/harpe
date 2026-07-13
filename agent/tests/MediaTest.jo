@@ -1,8 +1,9 @@
 //[ MediaTest.jo
   !
   ! Unit tests for the media layer (`harpe.media`): the shipped `FileSystemProvider`
-  ! — resolution (a descriptor, no content read), on-demand `load`, MIME/metadata,
-  ! and (the security-relevant part) path confinement to its root.
+  ! — path-keyed resolution (`byPath`), on-demand `load`, MIME/metadata, path
+  ! confinement to its root, and the `keyToPath` access-control seam (a handle
+  ! mapping that admits only granted keys).
 //]
 
 namespace harpe.test.MediaTest
@@ -31,7 +32,7 @@ def run(): Unit receives stdout =
   file.write(os.path.join(wsdir, "data.csv"), "a,b\n1,2\n")
   file.write(os.path.join(root, "secret.txt"), "TOPSECRET")
 
-  val provider = new FileSystemProvider(wsdir)
+  val provider = FileSystemProvider.byPath(wsdir)
 
   // --- resolution: bytes, MIME, provenance metadata ---
   match provider.resolve("data.csv")
@@ -53,3 +54,14 @@ def run(): Unit receives stdout =
   check("deny parent escape",   denied(provider.resolve("../secret.txt")))
   check("deny absolute outside", denied(provider.resolve(os.path.join(root, "secret.txt"))))
   check("missing file is None",  denied(provider.resolve("absent.csv")))
+
+  // --- keyToPath access control (the SaaS case): only granted handles resolve;
+  //     the underlying path is NOT a valid key.
+  val grants: Map[String, String] = Map:
+    "h1" ~ "data.csv"
+
+  val secured = new FileSystemProvider(wsdir, k => grants.getOrElse(k, ""))
+  check("granted handle resolves",   !denied(secured.resolve("h1")))
+  check("granted handle loads",      secured.load("h1").decode().asString == "a,b\n1,2\n")
+  check("raw path is not a key",     denied(secured.resolve("data.csv")))
+  check("unknown handle is denied",  denied(secured.resolve("h2")))
