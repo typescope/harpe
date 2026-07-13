@@ -1,0 +1,42 @@
+//[ Media.jo
+  !
+  ! A media descriptor the agent handles — an image, a PDF, an audio clip — as a
+  ! provider-neutral value: its MIME type and an open bag of typed metadata. It does
+  ! NOT hold the content; a `MediaProvider` reads the bytes on demand via
+  ! `readContent`, so a descriptor is cheap and describing a file never loads it.
+  !
+  ! The metadata is structured, not a flat string map: a numeric value keeps its
+  ! type (a page count is a number, not "3"). The key set is a convention
+  ! (`filename`, `source`, `sizeBytes`, `pages`, …), not a schema: providers stamp
+  ! what they know, tools read what they need, and neither is forced to grow the
+  ! type.
+//]
+
+namespace harpe.media
+
+//[ A metadata value: text or a number.
+  !
+  !     var meta = Map.empty[String, Meta]
+  !     meta = meta.add("filename", "report.pdf")   // String
+  !     meta = meta.add("pages", 12)                 // Int
+//]
+type Meta = String | Int
+
+//[ A media descriptor: MIME type and typed metadata — not the content.
+  !
+  ! The MIME type is e.g. `"application/pdf"` or `"image/png"`. A `MediaProvider`
+  ! produces it from `resolve` (cheap: type and metadata only); the bytes are read
+  ! separately, on demand, via `MediaProvider.load`, so describing a large file
+  ! never loads it.
+//]
+class Media(mimeType: String, meta: Map[String, Meta])
+  //[ Read a string-valued metadata key.
+    !
+    ! `None` if the key is absent or its value is not a string, e.g.
+    ! `media.metaString("filename")`.
+  //]
+  def metaString(key: String): Option[String] =
+    match meta.getOpt(key)
+    case Some(s: String) => Some(s)
+    case _               => None
+end

@@ -1,0 +1,33 @@
+//[ MediaProvider.jo
+  !
+  ! Where media comes from. A `MediaProvider` maps a unique identifier — a path, an
+  ! upload id, a URL, a Telegram file-id — to media in two steps: `resolve` returns
+  ! a cheap descriptor (type + metadata), and `load` reads the bytes on demand. That
+  ! one seam is what keeps the design additive: a media-reading tool is written once
+  ! against this interface and never learns about sources, so N tools and M sources
+  ! compose as N + M, not N × M.
+  !
+  ! Providers are read-only: an agent that *produces* media (a thumbnail, a
+  ! rendered page) does so through a dedicated tool that stores the result itself —
+  ! storage is the application's concern, not this seam's.
+  !
+  ! The framework ships one implementation, `FileSystemProvider` (a directory-rooted
+  ! source; see FileSystemProvider.jo). Sources that live elsewhere — an upload
+  ! store, a bucket, a chat platform's file API — are supplied by the application.
+//]
+
+namespace harpe.media
+
+//[ A source of media, keyed by a unique identifier.
+//]
+interface MediaProvider
+  //[ The descriptor for `id` — MIME type and metadata — without reading the
+    ! content. `None` when the id names nothing this provider can serve.
+  //]
+  def resolve(id: String): Option[Media]
+
+  //[ The raw bytes of the media named by `id`. Call it only for an id `resolve`
+    ! accepted.
+  //]
+  def load(id: String): py.Dynamic
+end

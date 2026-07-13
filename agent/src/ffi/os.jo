@@ -27,7 +27,11 @@ interface PathApi
 
   def dirname(path: String): String
 
+  def basename(path: String): String
+
   def abspath(path: String): String
+
+  def realpath(path: String): String
 
   def normpath(path: String): String
 
@@ -35,6 +39,9 @@ interface PathApi
 
   def getsize(path: String): Int
 end
+
+// The file extension of `path`, including the dot (e.g. `".pdf"`); "" if none.
+def extname(path: String): String = module.path.splitext(path)[1].asString
 
 def listdir(path: String): py.List = module.listdir(path).cast[py.List]
 

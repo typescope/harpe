@@ -1,0 +1,57 @@
+//[ MediaTest.jo
+  !
+  ! Unit tests for the media layer (`harpe.media`): the shipped `FileSystemProvider`
+  ! — resolution (a descriptor, no content read), on-demand `load`, MIME/metadata,
+  ! and (the security-relevant part) path confinement to its root.
+//]
+
+namespace harpe.test.MediaTest
+
+import jo.IO.stdout
+import harpe.media.*
+import harpe.ffi.writeFile
+import os
+
+private def check(label: String, cond: Bool): Unit receives stdout =
+  assert: cond, "\{label} failed"
+  println "  ok \{label}"
+
+private def denied(o: Option[Media]): Bool =
+  match o
+  case None => true
+  case _    => false
+
+def run(): Unit receives stdout =
+  // A rooted provider at <root>/ws, with a secret planted OUTSIDE it (at <root>)
+  // to probe confinement.
+  val root  = py.module("tempfile").mkdtemp().asString
+  val wsdir = os.path.join(root, "ws")
+  os.makedirs(wsdir)
+  writeFile(os.path.join(wsdir, "data.csv"), "a,b\n1,2\n")
+  writeFile(os.path.join(root, "secret.txt"), "TOPSECRET")
+
+  val provider = new FileSystemProvider(wsdir)
+
+  // --- resolution: bytes, MIME, provenance metadata ---
+  match provider.resolve("data.csv")
+  case Some(m) =>
+    check("resolve gives a text MIME", m.mimeType.startsWith("text/"))
+
+    match m.metaString("filename")
+    case Some(fn) => check("filename metadata", fn == "data.csv")
+    case None     => check("filename metadata present", false)
+
+    match m.metaString("source")
+    case Some(src) => check("source metadata is the id", src == "data.csv")
+    case None      => check("source metadata present", false)
+
+  case None =>
+    check("resolve data.csv", false)
+
+  // --- load reads the bytes on demand ---
+  check("load returns the file bytes", provider.load("data.csv").decode().asString == "a,b\n1,2\n")
+
+  // --- confinement (the point of a shipped provider) ---
+  check("deny parent escape",   denied(provider.resolve("../secret.txt")))
+  check("deny absolute outside", denied(provider.resolve(os.path.join(root, "secret.txt"))))
+  check("missing file is None",  denied(provider.resolve("absent.csv")))

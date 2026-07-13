@@ -1,0 +1,17 @@
+//[ mimetypes.jo
+  !
+  ! MIME-type guessing from filenames, wrapping Python's `mimetypes` module —
+  ! mirroring `os` and `time`. Referenced as `mimetypes.guessType(...)`.
+//]
+
+namespace mimetypes
+
+private def module: py.Dynamic = py.module("mimetypes")
+
+//[ Guess a file's MIME type from its name (e.g. `"application/pdf"`).
+  !
+  ! `None` when the type cannot be determined from the name.
+//]
+def guessType(path: String): Option[String] =
+  val guessed = module.guess_type(path)[0]
+  if py.isNone(guessed) then None else Some(guessed.asString)
