@@ -1,0 +1,74 @@
+namespace harpe.examples.prreview
+
+//[ Main.jo
+  !
+  ! The CLI agent loop (the Harpe "conversational" trigger) and its entry
+  ! points. Each turn it:
+  !
+  !   1. reads a line from the user
+  !   2. asks the LLM, offering the configured tools (default: runCode plus the
+  !      read-only skill tools)
+  !   3. dispatches each tool call to its handler and feeds the result back
+  !   4. repeats until the LLM replies with text, then prints the reply
+  !
+  ! `jo.main = harpe.examples.prreview.main` wires an agent to the loop.
+  !
+//]
+
+namespace harpe.cli
+
+import jo.IO.stdout
+import jo.IO.args
+import harpe.*
+import harpe.ffi.loadDotenv
+import harpe.logging.Logging
+import harpe.logging.JsonlLogger
+import harpe.logging.logger
+import harpe.Model.UserText
+import harpe.Model.Message
+import harpe.turns.Answered
+import harpe.turns.Interrupted
+
+//[ agent entry point  //]
+def main(): Unit receives args, stdout =
+  if args.size < 2 then
+    abort "Missing PR source argument"
+
+  val pr     = args[1]
+  val dryRun = args[2] == "true"
+
+  if Defaults.checkAgentDir() then
+    loadDotenv(".env")
+    val wspace = new Workspace(os.path.abspath("."))
+    with workspace = wspace in review(pr, dryRun)
+
+private def review(pr: String, dryRun: Bool): Unit receives stdout, workspace, logger =
+  val getenv("GITHUB_TOKEN", "")
+
+  val memory = new Memory
+  val basePrompt = workspace.read("AGENT.md") rescue None => ""
+  val tools = Defaults.tools() ++ memoryTools(memory)
+  val context = new WindowedContext(basePrompt, memory, history)
+  val agent = new Agent(Defaults.model(), tools, context)
+
+  val inputHistory = workspace.relative("logs/inputs.txt")
+  val interact = new ConsoleInteract(stdout, inputHistory)
+
+  interact.init()
+
+  val userMsg = UserText(userInput)
+  val res = interact.turn: () =>
+    agent.runTurn(userMsg, interact, 10, 4)
+
+  if res is Answered(delta, text) then
+    sessionLog.append(time.now(), delta)
+    interact.agentResponse(text)
+
+  else
+    println "  · request failed"
+
+  // Persist memory regardless of outcome (it is not rolled back with a turn).
+  if !memory.isEmpty then Memory.save(sessionLog.memoryPath, memory)
+
+  sessionLog.close()
+end
