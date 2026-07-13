@@ -19,8 +19,14 @@ import harpe.ffi.tempfile
 
 import harpe.*
 import harpe.media.*
+import harpe.logging.logger
 
 private def markitdown: py.Dynamic = py.module("markitdown")
+
+//[ The audit-log category for this tool — one record per read. Reverse-namespaced
+  ! (namespace + tool name) per the `harpe.logging.Entry` category convention.
+//]
+private def readFileCategory: String = "harpe.cli.readFile"
 
 //[ The file-reading tool, backed by `provider`.
   !
@@ -37,15 +43,27 @@ def fileTool(provider: MediaProvider): Tool =
 //[ Resolve a path and render it to Markdown, bounding the result.
   !
   ! Bounding keeps one large document from flooding the context. A path that
-  ! resolves to nothing is reported back to the model.
+  ! resolves to nothing is reported back to the model. Each call emits one
+  ! `harpe.cli.readFile` audit record (the key requested and the outcome) to the
+  ! ambient `logger`.
 //]
-private def readFile(provider: MediaProvider, id: String): Tool.RunOutcome =
+private def readFile(provider: MediaProvider, id: String): Tool.RunOutcome receives logger =
   match provider.resolve(id)
   case None =>
+    logger.log:
+      readFileCategory
+      "key"     ~ id
+      "outcome" ~ "not found"
     new Tool.RunOutcome("No file found at '\{id}'.", "not found · \{id}")
 
   case Some(media) =>
     val markdown = markitdownConvert(media, provider.load(id))
+    logger.log:
+      readFileCategory
+      "key"      ~ id
+      "fileName" ~ media.fileName
+      "mimeType" ~ media.mimeType
+      "outcome"  ~ "read"
     new Tool.RunOutcome(Tool.elide(markdown, 4000), "read · \{id}")
 
 //[ Convert media `content` to Markdown with markitdown.
