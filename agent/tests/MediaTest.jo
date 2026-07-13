@@ -6,11 +6,12 @@
 //]
 
 namespace harpe.test.MediaTest
+import harpe.ffi.tempfile
+import harpe.ffi.file
 
 import jo.IO.stdout
 import harpe.media.*
-import harpe.ffi.writeFile
-import os
+import harpe.ffi.os
 
 private def check(label: String, cond: Bool): Unit receives stdout =
   assert: cond, "\{label} failed"
@@ -24,11 +25,11 @@ private def denied(o: Option[Media]): Bool =
 def run(): Unit receives stdout =
   // A rooted provider at <root>/ws, with a secret planted OUTSIDE it (at <root>)
   // to probe confinement.
-  val root  = py.module("tempfile").mkdtemp().asString
+  val root  = tempfile.mkdtemp()
   val wsdir = os.path.join(root, "ws")
   os.makedirs(wsdir)
-  writeFile(os.path.join(wsdir, "data.csv"), "a,b\n1,2\n")
-  writeFile(os.path.join(root, "secret.txt"), "TOPSECRET")
+  file.write(os.path.join(wsdir, "data.csv"), "a,b\n1,2\n")
+  file.write(os.path.join(root, "secret.txt"), "TOPSECRET")
 
   val provider = new FileSystemProvider(wsdir)
 

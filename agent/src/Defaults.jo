@@ -7,13 +7,12 @@
 //]
 
 namespace harpe
+import harpe.ffi.sys
+import harpe.ffi.file
 
-import harpe.ffi.getenv
-import harpe.ffi.sysMod
-import harpe.ffi.fileExists
 import harpe.models.*
 import harpe.tools.*
-import os
+import harpe.ffi.os
 
 section Defaults
   //[ The base toolset: `runCode` plus the read-only skill tools over the agent's
@@ -49,23 +48,23 @@ section Defaults
     !                     its own).
   //]
   def model(): Model receives IO.stdout =
-    val provider = getenv("PROVIDER", "anthropic")
+    val provider = os.getenv("PROVIDER", "anthropic")
     if provider == "openai" then
-      val key = getenv("OPENAI_API_KEY", "")
+      val key = os.getenv("OPENAI_API_KEY", "")
       if key == "" then
         println "Error: OPENAI_API_KEY is not set (put it in .env or the environment)."
-        sysMod.exit(1)
-      openai(key, getenv("MODEL", "gpt-4o"), getenv("OPENAI_BASE_URL", ""))
+        sys.exit(1)
+      openai(key, os.getenv("MODEL", "gpt-4o"), os.getenv("OPENAI_BASE_URL", ""))
     else
-      val key = getenv("ANTHROPIC_API_KEY", "")
+      val key = os.getenv("ANTHROPIC_API_KEY", "")
       if key == "" then
         println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
-        sysMod.exit(1)
-      anthropic(key, getenv("MODEL", "claude-opus-4-6"), cachePolicy())
+        sys.exit(1)
+      anthropic(key, os.getenv("MODEL", "claude-opus-4-6"), cachePolicy())
 
   //[ The Anthropic prompt-cache policy from PROMPT_CACHE (default "5m"). //]
   private def cachePolicy(): AnthropicCache =
-    match getenv("PROMPT_CACHE", "5m")
+    match os.getenv("PROMPT_CACHE", "5m")
     case "off" => NoCache
     case "1h"  => OneHour
     case _     => FiveMinutes
@@ -87,7 +86,7 @@ section Defaults
     ! Prints a clear error and returns false on a mislaunch.
   //]
   def checkAgentDir(): Bool receives IO.stdout =
-    if fileExists("jo.toml") && os.path.isdir("sandbox") then
+    if file.exists("jo.toml") && os.path.isdir("sandbox") then
       true
 
     else

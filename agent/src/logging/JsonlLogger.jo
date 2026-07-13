@@ -9,9 +9,9 @@
 //]
 
 namespace harpe.logging
+import harpe.ffi.json
 
-import harpe.ffi.jsonMod
-import os
+import harpe.ffi.os
 
 //[ Open `path` for appending, creating its parent directory if needed. //]
 private def openLog(path: String): py.Dynamic =
@@ -32,7 +32,7 @@ class JsonlLogger(path: String)
     val d = py.dict("time" ~ entry.time, "category" ~ entry.category)
     for k ~ v in entry.fields.toList do d.set(k, unwrap(v))
 
-    out.write(jsonMod.dumps(d).asString + "\n")
+    out.write(json.dumps(d) + "\n")
     out.flush()
 
   def close(): Unit = out.close()

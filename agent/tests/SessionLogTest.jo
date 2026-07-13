@@ -7,10 +7,13 @@
 //]
 
 namespace harpe.test.SessionLogTest
+import harpe.ffi.os
+import harpe.ffi.time
+import harpe.ffi.json
+import harpe.ffi.file
 
 import jo.IO.stdout
 import harpe.*
-import harpe.ffi.*
 import harpe.Model.*
 import harpe.Tool.*
 
@@ -21,8 +24,8 @@ private def check(label: String, cond: Bool): Unit receives stdout =
 // Read a session file back as one parsed dict per non-empty line.
 private def readRecords(path: String): List[py.Dict] =
   var records: List[py.Dict] = []
-  for line in readFile(path).lines do
-    if line.trim != "" then records = records + jsonMod.loads(line).cast[py.Dict]
+  for line in file.read(path).lines do
+    if line.trim != "" then records = records + json.loads(line).cast[py.Dict]
 
   records
 

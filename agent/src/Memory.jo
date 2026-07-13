@@ -17,11 +17,10 @@
 //]
 
 namespace harpe
+import harpe.ffi.os
+import harpe.ffi.json
+import harpe.ffi.file
 
-import harpe.ffi.jsonMod
-import harpe.ffi.fileExists
-import harpe.ffi.readFile
-import harpe.ffi.writeFile
 
 //[ A mutable string→string working-memory store, over an immutable `Map`. //]
 class Memory
@@ -51,7 +50,7 @@ class Memory
   def toJson(): String =
     val d = py.dict()
     for k ~ v in store.toList do d.set(k, v)
-    jsonMod.dumps(d).asString
+    json.dumps(d)
 end
 
 section Memory
@@ -62,7 +61,7 @@ section Memory
   def fromJson(text: String): Memory =
     val m = new Memory
     if text.trim != "" then
-      match py.try(jsonMod.loads(text))
+      match py.try(json.loads(text))
       case Ok(d) =>
         val dict = d.cast[py.Dict]
         for k in py.iter(dict.keys()) do
@@ -74,7 +73,7 @@ section Memory
 
   //[ Load a memory snapshot from `path`; an empty store if the file is absent. //]
   def load(path: String): Memory =
-    if fileExists(path) then fromJson(readFile(path)) else new Memory
+    if file.exists(path) then fromJson(file.read(path)) else new Memory
 
   //[ Save `memory` to `path` atomically: write `<path>.tmp`, then rename over the
     ! target (atomic on POSIX), so a crash never leaves a half-written file.
@@ -84,6 +83,6 @@ section Memory
     if dir != "" then os.makedirs(dir)
 
     val tmp = path + ".tmp"
-    writeFile(tmp, memory.toJson())
+    file.write(tmp, memory.toJson())
     os.rename(tmp, path)
 end

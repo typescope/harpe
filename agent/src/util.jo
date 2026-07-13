@@ -10,9 +10,9 @@
 //]
 
 namespace harpe.util
+import harpe.ffi.json
 
 import harpe.Model.*
-import harpe.ffi.jsonMod
 
 //[ Bound the transcript to `maxChars` by dropping whole oldest *turns* (a turn
   ! begins at a `UserText`). This never splits an `Assistant`+`ToolResults` pair,
@@ -65,7 +65,7 @@ private def messageChars(m: Message): Int =
 
   case Assistant(text, calls) =>
     var n = text.size
-    for c in calls do n = n + jsonMod.dumps(c.input.raw).asString.size
+    for c in calls do n = n + json.dumps(c.input.raw).size
     n
 
   case ToolResults(results) =>

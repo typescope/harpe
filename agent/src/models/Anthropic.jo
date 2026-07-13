@@ -7,8 +7,8 @@
 //]
 
 namespace harpe.models
+import harpe.ffi.builtins
 
-import harpe.ffi.*
 
 import harpe.Model
 import harpe.Model.*
@@ -123,7 +123,7 @@ private def parseReply(response: py.Dynamic): Assistant =
   var calls: List[ToolCall] = []
 
   for block in content do
-    val btype = attr(block, "type").asString
+    val btype = builtins.attr(block, "type").asString
     if btype == "text" then
       text = text + block.text.asString
     else if btype == "tool_use" then

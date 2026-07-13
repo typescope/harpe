@@ -1,0 +1,32 @@
+//[ dotenv.jo
+  !
+  ! Loading a `.env` file into the process environment — a small usage-level helper
+  ! over `file` and `os.environ`, in its own namespace like `os` and `time`.
+//]
+
+namespace harpe.ffi.dotenv
+
+import harpe.ffi.file
+import harpe.ffi.os
+
+//[ Load `KEY=VALUE` lines from a `.env` file at `path` into the environment.
+  !
+  ! Blank lines and `#` comments are skipped; a missing file is a no-op.
+//]
+def load(path: String): Unit =
+  if file.exists(path) then
+    val env = os.environ
+    for line in file.read(path).lines do
+      val t = line.trim
+      val eq = indexOf(t, '=')
+      if t.size > 0 && !t.startsWith("#") && eq > 0 then
+        val key = t.substring(0, eq).trim
+        val value = t.substring(eq + 1, t.size).trim
+        env.set(key, value)
+
+private def indexOf(s: String, c: Char): Int =
+  var i = 0
+  while i < s.size do
+    if s.get(i) == c then return i
+    i = i + 1
+  -1

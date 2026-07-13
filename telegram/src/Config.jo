@@ -9,6 +9,8 @@
 //]
 
 namespace harpe.telegram
+import harpe.ffi.os
+import harpe.ffi.sys
 
 import harpe.Agent
 import harpe.workspace
@@ -17,8 +19,6 @@ import harpe.Defaults
 import harpe.Model
 import harpe.Model.Message
 import harpe.tools.memoryTools
-import harpe.ffi.getenv
-import harpe.ffi.sysMod
 import harpe.context.WindowedContext
 
 section Config
@@ -72,10 +72,10 @@ section Config
     ! Required — the driver exits with a clear message if it is unset.
   //]
   def botToken(): String receives IO.stdout =
-    val token = getenv("TELEGRAM_BOT_TOKEN", "")
+    val token = os.getenv("TELEGRAM_BOT_TOKEN", "")
     if token == "" then
       println "Error: TELEGRAM_BOT_TOKEN is not set (get one from @BotFather, put it in .env)."
-      sysMod.exit(1)
+      sys.exit(1)
     token
 
   //[ The allowlist of SENDER (user) ids permitted to use the agent, from
@@ -90,7 +90,7 @@ section Config
     ! user their own id so the operator can add it here.
   //]
   def allowedSenders(): List[String] =
-    val raw = getenv("TELEGRAM_ALLOWED_SENDERS", "")
+    val raw = os.getenv("TELEGRAM_ALLOWED_SENDERS", "")
     var out: List[String] = []
 
     if raw.trim != "" then

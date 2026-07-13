@@ -17,10 +17,11 @@
 //]
 
 namespace harpe
+import harpe.ffi.os
+import harpe.ffi.time
+import harpe.ffi.json
+import harpe.ffi.file
 
-import harpe.ffi.jsonMod
-import harpe.ffi.fileExists
-import harpe.ffi.readFile
 import harpe.util.truncate
 import harpe.Model.*
 import harpe.Tool.*
@@ -42,7 +43,7 @@ class SessionLog
   //]
   def append(time: Float, messages: List[Message]): Unit =
     for m in messages do
-      val line = jsonMod.dumps(SessionLog.messageToDict(time, m)).asString + "\n"
+      val line = json.dumps(SessionLog.messageToDict(time, m)) + "\n"
       logFile.write(line)
 
     logFile.flush()
@@ -89,12 +90,12 @@ section SessionLog
     ! untouched. The cap is generous, so normal sessions are returned in full.
   //]
   def loadFile(path: String): List[Message] =
-    if !fileExists(path) then []
+    if !file.exists(path) then []
     else
       var msgs: List[Message] = []
-      for line in readFile(path).lines do
+      for line in file.read(path).lines do
         if line.trim != "" then
-          msgs = msgs + dictToMessage(jsonMod.loads(line).cast[py.Dict])
+          msgs = msgs + dictToMessage(json.loads(line).cast[py.Dict])
       truncate(msgs, maxResumeChars)
 
   //[ The inverse of `messageToDict`: one stored record back into a `Message`. //]

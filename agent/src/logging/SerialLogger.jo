@@ -6,13 +6,13 @@
 //]
 
 namespace harpe.logging
+import harpe.ffi.threading
 
-import harpe.ffi.threadingMod
 
 private class SerialLogger(inner: Logger)
   view Logger
 
-  private val lock = threadingMod.Lock()
+  private val lock = threading.lock()
 
   def logEntry(entry: Entry): Unit =
     lock.acquire()

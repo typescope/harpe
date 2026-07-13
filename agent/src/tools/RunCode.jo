@@ -22,9 +22,16 @@
 //]
 
 namespace harpe.tools
+import harpe.ffi.os
+import harpe.ffi.time
+import harpe.ffi.glob
+import harpe.ffi.threading
+import harpe.ffi.subprocess
+import harpe.ffi.builtins
+import harpe.ffi.file
+import harpe.ffi.text
 
 import harpe.*
-import harpe.ffi.*
 import harpe.logging.*
 
 private def shutilMod: py.Dynamic = py.module("shutil")
@@ -41,7 +48,7 @@ private def runCodeCategory: String = "harpe.tools.runCode"
   ! built yet.
 //]
 private def findDoneFile(guestDir: String): Option[String] =
-  val hits = globMod.glob(os.path.join(guestDir, ".build/*/jo-*/target/*.py.done")).cast[py.List]
+  val hits = glob.glob(os.path.join(guestDir, ".build/*/jo-*/target/*.py.done"))
   if hits.size == 0 then None else Some(hits.get(0).asString)
 
 //[ Replay the recorded invocation (`lines`, one argument per line) with this
@@ -136,14 +143,14 @@ private def buildAndRun(
   val runSast = os.path.join(runDir, "sast")
 
   os.makedirs(runSast)
-  writeFile(runSrc, code)
+  file.write(runSrc, code)
 
-  val args = replayArgs(readFile(donePath).lines, runSrc, runOut, runSast)
+  val args = replayArgs(file.read(donePath).lines, runSrc, runOut, runSast)
 
   // 1. Compile — the security checkpoint — timed, bounded, and error-captured.
   val t0 = time.now()
-  val build = runCapped(args, buildTimeout)
-  val compileSeconds = round2(time.now() - t0)
+  val build = subprocess.runCapped(args, buildTimeout)
+  val compileSeconds = builtins.round(time.now() - t0, 2)
 
   if build.timedOut then
     logger.log:
@@ -158,7 +165,7 @@ private def buildAndRun(
       "build timed out · \{buildTimeout}s")
 
   if build.returnCode != 0 then
-    val compileError = stripAnsi(build.err).trim
+    val compileError = text.stripAnsi(build.err).trim
     logger.log:
       runCodeCategory
       "code"           ~ code
@@ -191,8 +198,8 @@ private def buildAndRun(
   // inheriting none of the host's secrets. The build step above keeps the full
   // env — it is the trusted compiler needing the toolchain.
   val t1 = time.now()
-  val run = runCapped(runCmd, runTimeout, env = guestEnv())
-  val runSeconds = round2(time.now() - t1)
+  val run = subprocess.runCapped(runCmd, runTimeout, env = subprocess.guestEnv())
+  val runSeconds = builtins.round(time.now() - t1, 2)
 
   if run.timedOut then
     logger.log:
@@ -209,7 +216,7 @@ private def buildAndRun(
 
   val runReturnCode = run.returnCode
   val runOutText = run.out.trim
-  val runErr = stripAnsi(run.err).trim
+  val runErr = text.stripAnsi(run.err).trim
 
   val result =
     if runReturnCode != 0 then "The program crashed:\n\{runErr}"
@@ -268,7 +275,7 @@ def runCodeTool(
     maxConcurrent: Int = 4,
     maxResultChars: Int = 4000)
 : Tool =
-  val gate = threadingMod.Semaphore(maxConcurrent)
+  val gate = threading.semaphore(maxConcurrent)
 
   // The optional run.sh wrapper sits at sandbox/run.sh — i.e. next to the guest
   // package. If it exists it must be executable, or every run would fail

@@ -1,0 +1,25 @@
+//[ file.jo
+  !
+  ! Reading and writing files, wrapping Python's `open` (and `os.path` for
+  ! existence) — mirroring `os` and `time`. Referenced as `file.read(...)` /
+  ! `file.write(...)`.
+//]
+
+namespace harpe.ffi.file
+
+import harpe.ffi.os
+
+//[ Does a regular file exist at `path`? //]
+def exists(path: String): Bool = os.path.isfile(path)
+
+//[ The whole text of `path` (UTF-8). //]
+def read(path: String): String = py.open(path, "r").read().asString
+
+//[ The whole content of `path` as raw bytes. //]
+def readBytes(path: String): py.Dynamic = py.open(path, "rb").read()
+
+//[ Write `content` to `path`, replacing it. //]
+def write(path: String, content: String): Unit =
+  val f = py.open(path, "w")
+  f.write(content)
+  f.close()

@@ -5,11 +5,11 @@
 //]
 
 namespace harpe.test.MemoryTest
+import harpe.ffi.tempfile
 
 import jo.IO.stdout
 import harpe.Memory
-import harpe.ffi.*
-import os
+import harpe.ffi.os
 
 private def check(label: String, cond: Bool): Unit receives stdout =
   assert: cond, "\{label} failed"
@@ -42,7 +42,7 @@ def run(): Unit receives stdout =
   check("snapshot carries a value", snap.getOrElse("goal", "") == "revised")
 
   // --- atomic file save/load ---
-  val dir = py.module("tempfile").mkdtemp().asString
+  val dir = tempfile.mkdtemp()
   val path = os.path.join(dir, "nested", "memory.json")   // 'nested' exercises makedirs
   Memory.save(path, m)
   val loaded = Memory.load(path)

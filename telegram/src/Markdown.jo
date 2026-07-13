@@ -15,8 +15,8 @@
 //]
 
 namespace harpe.telegram
+import harpe.ffi.builtins
 
-import harpe.ffi.*
 
 section Markdown
   private def parser: py.Dynamic = py.module("markdown_it").MarkdownIt()
@@ -58,7 +58,7 @@ section Markdown
     while i < tokens.size do
       val t = tokens.get(i)
       i = i + 1
-      val kind = attr(t, "type").asString
+      val kind = builtins.attr(t, "type").asString
 
       // Tight-list paragraphs are marked hidden by the parser: skip them, so
       // list items stay single lines.
@@ -142,7 +142,7 @@ section Markdown
     while i < children.size do
       val t = children.get(i)
       i = i + 1
-      val kind = attr(t, "type").asString
+      val kind = builtins.attr(t, "type").asString
 
       if kind == "text" then
         s = s + esc(t.content.asString)

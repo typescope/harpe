@@ -11,12 +11,14 @@
 //]
 
 namespace harpe.test.SkillsTest
+import harpe.ffi.os
+import harpe.ffi.tempfile
+import harpe.ffi.file
 
 import jo.IO.stdout
 import harpe.*
 import harpe.tools.*
 import harpe.Tool.*
-import harpe.ffi.*
 import harpe.logging.Logging
 import harpe.logging.logger
 
@@ -42,17 +44,17 @@ private def check(label: String, cond: Bool): Unit receives stdout =
 
 def run(): Unit receives stdout =
   // Build a nested skills tree, plus secrets that live OUTSIDE it.
-  val tmp = py.module("tempfile").mkdtemp().asString
+  val tmp = tempfile.mkdtemp()
   val skillsDir = os.path.join(tmp, "skills")
   os.makedirs(os.path.join(skillsDir, "sub/deep"))
-  writeFile(os.path.join(skillsDir, "top.md"), "top content")
-  writeFile(os.path.join(skillsDir, "sub/nested.md"), "nested content")
-  writeFile(os.path.join(skillsDir, "sub/deep/leaf.jo"), "leaf content")
+  file.write(os.path.join(skillsDir, "top.md"), "top content")
+  file.write(os.path.join(skillsDir, "sub/nested.md"), "nested content")
+  file.write(os.path.join(skillsDir, "sub/deep/leaf.jo"), "leaf content")
   // outside the skills dir
-  writeFile(os.path.join(tmp, "secret.txt"), "SECRET")
+  file.write(os.path.join(tmp, "secret.txt"), "SECRET")
   // a sibling dir whose name has the skills dir as a prefix (boundary attack)
   os.makedirs(os.path.join(tmp, "skills-evil"))
-  writeFile(os.path.join(tmp, "skills-evil/secret.md"), "EVIL")
+  file.write(os.path.join(tmp, "skills-evil/secret.md"), "EVIL")
 
   val tools = skillTools(skillsDir)
 

@@ -14,6 +14,10 @@
 //]
 
 namespace harpe.test.RunCodeTest
+import harpe.ffi.os
+import harpe.ffi.threading
+import harpe.ffi.subprocess
+import harpe.ffi.tempfile
 
 import jo.IO.stdout
 import harpe.*
@@ -21,7 +25,6 @@ import harpe.tools.runCodeTool
 import harpe.logging.Logging
 import harpe.logging.logger
 import harpe.Tool.*
-import harpe.ffi.*
 
 // Locate the sandbox fixture regardless of where `jo test` is invoked from
 // (the package dir or the repo root).
@@ -69,7 +72,7 @@ private def concurrentCheck(tool: Tool, n: Int): Unit receives stdout =
   while k < n do
     val idx = k
     val worker = () => results.set(idx, py.dynamic(exec(tool, guest("  println \{idx}\n")).result))
-    val t = threadingMod.Thread(target = worker, daemon = true)
+    val t = threading.thread(worker)
     threads.append(t)
     t.start()
     k = k + 1
@@ -92,11 +95,11 @@ def run(): Unit receives stdout =
 
   // The tool replays the invocation recorded by `jo build`, so the fixture must be
   // built once up front (the user's normal one-time prep).
-  val prep = runCapped(py.list("jo", "build", "--spec", os.path.join(guestDir, "jo.toml")), 180.0)
+  val prep = subprocess.runCapped(py.list("jo", "build", "--spec", os.path.join(guestDir, "jo.toml")), 180.0)
   assert: !prep.timedOut && prep.returnCode == 0, "runCode tests: failed to pre-build the sandbox fixture:\n\{prep.err}"
 
   // An unbuilt sandbox reports clearly instead of building or running anything.
-  val unbuilt = py.module("tempfile").mkdtemp().asString
+  val unbuilt = tempfile.mkdtemp()
   check("not-built", exec(runCodeTool(unbuilt), guest("  println 1\n")).summary, "sandbox not built")
 
   val fast  = runCodeTool(guestDir, 120.0, 5.0)   // 5s run backstop

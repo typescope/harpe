@@ -9,8 +9,8 @@
 //]
 
 namespace harpe.models
+import harpe.ffi.builtins
 
-import harpe.ffi.*
 
 import harpe.Model.*
 import harpe.Tool
@@ -41,7 +41,7 @@ private def classifyError(err: py.Error): ReplyResult =
 
 //[ The exception's HTTP status, or 0 when it carries none. //]
 private def statusOf(err: py.Error): Int =
-  val raw = builtins.callDynamic("getattr", err, "status_code", py.none)
+  val raw = builtins.attrOr(err, "status_code", py.none)
 
   if raw.isNone then
     0

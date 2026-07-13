@@ -10,8 +10,8 @@
 //]
 
 namespace harpe.models
+import harpe.ffi.json
 
-import harpe.ffi.jsonMod
 
 import harpe.Model
 import harpe.Model.*
@@ -52,7 +52,7 @@ private section OpenAI
       case Assistant(text, calls) =>
         val tcList = py.list()
         for c in calls do
-          val fn = py.dict("name" ~ c.name, "arguments" ~ jsonMod.dumps(c.input.raw))
+          val fn = py.dict("name" ~ c.name, "arguments" ~ json.dumps(c.input.raw))
           tcList.append(py.dict("id" ~ c.id, "type" ~ "function", "function" ~ fn))
         end
 
@@ -83,7 +83,7 @@ private section OpenAI
     if !msg.tool_calls.isNone then
       for tc in msg.tool_calls.cast[py.List] do
         val argsJson = tc.function.arguments.asString
-        val argsDict = jsonMod.loads(argsJson).cast[py.Dict]
+        val argsDict = json.loads(argsJson).cast[py.Dict]
         calls = calls + ToolCall(tc.id.asString, tc.function.name.asString, ToolInput(argsDict))
 
     // A finish_reason of "length" means the reply was cut off — possibly mid

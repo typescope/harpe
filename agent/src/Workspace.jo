@@ -8,9 +8,9 @@
 //]
 
 namespace harpe
+import harpe.ffi.os
+import harpe.ffi.file
 
-import harpe.ffi.fileExists
-import harpe.ffi.readFile
 
 //[ Workspace
   !
@@ -34,7 +34,7 @@ class Workspace(root: String)
   //]
   def read(path: String): Option[String] =
     val p = relative(path)
-    if fileExists(p) then Some(readFile(p)) else None
+    if file.exists(p) then Some(file.read(p)) else None
 end
 
 //[ The agent's working directory, provided to tool builders as context. //]

@@ -1,4 +1,4 @@
-namespace os
+namespace harpe.ffi.os
 
 private def module: py.Dynamic = py.module("os")
 def path: PathApi = module.path.cast[PathApi]
@@ -6,8 +6,18 @@ def path: PathApi = module.path.cast[PathApi]
 // The process environment as a mutable string map.
 def environ: py.Dict = module.environ.cast[py.Dict]
 
+// An environment variable's value, or `fallback` if unset.
+def getenv(name: String, fallback: String): String =
+  environ.get(name, fallback).asString
+
 // Read up to `count` bytes from file descriptor `fd` (raw os.read).
 def read(fd: Int, count: Int): py.Dynamic = module.read(fd, count)
+
+// The process-group id of process `pid`.
+def getpgid(pid: Int): Int = module.getpgid(pid).asInt
+
+// Send signal `sig` to every process in group `pgid`.
+def killpg(pgid: Int, sig: Int): Unit = module.killpg(pgid, sig)
 
 interface WalkEntry
   def dirpath: String = py.dynamic(this)[0].asString
