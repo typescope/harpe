@@ -1,29 +1,30 @@
 //[ GithubClient.jo
   !
-  ! Typed Jo wrappers around PyGithub for PR write operations.
-  ! Reads GITHUB_TOKEN from the environment so it is never written to disk.
+  ! Typed Jo wrappers around PyGithub for PR operations.
 //]
 
-namespace harpe.examples.prreview
+namespace SandboxRuntime
+
+import harpe.ffi.jsonMod
 
 //[ Typed interface for the `github` module — lets us call Github(...) with keyword args //]
-interface GithubModule
-  def Github(login_or_token: String, user_agent: String @py.keyword): py.Dynamic
+private interface GitHub
+  def Github(token: String, user_agent: String @py.keyword): py.Dynamic
 end
 
 //[ Typed interface for PyGithub's Github client //]
-interface GithubApi
-  def get_repo(full_name_or_id: String): py.Dynamic
+private interface GetRepo
+  def get_repo(name: String): py.Dynamic
 end
 
 //[ Typed interface for PyGithub's Repository //]
-interface RepositoryApi
+private interface PrApi
   def get_pull(number: Int): py.Dynamic
   def get_commit(sha: String): py.Dynamic
 end
 
-//[ Typed interface for PyGithub's PullRequest //]
-interface PullRequestApi
+//[ Typed interface for PyGithub's PR actions //]
+private interface Review
   def create_review(
     commit: py.Dynamic @py.keyword,
     body: String @py.keyword,
@@ -34,52 +35,50 @@ interface PullRequestApi
   def merge(sha: String @py.keyword, commit_message: String @py.keyword): py.Dynamic
 end
 
-private def osModule: py.Dynamic   = py.module("os")
-private def jsonModule: py.Dynamic = py.module("json")
-private def ghModule: GithubModule = py.module("github").cast[GithubModule]
+private def module: GitHub = py.module("github").cast[GitHub]
 
-private def getClient(token: String): GithubApi =
-  ghModule.Github(token, user_agent = "jo-pr-review-agent/1.0").cast[GithubApi]
+private class GithubClient(token: String):
+  val client = module.Github(token, user_agent = "harpe-pr-review/1.0").cast[GetRepo]
 
-private def getRepo(owner: String, repo: String): RepositoryApi =
-  getClient().get_repo(owner + "/" + repo).cast[RepositoryApi]
+  private def getRepo(owner: String, repo: String): PrApi =
+    client.get_repo(owner + "/" + repo).cast[PrApi]
 
-//[ Submit a PR review via PyGithub.
-  !
-  ! event:        "APPROVE", "REQUEST_CHANGES", or "COMMENT"
-  ! commentsJson: JSON array of {path, line, body} objects (pass "[]" for none)
-//]
-def submitReview(
-  owner: String,
-  repo: String,
-  prNumber: Int,
-  headSha: String,
-  event: String,
-  body: String,
-  commentsJson: String
-): Unit =
-  val r        = getRepo(owner, repo)
-  val pr       = r.get_pull(prNumber).cast[PullRequestApi]
-  val commit   = r.get_commit(headSha)
-  val comments = jsonModule.loads(commentsJson)
-  pr.create_review(commit = commit, body = body, event = event, comments = comments)
+  //[ Submit a PR review via PyGithub.
+    !
+    ! event:        "APPROVE", "REQUEST_CHANGES", or "COMMENT"
+    ! commentsJson: JSON array of {path, line, body} objects (pass "[]" for none)
+  //]
+  def submitReview(
+    owner: String,
+    repo: String,
+    prNumber: Int,
+    headSha: String,
+    event: String,
+    body: String,
+    commentsJson: String
+  ): Unit =
+    val r        = getRepo(owner, repo)
+    val pr       = r.get_pull(prNumber).cast[Review]
+    val commit   = r.get_commit(headSha)
+    val comments = jsonMod.loads(commentsJson)
+    pr.create_review(commit = commit, body = body, event = event, comments = comments)
 
-//[ Post an issue-level comment on the PR. //]
-def addComment(owner: String, repo: String, prNumber: Int, body: String): Unit =
-  getRepo(owner, repo).get_pull(prNumber).cast[PullRequestApi].create_issue_comment(body)
+  //[ Post an issue-level comment on the PR. //]
+  def addComment(owner: String, repo: String, prNumber: Int, body: String): Unit =
+    getRepo(owner, repo).get_pull(prNumber).cast[Review].create_issue_comment(body)
 
-//[ Merge the PR using the head SHA as a guard against concurrent updates.
-  !
-  ! commitMessage: merge commit message; pass "" to use GitHub's default.
-//]
-def mergePR(
-  owner: String,
-  repo: String,
-  prNumber: Int,
-  headSha: String,
-  commitMessage: String
-): Unit =
-  getRepo(owner, repo).get_pull(prNumber).cast[PullRequestApi].merge(
-    sha = headSha,
-    commit_message = commitMessage
-  )
+  //[ Merge the PR using the head SHA as a guard against concurrent updates.
+    !
+    ! commitMessage: merge commit message; pass "" to use GitHub's default.
+  //]
+  def mergePR(
+    owner: String,
+    repo: String,
+    prNumber: Int,
+    headSha: String,
+    commitMessage: String
+  ): Unit =
+    getRepo(owner, repo).get_pull(prNumber).cast[Review].merge(
+      sha = headSha,
+      commit_message = commitMessage
+    )
