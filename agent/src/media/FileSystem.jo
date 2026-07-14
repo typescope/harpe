@@ -1,0 +1,138 @@
+//[ FileSystem.jo
+  !
+  ! The sandbox filesystem the guest reads: a confined tree it navigates with `Path`.
+  ! All reads resolve a `Path` against the real root and do **local** I/O — no broker,
+  ! no bytes over a socket.
+  !
+  ! `FileSystemImpl` implements both `FileSystem` (local reads) and `MediaProvider`
+  ! (granted-media `resolve`/`load` over the broker). A CLI agent, whose files are
+  ! already in place, uses it with no broker — the media methods then answer
+  ! `None`/`false`.
+//]
+
+namespace harpe.media
+
+import harpe.ffi.os
+import harpe.ffi.file
+import harpe.ffi.builtins
+import harpe.broker.*
+
+//[ Resolve a `Path` against the real `root` — the single trusted I/O gate.
+  !
+  ! Every `Join` segment is already validated (by construction), so this is a plain
+  ! fold onto the root; a `..` can never appear.
+//]
+def resolvePath(root: String, path: Path): String =
+  match path
+  case _: Path.root => root
+  case j: Path.Join => os.path.join(resolvePath(root, j.prefix), j.last)
+
+//[ A confined filesystem the guest reads via `Path`. //]
+interface FileSystem
+  //[ The root, for building paths: `fs.root / "docs" / "x.pdf"`. //]
+  def root: Path = Path.root
+
+  //[ Whether a file or directory exists at `path`. //]
+  def exists(path: Path): Bool
+
+  //[ The entries directly under `dir`, as child paths. //]
+  def list(dir: Path): List[Path]
+
+  //[ The file's lines, streamed lazily — never loads the whole file. //]
+  def readText(path: Path): Iterator[String]
+
+  //[ The file's bytes. For a large file, hand its `Path` to a processor instead. //]
+  def readBinary(path: Path): Bytes
+end
+
+//[ A `FileSystem` (local reads) that is also a `MediaProvider` (granted-media
+  ! `resolve`/`load` over `broker`, or `None`/`false` when there is no broker).
+//]
+class FileSystemImpl
+  val realRoot: String
+  val broker: Option[BrokerClient]
+
+  //[ Normalize the root and require it to be an existing directory.
+    !
+    ! Resolves symlinks and `.`/`..`, so every later resolve joins onto a canonical
+    ! root.
+  //]
+  def FileSystemImpl(root: String, broker: Option[BrokerClient]) =
+    val resolved = os.path.realpath(root)
+    if !os.path.isdir(resolved) then
+      abort "FileSystem root is not a directory: '\{root}'"
+
+    this.realRoot = resolved
+    this.broker = broker
+
+  view FileSystem
+  view MediaProvider
+
+  def exists(path: Path): Bool = os.path.exists(resolvePath(realRoot, path))
+
+  def list(dir: Path): List[Path] =
+    val names: py.List = os.listdir(resolvePath(realRoot, dir))
+    var result = List.empty[Path]
+    var i = builtins.len(names) - 1
+
+    while i >= 0 do
+      result = result.prepend(dir / names.get(i).asString)
+      i = i - 1
+
+    result
+
+  def readBinary(path: Path): Bytes =
+    file.readBytes(resolvePath(realRoot, path)).cast[Bytes]
+
+  def readText(path: Path): Iterator[String] =
+    new LineIterator(py.open(resolvePath(realRoot, path), "r"))
+
+  def resolve(id: String): Option[Media] =
+    match broker
+    case None =>
+      None
+
+    case Some(b) =>
+      val result = b.call("media", "stat", py.dynamic(py.dict("id" ~ id))).result
+      if py.isNone(result) then
+        None
+
+      else
+        Some(mediaFromDict(result.cast[py.Dict]))
+
+  def load(id: String, target: Path): Bool =
+    match broker
+    case None =>
+      false
+
+    case Some(b) =>
+      val segs = py.list()
+      for seg in target.segments do
+        segs.append(py.dynamic(seg))
+
+      b.call("media", "load", py.dynamic(py.dict("id" ~ id, "target" ~ py.dynamic(segs)))).result.asBool
+end
+
+section FileSystemImpl
+  //[ A read-only filesystem over `root`, with no media provider (the CLI case). //]
+  def local(root: String): FileSystemImpl = new FileSystemImpl(root, None)
+end
+
+//[ A lazy line iterator over an open Python file object. //]
+private class LineIterator
+  val handle: py.Dynamic
+  var pending: py.Dynamic
+
+  def LineIterator(handle: py.Dynamic) =
+    this.handle = handle
+    this.pending = builtins.next(handle, py.none)
+
+  view Iterator[String]
+
+  def hasNext: Bool = !py.isNone(pending)
+
+  def next: String =
+    val line = pending.callDynamic("rstrip", "\n").asString
+    this.pending = builtins.next(this.handle, py.none)
+    line
+end

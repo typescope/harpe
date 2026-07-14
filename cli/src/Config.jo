@@ -16,7 +16,6 @@ import harpe.Model
 import harpe.Model.Message
 import harpe.tools.memoryTools
 import harpe.context.WindowedContext
-import harpe.media.FileSystemProvider
 
 section Config
   //[ Assemble this agent for one session — the central place where its pieces
@@ -41,7 +40,7 @@ section Config
   //]
   def agent(brain: Model, memory: Memory, history: List[Message]): Agent receives workspace =
     val basePrompt = workspace.read("AGENT.md") rescue None => ""
-    val tools = Defaults.tools() ++ memoryTools(memory) ++ [fileTool(FileSystemProvider.byPath(workspace.root))]
+    val tools = Defaults.tools() ++ memoryTools(memory)
     val context = new WindowedContext(basePrompt, memory, history)
     new Agent(brain, tools, context)
 

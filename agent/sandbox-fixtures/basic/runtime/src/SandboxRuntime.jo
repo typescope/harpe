@@ -3,17 +3,30 @@ namespace SandboxRuntime
 import jo.IO.stdout
 import harpe.logging.*
 import harpe.ffi.os
+import harpe.broker.*
 import SandboxAPI
 
 // Runtime for the runCode integration tests: install the audit channel (a JSONL
-// file the host names via HARPE_AUDIT_LOG and reads back), emit one record so the
-// emit path is exercised at runtime, then run the guest.
+// file the host names via HARPE_AUDIT_LOG and reads back), probe the broker channel
+// (host↔guest), emit one record, then run the guest.
 def main(): Unit receives stdout =
   Logging.withLogger(auditLogger(), () => run())
 
 private def run(): Unit receives stdout, logger =
   logger.info("harpe.sandbox.runtime", "runtime ready")
+  probeBroker()
   SandboxAPI.runTask()
+
+// Step-3 broker self-test: if the host injected a broker socket, do one round-trip
+// through it from inside the guest process and print the result. Proves the channel
+// (host `Broker` ↔ guest `BrokerClient`) without a guest-facing capability yet.
+private def probeBroker(): Unit receives stdout =
+  val path = os.getenv("HARPE_BROKER_SOCK", "")
+  if path != "" then
+    val client = BrokerClient.connect(path)
+    val reply = client.call("echo", "ping", py.dynamic(py.dict("msg" ~ "sandbox")))
+    println "broker: \{reply.result.cast[py.Dict].get("msg").asString}"
+    client.close()
 
 private def auditLogger(): Logger =
   val path = os.getenv("HARPE_AUDIT_LOG", "")

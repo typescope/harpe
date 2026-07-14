@@ -1,67 +1,79 @@
 //[ MediaTest.jo
   !
-  ! Unit tests for the media layer (`harpe.media`): the shipped `FileSystemProvider`
-  ! — path-keyed resolution (`byPath`), on-demand `load`, MIME/metadata, path
-  ! confinement to its root, and the `keyToPath` access-control seam (a handle
-  ! mapping that admits only granted keys).
+  ! Unit test for granted-media loading: `FileSystemProvider` as the host
+  ! `MediaProvider`, and the guest reaching it through `FileSystem.resolve` /
+  ! `FileSystem.load` over the broker — a granted resource inspected, then loaded into
+  ! a scratch dir and read back, with no bytes crossing the socket.
 //]
 
 namespace harpe.test.MediaTest
+
+import harpe.media.*
+import harpe.broker.*
 import harpe.ffi.tempfile
 import harpe.ffi.file
+import harpe.ffi.os
 
 import jo.IO.stdout
-import harpe.media.*
-import harpe.ffi.os
 
 private def check(label: String, cond: Bool): Unit receives stdout =
   assert: cond, "\{label} failed"
   println "  ok \{label}"
 
-private def denied(o: Option[Media]): Bool =
+private def isSome(o: Option[Media]): Bool =
   match o
-  case None => true
-  case _    => false
+  case Some(_) => true
+  case None    => false
+
+private def joinLines(it: Iterator[String]): String =
+  var s = ""
+  for line in it do
+    s = if s == "" then line else s + "|" + line
+  s
 
 def run(): Unit receives stdout =
-  // A rooted provider at <root>/ws, with a secret planted OUTSIDE it (at <root>)
-  // to probe confinement.
-  val root  = tempfile.mkdtemp()
-  val wsdir = os.path.join(root, "ws")
-  os.makedirs(wsdir)
-  file.write(os.path.join(wsdir, "data.csv"), "a,b\n1,2\n")
-  file.write(os.path.join(root, "secret.txt"), "TOPSECRET")
+  // A source directory holding one "granted" file.
+  val srcDir = tempfile.mkdtemp()
+  file.write(os.path.join(srcDir, "granted.txt"), "BODY")
+  val source = FileSystemProvider.byPath(srcDir)
 
-  val provider = FileSystemProvider.byPath(wsdir)
+  check("source resolves a confined file", isSome(source.resolve("granted.txt")))
+  check("source rejects an escape",        !isSome(source.resolve("../etc/passwd")))
+  check("source rejects a miss",           !isSome(source.resolve("nope.txt")))
 
-  // --- resolution: bytes, MIME, provenance metadata ---
-  match provider.resolve("data.csv")
+  // The guest reaches the source through FileSystem, over the broker.
+  val scratch = tempfile.mkdtemp()
+  val sock = os.path.join(tempfile.mkdtemp(), "media.sock")
+  val service = new MediaService(id => source.resolve(id), (id, dest) => source.copyTo(id, dest), scratch)
+  val services = Map.empty[String, Service].add("media", service)
+  val broker = Broker.start(sock, services)
+
+  // One FileSystemImpl serves both views: FileSystem (reads) and MediaProvider (resolve/load).
+  val fs = new FileSystemImpl(scratch, Some(BrokerClient.connect(sock)))
+
+  // resolve: a cheap descriptor without materializing, host path never exposed.
+  match fs.resolve("granted.txt")
+  case None    => check("fs.resolve a granted id", false)
   case Some(m) =>
-    check("resolve gives a text MIME", m.mimeType.startsWith("text/"))
-    check("file name is the basename", m.fileName == "data.csv")
+    check("fs.resolve a granted id", true)
+    check("fs.resolve reports name", m.fileName == "granted.txt")
+    val sizeOk =
+      match m.metaInt("sizeBytes")
+      case Some(n) => n == 4
+      case None    => false
+    check("fs.resolve reports size (from meta)", sizeOk)
 
-    match m.metaString("source")
-    case Some(src) => check("source metadata is the id", src == "data.csv")
-    case None      => check("source metadata present", false)
+  val ungrantedResolve =
+    match fs.resolve("nope.txt")
+    case None    => true
+    case Some(_) => false
+  check("fs.resolve ungranted is None", ungrantedResolve)
 
-  case None =>
-    check("resolve data.csv", false)
+  // load: materialize into the scratch dir, read back locally.
+  val target = fs.root / "report.txt"
+  check("fs.load a granted id",       fs.load("granted.txt", target))
+  check("it appears in scratch",      fs.exists(target))
+  check("content was copied in",      joinLines(fs.readText(target)) == "BODY")
+  check("fs.load ungranted is false", !fs.load("nope.txt", fs.root / "x.txt"))
 
-  // --- load reads the bytes on demand ---
-  check("load returns the file bytes", provider.load("data.csv").decode().asString == "a,b\n1,2\n")
-
-  // --- confinement (the point of a shipped provider) ---
-  check("deny parent escape",   denied(provider.resolve("../secret.txt")))
-  check("deny absolute outside", denied(provider.resolve(os.path.join(root, "secret.txt"))))
-  check("missing file is None",  denied(provider.resolve("absent.csv")))
-
-  // --- keyToPath access control (the SaaS case): only granted handles resolve;
-  //     the underlying path is NOT a valid key.
-  val grants: Map[String, String] = Map:
-    "h1" ~ "data.csv"
-
-  val secured = new FileSystemProvider(wsdir, k => grants.getOrElse(k, ""))
-  check("granted handle resolves",   !denied(secured.resolve("h1")))
-  check("granted handle loads",      secured.load("h1").decode().asString == "a,b\n1,2\n")
-  check("raw path is not a key",     denied(secured.resolve("data.csv")))
-  check("unknown handle is denied",  denied(secured.resolve("h2")))
+  broker.stop()

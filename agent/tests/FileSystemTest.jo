@@ -1,0 +1,50 @@
+//[ FileSystemTest.jo
+  !
+  ! Unit test for `harpe.media.FileSystem`: a `FileSystemImpl` rooted at a temp dir —
+  ! `exists`, `list`, lazy `readText`, and `readBinary` (as `Bytes`), all over `Path`.
+//]
+
+namespace harpe.test.FileSystemTest
+
+import harpe.media.*
+import harpe.ffi.tempfile
+import harpe.ffi.file
+import harpe.ffi.os
+
+import jo.IO.stdout
+
+private def check(label: String, cond: Bool): Unit receives stdout =
+  assert: cond, "\{label} failed"
+  println "  ok \{label}"
+
+private def isErr(build: () => FileSystem): Bool =
+  match py.try(build())
+  case Ok(_)  => false
+  case Err(_) => true
+
+private def joinLines(it: Iterator[String]): String =
+  var s = ""
+  for line in it do
+    s = if s == "" then line else s + "|" + line
+  s
+
+def run(): Unit receives stdout =
+  val dir = tempfile.mkdtemp()
+  file.write(os.path.join(dir, "notes.txt"), "line1\nline2\nline3\n")
+  os.makedirs(os.path.join(dir, "sub"))
+  file.write(os.path.join(dir, "sub", "a.txt"), "hi")
+
+  val fs: FileSystem = FileSystemImpl.local(dir)
+
+  check("exists", fs.exists(fs.root / "notes.txt"))
+  check("missing", !fs.exists(fs.root / "nope.txt"))
+
+  check("readText streams lines", joinLines(fs.readText(fs.root / "notes.txt")) == "line1|line2|line3")
+
+  val bytes = fs.readBinary(fs.root / "sub" / "a.txt")
+  check("readBinary size", bytes.size == 2)
+  check("readBinary base64", bytes.toBase64 == "aGk=")
+
+  check("list entry count", fs.list(fs.root).size == 2)
+
+  check("rejects a nonexistent root", isErr(() => FileSystemImpl.local(os.path.join(dir, "no-such-subdir"))))

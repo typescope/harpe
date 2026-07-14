@@ -1,43 +1,31 @@
 //[ Media.jo
   !
-  ! A media descriptor the agent handles — an image, a PDF, an audio clip — as a
-  ! provider-neutral value: its MIME type and an open bag of typed metadata. It does
-  ! NOT hold the content; a `MediaProvider` reads the bytes on demand via
-  ! `readContent`, so a descriptor is cheap and describing a file never loads it.
+  ! A guest-safe descriptor of a resolved resource: MIME type, file name, and an open
+  ! bag of typed metadata. `MediaProvider.resolve` produces it cheaply (a stat, no
+  ! read), so the model can check a granted id before deciding to `load` it.
   !
-  ! The metadata is structured, not a flat string map: a numeric value keeps its
-  ! type (a page count is a number, not "3"). The key set is a convention
-  ! (`filename`, `source`, `sizeBytes`, `pages`, …), not a schema: providers stamp
-  ! what they know, tools read what they need, and neither is forced to grow the
-  ! type.
+  ! `meta` is a convention, not a schema — a provider stamps what it knows (`sizeBytes`,
+  ! `pages`, `width`, …) and a consumer reads what it needs, so new metadata never
+  ! grows the type. It crosses the broker to the guest, so it must carry no host path
+  ! or other host-only detail (that stays in the `MediaProvider`).
 //]
 
 namespace harpe.media
 
-//[ A metadata value: text or a number.
-  !
-  !     var meta = Map.empty[String, Meta]
-  !     meta = meta.add("filename", "report.pdf")   // String
-  !     meta = meta.add("pages", 12)                 // Int
-//]
+//[ A metadata value: text or a number. //]
 type Meta = String | Int
 
-//[ A media descriptor: MIME type, file name, and typed metadata — not the content.
-  !
-  ! The MIME type is e.g. `"application/pdf"` or `"image/png"`; `fileName` is the
-  ! resource's name (`""` if it has none), which a converter can key off — for an
-  ! extension, say. A `MediaProvider` produces this from `resolve` (cheap: no
-  ! content read); the bytes are read separately, on demand, via
-  ! `MediaProvider.load`, so describing a large file never loads it.
-//]
+//[ A media descriptor: MIME type, file name, and typed metadata — not the content. //]
 class Media(mimeType: String, fileName: String, meta: Map[String, Meta])
-  //[ Read a string-valued metadata key.
-    !
-    ! `None` if the key is absent or its value is not a string, e.g.
-    ! `media.metaString("source")`.
-  //]
+  //[ A string-valued metadata key, or `None` if absent or not a string. //]
   def metaString(key: String): Option[String] =
     match meta.getOpt(key)
     case Some(s: String) => Some(s)
     case _               => None
+
+  //[ An int-valued metadata key, or `None` if absent or not an int. //]
+  def metaInt(key: String): Option[Int] =
+    match meta.getOpt(key)
+    case Some(n: Int) => Some(n)
+    case _            => None
 end

@@ -33,10 +33,15 @@ import harpe.ffi.text
 import harpe.ffi.json
 
 import harpe.*
+import harpe.broker.*
 import harpe.logging.*
 
 private def shutilMod: py.Dynamic = py.module("shutil")
 private def tempfileMod: py.Dynamic = py.module("tempfile")
+
+// A monomorphic empty service map — `Map.empty` is polymorphic and cannot be used
+// directly as a default parameter value.
+private def noServices: Map[String, Service] = Map.empty
 
 //[ The log category for this tool's records — one program compile+run each.
   ! Reverse-namespaced (namespace + tool name) so it is unique in the open set and
@@ -103,7 +108,8 @@ private def runCode(
     buildTimeout: Float,
     runTimeout: Float,
     maxResultChars: Int,
-    runScript: String)
+    runScript: String,
+    services: Map[String, Service])
 : Tool.RunOutcome receives logger =
   match findDoneFile(guestDir)
   case None =>
@@ -114,7 +120,29 @@ private def runCode(
   case Some(donePath) =>
     gate.acquire()
     val runDir = tempfileMod.mkdtemp(prefix = "run-").asString
-    val outcome = py.try(buildAndRun(code, donePath, runDir, buildTimeout, runTimeout, runScript))
+
+    // Per-run broker: a Unix socket in the run dir, bound to this run's services.
+    // The guest reaches it via HARPE_BROKER_SOCK. Skipped entirely when no services
+    // are granted, so an agent that uses none pays nothing.
+    val brokerSock = os.path.join(runDir, "broker.sock")
+    val broker: Option[Broker] =
+      if services.isEmpty then None
+      else
+        match py.try(Broker.start(brokerSock, services))
+        case Ok(b)  => Some(b)
+        case Err(_) => None
+
+    val guestSock =
+      match broker
+      case Some(_) => brokerSock
+      case None    => ""
+
+    val outcome = py.try(buildAndRun(code, donePath, runDir, buildTimeout, runTimeout, runScript, guestSock))
+
+    match broker
+    case Some(b) => val _ = py.try(b.stop())
+    case None    => pass
+
     val _ = py.try(shutilMod.rmtree(runDir, ignore_errors = true))
     gate.release()
 
@@ -133,7 +161,8 @@ private def buildAndRun(
     runDir: String,
     buildTimeout: Float,
     runTimeout: Float,
-    runScript: String)
+    runScript: String,
+    brokerSock: String)
 : Tool.RunOutcome receives logger =
   // Each run emits one `harpe.tools.runCode` log entry — the program under test
   // plus the fields specific to how it ended — to the injected channel. What
@@ -206,6 +235,9 @@ private def buildAndRun(
   // the trusted compiler needing the toolchain.
   val runEnv = subprocess.guestEnv()
   runEnv.set("HARPE_AUDIT_LOG", runAudit)
+
+  if brokerSock != "" then
+    runEnv.set("HARPE_BROKER_SOCK", brokerSock)
 
   val t1 = time.now()
   val run = subprocess.runCapped(runCmd, runTimeout, env = runEnv)
@@ -303,7 +335,8 @@ def runCodeTool(
     buildTimeout: Float = 120.0,
     runTimeout: Float = 30.0,
     maxConcurrent: Int = 4,
-    maxResultChars: Int = 4000)
+    maxResultChars: Int = 4000,
+    services: Map[String, Service] = noServices)
 : Tool =
   val gate = threading.semaphore(maxConcurrent)
 
@@ -321,5 +354,5 @@ def runCodeTool(
     "runCode",
     "Write a Jo program (namespace UserTask, def runTask), compile it against the agent sandbox, and run it. Returns the program's stdout, or the compile error if it does not build.",
     [Tool.strParam("code", "The Jo source code to compile and run")],
-    input => runCode(input.string("code"), guestDir, gate, buildTimeout, runTimeout, maxResultChars, runScript)
+    input => runCode(input.string("code"), guestDir, gate, buildTimeout, runTimeout, maxResultChars, runScript, services)
   )

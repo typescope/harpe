@@ -1,0 +1,238 @@
+//[ Broker.jo
+  !
+  ! The broker: one synchronous host↔guest channel. The host binds a per-run Unix
+  ! socket and registers named `Service`s; the guest connects with a `BrokerClient`
+  ! and issues `call(service, op, args)` requests that block for a response. This is
+  ! the live, request/response counterpart of the audit log (which is guest→host,
+  ! async). Media is its first service; a key-value store or a sub-agent call would
+  ! register the same way.
+  !
+  ! Wire format: each frame is `[4-byte jsonLen][json][4-byte blobLen][blob]` — a
+  ! UTF-8 JSON header plus an optional **raw** binary trailer. Bytes ride the trailer,
+  ! never base64 inside the JSON, so a byte range costs no encode/decode and no 33%
+  ! inflation. Large media does not travel here at all: the guest gets a `Path` to a
+  ! file the host materialized in the shared run dir and reads it directly. The broker
+  ! carries only bounded reads (a text line range, a small buffer) and metadata.
+  !
+  ! Request json is `{"service", "op", "args"}`; response json is
+  ! `{"ok": true, "result": …}` or `{"ok": false, "error": …}`.
+//]
+
+namespace harpe.broker
+
+import harpe.ffi.socket
+import harpe.ffi.threading
+import harpe.ffi.json
+import harpe.ffi.builtins
+import harpe.ffi.os
+
+private def structMod: py.Dynamic = py.module("struct")
+
+//[ The empty bytes object `b""`. //]
+private def emptyBytes: py.Dynamic = py.dynamic("").callDynamic("encode", "ascii")
+
+//------------------------------------------------------------------------------
+// Framing
+//------------------------------------------------------------------------------
+
+//[ One wire frame: a JSON header and a raw (possibly empty) binary trailer. //]
+private class Frame(json: String, blob: py.Dynamic)
+
+//[ Read exactly `n` bytes, looping over short reads.
+  !
+  ! Abort if the stream ends before `n` bytes arrive (a truncated frame).
+//]
+private def recvExactly(sock: socket.Socket, n: Int): py.Dynamic =
+  val chunks = py.list()
+  var got = 0
+
+  while got < n do
+    val chunk = sock.recv(n - got)
+    val clen = builtins.len(chunk)
+
+    if clen == 0 then
+      abort "broker: connection closed mid-frame"
+
+    chunks.append(chunk)
+    got = got + clen
+
+  emptyBytes.callDynamic("join", chunks)
+
+//[ Read a 4-byte big-endian length. //]
+private def recvLen(sock: socket.Socket): Int =
+  structMod.unpack(">I", recvExactly(sock, 4))[0].asInt
+
+//[ Send one frame: JSON header, then the raw blob (its length always prefixed). //]
+private def sendFrame(sock: socket.Socket, frame: Frame): Unit =
+  val jdata = py.dynamic(frame.json).callDynamic("encode", "utf-8")
+  val blen = builtins.len(frame.blob)
+
+  sock.sendall(structMod.pack(">I", builtins.len(jdata)))
+  sock.sendall(jdata)
+  sock.sendall(structMod.pack(">I", blen))
+
+  if blen > 0 then
+    sock.sendall(frame.blob)
+
+//[ Read one frame, or `None` if the peer closed cleanly at a frame boundary. //]
+private def recvFrame(sock: socket.Socket): Option[Frame] =
+  val head = sock.recv(4)
+  val n0 = builtins.len(head)
+
+  if n0 == 0 then
+    None
+
+  else
+    val jhdr =
+      if n0 == 4 then head
+      else emptyBytes.callDynamic("join", py.list(head, recvExactly(sock, 4 - n0)))
+
+    val jlen = structMod.unpack(">I", jhdr)[0].asInt
+    val json = recvExactly(sock, jlen).callDynamic("decode", "utf-8").asString
+    val blen = recvLen(sock)
+    val blob = if blen == 0 then emptyBytes else recvExactly(sock, blen)
+    Some(new Frame(json, blob))
+
+//------------------------------------------------------------------------------
+// Services (host)
+//------------------------------------------------------------------------------
+
+//[ A service reply: a JSON-encodable `result` plus an optional raw `blob`.
+  !
+  ! Use `Reply.of` for a plain result, `Reply.bytes` when returning a byte range.
+//]
+class Reply(result: py.Dynamic, blob: py.Dynamic)
+
+section Reply
+  //[ A JSON result with no binary payload. //]
+  def of(result: py.Dynamic): Reply = new Reply(result, emptyBytes)
+
+  //[ A byte payload, with an optional small JSON `result` alongside it. //]
+  def bytes(result: py.Dynamic, blob: py.Dynamic): Reply = new Reply(result, blob)
+end
+
+//[ A registered service: handle one `op` with JSON `args` (a decoded Python value),
+  ! returning a `Reply`.
+  !
+  ! Raising is fine — the broker turns it into an error response rather than dropping
+  ! the connection.
+//]
+interface Service
+  def handle(op: String, args: py.Dynamic): Reply
+end
+
+//------------------------------------------------------------------------------
+// Broker (host)
+//------------------------------------------------------------------------------
+
+//[ A running broker: its listening socket, the path it bound, and its services. //]
+class Broker(server: socket.Socket, path: String, services: Map[String, Service])
+  //[ Stop accepting and remove the socket file.
+    !
+    ! In-flight connections finish on their own threads; new `accept` calls raise once
+    ! the socket is closed.
+  //]
+  def stop(): Unit =
+    server.close()
+    val _ = py.try(os.unlink(path))
+    pass
+end
+
+section Broker
+  //[ Bind a broker at `path`, register `services`, and spawn its accept loop on a
+    ! daemon thread.
+    !
+    ! Each connection is served on its own thread, so concurrent guest calls do not
+    ! block one another.
+  //]
+  def start(path: String, services: Map[String, Service]): Broker =
+    val server = socket.unixStream()
+    server.bind(path)
+    server.listen(8)
+
+    val broker = new Broker(server, path, services)
+    threading.thread(() => acceptLoop(broker)).start()
+    broker
+
+  //[ Accept connections until the server socket is closed (by `stop`). //]
+  private def acceptLoop(broker: Broker): Unit =
+    val body = () =>
+      while true do
+        val conn = socket.accept(broker.server)
+        threading.thread(() => serveConn(conn, broker.services)).start()
+
+    val _ = py.try(body())
+    pass
+
+  //[ Serve one connection: request/response until the peer closes it. //]
+  private def serveConn(conn: socket.Socket, services: Map[String, Service]): Unit =
+    val body = () =>
+      var running = true
+      while running do
+        match recvFrame(conn)
+        case None        => running = false
+        case Some(frame) => sendFrame(conn, handleRequest(services, frame.json))
+
+    val _ = py.try(body())
+    val _ = py.try(conn.close())
+    pass
+
+  //[ Decode a request, dispatch to its service, and build the response frame. //]
+  private def handleRequest(services: Map[String, Service], text: String): Frame =
+    val req = json.loads(text).cast[py.Dict]
+    val service = req.get("service").asString
+    val op = req.get("op").asString
+    val args = req.get("args")
+
+    match services.getOpt(service)
+    case None =>
+      errorFrame("unknown service '\{service}'")
+
+    case Some(svc) =>
+      match py.try(svc.handle(op, args))
+      case Ok(reply) => new Frame(okJson(reply.result), reply.blob)
+      case Err(e)    => errorFrame(e.message)
+
+  private def okJson(result: py.Dynamic): String =
+    json.dumps(py.dict("ok" ~ true, "result" ~ result))
+
+  private def errorFrame(message: String): Frame =
+    new Frame(json.dumps(py.dict("ok" ~ false, "error" ~ message)), emptyBytes)
+end
+
+//------------------------------------------------------------------------------
+// Client (guest)
+//------------------------------------------------------------------------------
+
+//[ The guest end of the channel: one connection over which `call`s are issued sequentially. //]
+class BrokerClient(sock: socket.Socket)
+  //[ Issue one request and return its `Reply` (JSON result + optional byte blob).
+    !
+    ! Aborts on a broker-side error.
+  //]
+  def call(service: String, op: String, args: py.Dynamic): Reply =
+    val req = json.dumps(py.dict("service" ~ service, "op" ~ op, "args" ~ args))
+    sendFrame(sock, new Frame(req, emptyBytes))
+
+    match recvFrame(sock)
+    case None =>
+      abort "broker: no response"
+
+    case Some(frame) =>
+      val resp = json.loads(frame.json).cast[py.Dict]
+      if resp.get("ok").asBool then
+        new Reply(resp.get("result"), frame.blob)
+
+      else
+        abort "broker: \{resp.get("error").asString}"
+
+  def close(): Unit = sock.close()
+end
+
+section BrokerClient
+  //[ Connect to the broker listening at `path`. //]
+  def connect(path: String): BrokerClient =
+    val sock = socket.unixStream()
+    sock.connect(path)
+    new BrokerClient(sock)
+end

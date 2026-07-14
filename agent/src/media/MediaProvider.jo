@@ -1,33 +1,106 @@
 //[ MediaProvider.jo
   !
-  ! Where media comes from. A `MediaProvider` maps a unique identifier — a path, an
-  ! upload id, a URL, a Telegram file-id — to media in two steps: `resolve` returns
-  ! a cheap descriptor (type + metadata), and `load` reads the bytes on demand. That
-  ! one seam is what keeps the design additive: a media-reading tool is written once
-  ! against this interface and never learns about sources, so N tools and M sources
-  ! compose as N + M, not N × M.
+  ! The guest capability for granted media: inspect an id, then load it into the
+  ! filesystem. Kept separate from `FileSystem` because media may live on a server or
+  ! in a database rather than the local tree — though one class (`FileSystemImpl`) can
+  ! implement both views.
   !
-  ! Providers are read-only: an agent that *produces* media (a thumbnail, a
-  ! rendered page) does so through a dedicated tool that stores the result itself —
-  ! storage is the application's concern, not this seam's.
-  !
-  ! The framework ships one implementation, `FileSystemProvider` (a directory-rooted
-  ! source; see FileSystemProvider.jo). Sources that live elsewhere — an upload
-  ! store, a bucket, a chat platform's file API — are supplied by the application.
+  ! `load` puts the resource at a `Path`, then the guest reads it through `FileSystem`
+  ! or hands the `Path` to a processor. No bytes cross the broker socket: the host
+  ! writes into the shared scratch dir, the guest reads it locally.
 //]
 
 namespace harpe.media
 
-//[ A source of media, keyed by a unique identifier.
-//]
+import harpe.broker.*
+import harpe.ffi.os
+import harpe.ffi.builtins
+
+//[ Access to granted media, keyed by id. //]
 interface MediaProvider
-  //[ The descriptor for `id` — MIME type and metadata — without reading the
-    ! content. `None` when the id names nothing this provider can serve.
+  //[ The descriptor for a granted `id` — type, name, size — without materializing it.
+    !
+    ! `None` when `id` is not granted. Cheap, so the model can decide whether to load.
   //]
   def resolve(id: String): Option[Media]
 
-  //[ The raw bytes of the media named by `id`. Call it only for an id `resolve`
-    ! accepted.
-  //]
-  def load(id: String): py.Dynamic
+  //[ Load `id` into the filesystem at `target`; `false` if `id` is not granted. //]
+  def load(id: String, target: Path): Bool
 end
+
+//[ The broker "media" service, adapting a host source to the guest over the broker.
+  !
+  ! `stat` → `resolveFn`; `load` → rebuild `target` from its segments (re-validating
+  ! each), resolve it against the scratch root, then `copyFn(id, realPath)`. The source
+  ! functions work in real paths, host-side; `FileSystemProvider` supplies the shipped
+  ! pair.
+//]
+class MediaService(
+    resolveFn: String => Option[Media],
+    copyFn: (String, String) => Bool,
+    scratchRoot: String)
+  view Service
+
+  def handle(op: String, args: py.Dynamic): Reply =
+    match op
+    case "stat" => handleStat(args)
+    case "load" => handleLoad(args)
+    case _      => abort "media: unknown op '\{op}'"
+
+  private def handleStat(args: py.Dynamic): Reply =
+    val id = args.cast[py.Dict].get("id").asString
+    match resolveFn(id)
+    case None =>
+      Reply.of(py.dynamic(py.none))
+
+    case Some(m) =>
+      Reply.of(py.dynamic(mediaToDict(m)))
+
+  private def handleLoad(args: py.Dynamic): Reply =
+    val d = args.cast[py.Dict]
+    val id = d.get("id").asString
+    val realPath = resolvePath(scratchRoot, rebuild(d.get("target")))
+
+    os.makedirs(os.path.dirname(realPath))
+    Reply.of(py.dynamic(copyFn(id, realPath)))
+
+  // Rebuild a `Path` from wire segments; the `Join` constructor re-validates each.
+  private def rebuild(segs: py.Dynamic): Path =
+    var path: Path = Path.root
+    val n = builtins.len(segs)
+    var i = 0
+
+    while i < n do
+      path = path / py.dynamic(segs)[i].asString
+      i = i + 1
+
+    path
+end
+
+//[ Serialize a `Media` to a JSON-encodable dict — `meta` becomes a nested dict of
+  ! string/number values. //]
+def mediaToDict(m: Media): py.Dict =
+  val meta = py.dict()
+  for entry in m.meta.toList do
+    meta.set(entry.fst, entry.snd)
+
+  py.dict("mimeType" ~ m.mimeType, "fileName" ~ m.fileName, "meta" ~ py.dynamic(meta))
+
+//[ Rebuild a `Media` from such a dict, restoring each `meta` value's type. //]
+def mediaFromDict(d: py.Dict): Media =
+  val metaDict = d.get("meta").cast[py.Dict]
+  val keys: py.List = py.module("builtins").callDynamic("list", metaDict.keys()).cast[py.List]
+
+  var meta = Map.empty[String, Meta]
+  var i = 0
+  val n = builtins.len(keys)
+
+  while i < n do
+    val key = keys.get(i).asString
+    meta = meta.add(key, metaValue(metaDict.get(key)))
+    i = i + 1
+
+  new Media(d.get("mimeType").asString, d.get("fileName").asString, meta)
+
+private def metaValue(v: py.Dynamic): Meta =
+  if builtins.typeName(v) == "int" then v.asInt else v.asString
