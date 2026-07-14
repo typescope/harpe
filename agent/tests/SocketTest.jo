@@ -1,0 +1,45 @@
+//[ SocketTest.jo
+  !
+  ! Unit test for `harpe.ffi.socket`: a Unix-domain socket round-trip (bind, listen,
+  ! accept on a thread; connect, send, recv on the main thread). This is the
+  ! transport the broker is built on.
+//]
+
+namespace harpe.test.SocketTest
+
+import harpe.ffi.socket
+import harpe.ffi.threading
+import harpe.ffi.tempfile
+import harpe.ffi.os
+
+import jo.IO.stdout
+
+private def check(label: String, cond: Bool): Unit receives stdout =
+  assert: cond, "\{label} failed"
+  println "  ok \{label}"
+
+def run(): Unit receives stdout =
+  val dir = tempfile.mkdtemp()
+  val path = os.path.join(dir, "s.sock")
+
+  val server = socket.unixStream()
+  server.bind(path)
+  server.listen(1)
+
+  // Server thread: accept one connection and echo its first message back.
+  val serve = () =>
+    val conn = socket.accept(server)
+    conn.sendall(conn.recv(1024))
+    conn.close()
+
+  threading.thread(serve).start()
+
+  val client = socket.unixStream()
+  client.connect(path)
+  client.sendall(py.dynamic("ping").callDynamic("encode", "utf-8"))
+
+  val reply = client.recv(1024).callDynamic("decode", "utf-8").asString
+  check("unix socket round-trip", reply == "ping")
+
+  client.close()
+  server.close()
