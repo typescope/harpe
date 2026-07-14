@@ -1,0 +1,47 @@
+//[ ProcessorTest.jo
+  !
+  ! Unit test for the concrete processors: `MarkitdownReader` (Word → text) and
+  ! `PypdfReader` (page count and per-page text).
+//]
+
+namespace harpe.test.ProcessorTest
+
+import harpe.media.*
+import harpe.ffi.tempfile
+import harpe.ffi.file
+import harpe.ffi.os
+
+import jo.IO.stdout
+
+private def check(label: String, cond: Bool): Unit receives stdout =
+  assert: cond, "\{label} failed"
+  println "  ok \{label}"
+
+// Build a blank `pages`-page PDF at `path` with pypdf.
+private def makeBlankPdf(path: String, pages: Int): Unit =
+  val writer = py.module("pypdf").PdfWriter()
+  var i = 0
+
+  while i < pages do
+    writer.add_blank_page(100.0, 100.0)
+    i = i + 1
+
+  writer.write(path)
+
+def run(): Unit receives stdout =
+  val dir = tempfile.mkdtemp()
+  val root: Path = Path.root
+
+  // Word via markitdown.
+  file.write(os.path.join(dir, "note.txt"), "hello markitdown")
+  val word: Word = new MarkitdownReader(dir)
+  check("Word.text renders the file", word.text(root / "note.txt").contains("hello markitdown"))
+
+  // PDF via pypdf — a 2-page blank document.
+  makeBlankPdf(os.path.join(dir, "doc.pdf"), 2)
+  val pdf: PDF = new PypdfReader(dir)
+  check("PDF.pageCount", pdf.pageCount(root / "doc.pdf") == 2)
+
+  val _ = pdf.text(root / "doc.pdf")            // runs (blank → empty)
+  val _ = pdf.pageText(root / "doc.pdf", 1)
+  check("PDF.text / pageText run", true)

@@ -63,6 +63,10 @@ end
 private def guest(body: String): String =
   "namespace UserTask\nimport SandboxAPI.*\n\ndef runTask(): Unit receives IO.stdout =\n" + body
 
+// A guest program that also receives the `fs` (FileSystem) capability.
+private def guestFs(body: String): String =
+  "namespace UserTask\nimport SandboxAPI.*\n\ndef runTask(): Unit receives IO.stdout, fs =\n" + body
+
 private def check(label: String, actual: String, expected: String): Unit receives stdout =
   assert: actual == expected, "\{label}: expected [\{expected}] but got [\{actual}]"
   println "  ok \{label}"
@@ -126,6 +130,12 @@ def run(): Unit receives stdout =
   val brokerOut = exec(brokerTool, guest("  println 7\n")).result
   assert: brokerOut.contains("broker: sandbox"), "broker channel: guest did not reach the host service — got [\{brokerOut}]"
   println "  ok broker-channel"
+
+  // The FileSystem capability reaches the guest: it reads its own run dir (which holds
+  // the compiled out.py) through the granted `fs`.
+  val fsOut = exec(fast, guestFs("  println fs.exists(fs.root / \"out.py\")\n")).result
+  assert: fsOut.contains("true"), "filesystem capability: guest could not read its run dir — got [\{fsOut}]"
+  println "  ok filesystem-capability"
 
   // Concurrent runs are isolated: 4 parallel programs, 2 building at a time,
   // each must get back its own output (no shared Task.jo / .build clobbering).

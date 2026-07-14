@@ -1,0 +1,48 @@
+//[ Processors.jo
+  !
+  ! Format processors: capabilities that turn a file (named by a `Path`) into text or
+  ! structured values. Each is FFI — its implementation calls a library — so each is a
+  ! separate capability the agent grants on its own (an agent may read PDFs but not
+  ! run OCR).
+  !
+  ! Every processor takes a `Path`, so it is source-agnostic: the file may have been
+  ! read locally or `load`ed from a remote `MediaProvider`. And every one offers
+  ! `text(src)` — the reliable "give me the words" — with format-specific methods on
+  ! top.
+  !
+  ! New capabilities or methods are added here; existing signatures stay put, and
+  ! options (an OCR language, a page range) arrive as defaulted parameters so callers
+  ! never break.
+//]
+
+namespace harpe.media
+
+//[ Image pixel dimensions. //]
+class ImageSize(width: Int, height: Int)
+
+//[ Read a PDF's text — whole, or a page at a time for a large document. //]
+interface PDF
+  //[ The number of pages. //]
+  def pageCount(src: Path): Int
+
+  //[ The whole document's text. //]
+  def text(src: Path): String
+
+  //[ One page's text; `page` is 1-based. //]
+  def pageText(src: Path, page: Int): String
+end
+
+//[ Read a Word (`.docx`) document's text. //]
+interface Word
+  //[ The document's text. //]
+  def text(src: Path): String
+end
+
+//[ Read an image: its pixel size, and any text it contains (OCR). //]
+interface Image
+  //[ The image's pixel dimensions. //]
+  def dimensions(src: Path): ImageSize
+
+  //[ Text recognized in the image (OCR); empty if none. //]
+  def text(src: Path): String
+end

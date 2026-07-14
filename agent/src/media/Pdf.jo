@@ -1,0 +1,39 @@
+//[ Pdf.jo
+  !
+  ! A concrete `PDF` capability backed by pypdf, which gives page-level access — page
+  ! count and per-page text — not just a flat rendering. It resolves a `Path` against
+  ! its root and reads the file directly. Needs the `pypdf` Python package.
+//]
+
+namespace harpe.media
+
+import harpe.ffi.os
+import harpe.ffi.builtins
+
+private def pypdfMod: py.Dynamic = py.module("pypdf")
+
+//[ A pypdf-backed PDF reader, resolving a `Path` against `root`. //]
+class PypdfReader(root: String)
+  view PDF
+
+  def pageCount(src: Path): Int =
+    builtins.len(pypdfMod.PdfReader(resolvePath(root, src)).pages)
+
+  def pageText(src: Path, page: Int): String =
+    val reader = pypdfMod.PdfReader(resolvePath(root, src))
+    py.dynamic(reader.pages)[page - 1].extract_text().asString
+
+  def text(src: Path): String =
+    val reader = pypdfMod.PdfReader(resolvePath(root, src))
+    val pages = reader.pages
+    val n = builtins.len(pages)
+
+    var result = ""
+    var i = 0
+    while i < n do
+      val page = py.dynamic(pages)[i].extract_text().asString
+      result = if i == 0 then page else result + "\n" + page
+      i = i + 1
+
+    result
+end

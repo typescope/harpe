@@ -4,6 +4,7 @@ import jo.IO.stdout
 import harpe.logging.*
 import harpe.ffi.os
 import harpe.broker.*
+import harpe.media.*
 import SandboxAPI
 
 // Runtime for the runCode integration tests: install the audit channel (a JSONL
@@ -15,7 +16,10 @@ def main(): Unit receives stdout =
 private def run(): Unit receives stdout, logger =
   logger.info("harpe.sandbox.runtime", "runtime ready")
   probeBroker()
-  SandboxAPI.runTask()
+
+  // Grant the guest a FileSystem rooted at the scratch (run) dir the host names.
+  val fs = FileSystemImpl.local(os.getenv("HARPE_SCRATCH_DIR", "."))
+  with SandboxAPI.fs = fs in SandboxAPI.runTask()
 
 // Step-3 broker self-test: if the host injected a broker socket, do one round-trip
 // through it from inside the guest process and print the result. Proves the channel

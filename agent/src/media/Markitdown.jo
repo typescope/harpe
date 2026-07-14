@@ -1,0 +1,32 @@
+//[ Markitdown.jo
+  !
+  ! A concrete `Word` reader backed by Microsoft's markitdown, which renders many
+  ! document formats to text. (PDFs use the page-aware `PypdfReader` instead.)
+  !
+  ! Swapping the backend is a local edit here; the `Word` interface and everything
+  ! above it are unchanged. Needs the `markitdown` Python package.
+//]
+
+namespace harpe.media
+
+import harpe.ffi.os
+
+private def markitdownMod: py.Dynamic = py.module("markitdown")
+
+//[ A markitdown-backed reader, resolving a `Path` against `root` and rendering the
+  ! file to text. //]
+class MarkitdownReader(root: String)
+  view Word
+
+  def text(src: Path): String = markitdownConvert(resolvePath(root, src))
+end
+
+//[ Render the file at real path `path` to text via markitdown.
+  !
+  ! A conversion failure is returned as a message rather than raised — an unreadable
+  ! file is an expected outcome the model should see, not a crash.
+//]
+def markitdownConvert(path: String): String =
+  match py.try(markitdownMod.MarkItDown().convert(path).text_content.asString)
+  case Ok(text) => text
+  case Err(e)   => "Could not read the file: \{e.message}"
