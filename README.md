@@ -28,8 +28,8 @@ jo start                      # builds the sandbox guest, then launches the agen
   No public endpoint needed: the bot long-polls.
 
 `jo start` is the `[commands]` entry in the agent's `jo.toml`:
-`jo build --spec sandbox/guest/jo.toml && jo run` — build the sandbox the model
-compiles against, then run the agent. (Requires Jo 0.11.3+.)
+`jo build --spec sandbox/jo.toml guest && jo run` — build the sandbox the model
+compiles against, then run the agent. (Requires Jo 0.12+.)
 
 ## Layout
 
@@ -142,8 +142,8 @@ prompt) and drop reference files into `skills/` — the agent browses them with
 the read-only skill tools.
 
 **Grant capabilities (the usual path).** Give the *LLM* a new typed ability
-inside the sandbox: declare the capability in `sandbox/api`, widen `runTask`'s
-`receives`, and construct the implementation in `sandbox/runtime` (impls get the
+inside the sandbox: declare the capability in the `api` module, widen `runTask`'s
+`receives`, and construct the implementation in the `runtime` module (impls get the
 `Sandbox` for logging/env/resource caps — never the model). Ungranted abilities
 fail to compile in the model's code.
 
@@ -198,17 +198,23 @@ rebuild.
 
 ## How the sandbox is wired
 
-The model's per-turn program (`sandbox/guest`) depends on your `api` and
-`runtime`, and links the entry to your runtime:
+The sandbox is a single project with three modules — `api`, `runtime`, and the
+model's per-turn program `guest`. The `guest` module depends on `api` and links
+the entry to your `runtime`:
 
 ```toml
-# sandbox/guest/jo.toml
-[main.dependencies]
-sandbox-api     = { path = "../api" }
-sandbox-runtime = { path = "../runtime", link = true }
-[main.links]
-"jo.main"            = "SandboxRuntime.main"
-"SandboxAPI.runTask" = "UserTask.runTask"
+# sandbox/jo.toml
+[module.guest]
+kind = "app"
+platform = "python"
+src = ["Task.jo"]
+
+modules = ["api", { id = "runtime", link = true }]
+
+links = [
+  { from = "jo.main", to = "SandboxRuntime.main" },
+  { from = "SandboxAPI.runTask", to = "UserTask.runTask" },
+]
 ```
 
 `SandboxRuntime.main` builds the host-side `Sandbox`, constructs the granted

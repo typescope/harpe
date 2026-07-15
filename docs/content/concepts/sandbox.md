@@ -21,12 +21,12 @@ applying two protections around every build/run that the guest cannot disable:
 
 ## Compile-time sandboxing — the capability gate
 
-The foundation. The model's program (`sandbox/guest`) is compiled *without* the
-runtime API: its `jo.toml` has no `--use-runtime-api`, so guest Jo cannot name
+The foundation. The model's program (the `guest` module) is compiled *without*
+the runtime API: its module declares no `enable-ffi`, so guest Jo cannot name
 `py.*`, `os`, or any capability the agent did not grant. Granting an ability and
 proving it safe are the same act — you declare a capability interface, widen
-`runTask`'s `receives` in `sandbox/api`, and construct its impl in
-`sandbox/runtime`. A program that names an ungranted capability *fails to
+`runTask`'s `receives` in the `api` module, and construct its impl in the
+`runtime` module. A program that names an ungranted capability *fails to
 compile, so it never runs* — the compile step is the security checkpoint.
 
 This is strong against a program that plays by the rules, but it is a single

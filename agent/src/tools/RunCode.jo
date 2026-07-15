@@ -6,8 +6,8 @@
   ! distinct from the conversational session history; the format and destination
   ! are the `Logger` backend's policy (see `harpe.logging`).
   !
-  ! How it compiles — and why it is concurrency-safe. Building the guest package
-  ! once (`jo build`, the user's one-time prep) records the *exact* compiler
+  ! How it compiles — and why it is concurrency-safe. Building the sandbox's guest
+  ! module once (`jo build`, the user's one-time prep) records the *exact* compiler
   ! invocation in the target's `.done` sidecar: the backend, every `--lib`
   ! (checking libraries) and `--link-lib` (link libraries) pointing at the
   ! dependencies' already-built, read-only `.sast`, the `--link` map, and the
@@ -53,8 +53,8 @@ private def runCodeCategory: String = "harpe.tools.runCode"
   ! `*.py.done` sidecar next to the built target. `None` if the guest has not been
   ! built yet.
 //]
-private def findDoneFile(guestDir: String): Option[String] =
-  val hits = glob.glob(os.path.join(guestDir, ".build/*/jo-*/target/*.py.done"))
+private def findDoneFile(sandboxDir: String): Option[String] =
+  val hits = glob.glob(os.path.join(sandboxDir, ".build/*/jo-*/target/*.py.done"))
   if hits.size == 0 then None else Some(hits.get(0).asString)
 
 //[ Replay the recorded invocation (`lines`, one argument per line) with this
@@ -103,7 +103,7 @@ private def replayArgs(lines: List[String], runSrc: String, runOut: String, runS
 //]
 private def runCode(
     code: String,
-    guestDir: String,
+    sandboxDir: String,
     gate: py.Dynamic,
     buildTimeout: Float,
     runTimeout: Float,
@@ -111,10 +111,10 @@ private def runCode(
     runScript: String,
     services: Map[String, Service])
 : Tool.RunOutcome receives logger =
-  match findDoneFile(guestDir)
+  match findDoneFile(sandboxDir)
   case None =>
     new Tool.RunOutcome(
-      "The sandbox is not built. Run `jo build` in the guest package once before starting the agent.",
+      "The sandbox is not built. Run `jo build` in the sandbox project once before starting the agent.",
       "sandbox not built")
 
   case Some(donePath) =>
@@ -301,7 +301,7 @@ private def replayAudit(path: String): Unit receives logger =
 
 //[ The core "act" tool: compile + run a Jo program against the agent sandbox.
   !
-  ! Requires the guest package to have been built once (`jo build`), which records
+  ! Requires the sandbox to have been built once (`jo build`), which records
   ! the compiler invocation this tool replays. Until then, calls return a "sandbox
   ! not built" message rather than building anything themselves.
   !
@@ -325,14 +325,14 @@ private def replayAudit(path: String): Unit receives logger =
   ! head + tail kept) so one large program output cannot flood the context. The
   ! full, un-elided output is still written to `logger`, so nothing is lost.
   !
-  ! Defense in depth is external: if `sandbox/run.sh` (next to the guest package)
+  ! Defense in depth is external: if `sandbox/run.sh` (at the sandbox project root)
   ! exists and is executable, each run goes through it — `run.sh <out.py>` — and
   ! the script owns the interpreter, uid drop, and OS confinement (ulimit,
   ! landrun, bwrap, docker, …). Absent, the guest runs under the system Python.
   ! See `docs/concepts/sandbox.md`.
 //]
 def runCodeTool(
-    guestDir: String,
+    sandboxDir: String,
     buildTimeout: Float = 120.0,
     runTimeout: Float = 30.0,
     maxConcurrent: Int = 4,
@@ -341,10 +341,10 @@ def runCodeTool(
 : Tool =
   val gate = threading.semaphore(maxConcurrent)
 
-  // The optional run.sh wrapper sits at sandbox/run.sh — i.e. next to the guest
-  // package. If it exists it must be executable, or every run would fail
+  // The optional run.sh wrapper sits at sandbox/run.sh — i.e. at the sandbox
+  // project root. If it exists it must be executable, or every run would fail
   // obscurely; catch that once at startup rather than per call.
-  val runScript = os.path.join(os.path.dirname(guestDir), "run.sh")
+  val runScript = os.path.join(sandboxDir, "run.sh")
 
   if os.path.isfile(runScript) then
     val osMod = py.module("os")
@@ -355,5 +355,5 @@ def runCodeTool(
     "runCode",
     "Write a Jo program (namespace UserTask, def runTask), compile it against the agent sandbox, and run it. Returns the program's stdout, or the compile error if it does not build.",
     [Tool.strParam("code", "The Jo source code to compile and run")],
-    input => runCode(input.string("code"), guestDir, gate, buildTimeout, runTimeout, maxResultChars, runScript, services)
+    input => runCode(input.string("code"), sandboxDir, gate, buildTimeout, runTimeout, maxResultChars, runScript, services)
   )

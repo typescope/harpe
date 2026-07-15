@@ -1,0 +1,27 @@
+jo = "0.12"
+
+[module.api]
+kind = "lib"
+src = ["SandboxAPI.jo"]
+platform = "python"
+
+modules = [ { path = "../../", id = "harpe" } ]
+
+[module.runtime]
+kind = "lib"
+src = ["SandboxRuntime.jo"]
+platform = "python"
+enable-ffi = true
+modules = ["api", { path = "../../", id = "harpe" } ]
+
+[module.guest]
+kind = "app"
+src = ["Task.jo"]
+platform = "python"
+
+modules = ["api", { id = "runtime", link = true } ]
+
+links = [
+  { from = "jo.main", to = "SandboxRuntime.main" },
+  { from = "SandboxAPI.runTask", to = "UserTask.runTask" },
+]

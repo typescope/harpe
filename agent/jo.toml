@@ -1,15 +1,19 @@
-jo   = "0.11"
-name = "harpe"
+jo = "0.12"
 
-[package]
-version = "0.1.0"
-runtime = "python"
-
-[main]
+[module.harpe]
+kind = "lib"
+platform = "python"
+src = ["src/"]
 compile-options = ["--test-pickling", "--check-tree"]
+enable-ffi = true
 
-# Unit tests (jo test). The package runtime (python) propagates to the test
-# module, so test sources can use `py.*` to build scaffolding directly.
-[test]
-compile-options = ["--print-after", "LowerContextParams", "--print-only", "Tool.jo"]
+[module.harpe.package]
+name = "harpe"
+version = "0.1.0"
+
+[module.test]
+kind = "app"
+platform = "python"
+enable-ffi = true
+modules = ["harpe"]
 src = ["tests/"]

@@ -29,9 +29,9 @@ import harpe.Tool.*
 
 // Locate the sandbox fixture regardless of where `jo test` is invoked from
 // (the package dir or the repo root).
-private def fixtureGuestDir(): String =
+private def fixtureSandboxDir(): String =
   var found = ""
-  for c in ["sandbox-fixtures/basic/guest", "agent/sandbox-fixtures/basic/guest"] do
+  for c in ["sandbox-fixtures/basic", "agent/sandbox-fixtures/basic"] do
     if found == "" && os.path.isdir(c) then found = c
 
   assert: found != "", "runCode tests: sandbox fixture not found under sandbox-fixtures/basic/"
@@ -105,19 +105,19 @@ private def concurrentCheck(tool: Tool, n: Int): Unit receives stdout =
   println "  ok concurrent-isolation"
 
 def run(): Unit receives stdout =
-  val guestDir = fixtureGuestDir()
+  val sandboxDir = fixtureSandboxDir()
 
   // The tool replays the invocation recorded by `jo build`, so the fixture must be
   // built once up front (the user's normal one-time prep).
-  val prep = subprocess.runCapped(py.list("jo", "build", "--spec", os.path.join(guestDir, "jo.toml")), 180.0)
+  val prep = subprocess.runCapped(py.list("jo", "build", "--spec", os.path.join(sandboxDir, "jo.toml"), "guest"), 180.0)
   assert: !prep.timedOut && prep.returnCode == 0, "runCode tests: failed to pre-build the sandbox fixture:\n\{prep.err}"
 
   // An unbuilt sandbox reports clearly instead of building or running anything.
   val unbuilt = tempfile.mkdtemp()
   check("not-built", exec(runCodeTool(unbuilt), guest("  println 1\n")).summary, "sandbox not built")
 
-  val fast  = runCodeTool(guestDir, 120.0, 5.0)   // 5s run backstop
-  val quick = runCodeTool(guestDir, 120.0, 2.0)   // 2s run backstop
+  val fast  = runCodeTool(sandboxDir, 120.0, 5.0)   // 5s run backstop
+  val quick = runCodeTool(sandboxDir, 120.0, 2.0)   // 2s run backstop
 
   // A well-formed program runs and produces output.
   check("normal", tag(exec(fast, guest("  println 42\n"))), "ran")
@@ -126,7 +126,7 @@ def run(): Unit receives stdout =
   // the sandbox runtime does a round-trip through the per-run socket from inside the
   // guest and prints the result. No service granted → no broker → nothing printed.
   val brokerServices = Map.empty[String, Service].add("echo", new EchoService())
-  val brokerTool = runCodeTool(guestDir, 120.0, 5.0, 4, 4000, brokerServices)
+  val brokerTool = runCodeTool(sandboxDir, 120.0, 5.0, 4, 4000, brokerServices)
   val brokerOut = exec(brokerTool, guest("  println 7\n")).result
   assert: brokerOut.contains("broker: sandbox"), "broker channel: guest did not reach the host service — got [\{brokerOut}]"
   println "  ok broker-channel"
@@ -139,7 +139,7 @@ def run(): Unit receives stdout =
 
   // Concurrent runs are isolated: 4 parallel programs, 2 building at a time,
   // each must get back its own output (no shared Task.jo / .build clobbering).
-  concurrentCheck(runCodeTool(guestDir, 120.0, 5.0, 2), 4)
+  concurrentCheck(runCodeTool(sandboxDir, 120.0, 5.0, 2), 4)
 
   // A program that does not type-check is caught at the compile checkpoint.
   check("compile-error", tag(exec(fast, guest("  println undefinedThing\n"))), "compile-error")
