@@ -1,0 +1,88 @@
+//[ PdfWriterImpl.jo
+  !
+  ! The fpdf2 `PdfWriter` backend: helvetica text, shaded-header tables, images,
+  ! and automatic page breaks. Targets resolve against `root`. Needs the `fpdf2`
+  ! Python package.
+//]
+
+namespace harpe.media
+
+import harpe.caps.*
+import harpe.ffi.os
+
+private def fpdfMod: py.Dynamic = py.module("fpdf")
+
+//[ The fpdf2 writing backend, resolving `Path`s against `root`. //]
+class FpdfWriter(root: String)
+  view PdfWriter
+
+  def create(): PdfBuilder =
+    val pdf = fpdfMod.FPDF()
+    pdf.set_auto_page_break(true)
+    pdf.add_page()
+    new PdfBuilderImpl(pdf, root)
+end
+
+private class PdfBuilderImpl(pdf: py.Dynamic, root: String)
+  view PdfBuilder
+
+  def metadata(title: String, author: String): Unit =
+    pdf.set_title(title)
+    pdf.set_author(author)
+
+  def addHeading(text: String, level: Int): Unit =
+    val size = if level < 1 then 20 else if level > 6 then 12 else 20 - level * 2
+    pdf.set_font("helvetica", "B", size)
+    pdf.set_text_color(30, 30, 90)
+    pdf.multi_cell(0, 10, text)
+    pdf.set_text_color(0, 0, 0)
+    val _ = pdf.ln(2)
+
+  def addParagraph(text: String): Unit =
+    pdf.set_font("helvetica", "", 11)
+    pdf.multi_cell(0, 6, text)
+    val _ = pdf.ln(2)
+
+  def addTable(rows: List[List[String]]): Unit =
+    if rows.size == 0 then return pass
+
+    val columns = rows.get(0).size
+    val width = pdf.epw.asFloat / columns.toFloat
+    pdf.set_fill_color(225, 228, 235)
+
+    var i = 0
+
+    while i < rows.size do
+      val header = i == 0
+      pdf.set_font("helvetica", if header then "B" else "", 10)
+
+      val row = rows.get(i)
+      var j = 0
+
+      while j < row.size do
+        pdf.cell(width, 8.0, row.get(j), 1, fill = header)
+        j = j + 1
+
+      val _ = pdf.ln(8)
+      i = i + 1
+
+    val _ = pdf.ln(2)
+
+  def addImage(src: Path, width: Int): Result[Unit, String] =
+    orMessage: py.try(placeImage(src, width))
+
+  def addPageBreak(): Unit =
+    val _ = pdf.add_page()
+
+  def save(target: Path): Result[Unit, String] =
+    orMessage: py.try(saveTo(target))
+
+  private def placeImage(src: Path, width: Int): Unit =
+    pdf.image(resolvePath(root, src), w = width)
+    val _ = pdf.ln(2)
+
+  private def saveTo(target: Path): Unit =
+    val real = resolvePath(root, target)
+    os.makedirs(os.path.dirname(real))
+    val _ = pdf.output(real)
+end

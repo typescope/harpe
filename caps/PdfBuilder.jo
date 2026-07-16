@@ -1,0 +1,35 @@
+//[ PdfBuilder.jo
+  !
+  ! A PDF under construction: metadata, headings, paragraphs, tables, images, and
+  ! page breaks (pages also break automatically), then `save` to a target `Path`.
+//]
+
+namespace harpe.caps
+
+//[ A PDF being built. //]
+interface PdfBuilder
+  //[ Set the document's title and author metadata. //]
+  def metadata(title: String, author: String): Unit
+
+  //[ Append a heading (`level` 1-9; smaller is larger type). //]
+  def addHeading(text: String, level: Int): Unit
+
+  //[ Append a body paragraph. //]
+  def addParagraph(text: String): Unit
+
+  //[ Append a table of text cells, one inner list per row; the first row is the
+    ! shaded header.
+  //]
+  def addTable(rows: List[List[String]]): Unit
+
+  //[ Append the image at `src`, scaled to `width` millimeters (a page is ~190 mm
+    ! wide inside the margins).
+  //]
+  def addImage(src: Path, width: Int): Result[Unit, String]
+
+  //[ Start a new page. //]
+  def addPageBreak(): Unit
+
+  //[ Write the document to `target`. //]
+  def save(target: Path): Result[Unit, String]
+end
