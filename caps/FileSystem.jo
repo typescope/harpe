@@ -24,10 +24,14 @@ class DirEntry(path: Path, isDirectory: Bool)
 
 //[ A confined filesystem the guest reads via `Path`.
   !
-  ! Error convention: an environment surprise the program should branch on comes
-  ! back in the type — `Result[T, String]` when there is a reason to give, `Option`
-  ! when absence says it all. Violating a stated contract (reading a closed file, a
-  ! negative offset) is a bug in the program and aborts the run.
+  ! Error convention: a failure the program can plan around comes back in the
+  ! type — `Result[T, String]` when there is a reason to give, `Option` when
+  ! absence says it all.
+  !
+  ! In opening a file the programmer usually expects error and handles them.
+  ! In contrast, reading an already-open file is total — what remains there is
+  ! either a contract violation (reading a closed file, a negative offset) or
+  ! an unrecoverable I/O fault, and both abort the run.
 //]
 interface FileSystem
   //[ The root, for building paths: `fs.root / "docs" / "x.pdf"`. //]

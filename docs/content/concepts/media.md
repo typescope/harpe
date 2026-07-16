@@ -99,9 +99,8 @@ exceptional. Every capability therefore answers environment errors in its type:
 `Result[T, String]` when there is a reason to give (a missing file, a corrupt
 document, an out-of-range page), `Option` when absence says it all (`resolve`,
 `stat`). The model branches with a `match`, or unwraps the happy path with
-`.success`. Only *contract violations* — reading a closed file, a negative
-offset — abort the run: those are bugs in the program, and the fix is a new
-program, not a branch.
+`.success`. Reads on an already-open file are total; misuse — reading a closed
+file, a negative offset — aborts the run.
 
 `resolve` is cheap — a stat, no read — returning a `Media` descriptor (`mimeType`,
 `fileName`, and an open bag of typed metadata: `sizeBytes`, `pages`, …), so the
