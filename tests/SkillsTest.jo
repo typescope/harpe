@@ -56,13 +56,25 @@ def run(): Unit receives stdout =
   os.makedirs(os.path.join(tmp, "skills-evil"))
   file.write(os.path.join(tmp, "skills-evil/secret.md"), "EVIL")
 
+  // A directory SYMLINKED into the skills tree is deliberate sharing (that is how
+  // an agent surfaces reference material, e.g. skills/caps -> ../../caps), so the
+  // walk follows it and its files are ordinary nested skills.
+  os.makedirs(os.path.join(tmp, "shared"))
+  file.write(os.path.join(tmp, "shared/ref.md"), "linked reference")
+  os.symlink(os.path.join(tmp, "shared"), os.path.join(skillsDir, "linked"))
+
   val tools = skillTools(skillsDir)
 
-  // Listing surfaces nested files, names carrying their sub-directory path.
-  check("list-nested", listSkills(tools) == "sub/deep/leaf.jo\nsub/nested.md\ntop.md")
+  // Listing surfaces nested files, names carrying their sub-directory path —
+  // including files inside a symlinked directory.
+  check("list-nested", listSkills(tools) == "linked/ref.md\nsub/deep/leaf.jo\nsub/nested.md\ntop.md")
 
   // A legitimate read of a deeply nested file works.
   check("read-nested", readSkill(tools, "sub/deep/leaf.jo") == "leaf content")
+
+  // Files behind the symlink read and search like any other skill.
+  check("read-symlinked", readSkill(tools, "linked/ref.md") == "linked reference")
+  check("search-symlinked", searchSkills(tools, "linked reference").contains("linked/ref.md:1:"))
 
   // --- security: no read outside the skills directory ---
 

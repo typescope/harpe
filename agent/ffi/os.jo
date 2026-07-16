@@ -65,4 +65,9 @@ def makedirs(path: String): Unit = module.makedirs(path, exist_ok = true)
 
 def rename(src: String, dst: String): Unit = module.rename(src, dst)
 
-def walk(top: String = "."): py.Dynamic = module.walk(top)
+def symlink(target: String, link: String): Unit = module.symlink(target, link)
+
+// Follows directory symlinks: a link placed inside a walked tree is deliberate
+// (it is how an agent shares reference material into skills/), so the walk
+// descends into it. Cyclic links would loop — do not create them.
+def walk(top: String): py.Dynamic = module.walk(top, followlinks = true)
