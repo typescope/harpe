@@ -17,12 +17,6 @@ private interface GetRepo
   def get_repo(name: String): py.Dynamic
 end
 
-//[ Typed interface for PyGithub's Repository //]
-private interface PrApi
-  def get_pull(number: Int): py.Dynamic
-  def get_commit(sha: String): py.Dynamic
-end
-
 //[ Typed interface for PyGithub's PR actions //]
 private interface Review
   def create_review(
@@ -40,8 +34,38 @@ private def module: GitHub = py.module("github").cast[GitHub]
 private class GithubClient(token: String):
   val client = module.Github(token, user_agent = "harpe-pr-review/1.0").cast[GetRepo]
 
-  private def getRepo(owner: String, repo: String): PrApi =
-    client.get_repo(owner + "/" + repo).cast[PrApi]
+  private def getPull(owner: String, repo: String, num: Int): => py.Dynamic =
+    client.get_repo(owner + "/" + repo).get_pull(num)
+
+  def getPR(owner: String, repo: String, number: Int) => py.Dynamic:
+    val pr = getPull(owner, repo, number)
+    val diffs: py.List = py.List()
+
+    for f in pr.get_files().cast[py.List] do
+      diffs.append(py.Dict(
+          "path"      ~   f.filename,
+          "status"    ~   f.status,
+          "additions" ~   f.additions,
+          "deletions" ~   f.deletions,
+          "patch"     ~   f.patch or "",
+      ))
+    end
+
+
+    py.dict(
+        "owner"    ~      owner,
+        "repo"     ~      repo,
+        "number"   ~      pr.number,
+        "title"    ~      pr.title,
+        "body"     ~      pr.body or "",
+        "author"   ~      pr.user.login,
+        "base_br"  ~      pr.base.ref,
+        "head_br"  ~      pr.head.ref,
+        "head_sha" ~      pr.head.sha,
+        "state"    ~      pr.state,
+        "diffs"    ~      diffs
+    )
+
 
   //[ Submit a PR review via PyGithub.
     !
@@ -51,21 +75,20 @@ private class GithubClient(token: String):
   def submitReview(
     owner: String,
     repo: String,
-    prNumber: Int,
+    number: Int,
     headSha: String,
     event: String,
     body: String,
     commentsJson: String
   ): Unit =
-    val r        = getRepo(owner, repo)
-    val pr       = r.get_pull(prNumber).cast[Review]
+    val pr       = getPull(owner, repo, number).cast[Review]
     val commit   = r.get_commit(headSha)
     val comments = jsonMod.loads(commentsJson)
-    pr.create_review(commit = commit, body = body, event = event, comments = comments)
+    pr.create_review(commit, body, event, comments)
 
   //[ Post an issue-level comment on the PR. //]
-  def addComment(owner: String, repo: String, prNumber: Int, body: String): Unit =
-    getRepo(owner, repo).get_pull(prNumber).cast[Review].create_issue_comment(body)
+  def addComment(owner: String, repo: String, number: Int, body: String): Unit =
+    getPull(owner, repo, number).cast[Review].create_issue_comment(body)
 
   //[ Merge the PR using the head SHA as a guard against concurrent updates.
     !
@@ -74,11 +97,21 @@ private class GithubClient(token: String):
   def mergePR(
     owner: String,
     repo: String,
-    prNumber: Int,
+    num: Int,
     headSha: String,
     commitMessage: String
   ): Unit =
-    getRepo(owner, repo).get_pull(prNumber).cast[Review].merge(
+    getPull(owner, repo, num).cast[Review].merge(
       sha = headSha,
       commit_message = commitMessage
     )
+
+  def getRepoFiles(owner: String, repo: String, paths: List[String],
+                  ref: String = "HEAD") => Map[String, String]:
+      val r = client.get_repo(owner + "/" + repo)
+      var files = Map[String, String]()
+      for path in paths:
+          match py.try(r.get_contents(path, ref=ref))
+            Ok(content) => files = files.add(path, content.decoded_content.decode("utf-8", errors="replace").asString)
+            Err(msg) => pass // TODO
+      files

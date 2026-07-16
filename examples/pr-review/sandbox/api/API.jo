@@ -16,11 +16,12 @@ class PRInfo(
   number: Int,
   title: String,
   body: String,
-  author: String,
   baseBranch: String,
   headBranch: String,
+  headSha: String,
   url: String,
-  state: String
+  state: String,
+  diffs: List[FileDiff]
 )
 
 //[ A changed file in the PR with its unified diff patch
@@ -54,9 +55,6 @@ union ReviewVerdict = Approve | RequestChanges | CommentOnly
 interface GitHub
   //[ Get PR metadata (number, title, body, author, branches, url, state) //]
   def getPR(): PRInfo
-
-  //[ Get all file diffs in the PR (path, status, additions, deletions, patch) //]
-  def getDiffs(): List[FileDiff]
 
   //[ Read a source file from the PR's head branch snapshot
     !

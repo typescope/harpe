@@ -1,15 +1,3 @@
-//[ Runtime.jo
-  !
-  ! Read operations (getPR, getDiffs, readFile) are served from the local
-  ! pr_data.json snapshot written by agent at startup.
-  !
-  ! Write operations (submitReview, addComment, merge) call the real GitHub
-  ! REST API immediately via GithubClient.jo (PyGithub).
-  !
-  ! dry_run mode (read from pr_data.json) prints what would happen instead of
-  ! calling GitHub.
-//]
-
 namespace GithubRuntime
 
 import jo.IO.stdout
@@ -29,39 +17,30 @@ private def buildCommentsJson(comments: List[GithubAPI.LineComment]): String =
     """
   "[" + comments.map(comment).join(",") + "]"
 
+private class PR(owner: String, repo: String, num: Int)
+
+def parsePrURL(url: String) => Opt[PR]:
+  if url.trim is `^(https://)?github\.com/(?owner[^/]+)/(?repo[^/]+)/pull/(num\d+)$` then:
+    new PR(owner, repo, num.toInt)
+  else
+    None
+
 //[ GitHub interface backed by local snapshot files + live GitHub API //]
-class GithubImpl(
-  prDataPath: String,
-  repoDir: String,
-  owner: String,
-  repo: String,
-  prNumber: Int,
-  headSha: String,
-  dryRun: Bool
-)
+class GithubImpl(sd Sandbox, prUrl: String, dryRun: Bool, token: String)
   view GithubAPI.GitHub
 
-  private def loadData(): py.Dynamic =
-    jsonMod.loads(readFile(prDataPath))
+  val pr = parsePrURL(prUrl)
+  if pr is None then:
+    abort "invalid PR url:" + prUrl
 
-  //[ Read operations — served from the local snapshot //]
+  val client = new GithubClient(token)
+  val prInfo = getPR()
 
-  def getPR(): GithubAPI.PRInfo =
-    val data = loadData()
-    new GithubAPI.PRInfo(
-      data.number.asInt,
-      data.title.asString,
-      data.body.asString,
-      data.author.asString,
-      data.base_branch.asString,
-      data.head_branch.asString,
-      data.url.asString,
-      data.state.asString
-    )
+  private def getPR(): GithubAPI.PRInfo =
+    val pr = client.getPR(pr.owner, pr.repo, pr.num)
 
-  def getDiffs(): List[GithubAPI.FileDiff] =
     var diffs: List[GithubAPI.FileDiff] = []
-    for d in loadData()["diffs"].cast[py.List] do
+    for d in pr["diffs"].cast[py.List] do
       diffs = diffs + new GithubAPI.FileDiff(
         d.path.asString,
         d.status.asString,
@@ -69,11 +48,33 @@ class GithubImpl(
         d.deletions.asInt,
         d.patch.asString
       )
-    diffs
+
+    new GithubAPI.PRInfo(
+      pr.number.asInt,
+      pr.title.asString,
+      pr.body.asString,
+      pr.base_br.asString,
+      pr.head_br.asString,
+      pr.head_sha.asString,
+      pr.state.asString,
+      diffs
+    )
+
+  def getPRInfo(): GithubAPI.PRInfo = prInfo
+
+  //[ Read repo file //]
+  def readFile(path: String): String =
+    if sd.fileExists(path) then
+      sd.readFile(path)
+    else
+      val files = client.getRepoFiles(pr.owner, pr.repo, List(path))
+      val content = files[path]
+      if content != "" then sd.writeFile(path, content)
+      content
 
   //[ Write operations — call the real GitHub API (or print in dry-run mode) //]
-
   def submitReview(verdict: GithubAPI.ReviewVerdict, body: String, comments: List[GithubAPI.LineComment]): Unit receives stdout =
+    val PR(owner, repo, num) = pr
     val verdictStr = match verdict
       case GithubAPI.Approve        => "APPROVE"
       case GithubAPI.RequestChanges => "REQUEST_CHANGES"
@@ -86,56 +87,49 @@ class GithubImpl(
       println ("  comments: " + commentsJson)
       println "ACTION_COMPLETED"
     else
-      GithubClient.submitReview(owner, repo, prNumber, headSha, verdictStr, body, commentsJson)
+      client.submitReview(owner, repo, num, prInfo.headSha, verdictStr, body, commentsJson)
       println "✓ Review submitted"
       println "ACTION_COMPLETED"
 
   def addComment(body: String): Unit receives stdout =
+    val PR(owner, repo, num) = pr
     if dryRun then
       println "[DRY RUN] addComment:"
       println ("  " + body)
       println "ACTION_COMPLETED"
     else
-      GithubClient.addComment(owner, repo, prNumber, body)
+      client.addComment(owner, repo, num, body)
       println "✓ Comment posted"
       println "ACTION_COMPLETED"
 
   def merge(commitMessage: String): Unit receives stdout =
+    val PR(owner, repo, num) = pr
     if dryRun then
       println "[DRY RUN] merge PR"
       println "ACTION_COMPLETED"
     else
-      GithubClient.mergePR(owner, repo, prNumber, headSha, commitMessage)
+      client.mergePR(owner, repo, num, prInfo.headSha, commitMessage)
       println "✓ PR merged"
       println "ACTION_COMPLETED"
 
 end
 
-//[ Main entry point
-  !
-  ! argv[1] = path to pr_data.json  (written by agent.py at startup)
-  ! argv[2] = path to repo files snapshot directory
-  ! argv[3] = "true" | "false"  (dry-run flag passed from agent.py)
-//]
+//[ Main entry point //]
 def main(): Unit receives args, stdout =
   if args.size < 4 then
     println args
     println "Error: missing arguments"
-    println "Usage: python3 task.py <prDataPath> <repoDir> <dryRun>"
+    println "Usage: python3 task.py <prUrl> <dryRun>"
     abort "Missing arguments"
 
-  val prDataPath = args[1]
-  val repoDir    = args[2]
-  val dryRun     = args[3] == "true"
+  val prUrl  = args[1]
+  val dryRun = args[2] == "true"
+  val sandbox: Sandbox = Sandbox.create("data")
 
-  val data     = jsonMod.loads(os.open(prDataPath, "r").read().asString)
-  val owner    = data.owner.asString
-  val repo     = data.repo.asString
-  val prNumber = data.number.asInt
-  val headSha  = data.head_sha.asString
-
-  val ghImpl = new GithubImpl(prDataPath, repoDir, owner, repo, prNumber, headSha, dryRun)
-
-  with SandboxAPI.github = ghImpl in
-    SandboxAPI.runTask()
+  match sandbox.env("GITHUB_TOKEN"):
+    case Some(token) =>
+      val ghImpl = new GithubImpl(prUrl, dryRun, token)
+      with SandboxAPI.github = ghImpl in
+        SandboxAPI.runTask()
+    case _ => abort "missing github token from process environment"
 end
