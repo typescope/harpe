@@ -1,0 +1,26 @@
+//[ FileSystem.jo
+  !
+  ! The sandbox filesystem the guest reads: a confined tree it navigates with `Path`.
+  ! Pure interface — the trusted implementation (`FileSystemImpl`, in the harpe
+  ! module) resolves each `Path` against the real root and does local I/O.
+//]
+
+namespace harpe.media
+
+//[ A confined filesystem the guest reads via `Path`. //]
+interface FileSystem
+  //[ The root, for building paths: `fs.root / "docs" / "x.pdf"`. //]
+  def root: Path = Path.root
+
+  //[ Whether a file or directory exists at `path`. //]
+  def exists(path: Path): Bool
+
+  //[ The entries directly under `dir`, as child paths. //]
+  def list(dir: Path): List[Path]
+
+  //[ The file's lines, streamed lazily — never loads the whole file. //]
+  def readText(path: Path): Iterator[String]
+
+  //[ The file's bytes. For a large file, hand its `Path` to a processor instead. //]
+  def readBinary(path: Path): Bytes
+end

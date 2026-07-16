@@ -3,7 +3,7 @@
   ! Integration tests for the `runCode` tool (`harpe.tools`). Unlike the pure
   ! `runTurn` tests, `runCode` actually compiles and runs a guest program, so
   ! these drive `runCodeTool` against an on-disk sandbox fixture
-  ! (`agent/sandbox-fixtures/basic/`, kept outside the `tests/` source glob) and
+  ! (`sandbox-fixtures/basic/`, kept outside the `tests/` source glob) and
   ! assert a normalized outcome tag — covering the host wall-clock timeout, the
   ! `sandbox/run.sh` seam, and provider-key env scrub end to end. They shell out
   ! to `jo build` + `python3`, so they are slower than the unit tests.
@@ -27,11 +27,11 @@ import harpe.logging.Logging
 import harpe.logging.logger
 import harpe.Tool.*
 
-// Locate the sandbox fixture regardless of where `jo test` is invoked from
-// (the package dir or the repo root).
+// Locate the sandbox fixture regardless of where `jo run test` is invoked from
+// (the repo root or a subdirectory).
 private def fixtureSandboxDir(): String =
   var found = ""
-  for c in ["sandbox-fixtures/basic", "agent/sandbox-fixtures/basic"] do
+  for c in ["sandbox-fixtures/basic", "../sandbox-fixtures/basic"] do
     if found == "" && os.path.isdir(c) then found = c
 
   assert: found != "", "runCode tests: sandbox fixture not found under sandbox-fixtures/basic/"
