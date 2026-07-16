@@ -7,15 +7,13 @@
 anthropic>=0.40,<1   # required for PROVIDER=anthropic (default)
 openai>=2.21,<3      # required for PROVIDER=openai
 
-# Media capabilities (harpe.media). markitdown renders documents (Word, etc.) to
-# text — its [all] extra pulls in the image / Office / audio converters. pypdfium2
-# (PDFium, Chrome's PDF engine) gives page-level PDF access — page count, per-page
-# text, page → image rendering — as a self-contained wheel, no system dependency.
-markitdown[all]>=0.1,<1
+# Media capabilities (harpe.media). pypdfium2 (PDFium, Chrome's PDF engine) gives
+# page-level PDF access as a self-contained wheel, no system dependency.
 pypdfium2>=5,<6
+python-docx>=1,<2    # Word reading (FileSystem.openWord)
+openpyxl>=3.1,<4     # spreadsheet reading (FileSystem.openWorkbook)
+pillow>=10,<13       # Image pixel work (harpe.media Image capability)
 
-# Image pixel work (harpe.media Image capability): Pillow (also comes via
-# markitdown[all]).
 #
 # OCR (harpe.media OCR capability) — two shipped backends, pick one:
 # - pytesseract wraps the Tesseract engine, which must be installed as a SYSTEM

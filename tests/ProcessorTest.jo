@@ -1,13 +1,16 @@
 //[ ProcessorTest.jo
   !
-  ! Unit test for the concrete processors: `MarkitdownReader` (Word → text),
-  ! `PdfiumReader` (page count, per-page text, page → image), `PillowImage`
-  ! (pixel work), and the OCR readers (`TesseractOcr`, `RapidOcr`).
+  ! Unit test for the format readers behind `FileSystem` — `openWord` (python-docx
+  ! handle: paragraphs, outline), `openPDF` (pypdfium2 handle: pages, outline,
+  ! metadata, page → image), `openWorkbook` (openpyxl handle: rows, dimensions) —
+  ! wired through the ambient backend params, plus the separately granted
+  ! `PillowImage` and OCR readers (`TesseractOcr`, `RapidOcr`).
 //]
 
 namespace harpe.test.ProcessorTest
 
 import harpe.media.*
+import harpe.caps.*
 import harpe.ffi.tempfile
 import harpe.ffi.file
 import harpe.ffi.os
@@ -67,6 +70,28 @@ private def makeImagePdf(path: String): Unit =
   page.gen_content()
   doc.save(path)
 
+// Build a 4-paragraph docx at `path`: two headings, two body paragraphs.
+private def makeDocx(path: String): Unit =
+  val doc = py.module("docx").Document()
+  val _ = doc.add_heading("Intro", level = 1)
+  val _ = doc.add_paragraph("Body one.")
+  val _ = doc.add_heading("Details", level = 2)
+  val _ = doc.add_paragraph("Body two.")
+  doc.save(path)
+
+// Build a 2-sheet workbook at `path`: "Data" (header + 2 rows), "Notes" (1 cell).
+private def makeXlsx(path: String): Unit =
+  val wb = py.module("openpyxl").Workbook()
+  val ws = wb.active
+  ws.title = "Data"
+  ws.append(py.list("name", "qty", "price"))
+  ws.append(py.list("apple", 3, 1.5))
+  ws.append(py.list("pear", 5, 2.25))
+
+  val notes = wb.create_sheet("Notes")
+  notes.append(py.list("hello"))
+  wb.save(path)
+
 // A handwritten 2-page PDF with an information dictionary and a 2-entry outline —
 // pypdfium2 cannot author those, but PDFium parses this fixture fine.
 private def outlinedPdf: String = """
@@ -85,50 +110,99 @@ private def outlinedPdf: String = """
 
 def run(): Unit receives stdout =
   val dir = tempfile.mkdtemp()
+
+  // Bind the format backends the `FileSystem` shortcuts read through.
+  with
+    pdfReader = new PdfiumReader(dir),
+    excelReader = new OpenpyxlExcel(dir),
+    wordReader = new DocxReader(dir)
+  in suite(dir)
+
+private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, wordReader =
   val root: Path = Path.root
 
-  // Word via markitdown.
-  file.write(os.path.join(dir, "note.txt"), "hello markitdown")
-  val word: Word = new MarkitdownReader(dir)
-  check("Word.text renders the file", word.text(root / "note.txt").success.contains("hello markitdown"))
+  val fs: FileSystem = FileSystemImpl.local(dir)
 
-  // PDF via pypdfium2 — a 2-page blank document.
+  file.write(os.path.join(dir, "note.txt"), "not a real document")
+
+  // Word via python-docx — paragraph windows and the heading outline.
+  makeDocx(os.path.join(dir, "memo.docx"))
+  check("openWord garbage is Err", fs.openWord(root / "note.txt").isErr)
+
+  val memo = fs.openWord(root / "memo.docx").success
+  check("Word.paragraphCount", memo.paragraphCount == 4)
+
+  val toc = memo.outline
+  check("Word.outline", toc.size == 2 && toc.get(0).title == "Intro" && toc.get(0).paragraph == 1)
+  check("Word.outline levels", toc.get(0).level == 1 && toc.get(1).level == 2)
+
+  val body = memo.paragraphs(2, 1)
+  check("Word.paragraphs window", body.size == 1 && body.get(0) == "Body one.")
+  check("Word.paragraphs past end reads short", memo.paragraphs(4, 10).size == 1)
+  memo.close()
+
+  // PDF via pypdfium2 — open once, traverse the handle.
   makeBlankPdf(os.path.join(dir, "doc.pdf"), 2)
-  val pdf: PDF = new PdfiumReader(dir)
-  check("PDF.pageCount", pdf.pageCount(root / "doc.pdf").success == 2)
+  check("openPDF garbage is Err", fs.openPDF(root / "note.txt").isErr)
+  check("openPDF missing is Err", fs.openPDF(root / "nope.pdf").isErr)
 
-  check("PDF.pageText runs", pdf.pageText(root / "doc.pdf", 1).isOk)   // blank → empty
-  check("PDF.pageText out of range is Err", pdf.pageText(root / "doc.pdf", 99).isErr)
-  check("PDF on garbage is Err", pdf.pageCount(root / "note.txt").isErr)
+  val doc = fs.openPDF(root / "doc.pdf").success
+  check("PDF.pageCount", doc.pageCount == 2)
+  check("PDF.pageText runs", doc.pageText(1).isOk)   // blank → empty
+  check("PDF.outline empty", doc.outline.size == 0)
 
   // Render a page to an image: 100x100 points at the default scale 2 → 200x200 px.
-  check("PDF.pageImage", isSize(pdf.pageImage(root / "doc.pdf", 1, root / "p1.png").success, 200, 200))
+  check("PDF.pageImage", isSize(doc.pageImage(1, root / "p1.png").success, 200, 200))
   check("PDF.pageImage writes target", os.path.isfile(os.path.join(dir, "p1.png")))
-
-  // No outline / no metadata → empty, not a crash.
-  check("PDF.outline empty", pdf.outline(root / "doc.pdf").success.size == 0)
+  doc.close()
+  doc.close()                        // idempotent
+  check("PDF.close is safe", true)
 
   // Outline and metadata from the handwritten fixture.
   file.write(os.path.join(dir, "outlined.pdf"), outlinedPdf)
-  val headings = pdf.outline(root / "outlined.pdf").success
+  val outlined = fs.openPDF(root / "outlined.pdf").success
+  val headings = outlined.outline
   check("PDF.outline entries", headings.size == 2)
 
   val first = headings.get(0)
   check("PDF.outline title", first.title == "Intro" && first.page == 1 && first.level == 0)
   check("PDF.outline second", headings.get(1).page == 2)
 
-  val info = pdf.metadata(root / "outlined.pdf").success
+  val info = outlined.metadata
   check("PDF.metadata Title", info.getOrElse("Title", "") == "Test Doc")
   check("PDF.metadata Author", info.getOrElse("Author", "") == "Harpe")
   check("PDF.metadata skips empty", info.getOrElse("Subject", "-") == "-")
+  outlined.close()
 
   // Content profile: an image on page 1, an empty page 2.
   makeImagePdf(os.path.join(dir, "img.pdf"))
-  val withImage = pdf.pageContent(root / "img.pdf", 1).success
+  val imgDoc = fs.openPDF(root / "img.pdf").success
+  val withImage = imgDoc.pageContent(1)
   check("PDF.pageContent image", withImage.images == 1 && withImage.texts == 0)
 
-  val empty = pdf.pageContent(root / "img.pdf", 2).success
+  val empty = imgDoc.pageContent(2)
   check("PDF.pageContent empty", empty.images == 0 && empty.texts == 0 && empty.paths == 0)
+  imgDoc.close()
+
+  // Excel via openpyxl — open once, read sheet-wise.
+  makeXlsx(os.path.join(dir, "table.xlsx"))
+  check("openWorkbook garbage is Err", fs.openWorkbook(root / "note.txt").isErr)
+
+  val book = fs.openWorkbook(root / "table.xlsx").success
+  check("Workbook.sheets", book.sheets.size == 2 && book.sheets.get(0) == "Data" && book.sheets.get(1) == "Notes")
+
+  val dims = book.dimensions("Data").getOrElse(() => new SheetSize(0, 0))
+  check("Workbook.dimensions", dims.rows == 3 && dims.columns == 3)
+  check("Workbook.dimensions unknown is None", book.dimensions("NoSuch") is None)
+
+  val window = book.rows("Data", 2, 2).getOrElse(() => List.empty[List[String]])
+  check("Workbook.rows window", window.size == 2 && window.get(0).get(0) == "apple" && window.get(0).get(1) == "3")
+  check("Workbook.rows renders floats", window.get(1).get(2) == "2.25")
+  check("Workbook.rows past end reads short", book.rows("Data", 3, 10).getOrElse(() => []).size == 1)
+  check("Workbook.rows unknown is None", book.rows("NoSuch", 1, 1) is None)
+  book.close()
+  book.close()                       // idempotent
+  check("Workbook.close is safe", true)
 
   // Image pixel work via Pillow.
   makeImage(os.path.join(dir, "pic.png"), 30, 20)

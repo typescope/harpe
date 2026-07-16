@@ -1,0 +1,92 @@
+//[ Excel.jo
+  !
+  ! The `ExcelReader` backend behind `FileSystem.openWorkbook`, backed by openpyxl.
+  ! Opening loads the workbook once, in read-only streaming mode (`read_only`:
+  ! bounded memory over huge sheets; `data_only`: formula results, not formulas).
+  ! Needs the `openpyxl` Python package.
+//]
+
+namespace harpe.media
+
+import harpe.caps.*
+
+import harpe.ffi.builtins
+
+private def openpyxlMod: py.Dynamic = py.module("openpyxl")
+
+//[ The openpyxl `ExcelReader` backend, resolving a `Path` against `root`.
+  ! Parses once; `Err` for a missing or corrupt file.
+//]
+class OpenpyxlExcel(root: String)
+  view ExcelReader
+
+  def open(src: Path): Result[Workbook, String] =
+    val real = resolvePath(root, src)
+    orMessage(py.try(openpyxlMod.load_workbook(real, read_only = true, data_only = true))).map: wb =>
+      new WorkbookImpl(wb)
+end
+
+//[ The open workbook over an openpyxl read-only workbook object. //]
+private class WorkbookImpl(wb: py.Dynamic)
+  view Workbook
+
+  def sheets: List[String] =
+    val names = builtins.list(wb.sheetnames)
+
+    var result = List.empty[String]
+    var i = 0
+    val n = builtins.len(names)
+
+    while i < n do
+      result = result + names.get(i).asString
+      i = i + 1
+
+    result
+
+  def dimensions(sheet: String): Option[SheetSize] =
+    match worksheet(sheet)
+    case None => None
+
+    case Some(ws) =>
+      // A foreign file may lack the cached dimension record — force a scan then.
+      if py.isNone(ws.max_row) then ws.calculate_dimension(force = true)
+
+      Some(new SheetSize(ws.max_row.asInt, ws.max_column.asInt))
+
+  def rows(sheet: String, start: Int, count: Int): Option[List[List[String]]] =
+    if start < 1 then abort "row \{start} is out of range: rows are 1-based"
+
+    match worksheet(sheet)
+    case None => None
+
+    case Some(ws) =>
+      val it = ws.iter_rows(min_row = start, max_row = start + count - 1, values_only = true)
+
+      var result = List.empty[List[String]]
+      var row = builtins.next(it, py.none)
+
+      while !py.isNone(row) do
+        val cells = builtins.list(row)
+
+        var line = List.empty[String]
+        var i = 0
+        val n = builtins.len(cells)
+
+        while i < n do
+          val cell = cells.get(i)
+          line = line + (if py.isNone(cell) then "" else cell.toString)
+          i = i + 1
+
+        result = result + line
+        row = builtins.next(it, py.none)
+
+      Some(result)
+
+  def close(): Unit = wb.close()
+
+  //[ The worksheet named `sheet`, or `None` when the workbook has no such sheet. //]
+  private def worksheet(sheet: String): Option[py.Dynamic] =
+    match py.try(wb[sheet])
+    case Ok(ws)  => Some(ws)
+    case Err(_)  => None
+end

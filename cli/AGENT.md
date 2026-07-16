@@ -35,19 +35,28 @@ The `data/` directory holds files the user shares with you. Your program reaches
 it through capabilities received by `runTask` — declare the ones you use:
 
 ```Jo
-def runTask(): Unit receives IO.stdout, fs, pdf, word, image, ocr
+def runTask(): Unit receives IO.stdout, fs, pdfReader, excelReader, wordReader, image, ocr
 ```
+
+(declare the ones you use; `fs`'s document opens also need their backend param —
+`openPDF` needs `pdfReader`, `openWorkbook` needs `excelReader`, `openWord` needs
+`wordReader`)
 
 - `fs: FileSystem` — the read-only tree. Build paths from the root:
   `fs.root / "letter.pdf"`. `fs.list(fs.root)` (sorted entries with
   `.path`/`.isDirectory`), `fs.stat(p)` (size, modified time), `fs.readText(p)`
   for a small file; for a big one `fs.openTextFile(p)` then `lines` / `head(n)` /
-  `tail(n)`, and `close()` it.
-- `pdf: PDF` — `pageCount(p)`, `pageText(p, n)` (1-based; read pages you need,
-  never the whole document), `outline(p)` (table of contents), `metadata(p)`,
-  `pageContent(p, n)` (counts of text/images/paths on a page),
-  `pageImage(p, n, target)` (render a page to PNG).
-- `word: Word` — `text(p)` renders documents (`.docx`, …) to text.
+  `tail(n)`. It also opens documents:
+  - `fs.openPDF(p)` → an open PDF: `pageCount`, `pageText(n)` (1-based; read the
+    pages you need, never the whole document), `outline`, `metadata`,
+    `pageContent(n)` (text/image/path counts — a scanned-page probe),
+    `pageImage(n, target)` (render a page to PNG).
+  - `fs.openWorkbook(p)` → an open spreadsheet: `sheets`, `dimensions(sheet)`,
+    `rows(sheet, start, count)` (a row window — size it with `dimensions` first).
+  - `fs.openWord(p)` → an open .docx: `paragraphCount`, `outline` (headings with
+    paragraph positions), `paragraphs(start, count)` (a paragraph window).
+
+  Close every open file, document, and workbook when done.
 - `image: Image` — `dimensions(p)`, `metadata(p)`, `resize`, `crop`, `convert`.
 - `ocr: OCR` — `text(p)` reads the text out of an image.
 
@@ -59,13 +68,16 @@ page reads as empty text — render it with `pageImage`, then `ocr.text` the PNG
 namespace UserTask
 import SandboxAPI.*
 
-def runTask(): Unit receives IO.stdout, fs, pdf, ocr =
-  val page = pdf.pageText(fs.root / "report.pdf", 3).success
+def runTask(): Unit receives IO.stdout, fs, pdfReader, ocr =
+  val doc = fs.openPDF(fs.root / "report.pdf").success
+  val page = doc.pageText(3).success
 
   if page != "" then println: page
   else
-    val _ = pdf.pageImage(fs.root / "report.pdf", 3, fs.root / "p3.png").success
+    val _ = doc.pageImage(3, fs.root / "p3.png").success
     println: ocr.text(fs.root / "p3.png").success
+
+  doc.close()
 ```
 
 ## Working memory

@@ -1,0 +1,18 @@
+//[ PdfReader.jo
+  !
+  ! The PDF parsing backend: opens a document into a `PDF` handle. The
+  ! `FileSystem.openPDF` shortcut reads through the `pdfReader` param, so an
+  ! agent swaps backends by rebinding the param — `with pdfReader = mine in …` —
+  ! without touching `FileSystem`.
+//]
+
+namespace harpe.caps
+
+//[ Open PDF documents. //]
+interface PdfReader
+  //[ Open the document at `src` — parse and validate once. Close it when done. //]
+  def open(src: Path): Result[PDF, String]
+end
+
+//[ The ambient PDF backend. //]
+param pdfReader: PdfReader

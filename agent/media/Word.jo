@@ -1,0 +1,63 @@
+//[ Word.jo
+  !
+  ! The `WordReader` backend behind `FileSystem.openWord`, backed by python-docx.
+  ! Opening parses the document once; `WordImpl` traverses the paragraph list.
+  ! Needs the `python-docx` Python package.
+//]
+
+namespace harpe.media
+
+import harpe.caps.*
+import harpe.ffi.builtins
+
+private def docxMod: py.Dynamic = py.module("docx")
+
+//[ The python-docx `WordReader` backend, resolving a `Path` against `root`. //]
+class DocxReader(root: String)
+  view WordReader
+
+  def open(src: Path): Result[Word, String] =
+    orMessage(py.try(docxMod.Document(resolvePath(root, src)))).map: doc =>
+      new WordImpl(builtins.list(doc.paragraphs))
+end
+
+//[ The open document: the parsed paragraph list. //]
+private class WordImpl(paras: py.List)
+  view Word
+
+  def paragraphCount: Int = builtins.len(paras)
+
+  def outline: List[WordHeading] =
+    var result = List.empty[WordHeading]
+    var i = 0
+    val n = paragraphCount
+
+    while i < n do
+      val style = paras.get(i).style.name.asString
+
+      // Heading styles are named "Heading 1" .. "Heading 9".
+      if style.startsWith("Heading ") && style.size == 9 then
+        val level = builtins.ord(style.substring(8, 1)) - 48
+        result = result + new WordHeading(paras.get(i).text.asString, i + 1, level)
+
+      i = i + 1
+
+    result
+
+  def paragraphs(start: Int, count: Int): List[String] =
+    if start < 1 then abort "paragraph \{start} is out of range: paragraphs are 1-based"
+
+    val n = paragraphCount
+    val stop = if start - 1 + count < n then start - 1 + count else n
+
+    var result = List.empty[String]
+    var i = start - 1
+
+    while i < stop do
+      result = result + paras.get(i).text.asString
+      i = i + 1
+
+    result
+
+  def close(): Unit = pass
+end

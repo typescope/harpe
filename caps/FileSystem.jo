@@ -5,7 +5,7 @@
   ! module) resolves each `Path` against the real root and does local I/O.
 //]
 
-namespace harpe.media
+namespace harpe.caps
 
 //[ Metadata for one file or directory — the single stat record.
   !
@@ -66,6 +66,31 @@ interface FileSystem
   //[ Open the file at `path` for binary reads. Close it when done. //]
   def openBinaryFile(path: Path): Result[BinaryFile, String]
 
+  //[ Open the PDF document at `path` — parse and validate once; the `PDF` is the
+    ! handle for page-wise reading. Close it when done.
+    !
+    ! A shortcut through the ambient `pdfReader` backend; rebind the param to swap
+    ! the backend.
+  //]
+  def openPDF(path: Path): Result[PDF, String] receives pdfReader =
+    pdfReader.open(path)
+
+  //[ Open the spreadsheet workbook (`.xlsx`) at `path` — parse and validate once;
+    ! the `Workbook` is the handle for sheet-wise reading. Close it when done.
+    !
+    ! A shortcut through the ambient `excelReader` backend.
+  //]
+  def openWorkbook(path: Path): Result[Workbook, String] receives excelReader =
+    excelReader.open(path)
+
+  //[ Open the Word document (`.docx`) at `path` — parse once; the `Word` is the
+    ! handle for paragraph-wise reading. Close it when done.
+    !
+    ! A shortcut through the ambient `wordReader` backend.
+  //]
+  def openWord(path: Path): Result[Word, String] receives wordReader =
+    wordReader.open(path)
+
   //[ The whole file as text — the one-shot for a small file (opens, reads, closes).
     !
     ! For a large file, open it and use `lines`, `head`, or `tail` instead.
@@ -89,3 +114,6 @@ interface FileSystem
       file.close()
       Ok(content)
 end
+
+//[ The ambient confined filesystem. //]
+param fs: FileSystem

@@ -1,15 +1,15 @@
 //[ PDF.jo
   !
-  ! The PDF format capability: turn a PDF (named by a `Path`) into text and
-  ! structured values. Like every processor it is FFI-backed, so it is granted on
-  ! its own; the methods are picked for how an agent navigates a large document,
-  ! and each is FFI-bound — anything composable in pure Jo (search, say, is a loop
-  ! over `pageText`) stays out of the interface. New methods are added over time;
-  ! existing signatures stay put, and options arrive as defaulted parameters so
-  ! callers never break.
+  ! An open PDF document: page-wise text, the outline and information dictionary,
+  ! content profiles, and page rendering. It holds the parsed document, so a loop
+  ! over pages parses the file once, not per call; close it when done.
+  !
+  ! Deliberately no whole-document read: page-wise access keeps a large document's
+  ! cost proportional to what the program actually needs. Naming a page outside
+  ! `1..pageCount` is a bug in the program and aborts the run.
 //]
 
-namespace harpe.media
+namespace harpe.caps
 
 //[ One outline (table-of-contents) entry.
   !
@@ -25,17 +25,10 @@ class Heading(title: String, page: Int, level: Int)
 //]
 class PageContent(texts: Int, images: Int, paths: Int)
 
-//[ Read a PDF's text, a page at a time.
-  !
-  ! Deliberately no whole-document read: page-wise access keeps a large document's
-  ! cost proportional to what the program actually needs.
-//]
+//[ An open PDF document. Pages are 1-based. //]
 interface PDF
   //[ The number of pages. //]
-  def pageCount(src: Path): Result[Int, String]
-
-  //[ One page's text; `page` is 1-based. //]
-  def pageText(src: Path, page: Int): Result[String, String]
+  def pageCount: Int
 
   //[ The document outline (table of contents), in document order.
     !
@@ -43,16 +36,19 @@ interface PDF
     ! section by title, then read just its pages with `pageText` instead of
     ! scanning linearly.
   //]
-  def outline(src: Path): Result[List[Heading], String]
+  def outline: List[Heading]
 
   //[ The document information dictionary.
     !
     ! Standard keys (`Title`, `Author`, `Subject`, `Keywords`, `CreationDate`, …),
     ! empty values omitted.
   //]
-  def metadata(src: Path): Result[Map[String, String], String]
+  def metadata: Map[String, String]
 
-  //[ The page's content profile; `page` is 1-based.
+  //[ One page's text; `Err` when the page's content cannot be extracted. //]
+  def pageText(page: Int): Result[String, String]
+
+  //[ The page's content profile.
     !
     ! The cheap "what kind of page is this" probe. No text but an image → a scanned
     ! page: render it with `pageImage` and OCR. Images alongside text → figures worth
@@ -60,13 +56,16 @@ interface PDF
     ! table structure — a table is text runs plus ruling paths — so these counts are
     ! the honest signal, not a detector.
   //]
-  def pageContent(src: Path, page: Int): Result[PageContent, String]
+  def pageContent(page: Int): PageContent
 
   //[ Render one page to a PNG image at `target`, returning its pixel size.
     !
-    ! The bridge to OCR: when `pageText` comes back empty (a scanned page), render the
-    ! page and hand `target` to `OCR.text`. `scale` multiplies the page's natural
-    ! 72-dpi size — the default 2 (≈ 144 dpi) is enough for OCR. `page` is 1-based.
+    ! The bridge to OCR: when `pageText` comes back empty (a scanned page), render
+    ! the page and hand `target` to `OCR.text`. `scale` multiplies the page's
+    ! natural 72-dpi size — the default 2 (≈ 144 dpi) is enough for OCR.
   //]
-  def pageImage(src: Path, page: Int, target: Path, scale: Int = 2): Result[ImageSize, String]
+  def pageImage(page: Int, target: Path, scale: Int = 2): Result[ImageSize, String]
+
+  //[ Release the parsed document. Safe to call more than once. //]
+  def close(): Unit
 end

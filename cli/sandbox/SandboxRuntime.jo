@@ -4,6 +4,7 @@ import jo.IO.stdout
 import harpe.logging.*
 import harpe.ffi.os
 import harpe.media.*
+import harpe.caps.*
 import SandboxAPI
 
 // The agent's per-turn entry. The guest links jo.main = SandboxRuntime.main. It
@@ -28,11 +29,12 @@ private def run(): Unit receives stdout =
   val root = os.getenv("HARPE_DATA_DIR", os.getenv("HARPE_SCRATCH_DIR", "."))
 
   with
-    SandboxAPI.fs = FileSystemImpl.local(root),
-    SandboxAPI.pdf = new PdfiumReader(root),
-    SandboxAPI.word = new MarkitdownReader(root),
-    SandboxAPI.image = new PillowImage(root),
-    SandboxAPI.ocr = new TesseractOcr(root)
+    fs = FileSystemImpl.local(root),
+    pdfReader = new PdfiumReader(root),
+    excelReader = new OpenpyxlExcel(root),
+    wordReader = new DocxReader(root),
+    image = new PillowImage(root),
+    ocr = new TesseractOcr(root)
   in SandboxAPI.runTask()
 
 // The audit backend: a JSONL file the host named in HARPE_AUDIT_LOG, or a no-op
