@@ -29,6 +29,12 @@ proving it safe are the same act — you declare a capability interface, widen
 `runtime` module. A program that names an ungranted capability *fails to
 compile, so it never runs* — the compile step is the security checkpoint.
 
+The framework's own capability interfaces ([media](@/concepts/media.md):
+`FileSystem`, `MediaProvider`, the format processors) ship in the pure **`caps`
+module** — interfaces and value types only, no FFI, no implementations. An `api`
+module depends on `caps` rather than on the framework, so the trusted
+implementations are not in the guest's dependency graph at all.
+
 This is strong against a program that plays by the rules, but it is a single
 wall: a compiler soundness bug, or a bug in a capability implementation (which
 runs with full power inside the guest process), would breach it — which is

@@ -1,0 +1,40 @@
+//[ TextFile.jo
+  !
+  ! An open text file: whole-content, head/tail windows, and a lazy line traversal.
+  ! It holds an open handle, so close it when done; reading after `close` is an
+  ! error.
+//]
+
+namespace harpe.media
+
+//[ An open, readable text file. //]
+interface TextFile
+  //[ The whole content.
+    !
+    ! Loads the file — for a large one, use `lines`, `head`, or `tail` instead.
+  //]
+  def text: String
+
+  //[ The lines, streamed lazily from the start of the file.
+    !
+    ! Bounded memory over any file size. Each call starts a fresh traversal; run
+    ! one at a time. For a line window, compose: `lines.drop(499).take(20).toList`
+    ! is lines 500-519.
+  //]
+  def lines: Iterator[String]
+
+  //[ The first `count` lines — a peek at the top of the file. //]
+  def head(count: Int): List[String] = lines.take(count).toList
+
+  //[ The last `count` lines — the tail of a log, at the cost of the tail only.
+    !
+    ! The implementation reads backward from the end, never the whole file.
+  //]
+  def tail(count: Int): List[String]
+
+  //[ The file's size in bytes. //]
+  def size: Int
+
+  //[ Release the underlying file handle. Safe to call more than once. //]
+  def close(): Unit
+end

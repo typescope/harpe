@@ -12,6 +12,10 @@ namespace harpe.media
 
 //[ Read the text content of an image. //]
 interface OCR
-  //[ Text recognized in the image; empty if none. //]
-  def text(src: Path): String
+  //[ Text recognized in the image.
+    !
+    ! `Ok("")` when the image holds none; `Err` when the image could not be read or
+    ! the engine is unavailable.
+  //]
+  def text(src: Path): Result[String, String]
 end

@@ -5,6 +5,9 @@
   ! information dictionary, and renders a page to an image for OCR. It resolves a
   ! `Path` against its root and reads the file directly. Needs the `pypdfium2`
   ! Python package (a self-contained wheel, no system dependency).
+  !
+  ! Each capability method wraps a total body in `py.try`: a missing file, a corrupt
+  ! document, or an out-of-range page comes back as `Err(message)`, never a crash.
 //]
 
 namespace harpe.media
@@ -18,14 +21,36 @@ private def pdfiumMod: py.Dynamic = py.module("pypdfium2")
 class PdfiumReader(root: String)
   view PDF
 
-  def pageCount(src: Path): Int =
-    builtins.len(pdfiumMod.PdfDocument(resolvePath(root, src)))
+  def pageCount(src: Path): Result[Int, String] =
+    orMessage: py.try(pageCountOf(src))
 
-  def pageText(src: Path, page: Int): String =
+  def pageText(src: Path, page: Int): Result[String, String] =
+    orMessage: py.try(pageTextOf(src, page))
+
+  def text(src: Path): Result[String, String] =
+    orMessage: py.try(textOf(src))
+
+  def outline(src: Path): Result[List[Heading], String] =
+    orMessage: py.try(outlineOf(src))
+
+  def metadata(src: Path): Result[Map[String, String], String] =
+    orMessage: py.try(metadataOf(src))
+
+  def pageContent(src: Path, page: Int): Result[PageContent, String] =
+    orMessage: py.try(pageContentOf(src, page))
+
+  def pageImage(src: Path, page: Int, target: Path, scale: Int = 2): Result[ImageSize, String] =
+    orMessage: py.try(pageImageOf(src, page, target, scale))
+
+  private def pageCountOf(src: Path): Int =
+    val doc = pdfiumMod.PdfDocument(resolvePath(root, src))
+    builtins.len(doc)
+
+  private def pageTextOf(src: Path, page: Int): String =
     val doc = pdfiumMod.PdfDocument(resolvePath(root, src))
     doc.get_page(page - 1).get_textpage().get_text_range().asString
 
-  def text(src: Path): String =
+  private def textOf(src: Path): String =
     val doc = pdfiumMod.PdfDocument(resolvePath(root, src))
     val n = builtins.len(doc)
 
@@ -38,7 +63,7 @@ class PdfiumReader(root: String)
 
     result
 
-  def pageImage(src: Path, page: Int, target: Path, scale: Int = 2): ImageSize =
+  private def pageImageOf(src: Path, page: Int, target: Path, scale: Int): ImageSize =
     val doc = pdfiumMod.PdfDocument(resolvePath(root, src))
     val image = doc.get_page(page - 1).render(scale).to_pil()
 
@@ -47,7 +72,7 @@ class PdfiumReader(root: String)
     image.save(realTarget)
     new ImageSize(image.width.asInt, image.height.asInt)
 
-  def outline(src: Path): List[Heading] =
+  private def outlineOf(src: Path): List[Heading] =
     val items = builtins.list(pdfiumMod.PdfDocument(resolvePath(root, src)).get_toc())
 
     var result = List.empty[Heading]
@@ -59,7 +84,7 @@ class PdfiumReader(root: String)
 
     result
 
-  def metadata(src: Path): Map[String, String] =
+  private def metadataOf(src: Path): Map[String, String] =
     val doc = pdfiumMod.PdfDocument(resolvePath(root, src))
     val dict = doc.callDynamic("get_metadata_dict", true).cast[py.Dict]
     val keys = builtins.list(dict.keys())
@@ -75,7 +100,7 @@ class PdfiumReader(root: String)
 
     result
 
-  def pageContent(src: Path, page: Int): PageContent =
+  private def pageContentOf(src: Path, page: Int): PageContent =
     val doc = pdfiumMod.PdfDocument(resolvePath(root, src))
     val objs = builtins.list(doc.get_page(page - 1).callDynamic("get_objects"))
     val n = builtins.len(objs)
@@ -97,8 +122,11 @@ class PdfiumReader(root: String)
 
     new PageContent(texts, images, paths)
 
-  //[ A `Heading` from a pypdfium2 bookmark: 0-based dest page → 1-based `page`, or
-    ! 0 when the bookmark has no page destination. //]
+  //[ A `Heading` from a pypdfium2 bookmark.
+    !
+    ! 0-based dest page → 1-based `page`, or 0 when the bookmark has no page
+    ! destination.
+  //]
   private def heading(bookmark: py.Dynamic): Heading =
     val dest = bookmark.get_dest()
     val page =

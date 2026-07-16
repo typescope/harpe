@@ -167,7 +167,7 @@ class SqliteLogger(db: py.Dynamic)
 end
 ```
 
-`agent/src/logging/JsonlLogger.jo` is a complete `Logger` to copy from — it shows
+`agent/logging/JsonlLogger.jo` is a complete `Logger` to copy from — it shows
 how to turn `entry.fields` (including nested maps) into JSON. You can also **wrap**
 `JsonlLogger` instead of replacing it — see below.
 

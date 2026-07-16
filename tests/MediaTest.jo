@@ -25,10 +25,13 @@ private def isSome(o: Option[Media]): Bool =
   case Some(_) => true
   case None    => false
 
-private def joinLines(it: Iterator[String]): String =
+// Drain a file's lines into "a|b|c", closing it.
+private def joinLines(f: TextFile): String =
   var s = ""
-  for line in it do
+  for line in f.lines do
     s = if s == "" then line else s + "|" + line
+
+  f.close()
   s
 
 def run(): Unit receives stdout =
@@ -73,7 +76,7 @@ def run(): Unit receives stdout =
   val target = fs.root / "report.txt"
   check("fs.load a granted id",       fs.load("granted.txt", target))
   check("it appears in scratch",      fs.exists(target))
-  check("content was copied in",      joinLines(fs.readText(target)) == "BODY")
+  check("content was copied in",      joinLines(fs.openTextFile(target).success) == "BODY")
   check("fs.load ungranted is false", !fs.load("nope.txt", fs.root / "x.txt"))
 
   broker.stop()

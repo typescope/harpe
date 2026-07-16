@@ -48,12 +48,16 @@ interface PathApi
   def relpath(path: String, start: String): String
 
   def getsize(path: String): Int
+
+  def getmtime(path: String): Float
 end
 
 // The file extension of `path`, including the dot (e.g. `".pdf"`); "" if none.
 def extname(path: String): String = module.path.splitext(path)[1].asString
 
 def listdir(path: String): py.List = module.listdir(path).cast[py.List]
+
+def fstat(fd: Int): py.Dynamic = module.fstat(fd)
 
 def unlink(path: String): Unit = module.unlink(path)
 

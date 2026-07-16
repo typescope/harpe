@@ -5,8 +5,8 @@
   !
   ! Needs the `pytesseract` and `pillow` packages, and the `tesseract` **system**
   ! binary (e.g. `apt install tesseract-ocr`) — not a pip dependency. When the binary
-  ! is absent, `text` returns a message rather than crashing. For a pip-only engine,
-  ! see `RapidOcr`.
+  ! is absent, `text` answers `Err` rather than crashing. For a pip-only engine, see
+  ! `RapidOcr`.
 //]
 
 namespace harpe.media
@@ -18,8 +18,10 @@ private def tesseractPil: py.Dynamic = py.module("PIL.Image")
 class TesseractOcr(root: String)
   view OCR
 
-  def text(src: Path): String =
-    match py.try(tesseractMod.image_to_string(tesseractPil.open(resolvePath(root, src))).asString)
-    case Ok(t)  => t
-    case Err(e) => "Could not OCR the image: \{e.message}"
+  def text(src: Path): Result[String, String] =
+    orMessage: py.try(recognize(src))
+
+  private def recognize(src: Path): String =
+    val img = tesseractPil.open(resolvePath(root, src))
+    tesseractMod.image_to_string(img).asString
 end

@@ -7,7 +7,28 @@
 
 namespace harpe.media
 
-//[ A confined filesystem the guest reads via `Path`. //]
+//[ Metadata for one file or directory — the single stat record.
+  !
+  ! Kind, size in bytes, and modification time (seconds since the Unix epoch). One
+  ! cheap call (a stat, no read), so a program can rank by recency or plan a window
+  ! before opening. `sizeBytes` is meaningful for files.
+//]
+class FileInfo(isFile: Bool, sizeBytes: Int, modifiedAt: Int)
+
+//[ One directory entry: the child path and whether it is a directory.
+  !
+  ! The type information a listing carries for free, so a tree walk needs no stat
+  ! per entry.
+//]
+class DirEntry(path: Path, isDirectory: Bool)
+
+//[ A confined filesystem the guest reads via `Path`.
+  !
+  ! Error convention: an environment surprise the program should branch on comes
+  ! back in the type — `Result[T, String]` when there is a reason to give, `Option`
+  ! when absence says it all. Violating a stated contract (reading a closed file, a
+  ! negative offset) is a bug in the program and aborts the run.
+//]
 interface FileSystem
   //[ The root, for building paths: `fs.root / "docs" / "x.pdf"`. //]
   def root: Path = Path.root
@@ -15,12 +36,52 @@ interface FileSystem
   //[ Whether a file or directory exists at `path`. //]
   def exists(path: Path): Bool
 
-  //[ The entries directly under `dir`, as child paths. //]
-  def list(dir: Path): List[Path]
+  //[ Whether `path` is an existing file. //]
+  def isFile(path: Path): Bool
 
-  //[ The file's lines, streamed lazily — never loads the whole file. //]
-  def readText(path: Path): Iterator[String]
+  //[ The metadata record for `path`; `None` when nothing exists there. //]
+  def stat(path: Path): Option[FileInfo]
 
-  //[ The file's bytes. For a large file, hand its `Path` to a processor instead. //]
-  def readBinary(path: Path): Bytes
+  //[ The entries directly under `dir`, sorted by name.
+    !
+    ! `Err` when `dir` is not a directory.
+  //]
+  def list(dir: Path): Result[List[DirEntry], String]
+
+  //[ Open the file at `path` for text reads. Close it when done.
+    !
+    ! Text decodes as `encoding` — `"utf-8"` (the default) or `"windows-1252"`
+    ! (the common legacy encoding; it also decodes latin-1 text): a fixed set
+    ! every runtime supports with identical semantics; any other name is an
+    ! `Err`. Undecodable bytes decode to the replacement character U+FFFD —
+    ! mojibake or U+FFFD in the output is the signal to reopen with the other
+    ! encoding.
+  //]
+  def openTextFile(path: Path, encoding: String = "utf-8"): Result[TextFile, String]
+
+  //[ Open the file at `path` for binary reads. Close it when done. //]
+  def openBinaryFile(path: Path): Result[BinaryFile, String]
+
+  //[ The whole file as text — the one-shot for a small file (opens, reads, closes).
+    !
+    ! For a large file, open it and use `lines`, `head`, or `tail` instead.
+  //]
+  def readText(path: Path, encoding: String = "utf-8"): Result[String, String] =
+    match openTextFile(path, encoding)
+    case Err(e) => Err(e)
+
+    case Ok(file) =>
+      val content = file.text
+      file.close()
+      Ok(content)
+
+  //[ The whole file's bytes — the one-shot counterpart of `readText`. //]
+  def readBytes(path: Path): Result[Bytes, String] =
+    match openBinaryFile(path)
+    case Err(e) => Err(e)
+
+    case Ok(file) =>
+      val content = file.bytes
+      file.close()
+      Ok(content)
 end

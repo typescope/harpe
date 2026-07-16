@@ -114,5 +114,5 @@ end
 
 `WindowedContext` and `SummarizingContext` are two points in this space; a
 different need — semantic retrieval, a hard token cap, per-tool pruning — is a new
-`Context` you drop into `Config.jo`. Their sources (`agent/src/context/`) are the
+`Context` you drop into `Config.jo`. Their sources (`agent/context/`) are the
 reference to copy from.

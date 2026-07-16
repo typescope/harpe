@@ -11,40 +11,45 @@
 
 namespace harpe.media
 
-//[ One outline (table-of-contents) entry: a heading title, the 1-based page it
-  ! points to (0 when the entry has no page destination), and its nesting depth
-  ! (0 for a top-level entry).
+//[ One outline (table-of-contents) entry.
+  !
+  ! A heading title, the 1-based page it points to (0 when the entry has no page
+  ! destination), and its nesting depth (0 for a top-level entry).
 //]
 class Heading(title: String, page: Int, level: Int)
 
-//[ A PDF page's content profile: how many text runs, embedded images, and vector
-  ! paths (lines, rectangles, curves) its content stream holds.
+//[ A PDF page's content profile.
+  !
+  ! How many text runs, embedded images, and vector paths (lines, rectangles,
+  ! curves) the page's content stream holds.
 //]
 class PageContent(texts: Int, images: Int, paths: Int)
 
 //[ Read a PDF's text — whole, or a page at a time for a large document. //]
 interface PDF
   //[ The number of pages. //]
-  def pageCount(src: Path): Int
+  def pageCount(src: Path): Result[Int, String]
 
   //[ The whole document's text. //]
-  def text(src: Path): String
+  def text(src: Path): Result[String, String]
 
   //[ One page's text; `page` is 1-based. //]
-  def pageText(src: Path, page: Int): String
+  def pageText(src: Path, page: Int): Result[String, String]
 
-  //[ The document outline (table of contents), in document order; empty when the
-    ! document carries none.
+  //[ The document outline (table of contents), in document order.
     !
-    ! The map of a large document: find the section by title, then read just its
-    ! pages with `pageText` instead of scanning linearly.
+    ! Empty when the document carries none. The map of a large document: find the
+    ! section by title, then read just its pages with `pageText` instead of
+    ! scanning linearly.
   //]
-  def outline(src: Path): List[Heading]
+  def outline(src: Path): Result[List[Heading], String]
 
-  //[ The document information dictionary — standard keys (`Title`, `Author`,
-    ! `Subject`, `Keywords`, `CreationDate`, …), empty values omitted.
+  //[ The document information dictionary.
+    !
+    ! Standard keys (`Title`, `Author`, `Subject`, `Keywords`, `CreationDate`, …),
+    ! empty values omitted.
   //]
-  def metadata(src: Path): Map[String, String]
+  def metadata(src: Path): Result[Map[String, String], String]
 
   //[ The page's content profile; `page` is 1-based.
     !
@@ -54,7 +59,7 @@ interface PDF
     ! table structure — a table is text runs plus ruling paths — so these counts are
     ! the honest signal, not a detector.
   //]
-  def pageContent(src: Path, page: Int): PageContent
+  def pageContent(src: Path, page: Int): Result[PageContent, String]
 
   //[ Render one page to a PNG image at `target`, returning its pixel size.
     !
@@ -62,5 +67,5 @@ interface PDF
     ! page and hand `target` to `OCR.text`. `scale` multiplies the page's natural
     ! 72-dpi size — the default 2 (≈ 144 dpi) is enough for OCR. `page` is 1-based.
   //]
-  def pageImage(src: Path, page: Int, target: Path, scale: Int = 2): ImageSize
+  def pageImage(src: Path, page: Int, target: Path, scale: Int = 2): Result[ImageSize, String]
 end

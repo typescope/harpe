@@ -90,70 +90,71 @@ def run(): Unit receives stdout =
   // Word via markitdown.
   file.write(os.path.join(dir, "note.txt"), "hello markitdown")
   val word: Word = new MarkitdownReader(dir)
-  check("Word.text renders the file", word.text(root / "note.txt").contains("hello markitdown"))
+  check("Word.text renders the file", word.text(root / "note.txt").success.contains("hello markitdown"))
 
   // PDF via pypdfium2 — a 2-page blank document.
   makeBlankPdf(os.path.join(dir, "doc.pdf"), 2)
   val pdf: PDF = new PdfiumReader(dir)
-  check("PDF.pageCount", pdf.pageCount(root / "doc.pdf") == 2)
+  check("PDF.pageCount", pdf.pageCount(root / "doc.pdf").success == 2)
 
-  val _ = pdf.text(root / "doc.pdf")            // runs (blank → empty)
-  val _ = pdf.pageText(root / "doc.pdf", 1)
-  check("PDF.text / pageText run", true)
+  check("PDF.text runs", pdf.text(root / "doc.pdf").isOk)            // blank → empty
+  check("PDF.pageText runs", pdf.pageText(root / "doc.pdf", 1).isOk)
+  check("PDF.pageText out of range is Err", pdf.pageText(root / "doc.pdf", 99).isErr)
+  check("PDF on garbage is Err", pdf.pageCount(root / "note.txt").isErr)
 
   // Render a page to an image: 100x100 points at the default scale 2 → 200x200 px.
-  check("PDF.pageImage", isSize(pdf.pageImage(root / "doc.pdf", 1, root / "p1.png"), 200, 200))
+  check("PDF.pageImage", isSize(pdf.pageImage(root / "doc.pdf", 1, root / "p1.png").success, 200, 200))
   check("PDF.pageImage writes target", os.path.isfile(os.path.join(dir, "p1.png")))
 
   // No outline / no metadata → empty, not a crash.
-  check("PDF.outline empty", pdf.outline(root / "doc.pdf").size == 0)
+  check("PDF.outline empty", pdf.outline(root / "doc.pdf").success.size == 0)
 
   // Outline and metadata from the handwritten fixture.
   file.write(os.path.join(dir, "outlined.pdf"), outlinedPdf)
-  val headings = pdf.outline(root / "outlined.pdf")
+  val headings = pdf.outline(root / "outlined.pdf").success
   check("PDF.outline entries", headings.size == 2)
 
   val first = headings.get(0)
   check("PDF.outline title", first.title == "Intro" && first.page == 1 && first.level == 0)
   check("PDF.outline second", headings.get(1).page == 2)
 
-  val info = pdf.metadata(root / "outlined.pdf")
+  val info = pdf.metadata(root / "outlined.pdf").success
   check("PDF.metadata Title", info.getOrElse("Title", "") == "Test Doc")
   check("PDF.metadata Author", info.getOrElse("Author", "") == "Harpe")
   check("PDF.metadata skips empty", info.getOrElse("Subject", "-") == "-")
 
   // Content profile: an image on page 1, an empty page 2.
   makeImagePdf(os.path.join(dir, "img.pdf"))
-  val withImage = pdf.pageContent(root / "img.pdf", 1)
+  val withImage = pdf.pageContent(root / "img.pdf", 1).success
   check("PDF.pageContent image", withImage.images == 1 && withImage.texts == 0)
 
-  val empty = pdf.pageContent(root / "img.pdf", 2)
+  val empty = pdf.pageContent(root / "img.pdf", 2).success
   check("PDF.pageContent empty", empty.images == 0 && empty.texts == 0 && empty.paths == 0)
 
   // Image pixel work via Pillow.
   makeImage(os.path.join(dir, "pic.png"), 30, 20)
   val image: Image = new PillowImage(dir)
-  check("Image.dimensions", isSize(image.dimensions(root / "pic.png"), 30, 20))
+  check("Image.dimensions", isSize(image.dimensions(root / "pic.png").success, 30, 20))
 
-  val meta = image.metadata(root / "pic.png")
+  val meta = image.metadata(root / "pic.png").success
   check("Image.metadata format", meta.getOrElse("format", "") == "PNG")
   check("Image.metadata mode", meta.getOrElse("mode", "") == "RGB")
 
   // Fit 30x20 within a 15x15 box, aspect preserved → 15x10.
-  check("Image.resize", isSize(image.resize(root / "pic.png", 15, 15, root / "small.png"), 15, 10))
-  check("Image.crop", isSize(image.crop(root / "pic.png", 5, 5, 10, 8, root / "part.png"), 10, 8))
+  check("Image.resize", isSize(image.resize(root / "pic.png", 15, 15, root / "small.png").success, 15, 10))
+  check("Image.crop", isSize(image.crop(root / "pic.png", 5, 5, 10, 8, root / "part.png").success, 10, 8))
 
-  image.convert(root / "pic.png", root / "pic.jpg")
-  check("Image.convert", isSize(image.dimensions(root / "pic.jpg"), 30, 20))
+  check("Image.convert", isSize(image.convert(root / "pic.png", root / "pic.jpg").success, 30, 20))
+  check("Image on missing is Err", image.dimensions(root / "nope.png").isErr)
 
   // OCR: Tesseract degrades gracefully when the system binary is absent; RapidOCR
   // reads real text when its package is installed.
   val tesseract: OCR = new TesseractOcr(dir)
-  val _ = tesseract.text(root / "pic.png")
-  check("OCR tesseract runs", true)
+  val tessResult = tesseract.text(root / "pic.png")
+  check("OCR tesseract answers", tessResult.isOk || tessResult.isErr)
 
   if hasModule("rapidocr_onnxruntime") then
     makeTextImage(os.path.join(dir, "text.png"))
     val rapid: OCR = new RapidOcr(dir)
-    check("OCR rapidocr reads text", rapid.text(root / "text.png").contains("HELLO"))
-    check("OCR rapidocr blank", rapid.text(root / "pic.png") == "")
+    check("OCR rapidocr reads text", rapid.text(root / "text.png").success.contains("HELLO"))
+    check("OCR rapidocr blank", rapid.text(root / "pic.png").success == "")

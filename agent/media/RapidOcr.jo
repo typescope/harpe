@@ -6,7 +6,7 @@
   ! and reads the file directly.
   !
   ! The engine loads its models on first use and is kept for the reader's lifetime.
-  ! When the package is absent, `text` returns a message rather than crashing.
+  ! When the package is absent, `text` answers `Err` rather than crashing.
 //]
 
 namespace harpe.media
@@ -24,13 +24,14 @@ class RapidOcr
 
   view OCR
 
-  def text(src: Path): String =
-    match py.try(recognize(resolvePath(root, src)))
-    case Ok(t)  => t
-    case Err(e) => "Could not OCR the image: \{e.message}"
+  def text(src: Path): Result[String, String] =
+    orMessage: py.try(recognize(resolvePath(root, src)))
 
-  //[ Run the engine: its result is `(lines, elapse)` with each line
-    ! `[box, text, confidence]`, or `(None, _)` when the image holds no text. //]
+  //[ Run the engine.
+    !
+    ! Its result is `(lines, elapse)` with each line `[box, text, confidence]`, or
+    ! `(None, _)` when the image holds no text.
+  //]
   private def recognize(path: String): String =
     val lines = py.call(engine, path)[0]
 

@@ -18,15 +18,13 @@ private def markitdownMod: py.Dynamic = py.module("markitdown")
 class MarkitdownReader(root: String)
   view Word
 
-  def text(src: Path): String = markitdownConvert(resolvePath(root, src))
+  def text(src: Path): Result[String, String] = markitdownConvert(resolvePath(root, src))
 end
 
 //[ Render the file at real path `path` to text via markitdown.
   !
-  ! A conversion failure is returned as a message rather than raised — an unreadable
-  ! file is an expected outcome the model should see, not a crash.
+  ! `Err(message)` for an unreadable file — an expected outcome the model should
+  ! branch on.
 //]
-def markitdownConvert(path: String): String =
-  match py.try(markitdownMod.MarkItDown().convert(path).text_content.asString)
-  case Ok(text) => text
-  case Err(e)   => "Could not read the file: \{e.message}"
+def markitdownConvert(path: String): Result[String, String] =
+  orMessage: py.try(markitdownMod.MarkItDown().convert(path).text_content.asString)

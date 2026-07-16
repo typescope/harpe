@@ -17,25 +17,30 @@ class ImageSize(width: Int, height: Int)
 //[ Read and transform an image. //]
 interface Image
   //[ The image's pixel dimensions. //]
-  def dimensions(src: Path): ImageSize
+  def dimensions(src: Path): Result[ImageSize, String]
 
-  //[ The image's metadata: `format`, `mode`, and named EXIF entries (`Orientation`,
-    ! `DateTime`, `Model`, …) when present.
+  //[ The image's metadata.
+    !
+    ! `format`, `mode`, and named EXIF entries (`Orientation`, `DateTime`, `Model`,
+    ! …) when present.
   //]
-  def metadata(src: Path): Map[String, String]
+  def metadata(src: Path): Result[Map[String, String], String]
 
-  //[ Scale the image to fit within `width` x `height` — aspect ratio preserved,
-    ! never enlarged — writing it to `target` and returning the resulting size.
+  //[ Scale the image to fit within `width` x `height`, writing it to `target`.
+    !
+    ! Aspect ratio preserved, never enlarged; returns the resulting size.
   //]
-  def resize(src: Path, width: Int, height: Int, target: Path): ImageSize
+  def resize(src: Path, width: Int, height: Int, target: Path): Result[ImageSize, String]
 
-  //[ Cut the `width` x `height` region at top-left (`x`, `y`) out of the image,
-    ! writing it to `target` and returning the resulting size.
+  //[ Cut the `width` x `height` region at top-left (`x`, `y`) into `target`.
+    !
+    ! Returns the resulting size.
   //]
-  def crop(src: Path, x: Int, y: Int, width: Int, height: Int, target: Path): ImageSize
+  def crop(src: Path, x: Int, y: Int, width: Int, height: Int, target: Path): Result[ImageSize, String]
 
-  //[ Re-encode the image in the format `target`'s extension names (`.png`, `.jpg`,
-    ! `.webp`, …).
+  //[ Re-encode the image in the format `target`'s extension names.
+    !
+    ! `.png`, `.jpg`, `.webp`, …; returns the pixel size.
   //]
-  def convert(src: Path, target: Path): Unit
+  def convert(src: Path, target: Path): Result[ImageSize, String]
 end

@@ -13,7 +13,6 @@
 namespace harpe.media
 
 import harpe.ffi.os
-import harpe.ffi.file
 import harpe.ffi.builtins
 import harpe.broker.*
 
@@ -27,8 +26,20 @@ def resolvePath(root: String, path: Path): String =
   case _: Path.root => root
   case j: Path.Join => os.path.join(resolvePath(root, j.prefix), j.last)
 
-//[ A `FileSystem` (local reads) that is also a `MediaProvider` (granted-media
-  ! `resolve`/`load` over `broker`, or `None`/`false` when there is no broker).
+//[ Map a caught Python error to its message.
+  !
+  ! The impl-side step from `py.try` to the guest-facing `Result[T, String]`
+  ! convention.
+//]
+private def orMessage[T](result: Result[T, py.Error]): Result[T, String] =
+  match result
+  case Ok(value) => Ok(value)
+  case Err(e)    => Err(e.message)
+
+//[ A `FileSystem` (local reads) that is also a `MediaProvider`.
+  !
+  ! Granted-media `resolve`/`load` go over `broker`; with no broker they answer
+  ! `None`/`false`.
 //]
 class FileSystemImpl
   val realRoot: String
@@ -52,22 +63,55 @@ class FileSystemImpl
 
   def exists(path: Path): Bool = os.path.exists(resolvePath(realRoot, path))
 
-  def list(dir: Path): List[Path] =
-    val names: py.List = os.listdir(resolvePath(realRoot, dir))
-    var result = List.empty[Path]
-    var i = builtins.len(names) - 1
+  def isFile(path: Path): Bool = os.path.isfile(resolvePath(realRoot, path))
 
-    while i >= 0 do
-      result = result.prepend(dir / names.get(i).asString)
-      i = i - 1
+  def stat(path: Path): Option[FileInfo] =
+    val real = resolvePath(realRoot, path)
 
-    result
+    if !os.path.exists(real) then None
+    else
+      val info = new FileInfo(os.path.isfile(real), os.path.getsize(real), os.path.getmtime(real).toInt)
+      Some(info)
 
-  def readBinary(path: Path): Bytes =
-    file.readBytes(resolvePath(realRoot, path)).cast[Bytes]
+  def list(dir: Path): Result[List[DirEntry], String] =
+    val real = resolvePath(realRoot, dir)
 
-  def readText(path: Path): Iterator[String] =
-    new LineIterator(py.open(resolvePath(realRoot, path), "r"))
+    if !os.path.isdir(real) then Err("not a directory: '\{dir.toString}'")
+    else
+      val names: py.List = os.listdir(real)
+      py.dynamic(names).sort()
+
+      var result = List.empty[DirEntry]
+      var i = builtins.len(names) - 1
+
+      while i >= 0 do
+        val child = dir / names.get(i).asString
+        result = result.prepend(new DirEntry(child, os.path.isdir(resolvePath(realRoot, child))))
+        i = i - 1
+
+      Ok(result)
+
+  def openTextFile(path: Path, encoding: String = "utf-8"): Result[TextFile, String] =
+    if !validEncoding(encoding) then Err("unknown encoding: '\{encoding}'")
+    else openHandle(path).map: handle => new TextFileImpl(handle, encoding)
+
+  def openBinaryFile(path: Path): Result[BinaryFile, String] =
+    openHandle(path).map: handle => new BinaryFileImpl(handle)
+
+  //[ Open for reading, in binary mode.
+    !
+    ! The not-a-file check gives the common miss a clean symbolic message; `py.try`
+    ! catches the rest (permissions, races).
+  //]
+  private def openHandle(path: Path): Result[py.Dynamic, String] =
+    val real = resolvePath(realRoot, path)
+
+    if !os.path.isfile(real) then Err("no such file: '\{path.toString}'")
+    else orMessage: py.try(py.open(real, "rb"))
+
+  //[ Whether `name` is in the interface's fixed, runtime-portable encoding set. //]
+  private def validEncoding(name: String): Bool =
+    name == "utf-8" || name == "windows-1252"
 
   def resolve(id: String): Option[Media] =
     match broker
@@ -100,13 +144,98 @@ section FileSystemImpl
   def local(root: String): FileSystemImpl = new FileSystemImpl(root, None)
 end
 
-//[ A lazy line iterator over an open Python file object. //]
+//[ An open text file over a binary handle.
+  !
+  ! Decodes as `encoding` with replacement at undecodable bytes; `lines` rewinds
+  ! and starts a fresh lazy traversal.
+//]
+private class TextFileImpl(handle: py.Dynamic, encoding: String)
+  view TextFile
+
+  def text: String =
+    handle.seek(0)
+    handle.read().decode(encoding, "replace").asString
+
+  def lines: Iterator[String] =
+    handle.seek(0)
+    new LineIterator(handle, encoding)
+
+  //[ Read blocks backward from the end, stopping once `count` newlines are in hand.
+    !
+    ! A huge file's tail costs only the tail. Blocks are joined as bytes before
+    ! decoding, so a block boundary cannot split a character.
+  //]
+  def tail(count: Int): List[String] =
+    val newline = py.dynamic("\n").encode()
+    val chunks = py.list()
+    var pos = size
+    var newlines = 0
+
+    while pos > 0 && newlines <= count do
+      val block = if pos < 65536 then pos else 65536
+      pos = pos - block
+      handle.seek(pos)
+
+      val chunk = handle.read(block)
+      chunks.append(chunk)
+      newlines = newlines + chunk.count(newline).asInt
+
+    py.dynamic(chunks).reverse()
+    val text = py.dynamic("").encode().join(chunks).decode(encoding, "replace").asString
+    lastLines(text, count)
+
+  def size: Int = os.fstat(handle.fileno().asInt).st_size.asInt
+
+  def close(): Unit = handle.close()
+
+  //[ The last `count` lines of `text`. //]
+  private def lastLines(text: String, count: Int): List[String] =
+    // `String.lines` yields one trailing empty segment when `text` ends in '\n'.
+    val all = text.lines
+    val total =
+      if text.size > 0 && text.get(text.size - 1) == '\n' then all.size - 1 else all.size
+
+    var i = if total > count then total - count else 0
+    var result = List.empty[String]
+
+    while i < total do
+      result = result + all.get(i)
+      i = i + 1
+
+    result
+end
+
+//[ An open binary file: whole and window reads as `Bytes`. //]
+private class BinaryFileImpl(handle: py.Dynamic)
+  view BinaryFile
+
+  def bytes: Bytes =
+    handle.seek(0)
+    handle.read().cast[Bytes]
+
+  def read(offset: Int, length: Int): Bytes =
+    handle.seek(offset)
+    handle.read(length).cast[Bytes]
+
+  def size: Int = os.fstat(handle.fileno().asInt).st_size.asInt
+
+  def close(): Unit = handle.close()
+end
+
+//[ A lazy line iterator over an open binary file handle.
+  !
+  ! One raw line per `next`, decoded as `encoding` with replacement, trailing
+  ! newline stripped. Exhausting it does not close the handle — that is the owning
+  ! file's job.
+//]
 private class LineIterator
   val handle: py.Dynamic
+  val encoding: String
   var pending: py.Dynamic
 
-  def LineIterator(handle: py.Dynamic) =
+  def LineIterator(handle: py.Dynamic, encoding: String) =
     this.handle = handle
+    this.encoding = encoding
     this.pending = builtins.next(handle, py.none)
 
   view Iterator[String]
@@ -114,7 +243,7 @@ private class LineIterator
   def hasNext: Bool = !py.isNone(pending)
 
   def next: String =
-    val line = pending.callDynamic("rstrip", "\n").asString
+    val line = pending.decode(encoding, "replace").callDynamic("rstrip", "\r\n").asString
     this.pending = builtins.next(this.handle, py.none)
     line
 end

@@ -1,7 +1,9 @@
 //[ FileSystemTest.jo
   !
   ! Unit test for `harpe.media.FileSystem`: a `FileSystemImpl` rooted at a temp dir —
-  ! `exists`, `list`, lazy `readText`, and `readBinary` (as `Bytes`), all over `Path`.
+  ! `exists`/`isFile`/`stat`/`list`, one-shot reads, and open files: `TextFile`
+  ! (whole, head/tail, and lazy line reads) and `BinaryFile` (as `Bytes`), all over
+  ! `Path`.
 //]
 
 namespace harpe.test.FileSystemTest
@@ -22,10 +24,13 @@ private def isErr(build: () => FileSystem): Bool =
   case Ok(_)  => false
   case Err(_) => true
 
-private def joinLines(it: Iterator[String]): String =
+// Drain a file's lines into "a|b|c", closing it.
+private def joinLines(f: TextFile): String =
   var s = ""
-  for line in it do
+  for line in f.lines do
     s = if s == "" then line else s + "|" + line
+
+  f.close()
   s
 
 def run(): Unit receives stdout =
@@ -39,12 +44,72 @@ def run(): Unit receives stdout =
   check("exists", fs.exists(fs.root / "notes.txt"))
   check("missing", !fs.exists(fs.root / "nope.txt"))
 
-  check("readText streams lines", joinLines(fs.readText(fs.root / "notes.txt")) == "line1|line2|line3")
+  check("lines stream", joinLines(fs.openTextFile(fs.root / "notes.txt").success) == "line1|line2|line3")
 
-  val bytes = fs.readBinary(fs.root / "sub" / "a.txt")
-  check("readBinary size", bytes.size == 2)
-  check("readBinary base64", bytes.toBase64 == "aGk=")
+  // Whole read, head/tail, size, and early close on one open file.
+  val notes = fs.openTextFile(fs.root / "notes.txt").success
+  check("text whole", notes.text == "line1\nline2\nline3\n")
+  check("size on handle", notes.size == 18)
 
-  check("list entry count", fs.list(fs.root).size == 2)
+  val h = notes.head(2)
+  check("head", h.size == 2 && h.get(0) == "line1" && h.get(1) == "line2")
+  check("head past end", notes.head(10).size == 3)
+
+  val t = notes.tail(2)
+  check("tail", t.size == 2 && t.get(0) == "line2" && t.get(1) == "line3")
+  check("tail past size", notes.tail(10).size == 3)
+  notes.close()
+  notes.close()                      // idempotent
+  check("close is safe", true)
+
+  // Tail across block boundaries: ~100 KB read backward in 64 KB blocks, and a
+  // final line without a trailing newline.
+  val filler = py.dynamic("line\n").callDynamic("__mul__", 20000).asString
+  file.write(os.path.join(dir, "big.txt"), filler + "last")
+  val big = fs.openTextFile(fs.root / "big.txt").success
+  val bt = big.tail(2)
+  check("tail across blocks", bt.size == 2 && bt.get(0) == "line" && bt.get(1) == "last")
+  big.close()
+
+  // Environment errors come back typed, never as a crash.
+  check("open missing is Err", fs.openTextFile(fs.root / "nope.txt").isErr)
+  check("open a directory is Err", fs.openBinaryFile(fs.root / "sub").isErr)
+  check("list a file is Err", fs.list(fs.root / "notes.txt").isErr)
+
+  // One-shot reads for small files (open, read, close in one call).
+  check("readText one-shot", fs.readText(fs.root / "notes.txt").success == "line1\nline2\nline3\n")
+  check("readText missing is Err", fs.readText(fs.root / "nope.txt").isErr)
+  check("readBytes one-shot", fs.readBytes(fs.root / "sub" / "a.txt").success.toBase64 == "aGk=")
+
+  // Encoding: UTF-8 default with replacement; windows-1252 by name; others → Err.
+  file.writeBytes(os.path.join(dir, "legacy.txt"), py.dynamic("caf\u{E9}").callDynamic("encode", "windows-1252"))
+  check("utf-8 default replaces", fs.readText(fs.root / "legacy.txt").success == "caf\u{FFFD}")
+  check("explicit encoding", fs.readText(fs.root / "legacy.txt", "windows-1252").success == "caf\u{E9}")
+  check("outside the encoding set is Err", fs.openTextFile(fs.root / "legacy.txt", "utf-16").isErr)
+
+  // stat: the single metadata record.
+  val info = fs.stat(fs.root / "notes.txt").getOrElse(() => new FileInfo(false, 0, 0))
+  check("stat is file", info.isFile)
+  check("stat size", info.sizeBytes == 18)
+  check("stat mtime", info.modifiedAt > 0)
+  check("stat dir", !fs.stat(fs.root / "sub").getOrElse(() => new FileInfo(true, 0, 0)).isFile)
+  check("stat missing is None", fs.stat(fs.root / "nope.txt") is None)
+
+  check("isFile file", fs.isFile(fs.root / "notes.txt"))
+  check("isFile dir", !fs.isFile(fs.root / "sub"))
+
+  val bin = fs.openBinaryFile(fs.root / "sub" / "a.txt").success
+  val bytes = bin.bytes
+  check("binary whole size", bytes.size == 2)
+  check("binary whole base64", bytes.toBase64 == "aGk=")
+  check("binary window", bin.read(1, 1).toBase64 == "aQ==")
+  check("binary size on handle", bin.size == 2)
+  bin.close()
+
+  // list: typed entries, sorted by name.
+  val entries = fs.list(fs.root).success
+  check("list entry count", entries.size == 4)
+  check("list sorted", entries.get(0).path.toString == "/big.txt" && entries.get(3).path.toString == "/sub")
+  check("list entry kinds", !entries.get(0).isDirectory && entries.get(3).isDirectory)
 
   check("rejects a nonexistent root", isErr(() => FileSystemImpl.local(os.path.join(dir, "no-such-subdir"))))
