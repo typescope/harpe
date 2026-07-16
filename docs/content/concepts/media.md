@@ -119,7 +119,6 @@ interfaces.
 ```jo
 interface PDF
   def pageCount(src: Path): Result[Int, String]
-  def text(src: Path): Result[String, String]
   def pageText(src: Path, page: Int): Result[String, String]            // 1-based
   def outline(src: Path): Result[List[Heading], String]                 // table of contents
   def metadata(src: Path): Result[Map[String, String], String]          // Title, Author, …

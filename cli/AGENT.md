@@ -43,9 +43,10 @@ def runTask(): Unit receives IO.stdout, fs, pdf, word, image, ocr
   `.path`/`.isDirectory`), `fs.stat(p)` (size, modified time), `fs.readText(p)`
   for a small file; for a big one `fs.openTextFile(p)` then `lines` / `head(n)` /
   `tail(n)`, and `close()` it.
-- `pdf: PDF` — `pageCount(p)`, `pageText(p, n)` (1-based), `text(p)`,
-  `outline(p)` (table of contents), `metadata(p)`, `pageContent(p, n)` (counts of
-  text/images/paths on a page), `pageImage(p, n, target)` (render a page to PNG).
+- `pdf: PDF` — `pageCount(p)`, `pageText(p, n)` (1-based; read pages you need,
+  never the whole document), `outline(p)` (table of contents), `metadata(p)`,
+  `pageContent(p, n)` (counts of text/images/paths on a page),
+  `pageImage(p, n, target)` (render a page to PNG).
 - `word: Word` — `text(p)` renders documents (`.docx`, …) to text.
 - `image: Image` — `dimensions(p)`, `metadata(p)`, `resize`, `crop`, `convert`.
 - `ocr: OCR` — `text(p)` reads the text out of an image.

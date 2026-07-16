@@ -25,17 +25,14 @@ class Heading(title: String, page: Int, level: Int)
 //]
 class PageContent(texts: Int, images: Int, paths: Int)
 
-//[ Read a PDF's text — whole, or a page at a time for a large document. //]
+//[ Read a PDF's text, a page at a time.
+  !
+  ! Deliberately no whole-document read: page-wise access keeps a large document's
+  ! cost proportional to what the program actually needs.
+//]
 interface PDF
   //[ The number of pages. //]
   def pageCount(src: Path): Result[Int, String]
-
-  //[ The whole document's text.
-    !
-    ! Warning: only use this method for local processing. Sending a large PDF
-    ! text consumes too many tokens.
-  //]
-  def text(src: Path): Result[String, String]
 
   //[ One page's text; `page` is 1-based. //]
   def pageText(src: Path, page: Int): Result[String, String]

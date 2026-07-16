@@ -27,9 +27,6 @@ class PdfiumReader(root: String)
   def pageText(src: Path, page: Int): Result[String, String] =
     orMessage: py.try(pageTextOf(src, page))
 
-  def text(src: Path): Result[String, String] =
-    orMessage: py.try(textOf(src))
-
   def outline(src: Path): Result[List[Heading], String] =
     orMessage: py.try(outlineOf(src))
 
@@ -49,19 +46,6 @@ class PdfiumReader(root: String)
   private def pageTextOf(src: Path, page: Int): String =
     val doc = pdfiumMod.PdfDocument(resolvePath(root, src))
     doc.get_page(page - 1).get_textpage().get_text_range().asString
-
-  private def textOf(src: Path): String =
-    val doc = pdfiumMod.PdfDocument(resolvePath(root, src))
-    val n = builtins.len(doc)
-
-    var result = ""
-    var i = 0
-    while i < n do
-      val page = doc.get_page(i).get_textpage().get_text_range().asString
-      result = if i == 0 then page else result + "\n" + page
-      i = i + 1
-
-    result
 
   private def pageImageOf(src: Path, page: Int, target: Path, scale: Int): ImageSize =
     val doc = pdfiumMod.PdfDocument(resolvePath(root, src))

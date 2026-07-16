@@ -97,8 +97,7 @@ def run(): Unit receives stdout =
   val pdf: PDF = new PdfiumReader(dir)
   check("PDF.pageCount", pdf.pageCount(root / "doc.pdf").success == 2)
 
-  check("PDF.text runs", pdf.text(root / "doc.pdf").isOk)            // blank → empty
-  check("PDF.pageText runs", pdf.pageText(root / "doc.pdf", 1).isOk)
+  check("PDF.pageText runs", pdf.pageText(root / "doc.pdf", 1).isOk)   // blank → empty
   check("PDF.pageText out of range is Err", pdf.pageText(root / "doc.pdf", 99).isErr)
   check("PDF on garbage is Err", pdf.pageCount(root / "note.txt").isErr)
 
