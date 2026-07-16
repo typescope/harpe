@@ -35,7 +35,7 @@ The `data/` directory holds files the user shares with you. Your program reaches
 it through capabilities received by `runTask` — declare the ones you use:
 
 ```Jo
-def runTask(): Unit receives IO.stdout, fs, pdfReader, excelReader, wordReader, image, ocr
+def runTask(): Unit receives IO.stdout, fs, pdfReader, excelReader, wordReader, excelWriter, wordWriter, image, ocr
 ```
 
 (declare the ones you use; `fs`'s document opens also need their backend param —
@@ -57,6 +57,10 @@ def runTask(): Unit receives IO.stdout, fs, pdfReader, excelReader, wordReader, 
     paragraph positions), `paragraphs(start, count)` (a paragraph window).
 
   Close every open file, document, and workbook when done.
+- `excelWriter` / `wordWriter` — produce or transform documents in `data/`:
+  `create()` for a new one, `edit(p)` to load an existing one; build
+  (`addSheet`/`appendRow`; `addHeading`/`addParagraph`) then `save(target)` —
+  saving to a new path transforms without touching the source.
 - `image: Image` — `dimensions(p)`, `metadata(p)`, `resize`, `crop`, `convert`.
 - `ocr: OCR` — `text(p)` reads the text out of an image.
 

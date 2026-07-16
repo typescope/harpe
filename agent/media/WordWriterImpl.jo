@@ -1,0 +1,42 @@
+//[ WordWriterImpl.jo
+  !
+  ! The python-docx `WordWriter` backend. `create` starts an empty document;
+  ! `edit` loads an existing one. Targets resolve against `root`.
+//]
+
+namespace harpe.media
+
+import harpe.caps.*
+import harpe.ffi.os
+
+private def docxWriterMod: py.Dynamic = py.module("docx")
+
+//[ The python-docx writing backend, resolving `Path`s against `root`. //]
+class DocxWriter(root: String)
+  view WordWriter
+
+  def create(): WordBuilder =
+    new WordBuilderImpl(docxWriterMod.Document(), root)
+
+  def edit(src: Path): Result[WordBuilder, String] =
+    orMessage(py.try(docxWriterMod.Document(resolvePath(root, src)))).map: doc =>
+      new WordBuilderImpl(doc, root)
+end
+
+private class WordBuilderImpl(doc: py.Dynamic, root: String)
+  view WordBuilder
+
+  def addHeading(text: String, level: Int): Unit =
+    val _ = doc.add_heading(text, level = level)
+
+  def addParagraph(text: String): Unit =
+    val _ = doc.add_paragraph(text)
+
+  def save(target: Path): Result[Unit, String] =
+    orMessage: py.try(saveTo(target))
+
+  private def saveTo(target: Path): Unit =
+    val real = resolvePath(root, target)
+    os.makedirs(os.path.dirname(real))
+    doc.save(real)
+end

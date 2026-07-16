@@ -1,0 +1,22 @@
+//[ ExcelWriter.jo
+  !
+  ! The spreadsheet writing backend: build a workbook from zero or load an
+  ! existing one, then save to a target — so edit-in-place (`edit(a)` … `save(a)`)
+  ! and transform (`edit(a)` … `save(b)`) are the same workflow.
+//]
+
+namespace harpe.caps
+
+//[ Create or edit spreadsheet workbooks (`.xlsx`). //]
+interface ExcelWriter
+  //[ A builder over a new, empty workbook (no sheets yet). //]
+  def create(): WorkbookBuilder
+
+  //[ A builder loaded from the workbook at `src`; the source is not modified
+    ! until the builder is saved back onto it.
+  //]
+  def edit(src: Path): Result[WorkbookBuilder, String]
+end
+
+//[ The ambient spreadsheet writing backend. //]
+param excelWriter: ExcelWriter

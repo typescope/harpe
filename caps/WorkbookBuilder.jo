@@ -1,0 +1,19 @@
+//[ WorkbookBuilder.jo
+  !
+  ! A workbook under construction. Build sheet by sheet, then `save` to a target
+  ! `Path` — chosen at the end, so one builder serves create, edit, and transform.
+//]
+
+namespace harpe.caps
+
+//[ A workbook being built. //]
+interface WorkbookBuilder
+  //[ Add an empty sheet named `name`. //]
+  def addSheet(name: String): Unit
+
+  //[ Append one row of cells to `sheet`; `false` when no such sheet exists. //]
+  def appendRow(sheet: String, cells: List[String]): Bool
+
+  //[ Write the workbook to `target`. //]
+  def save(target: Path): Result[Unit, String]
+end
