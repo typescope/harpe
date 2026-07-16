@@ -29,8 +29,7 @@ section Defaults
     ! `sandbox/run.sh` wrapper, if present, owns it (see `docs/concepts/sandbox.md`).
   //]
   def tools(): List[Tool] receives workspace =
-    val runTool = runCodeTool(workspace.sandboxDir)
-
+    val runTool = runCodeTool(workspace.sandboxDir, dataDir = workspace.relative("data"))
     [runTool] ++ skillTools(workspace.skillsDir)
 
   //[ The chat model, selected by env vars:

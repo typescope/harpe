@@ -3,6 +3,7 @@ namespace SandboxRuntime
 import jo.IO.stdout
 import harpe.logging.*
 import harpe.ffi.os
+import harpe.media.*
 import SandboxAPI
 
 // The agent's per-turn entry. The guest links jo.main = SandboxRuntime.main. It
@@ -10,14 +11,29 @@ import SandboxAPI
 // through the framework `harpe.logging` channel to a JSONL file the host names via
 // HARPE_AUDIT_LOG; the host (`runCode`) reads that file back and replays the
 // records with the turn's context — then runs the LLM's program. Capability impls
-// would be built here and granted to the guest via `with Foo.foo = fooImpl in ...`;
+// are built here and granted to the guest via `with SandboxAPI.x = impl in ...`;
 // the LLM only ever gets the capability.
 //
 // The runtime depends on `harpe` directly, so impls can use the framework (even
 // run sub-agents). OS-level confinement is NOT applied here — it lives outside the
 // process, in an optional `sandbox/run.sh` wrapper (see docs/concepts/sandbox.md).
 def main(): Unit receives stdout =
-  Logging.withLogger(auditLogger(), () => SandboxAPI.runTask())
+  Logging.withLogger(auditLogger(), () => run())
+
+// Grant the capabilities, all rooted at the agent's data/ directory (HARPE_DATA_DIR,
+// set by the host when data/ exists; the per-run scratch dir otherwise). One root
+// for every capability, so a `Path` means the same file to all of them. Swap
+// `TesseractOcr` for `RapidOcr` to change the OCR engine.
+private def run(): Unit receives stdout =
+  val root = os.getenv("HARPE_DATA_DIR", os.getenv("HARPE_SCRATCH_DIR", "."))
+
+  with
+    SandboxAPI.fs = FileSystemImpl.local(root),
+    SandboxAPI.pdf = new PdfiumReader(root),
+    SandboxAPI.word = new MarkitdownReader(root),
+    SandboxAPI.image = new PillowImage(root),
+    SandboxAPI.ocr = new TesseractOcr(root)
+  in SandboxAPI.runTask()
 
 // The audit backend: a JSONL file the host named in HARPE_AUDIT_LOG, or a no-op
 // when unset (the program was launched outside the runCode harness).

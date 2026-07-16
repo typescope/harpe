@@ -29,6 +29,44 @@ for detailed Jo syntax, use `skillsRead` tool to read `jo-syntax.md`.
 Workflow: write Jo → `runCode` → if it fails to compile, read the error and fix
 it → once it runs, use the output to answer. Keep answers concise.
 
+## Files and documents
+
+The `data/` directory holds files the user shares with you. Your program reaches
+it through capabilities received by `runTask` — declare the ones you use:
+
+```Jo
+def runTask(): Unit receives IO.stdout, fs, pdf, word, image, ocr
+```
+
+- `fs: FileSystem` — the read-only tree. Build paths from the root:
+  `fs.root / "letter.pdf"`. `fs.list(fs.root)` (sorted entries with
+  `.path`/`.isDirectory`), `fs.stat(p)` (size, modified time), `fs.readText(p)`
+  for a small file; for a big one `fs.openTextFile(p)` then `lines` / `head(n)` /
+  `tail(n)`, and `close()` it.
+- `pdf: PDF` — `pageCount(p)`, `pageText(p, n)` (1-based), `text(p)`,
+  `outline(p)` (table of contents), `metadata(p)`, `pageContent(p, n)` (counts of
+  text/images/paths on a page), `pageImage(p, n, target)` (render a page to PNG).
+- `word: Word` — `text(p)` renders documents (`.docx`, …) to text.
+- `image: Image` — `dimensions(p)`, `metadata(p)`, `resize`, `crop`, `convert`.
+- `ocr: OCR` — `text(p)` reads the text out of an image.
+
+Errors come back as values, never exceptions: `Result` (match `Ok(v)`/`Err(e)`,
+or `.success` to unwrap) and `Option` (match `Some(v)`/`None`). A scanned PDF
+page reads as empty text — render it with `pageImage`, then `ocr.text` the PNG:
+
+```Jo
+namespace UserTask
+import SandboxAPI.*
+
+def runTask(): Unit receives IO.stdout, fs, pdf, ocr =
+  val page = pdf.pageText(fs.root / "report.pdf", 3).success
+
+  if page != "" then println: page
+  else
+    val _ = pdf.pageImage(fs.root / "report.pdf", 3, fs.root / "p3.png").success
+    println: ocr.text(fs.root / "p3.png").success
+```
+
 ## Working memory
 
 You have a small working memory: named notes that persist across turns and are

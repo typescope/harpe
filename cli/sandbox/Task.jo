@@ -1,12 +1,16 @@
 namespace UserTask
+import SandboxAPI.*
 
-def isPrime(n: Int): Bool =
-  if n < 2 then false
-  else
-    for i in 2 to (n - 1) do
-      if n % i == 0 then return false
-    true
+// Placeholder guest program — the model's generated code replaces this each turn.
+// It demonstrates the granted capabilities: list the data/ tree, then describe
+// each PDF in it.
+def runTask(): Unit receives IO.stdout, fs, pdf, word, image, ocr =
+  for entry in fs.list(fs.root).success do
+    val name = entry.path.toString
 
-def runTask(): Unit =
-  val primes = (1 to 99).toList().select(x => isPrime(x))
-  println(primes.join(", "))
+    if name.endsWith(".pdf") then
+      match pdf.pageCount(entry.path)
+      case Ok(n)  => println "\{name}: PDF, \{n} page(s)"
+      case Err(e) => println "\{name}: unreadable (\{e})"
+
+    else println: name

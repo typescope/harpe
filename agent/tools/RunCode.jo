@@ -109,7 +109,8 @@ private def runCode(
     runTimeout: Float,
     maxResultChars: Int,
     runScript: String,
-    services: Map[String, Service])
+    services: Map[String, Service],
+    dataRoot: String)
 : Tool.RunOutcome receives logger =
   match findDoneFile(sandboxDir)
   case None =>
@@ -137,7 +138,7 @@ private def runCode(
       case Some(_) => brokerSock
       case None    => ""
 
-    val outcome = py.try(buildAndRun(code, donePath, runDir, buildTimeout, runTimeout, runScript, guestSock))
+    val outcome = py.try(buildAndRun(code, donePath, runDir, buildTimeout, runTimeout, runScript, guestSock, dataRoot))
 
     match broker
     case Some(b) => val _ = py.try(b.stop())
@@ -162,7 +163,8 @@ private def buildAndRun(
     buildTimeout: Float,
     runTimeout: Float,
     runScript: String,
-    brokerSock: String)
+    brokerSock: String,
+    dataRoot: String)
 : Tool.RunOutcome receives logger =
   // Each run emits one `harpe.tools.runCode` log entry — the program under test
   // plus the fields specific to how it ended — to the injected channel. What
@@ -236,6 +238,9 @@ private def buildAndRun(
   val runEnv = subprocess.guestEnv()
   runEnv.set("HARPE_AUDIT_LOG", runAudit)
   runEnv.set("HARPE_SCRATCH_DIR", runDir)
+
+  if dataRoot != "" then
+    runEnv.set("HARPE_DATA_DIR", dataRoot)
 
   if brokerSock != "" then
     runEnv.set("HARPE_BROKER_SOCK", brokerSock)
@@ -337,9 +342,15 @@ def runCodeTool(
     runTimeout: Float = 30.0,
     maxConcurrent: Int = 4,
     maxResultChars: Int = 4000,
-    services: Map[String, Service] = noServices)
+    services: Map[String, Service] = noServices,
+    dataDir: String = "")
 : Tool =
   val gate = threading.semaphore(maxConcurrent)
+
+  // The agent's data directory, granted to the guest as its filesystem root via
+  // HARPE_DATA_DIR. Skipped when absent — the sandbox runtime then falls back to
+  // the per-run scratch dir.
+  val dataRoot = if dataDir != "" && os.path.isdir(dataDir) then os.path.abspath(dataDir) else ""
 
   // The optional run.sh wrapper sits at sandbox/run.sh — i.e. at the sandbox
   // project root. If it exists it must be executable, or every run would fail
@@ -355,5 +366,5 @@ def runCodeTool(
     "runCode",
     "Write a Jo program (namespace UserTask, def runTask), compile it against the agent sandbox, and run it. Returns the program's stdout, or the compile error if it does not build.",
     [Tool.strParam("code", "The Jo source code to compile and run")],
-    input => runCode(input.string("code"), sandboxDir, gate, buildTimeout, runTimeout, maxResultChars, runScript, services)
+    input => runCode(input.string("code"), sandboxDir, gate, buildTimeout, runTimeout, maxResultChars, runScript, services, dataRoot)
   )
