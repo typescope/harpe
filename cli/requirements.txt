@@ -8,13 +8,20 @@ anthropic>=0.40,<1   # required for PROVIDER=anthropic (default)
 openai>=2.21,<3      # required for PROVIDER=openai
 
 # Media capabilities (harpe.media). markitdown renders documents (Word, etc.) to
-# text — its [all] extra pulls in the image / Office / audio converters. pypdf gives
-# page-level PDF access (page count, per-page text).
+# text — its [all] extra pulls in the image / Office / audio converters. pypdfium2
+# (PDFium, Chrome's PDF engine) gives page-level PDF access — page count, per-page
+# text, page → image rendering — as a self-contained wheel, no system dependency.
 markitdown[all]>=0.1,<1
-pypdf>=6,<7
+pypdfium2>=5,<6
 
-# Image OCR (harpe.media Image capability): Pillow gives dimensions (it also comes via
-# markitdown[all]); pytesseract reads text. pytesseract wraps the Tesseract engine,
-# which must be installed as a SYSTEM package (e.g. `apt install tesseract-ocr`) — it
-# is NOT a pip dependency. Absent the binary, Image.text returns a message.
+# Image pixel work (harpe.media Image capability): Pillow (also comes via
+# markitdown[all]).
+#
+# OCR (harpe.media OCR capability) — two shipped backends, pick one:
+# - pytesseract wraps the Tesseract engine, which must be installed as a SYSTEM
+#   package (e.g. `apt install tesseract-ocr`) — it is NOT a pip dependency. Absent
+#   the binary, OCR.text returns a message.
+# - rapidocr-onnxruntime (RapidOcr) is pure pip (~100 MB with onnxruntime), no system
+#   binary, and stronger on photos and rotated text. Uncomment to use it.
 pytesseract>=0.3,<1
+# rapidocr-onnxruntime>=1.3,<2

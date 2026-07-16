@@ -89,7 +89,7 @@ def mediaToDict(m: Media): py.Dict =
 //[ Rebuild a `Media` from such a dict, restoring each `meta` value's type. //]
 def mediaFromDict(d: py.Dict): Media =
   val metaDict = d.get("meta").cast[py.Dict]
-  val keys: py.List = py.module("builtins").callDynamic("list", metaDict.keys()).cast[py.List]
+  val keys: py.List = builtins.list(metaDict.keys())
 
   var meta = Map.empty[String, Meta]
   var i = 0

@@ -1,8 +1,10 @@
 //[ Pdf.jo
   !
-  ! A concrete `PDF` capability backed by pypdf, which gives page-level access — page
-  ! count and per-page text — not just a flat rendering. It resolves a `Path` against
-  ! its root and reads the file directly. Needs the `pypdf` Python package.
+  ! A concrete `PDF` capability backed by pypdfium2 — PDFium, Chrome's PDF engine —
+  ! which gives page-level access (page count, per-page text), the outline and
+  ! information dictionary, and renders a page to an image for OCR. It resolves a
+  ! `Path` against its root and reads the file directly. Needs the `pypdfium2`
+  ! Python package (a self-contained wheel, no system dependency).
 //]
 
 namespace harpe.media
@@ -10,30 +12,100 @@ namespace harpe.media
 import harpe.ffi.os
 import harpe.ffi.builtins
 
-private def pypdfMod: py.Dynamic = py.module("pypdf")
+private def pdfiumMod: py.Dynamic = py.module("pypdfium2")
 
-//[ A pypdf-backed PDF reader, resolving a `Path` against `root`. //]
-class PypdfReader(root: String)
+//[ A pypdfium2-backed PDF reader, resolving a `Path` against `root`. //]
+class PdfiumReader(root: String)
   view PDF
 
   def pageCount(src: Path): Int =
-    builtins.len(pypdfMod.PdfReader(resolvePath(root, src)).pages)
+    builtins.len(pdfiumMod.PdfDocument(resolvePath(root, src)))
 
   def pageText(src: Path, page: Int): String =
-    val reader = pypdfMod.PdfReader(resolvePath(root, src))
-    py.dynamic(reader.pages)[page - 1].extract_text().asString
+    val doc = pdfiumMod.PdfDocument(resolvePath(root, src))
+    doc.get_page(page - 1).get_textpage().get_text_range().asString
 
   def text(src: Path): String =
-    val reader = pypdfMod.PdfReader(resolvePath(root, src))
-    val pages = reader.pages
-    val n = builtins.len(pages)
+    val doc = pdfiumMod.PdfDocument(resolvePath(root, src))
+    val n = builtins.len(doc)
 
     var result = ""
     var i = 0
     while i < n do
-      val page = py.dynamic(pages)[i].extract_text().asString
+      val page = doc.get_page(i).get_textpage().get_text_range().asString
       result = if i == 0 then page else result + "\n" + page
       i = i + 1
 
     result
+
+  def pageImage(src: Path, page: Int, target: Path, scale: Int = 2): ImageSize =
+    val doc = pdfiumMod.PdfDocument(resolvePath(root, src))
+    val image = doc.get_page(page - 1).render(scale).to_pil()
+
+    val realTarget = resolvePath(root, target)
+    os.makedirs(os.path.dirname(realTarget))
+    image.save(realTarget)
+    new ImageSize(image.width.asInt, image.height.asInt)
+
+  def outline(src: Path): List[Heading] =
+    val items = builtins.list(pdfiumMod.PdfDocument(resolvePath(root, src)).get_toc())
+
+    var result = List.empty[Heading]
+    var i = builtins.len(items) - 1
+
+    while i >= 0 do
+      result = result.prepend(heading(items.get(i)))
+      i = i - 1
+
+    result
+
+  def metadata(src: Path): Map[String, String] =
+    val doc = pdfiumMod.PdfDocument(resolvePath(root, src))
+    val dict = doc.callDynamic("get_metadata_dict", true).cast[py.Dict]
+    val keys = builtins.list(dict.keys())
+
+    var result = Map.empty[String, String]
+    var i = 0
+    val n = builtins.len(keys)
+
+    while i < n do
+      val key = keys.get(i).asString
+      result = result.add(key, dict.get(key).asString)
+      i = i + 1
+
+    result
+
+  def pageContent(src: Path, page: Int): PageContent =
+    val doc = pdfiumMod.PdfDocument(resolvePath(root, src))
+    val objs = builtins.list(doc.get_page(page - 1).callDynamic("get_objects"))
+    val n = builtins.len(objs)
+
+    // Object types per PDFium: 1 = text, 2 = path, 3 = image.
+    var texts = 0
+    var images = 0
+    var paths = 0
+    var i = 0
+
+    while i < n do
+      val kind = builtins.attr(objs.get(i), "type").asInt
+
+      if kind == 1 then texts = texts + 1
+      else if kind == 2 then paths = paths + 1
+      else if kind == 3 then images = images + 1
+
+      i = i + 1
+
+    new PageContent(texts, images, paths)
+
+  //[ A `Heading` from a pypdfium2 bookmark: 0-based dest page → 1-based `page`, or
+    ! 0 when the bookmark has no page destination. //]
+  private def heading(bookmark: py.Dynamic): Heading =
+    val dest = bookmark.get_dest()
+    val page =
+      if py.isNone(dest) then 0
+      else
+        val index = dest.get_index()
+        if py.isNone(index) then 0 else index.asInt + 1
+
+    new Heading(bookmark.get_title().asString, page, bookmark.level.asInt)
 end

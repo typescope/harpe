@@ -55,6 +55,18 @@ jobs:
         working-directory: telegram
         run: jo build guest --spec sandbox/jo.toml
 
+      # The agent tests exercise the media processors (pypdfium2, markitdown,
+      # Pillow, RapidOCR), which the compiled Python reaches at run time.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: agent/requirements.txt
+
+      - name: Install agent test dependencies
+        run: pip install -r agent/requirements.txt
+
       - name: Test agent library
         working-directory: agent
         run: jo run test

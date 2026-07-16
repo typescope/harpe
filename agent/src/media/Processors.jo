@@ -20,6 +20,17 @@ namespace harpe.media
 //[ Image pixel dimensions. //]
 class ImageSize(width: Int, height: Int)
 
+//[ One outline (table-of-contents) entry: a heading title, the 1-based page it
+  ! points to (0 when the entry has no page destination), and its nesting depth
+  ! (0 for a top-level entry).
+//]
+class Heading(title: String, page: Int, level: Int)
+
+//[ A PDF page's content profile: how many text runs, embedded images, and vector
+  ! paths (lines, rectangles, curves) its content stream holds.
+//]
+class PageContent(texts: Int, images: Int, paths: Int)
+
 //[ Read a PDF's text — whole, or a page at a time for a large document. //]
 interface PDF
   //[ The number of pages. //]
@@ -30,6 +41,37 @@ interface PDF
 
   //[ One page's text; `page` is 1-based. //]
   def pageText(src: Path, page: Int): String
+
+  //[ The document outline (table of contents), in document order; empty when the
+    ! document carries none.
+    !
+    ! The map of a large document: find the section by title, then read just its
+    ! pages with `pageText` instead of scanning linearly.
+  //]
+  def outline(src: Path): List[Heading]
+
+  //[ The document information dictionary — standard keys (`Title`, `Author`,
+    ! `Subject`, `Keywords`, `CreationDate`, …), empty values omitted.
+  //]
+  def metadata(src: Path): Map[String, String]
+
+  //[ The page's content profile; `page` is 1-based.
+    !
+    ! The cheap "what kind of page is this" probe. No text but an image → a scanned
+    ! page: render it with `pageImage` and OCR. Images alongside text → figures worth
+    ! rendering. Many paths → ruling lines, usually a table or a diagram. PDF has no
+    ! table structure — a table is text runs plus ruling paths — so these counts are
+    ! the honest signal, not a detector.
+  //]
+  def pageContent(src: Path, page: Int): PageContent
+
+  //[ Render one page to a PNG image at `target`, returning its pixel size.
+    !
+    ! The bridge to OCR: when `pageText` comes back empty (a scanned page), render the
+    ! page and hand `target` to `OCR.text`. `scale` multiplies the page's natural
+    ! 72-dpi size — the default 2 (≈ 144 dpi) is enough for OCR. `page` is 1-based.
+  //]
+  def pageImage(src: Path, page: Int, target: Path, scale: Int = 2): ImageSize
 end
 
 //[ Read a Word (`.docx`) document's text. //]
@@ -38,11 +80,45 @@ interface Word
   def text(src: Path): String
 end
 
-//[ Read an image: its pixel size, and any text it contains (OCR). //]
+//[ Read and transform an image: pixel size, metadata, and derived images (resized,
+  ! cropped, converted — each written to a `target` the caller names).
+  !
+  ! Pixel work only. Reading the text *content* of an image is `OCR`, a separate
+  ! capability — an agent may prepare images (say, for a vision model) without being
+  ! able to extract what a document says.
+//]
 interface Image
   //[ The image's pixel dimensions. //]
   def dimensions(src: Path): ImageSize
 
-  //[ Text recognized in the image (OCR); empty if none. //]
+  //[ The image's metadata: `format`, `mode`, and named EXIF entries (`Orientation`,
+    ! `DateTime`, `Model`, …) when present.
+  //]
+  def metadata(src: Path): Map[String, String]
+
+  //[ Scale the image to fit within `width` x `height` — aspect ratio preserved,
+    ! never enlarged — writing it to `target` and returning the resulting size.
+  //]
+  def resize(src: Path, width: Int, height: Int, target: Path): ImageSize
+
+  //[ Cut the `width` x `height` region at top-left (`x`, `y`) out of the image,
+    ! writing it to `target` and returning the resulting size.
+  //]
+  def crop(src: Path, x: Int, y: Int, width: Int, height: Int, target: Path): ImageSize
+
+  //[ Re-encode the image in the format `target`'s extension names (`.png`, `.jpg`,
+    ! `.webp`, …).
+  //]
+  def convert(src: Path, target: Path): Unit
+end
+
+//[ Read the text content of an image (a scan, a screenshot, a rendered PDF page).
+  !
+  ! Its own capability, apart from `Image`: recognizing text is content extraction,
+  ! granted separately from pixel work — and its backends (a local engine, a cloud
+  ! service) swap independently of the image library.
+//]
+interface OCR
+  //[ Text recognized in the image; empty if none. //]
   def text(src: Path): String
 end

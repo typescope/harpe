@@ -25,6 +25,9 @@ def ord(ch: Any): Int = module.ord(ch).asInt
 //[ The length of a Python object (string, list, bytes, …). //]
 def len(x: Any): Int = module.len(x).asInt
 
+//[ Materialize a Python iterable (generator, dict keys, …) as a list. //]
+def list(x: Any): py.List = module.callDynamic("list", x).cast[py.List]
+
 //[ The name of a Python value's type (`"str"`, `"int"`, `"float"`, `"bool"`,
   ! `"dict"`, …) — used to dispatch on a decoded JSON value.
 //]

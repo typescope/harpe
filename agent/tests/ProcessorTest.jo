@@ -1,7 +1,8 @@
 //[ ProcessorTest.jo
   !
-  ! Unit test for the concrete processors: `MarkitdownReader` (Word → text) and
-  ! `PypdfReader` (page count and per-page text).
+  ! Unit test for the concrete processors: `MarkitdownReader` (Word → text),
+  ! `PdfiumReader` (page count, per-page text, page → image), `PillowImage`
+  ! (pixel work), and the OCR readers (`TesseractOcr`, `RapidOcr`).
 //]
 
 namespace harpe.test.ProcessorTest
@@ -17,16 +18,70 @@ private def check(label: String, cond: Bool): Unit receives stdout =
   assert: cond, "\{label} failed"
   println "  ok \{label}"
 
-// Build a blank `pages`-page PDF at `path` with pypdf.
+private def isSize(s: ImageSize, w: Int, h: Int): Bool = s.width == w && s.height == h
+
+// Build a `w`x`h` image at `path` with Pillow.
+private def makeImage(path: String, w: Int, h: Int): Unit =
+  val size = py.module("builtins").callDynamic("tuple", py.list(w, h))
+  py.module("PIL.Image").callDynamic("new", "RGB", size).save(path)
+
+// Build an image at `path` holding the text "HELLO HARPE 42", for OCR.
+private def makeTextImage(path: String): Unit =
+  val size = py.module("builtins").callDynamic("tuple", py.list(400, 80))
+  val img = py.module("PIL.Image").callDynamic("new", "RGB", size, "white")
+  val font = py.module("PIL.ImageFont").load_default(40)
+  py.module("PIL.ImageDraw").Draw(img).text(py.tuple(20, 20), "HELLO HARPE 42", "black", font)
+  img.save(path)
+
+// Whether the Python module `name` is importable.
+private def hasModule(name: String): Bool =
+  match py.try(py.module(name))
+  case Ok(_)  => true
+  case Err(_) => false
+
+// Build a blank `pages`-page PDF (100x100 points per page) at `path` with pypdfium2.
 private def makeBlankPdf(path: String, pages: Int): Unit =
-  val writer = py.module("pypdf").PdfWriter()
+  val doc = py.module("pypdfium2").PdfDocument.callDynamic("new")
   var i = 0
 
   while i < pages do
-    writer.add_blank_page(100.0, 100.0)
+    val _ = doc.new_page(100, 100)
     i = i + 1
 
-  writer.write(path)
+  doc.save(path)
+
+// Build a 2-page PDF at `path`: a 50x30 image on page 1, page 2 empty.
+private def makeImagePdf(path: String): Unit =
+  val pdfium = py.module("pypdfium2")
+  val doc = pdfium.PdfDocument.callDynamic("new")
+  val page = doc.new_page(200, 200)
+  val _ = doc.new_page(200, 200)
+
+  val size = py.module("builtins").callDynamic("tuple", py.list(50, 30))
+  val pil = py.module("PIL.Image").callDynamic("new", "RGB", size)
+  val img = pdfium.PdfImage.callDynamic("new", doc)
+  img.set_bitmap(pdfium.PdfBitmap.from_pil(pil))
+  img.set_matrix(pdfium.PdfMatrix().scale(50, 30))
+
+  page.insert_obj(img)
+  page.gen_content()
+  doc.save(path)
+
+// A handwritten 2-page PDF with an information dictionary and a 2-entry outline —
+// pypdfium2 cannot author those, but PDFium parses this fixture fine.
+private def outlinedPdf: String = """
+  %PDF-1.4
+  1 0 obj << /Type /Catalog /Pages 2 0 R /Outlines 6 0 R >> endobj
+  2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >> endobj
+  3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >> endobj
+  4 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >> endobj
+  5 0 obj << /Title (Test Doc) /Author (Harpe) >> endobj
+  6 0 obj << /Type /Outlines /First 7 0 R /Last 8 0 R /Count 2 >> endobj
+  7 0 obj << /Title (Intro) /Parent 6 0 R /Next 8 0 R /Dest [3 0 R /Fit] >> endobj
+  8 0 obj << /Title (Details) /Parent 6 0 R /Prev 7 0 R /Dest [4 0 R /Fit] >> endobj
+  trailer << /Root 1 0 R /Info 5 0 R /Size 9 >>
+  %%EOF
+  """
 
 def run(): Unit receives stdout =
   val dir = tempfile.mkdtemp()
@@ -37,11 +92,68 @@ def run(): Unit receives stdout =
   val word: Word = new MarkitdownReader(dir)
   check("Word.text renders the file", word.text(root / "note.txt").contains("hello markitdown"))
 
-  // PDF via pypdf — a 2-page blank document.
+  // PDF via pypdfium2 — a 2-page blank document.
   makeBlankPdf(os.path.join(dir, "doc.pdf"), 2)
-  val pdf: PDF = new PypdfReader(dir)
+  val pdf: PDF = new PdfiumReader(dir)
   check("PDF.pageCount", pdf.pageCount(root / "doc.pdf") == 2)
 
   val _ = pdf.text(root / "doc.pdf")            // runs (blank → empty)
   val _ = pdf.pageText(root / "doc.pdf", 1)
   check("PDF.text / pageText run", true)
+
+  // Render a page to an image: 100x100 points at the default scale 2 → 200x200 px.
+  check("PDF.pageImage", isSize(pdf.pageImage(root / "doc.pdf", 1, root / "p1.png"), 200, 200))
+  check("PDF.pageImage writes target", os.path.isfile(os.path.join(dir, "p1.png")))
+
+  // No outline / no metadata → empty, not a crash.
+  check("PDF.outline empty", pdf.outline(root / "doc.pdf").size == 0)
+
+  // Outline and metadata from the handwritten fixture.
+  file.write(os.path.join(dir, "outlined.pdf"), outlinedPdf)
+  val headings = pdf.outline(root / "outlined.pdf")
+  check("PDF.outline entries", headings.size == 2)
+
+  val first = headings.get(0)
+  check("PDF.outline title", first.title == "Intro" && first.page == 1 && first.level == 0)
+  check("PDF.outline second", headings.get(1).page == 2)
+
+  val info = pdf.metadata(root / "outlined.pdf")
+  check("PDF.metadata Title", info.getOrElse("Title", "") == "Test Doc")
+  check("PDF.metadata Author", info.getOrElse("Author", "") == "Harpe")
+  check("PDF.metadata skips empty", info.getOrElse("Subject", "-") == "-")
+
+  // Content profile: an image on page 1, an empty page 2.
+  makeImagePdf(os.path.join(dir, "img.pdf"))
+  val withImage = pdf.pageContent(root / "img.pdf", 1)
+  check("PDF.pageContent image", withImage.images == 1 && withImage.texts == 0)
+
+  val empty = pdf.pageContent(root / "img.pdf", 2)
+  check("PDF.pageContent empty", empty.images == 0 && empty.texts == 0 && empty.paths == 0)
+
+  // Image pixel work via Pillow.
+  makeImage(os.path.join(dir, "pic.png"), 30, 20)
+  val image: Image = new PillowImage(dir)
+  check("Image.dimensions", isSize(image.dimensions(root / "pic.png"), 30, 20))
+
+  val meta = image.metadata(root / "pic.png")
+  check("Image.metadata format", meta.getOrElse("format", "") == "PNG")
+  check("Image.metadata mode", meta.getOrElse("mode", "") == "RGB")
+
+  // Fit 30x20 within a 15x15 box, aspect preserved → 15x10.
+  check("Image.resize", isSize(image.resize(root / "pic.png", 15, 15, root / "small.png"), 15, 10))
+  check("Image.crop", isSize(image.crop(root / "pic.png", 5, 5, 10, 8, root / "part.png"), 10, 8))
+
+  image.convert(root / "pic.png", root / "pic.jpg")
+  check("Image.convert", isSize(image.dimensions(root / "pic.jpg"), 30, 20))
+
+  // OCR: Tesseract degrades gracefully when the system binary is absent; RapidOCR
+  // reads real text when its package is installed.
+  val tesseract: OCR = new TesseractOcr(dir)
+  val _ = tesseract.text(root / "pic.png")
+  check("OCR tesseract runs", true)
+
+  if hasModule("rapidocr_onnxruntime") then
+    makeTextImage(os.path.join(dir, "text.png"))
+    val rapid: OCR = new RapidOcr(dir)
+    check("OCR rapidocr reads text", rapid.text(root / "text.png").contains("HELLO"))
+    check("OCR rapidocr blank", rapid.text(root / "pic.png") == "")
