@@ -209,10 +209,15 @@ private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, ex
   // Writers: create from zero, then edit → save-as (transform).
   val built = excelWriter.create()
   built.addSheet("Out")
-  check("builder appendRow", built.appendRow("Out", ["a", "b"]))
+  check("builder appendRow", built.appendRow("Out", ["a", new IntCell(3), 2.25]))
+  check("builder setCell", built.setCell("Out", 1, 2, new IntCell(7)))
+  check("builder setCell unknown sheet", !built.setCell("NoSuch", 1, 1, 0.0))
   check("builder unknown sheet", !built.appendRow("NoSuch", ["x"]))
   check("builder save", built.save(root / "out.xlsx").isOk)
-  check("built workbook reads back", fs.openWorkbook(root / "out.xlsx").success.dimensions("Out").getOrElse(() => new SheetSize(0, 0)).rows == 1)
+  val readBack = fs.openWorkbook(root / "out.xlsx").success
+  check("built workbook reads back", readBack.dimensions("Out").getOrElse(() => new SheetSize(0, 0)).rows == 1)
+  check("typed cells survive", readBack.rows("Out", 1, 1).getOrElse(() => []).get(0).get(2) == "2.25")
+  check("setCell survives", readBack.rows("Out", 1, 1).getOrElse(() => []).get(0).get(1) == "7")
 
   val editor = excelWriter.edit(root / "out.xlsx").success
   val _ = editor.appendRow("Out", ["c", "d"])
@@ -223,13 +228,15 @@ private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, ex
   val draft = wordWriter.create()
   draft.addHeading("Report", 1)
   draft.addParagraph("Hello.")
+  draft.addListItem("first", false)
+  draft.addTable([["h1", "h2"], ["v1", "v2"]])
   check("word builder save", draft.save(root / "report.docx").isOk)
-  check("word reads back", fs.openWord(root / "report.docx").success.paragraphCount == 2)
+  check("word reads back", fs.openWord(root / "report.docx").success.paragraphCount == 3)
 
   val wordEdit = wordWriter.edit(root / "report.docx").success
   wordEdit.addParagraph("More.")
   check("word edit save-as", wordEdit.save(root / "report2.docx").isOk)
-  check("word transform grew target", fs.openWord(root / "report2.docx").success.paragraphCount == 3)
+  check("word transform grew target", fs.openWord(root / "report2.docx").success.paragraphCount == 4)
 
   // Image pixel work via Pillow.
   makeImage(os.path.join(dir, "pic.png"), 30, 20)

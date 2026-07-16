@@ -32,6 +32,26 @@ private class WordBuilderImpl(doc: py.Dynamic, root: String)
   def addParagraph(text: String): Unit =
     val _ = doc.add_paragraph(text)
 
+  def addListItem(text: String, ordered: Bool): Unit =
+    val style = if ordered then "List Number" else "List Bullet"
+    val _ = doc.add_paragraph(text, style = style)
+
+  def addTable(rows: List[List[String]]): Unit =
+    if rows.size == 0 then return pass
+
+    val table = doc.add_table(rows = rows.size, cols = rows.get(0).size)
+    var i = 0
+
+    while i < rows.size do
+      var j = 0
+      val row = rows.get(i)
+
+      while j < row.size do
+        py.module("builtins").callDynamic("setattr", table.cell(i, j), "text", row.get(j))
+        j = j + 1
+
+      i = i + 1
+
   def save(target: Path): Result[Unit, String] =
     orMessage: py.try(saveTo(target))
 

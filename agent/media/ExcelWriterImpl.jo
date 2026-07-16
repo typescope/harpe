@@ -26,22 +26,38 @@ class OpenpyxlWriter(root: String)
       new WorkbookBuilderImpl(wb, root)
 end
 
+//[ Unwrap a `Cell` to the raw value openpyxl stores. //]
+private def cellValue(cell: Cell): Any =
+  match cell
+  case s: String   => s
+  case f: Float    => f
+  case i: IntCell  => i.value
+  case b: BoolCell => b.value
+
 private class WorkbookBuilderImpl(wb: py.Dynamic, root: String)
   view WorkbookBuilder
 
   def addSheet(name: String): Unit =
     val _ = wb.create_sheet(name)
 
-  def appendRow(sheet: String, cells: List[String]): Bool =
+  def appendRow(sheet: String, cells: List[Cell]): Bool =
     match py.try(wb[sheet])
     case Err(_) => false
 
     case Ok(ws) =>
       val row = py.list()
       for cell in cells do
-        row.append(py.dynamic(cell))
+        row.append(py.dynamic(cellValue(cell)))
 
       ws.append(row)
+      true
+
+  def setCell(sheet: String, row: Int, column: Int, value: Cell): Bool =
+    match py.try(wb[sheet])
+    case Err(_) => false
+
+    case Ok(ws) =>
+      val _ = ws.cell(row = row, column = column, value = py.dynamic(cellValue(value)))
       true
 
   def save(target: Path): Result[Unit, String] =
