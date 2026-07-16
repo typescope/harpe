@@ -24,15 +24,15 @@ at build time**, and oversight is the **audit log** — there's no one to pause 
 
 ## The whole thing
 
-The agent's capabilities are its entry-point contract in `sandbox/api`:
+The agent's capabilities are its entry-point contract in the `api` module:
 
 ```jo
-// sandbox/api/src/Entry.jo — what the PR reviewer can do
+// sandbox/Entry.jo (api module) — what the PR reviewer can do
 defer def runTask(): Unit receives github, tests
 ```
 
 `github` is a published capability (read PRs, post comments). `tests` is a tiny one you write
-inline — an interface in `sandbox/api` and an implementation in `sandbox/runtime` that runs exactly
+inline — an interface in the `api` module and an implementation in the `runtime` module that runs exactly
 `make test`. The top-level `jo.toml` pulls in the Harpe loop and points `main` at its HTTP
 loop (`Harpe.http`) — that's the trigger — so `jo run` serves the agent with no source
 files; the route and tokens live in `.env`. All from the template.
@@ -51,8 +51,8 @@ jo new pr-reviewer --template request-driven
 cd pr-reviewer
 ```
 
-Same shape as always — the `jo.toml` agent app, the `sandbox/{api, runtime, guest}`
-projects, `AGENT.md`, `skills/`, `.env.example`, `data/`, `logs/`, and the `CLAUDE.md` +
+Same shape as always — the `jo.toml` agent app, the sandbox project's `api`, `runtime`, and
+`guest` modules, `AGENT.md`, `skills/`, `.env.example`, `data/`, `logs/`, and the `CLAUDE.md` +
 `.claude/skills/` that let Claude Code finish the agent for you. The steps below are what
 Claude does — and what you'd type by hand.
 
@@ -64,8 +64,10 @@ agent's input:
 
 ```toml
 # jo.toml
-[main.links]
-"jo.main" = "Harpe.http"
+[module.app]
+links = [
+  { from = "jo.main", to = "Harpe.http" },
+]
 ```
 ```sh
 # .env
@@ -82,13 +84,15 @@ so the work is to grant capabilities narrow enough to be safe on their own. This
 two:
 
 - **`github`** — a published capability that reads PR diffs and posts comments. Depend on it
-  from `sandbox/api` (the interface) and `sandbox/runtime` (the implementation), and put its
+  from the `api` module (the interface) and the `runtime` module (the implementation), and put its
   token in `.env`:
 
   ```toml
-  # sandbox/api/jo.toml          # sandbox/runtime/jo.toml gets github-runtime (link = true)
-  [main.dependencies]
-  github = "2.1"
+  # sandbox/jo.toml
+  [module.api]      # the runtime module also gets github-runtime with link = true
+  packages = [
+    { name = "github", version = "2.1" },
+  ]
   ```
   ```sh
   # .env
@@ -101,14 +105,14 @@ two:
   command:
 
   ```jo
-  // sandbox/api/src/Tests.jo — the whole authority: run the suite, nothing else
+  // sandbox/Tests.jo (api module) — the whole authority: run the suite, nothing else
   interface Tests
     def run(): TestResult
   end
   param tests: Tests
   ```
   ```jo
-  // sandbox/runtime/src/TestsImpl.jo
+  // sandbox/TestsImpl.jo (runtime module)
   class TestsImpl()
     def run(): TestResult = Shell.run("make test")     // fixed command — not the model's choice
     view Tests
@@ -121,15 +125,15 @@ two:
 Add both to the entry point and type-check:
 
 ```jo
-// sandbox/api/src/Entry.jo
+// sandbox/Entry.jo (api module)
 defer def runTask(): Unit receives github, tests
 ```
 ```sh
-jo check --spec sandbox/api/jo.toml      # the interfaces compile
+jo check --spec sandbox/jo.toml api      # the interfaces compile
 ```
 
 To see what a capability lets the agent do, read its interface with `jo doc --spec
-sandbox/api/jo.toml`.
+sandbox/jo.toml api`.
 
 ## Step 4 — Teach it
 
