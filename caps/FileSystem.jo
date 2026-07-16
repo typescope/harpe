@@ -96,23 +96,17 @@ interface FileSystem
     ! For a large file, open it and use `lines`, `head`, or `tail` instead.
   //]
   def readText(path: Path, encoding: String = "utf-8"): Result[String, String] =
-    match openTextFile(path, encoding)
-    case Err(e) => Err(e)
-
-    case Ok(file) =>
+    openTextFile(path, encoding).map: file =>
       val content = file.text
       file.close()
-      Ok(content)
+      content
 
   //[ The whole file's bytes — the one-shot counterpart of `readText`. //]
   def readBytes(path: Path): Result[Bytes, String] =
-    match openBinaryFile(path)
-    case Err(e) => Err(e)
-
-    case Ok(file) =>
+    openBinaryFile(path).map: file =>
       val content = file.bytes
       file.close()
-      Ok(content)
+      content
 end
 
 //[ The ambient confined filesystem. //]
