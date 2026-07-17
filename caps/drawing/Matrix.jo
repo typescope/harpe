@@ -1,0 +1,35 @@
+//[ Matrix.jo
+  !
+  ! A 2×3 affine transform, the value behind `DrawingContext.transform`.
+  !
+  ! Angles are absent on purpose: `rotate` needs trigonometry, which the pure
+  ! `caps` module cannot reach. Build a rotation from
+  ! `new Matrix(cos, sin, -sin, cos, 0, 0)` (an LLM computes the entries), and
+  ! compose it with `translate`/`scale` via `andThen`, until the stdlib grows a
+  ! math module.
+//]
+
+namespace harpe.caps.drawing
+
+//[ A 2×3 affine transform: `(x, y) → (a·x + c·y + e, b·x + d·y + f)`. //]
+class Matrix(a: Float, b: Float, c: Float, d: Float, e: Float, f: Float)
+  //[ Map a point through the transform. //]
+  def apply(p: Point): Point =
+    new Point(a * p.x + c * p.y + e, b * p.x + d * p.y + f)
+
+  //[ This transform followed by `m` (points move through `this` first). //]
+  def andThen(m: Matrix): Matrix =
+    new Matrix(
+      m.a * a + m.c * b,
+      m.b * a + m.d * b,
+      m.a * c + m.c * d,
+      m.b * c + m.d * d,
+      m.a * e + m.c * f + m.e,
+      m.b * e + m.d * f + m.f)
+end
+
+section Matrix
+  def identity: Matrix = new Matrix(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+  def translate(dx: Float, dy: Float): Matrix = new Matrix(1.0, 0.0, 0.0, 1.0, dx, dy)
+  def scale(sx: Float, sy: Float): Matrix = new Matrix(sx, 0.0, 0.0, sy, 0.0, 0.0)
+end

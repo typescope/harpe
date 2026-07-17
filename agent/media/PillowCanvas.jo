@@ -1,0 +1,280 @@
+//[ PillowCanvas.jo
+  !
+  ! A `CanvasWriter` / `Canvas` backed by Pillow. The imaging model on a raster
+  ! surface: shapes are flattened to points and drawn as polygons/polylines,
+  ! text is placed on a baseline, and the ambient `DrawingContext.transform` is
+  ! applied in Jo — a raster backend has no CTM, so the matrix is software
+  ! applied to every point before rasterizing. Needs the `pillow` package.
+  !
+  ! Font resolution maps the built-in families (sans/serif/mono) to DejaVu
+  ! faces; a raster backend ships no fonts, so a usable default must exist on
+  ! disk (or be registered). Rotated/scaled text draws upright at the
+  ! transformed anchor for now — glyph warping is a follow-up.
+//]
+
+namespace harpe.media
+
+import harpe.caps.*
+import harpe.caps.drawing.*
+
+import harpe.ffi.os
+
+private def pilImage: py.Dynamic = py.module("PIL.Image")
+private def pilDraw: py.Dynamic = py.module("PIL.ImageDraw")
+private def pilFont: py.Dynamic = py.module("PIL.ImageFont")
+
+private def curveSteps: Int = 16
+
+//[ Flatten a shape to one point list per subpath, with `tf` applied to every
+  ! point. Curves are sampled; this is the CTM-free backend's software CTM.
+//]
+private def flatten(shape: Shape, tf: Matrix): List[List[Point]] =
+  var done = List.empty[List[Point]]
+  var cur = List.empty[Point]
+  var px = 0.0
+  var py = 0.0
+  var i = 0
+  val ops = shape.ops
+  val n = ops.size
+
+  while i < n do
+    match ops.get(i)
+    case m: MoveTo =>
+      if !cur.isEmpty then
+        done = done ++ [cur]
+
+      px = m.x
+      py = m.y
+      cur = [tf.apply(new Point(px, py))]
+
+    case l: LineTo =>
+      px = l.x
+      py = l.y
+      cur = cur ++ [tf.apply(new Point(px, py))]
+
+    case c: CurveTo =>
+      var s = 1
+
+      while s <= curveSteps do
+        val t = s.toFloat / curveSteps.toFloat
+        cur = cur ++ [tf.apply(cubic(px, py, c, t))]
+        s = s + 1
+
+      px = c.x3
+      py = c.y3
+
+    case _: ClosePath =>
+      if !cur.isEmpty then
+        cur = cur ++ [cur.get(0)]
+
+    i = i + 1
+
+  if !cur.isEmpty then
+    done = done ++ [cur]
+
+  done
+
+//[ A point on the cubic Bézier from (`px`, `py`) through `c`'s controls. //]
+private def cubic(px: Float, py: Float, c: CurveTo, t: Float): Point =
+  val mt = 1.0 - t
+  val mt2 = mt * mt
+  val mt3 = mt2 * mt
+  val t2 = t * t
+  val t3 = t2 * t
+  val a = mt3
+  val b = 3.0 * mt2 * t
+  val d = 3.0 * mt * t2
+  val e = t3
+  new Point(a * px + b * c.x1 + d * c.x2 + e * c.x3,
+            a * py + b * c.y1 + d * c.y2 + e * c.y3)
+
+//[ Build a Python list of (x, y) tuples from a Jo point list. //]
+private def pyPoints(points: List[Point]): py.List =
+  val out = py.list()
+  var i = 0
+  val n = points.size
+
+  while i < n do
+    val p = points.get(i)
+    val _ = out.append(py.tuple(p.x, p.y))
+    i = i + 1
+
+  out
+
+//[ The Pillow-backed canvas backend, resolving a `Path` against `root`. //]
+class PillowCanvasWriter(root: String)
+  view CanvasWriter
+
+  val finder: FontFinder = new FontFinder()
+
+  def create(width: Int, height: Int, background: Color): Canvas =
+    val size = py.tuple(width, height)
+    val fill = py.tuple(background.r, background.g, background.b, 255)
+    val img = pilImage.callDynamic("new", "RGBA", size, fill)
+    new PillowCanvas(this, img, width, height)
+
+  def registerFont(family: String, src: Path): Result[Unit, String] =
+    orMessage: py.try(registerAt(family, src))
+
+  def stringWidth(text: String): Float receives DrawingContext.font =
+    loadFont(DrawingContext.font).getlength(text).asFloat
+
+  def fontAscent: Float receives DrawingContext.font =
+    loadFont(DrawingContext.font).getmetrics()[0].asFloat
+
+  def fontDescent: Float receives DrawingContext.font =
+    loadFont(DrawingContext.font).getmetrics()[1].asFloat
+
+  def imageSize(src: Path): Result[ImageSize, String] =
+    orMessage: py.try(sizeOf(src))
+
+  private def registerAt(family: String, src: Path): Unit =
+    val real = resolvePath(root, src)
+
+    if !os.path.exists(real) then
+      abort "no such font file: '\{src.toString}'"
+
+    finder.register(family, real)
+
+  private def sizeOf(src: Path): ImageSize =
+    val img = pilImage.open(resolvePath(root, src))
+    new ImageSize(img.width.asInt, img.height.asInt)
+
+  //[ Load a Pillow font for `font`: a registered family wins, else the best
+    ! match `finder` discovers among the platform's installed fonts.
+  //]
+  def loadFont(font: Font): py.Dynamic =
+    match finder.resolve(font.family, font.style)
+    case Some(path) => pilFont.truetype(path, font.size.toInt)
+    case None =>
+      abort "no system font found for family '\{font.family}' style '\{font.style}'"
+end
+
+//[ A single Pillow raster surface. //]
+class PillowCanvas(writer: PillowCanvasWriter, image: py.Dynamic, w: Int, h: Int)
+  view Canvas
+
+  var img: py.Dynamic = image
+
+  def width: Int = w
+
+  def height: Int = h
+
+  def fill(shape: Shape): Unit receives
+      DrawingContext.fillColor,
+      DrawingContext.alpha,
+      DrawingContext.transform
+  =
+    val color = DrawingContext.fillColor
+    val subpaths = flatten(shape, DrawingContext.transform)
+    onLayer: draw =>
+      var i = 0
+      val n = subpaths.size
+
+      while i < n do
+        val pts = subpaths.get(i)
+
+        if pts.size >= 3 then
+          draw.polygon(pyPoints(pts), fill = py.tuple(color.r, color.g, color.b, 255))
+
+        i = i + 1
+
+  def stroke(shape: Shape): Unit receives
+      DrawingContext.strokeColor,
+      DrawingContext.lineWidth,
+      DrawingContext.alpha,
+      DrawingContext.transform
+  =
+    val color = DrawingContext.strokeColor
+    val lw = DrawingContext.lineWidth.toInt.max(1)
+    val subpaths = flatten(shape, DrawingContext.transform)
+    onLayer: draw =>
+      var i = 0
+      val n = subpaths.size
+
+      while i < n do
+        val pts = subpaths.get(i)
+
+        if pts.size >= 2 then
+          draw.line(pyPoints(pts), fill = py.tuple(color.r, color.g, color.b, 255), width = lw)
+
+        i = i + 1
+
+  def fillStroke(shape: Shape): Unit receives
+      DrawingContext.fillColor,
+      DrawingContext.strokeColor,
+      DrawingContext.lineWidth,
+      DrawingContext.alpha,
+      DrawingContext.transform
+  =
+    fill(shape)
+    stroke(shape)
+
+  def textAt(x: Float, baseline: Float, text: String): Unit receives
+      DrawingContext.font,
+      DrawingContext.textColor,
+      DrawingContext.alpha,
+      DrawingContext.transform
+  =
+    val color = DrawingContext.textColor
+    val font = writer.loadFont(DrawingContext.font)
+    val at = DrawingContext.transform.apply(new Point(x, baseline))
+    onLayer: draw =>
+      draw.text(py.tuple(at.x, at.y), text, font = font,
+                fill = py.tuple(color.r, color.g, color.b, 255), anchor = "ls")
+
+  def imageAt(src: Path, x: Float, y: Float, width: Float): Result[Unit, String] =
+    orMessage: py.try(placeImage(src, x, y, width))
+
+  def save(target: Path): Result[Unit, String] =
+    orMessage: py.try(saveTo(target))
+
+  //[ Paint on a transparent layer, scale its alpha by `DrawingContext.alpha`,
+    ! and composite — so translucent shapes blend correctly (raster has no
+    ! graphics-state alpha; it must composite).
+  //]
+  private def onLayer(paint: py.Dynamic => Unit): Unit receives DrawingContext.alpha =
+    val layer = pilImage.callDynamic("new", "RGBA", py.tuple(w, h), py.tuple(0, 0, 0, 0))
+    paint(pilDraw.Draw(layer))
+
+    val alpha = DrawingContext.alpha
+    val scaled =
+      if alpha >= 1.0 then layer
+      else
+        val band = layer.getchannel("A").point(alphaTable(alpha))
+        val _ = layer.putalpha(band)
+        layer
+
+    img = pilImage.alpha_composite(img, scaled)
+
+  //[ A 256-entry lookup table scaling channel values by `alpha` — PIL's
+    ! `Image.point` takes a table, sparing us a Python callable.
+  //]
+  private def alphaTable(alpha: Float): py.List =
+    val table = py.list()
+    var v = 0
+
+    while v < 256 do
+      val _ = table.append((v.toFloat * alpha).toInt)
+      v = v + 1
+
+    table
+
+  private def placeImage(src: Path, x: Float, y: Float, width: Float): Unit =
+    val im = pilImage.open(resolvePath(writer.root, src)).convert("RGBA")
+    val scale = width / im.width.asInt.toFloat
+    val newH = (im.height.asInt.toFloat * scale).toInt
+    val resized = im.resize(py.tuple(width.toInt, newH))
+    val _ = img.alpha_composite(resized, py.tuple(x.toInt, y.toInt))
+
+  private def saveTo(target: Path): Unit =
+    val real = resolvePath(writer.root, target)
+    os.makedirs(os.path.dirname(real))
+
+    val lower = real.toLower
+
+    if lower.endsWith(".jpg") || lower.endsWith(".jpeg") then
+      val _ = img.convert("RGB").save(real)
+    else
+      val _ = img.save(real)
+end

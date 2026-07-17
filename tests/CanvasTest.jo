@@ -1,0 +1,70 @@
+//[ CanvasTest.jo
+  !
+  ! Drives the `Canvas` capability end to end through the `PillowCanvas`
+  ! backend: panel, title text, a stroked circle, the transform probe (one
+  ! unit rect scaled into a bar), and three alpha-blended disks. Writes a PNG
+  ! to a temp dir and checks it exists and is non-empty.
+//]
+
+namespace harpe.test
+
+import jo.IO.stdout
+import harpe.caps.*
+import harpe.caps.drawing.*
+import harpe.media.*
+import harpe.ffi.os
+import harpe.ffi.tempfile
+
+section CanvasTest
+  def run(): Unit receives stdout =
+    val dir = tempfile.mkdtemp()
+
+    with canvasWriter = new PillowCanvasWriter(dir) in draw()
+
+    val out = "\{dir}/canvas.png"
+
+    if os.path.exists(out) && os.path.getsize(out) > 0 then
+      println "  canvas: drew + saved a \{os.path.getsize(out)}-byte PNG"
+    else
+      abort "canvas: no output produced"
+
+  private def draw(): Unit receives canvasWriter =
+    val cv = canvasWriter.create(460, 260, Color.white)
+
+    with DrawingContext.fillColor = new Color(233, 238, 250) in
+      cv.fill(Shape.roundRect(20.0, 20.0, 420.0, 220.0, 14.0))
+
+    with
+      DrawingContext.font = Font.bold(26.0),
+      DrawingContext.textColor = new Color(25, 35, 80)
+    in
+      cv.textAt(38.0, 62.0, "Canvas capability ✓")
+
+    with
+      DrawingContext.strokeColor = new Color(70, 90, 180),
+      DrawingContext.lineWidth = 3.0
+    in
+      cv.stroke(Shape.circle(92.0, 168.0, 46.0))
+
+    // transform probe: a 1×1 unit rect scaled into a bar, then translated
+    with
+      DrawingContext.fillColor = new Color(70, 90, 180),
+      DrawingContext.transform =
+        Matrix.scale(230.0, 12.0).andThen(Matrix.translate(180.0, 108.0))
+    in
+      cv.fill(Shape.rect(0.0, 0.0, 1.0, 1.0))
+
+    disk(cv, 210.0, new Color(220, 60, 60))
+    disk(cv, 250.0, new Color(60, 180, 90))
+    disk(cv, 290.0, new Color(60, 90, 220))
+
+    val root: Path = Path.root
+    val _ = cv.save(root / "canvas.png")
+
+  private def disk(cv: Canvas, cx: Float, color: Color): Unit =
+    with
+      DrawingContext.fillColor = color,
+      DrawingContext.alpha = 0.45
+    in
+      cv.fill(Shape.circle(cx, 196.0, 34.0))
+end

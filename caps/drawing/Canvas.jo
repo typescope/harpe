@@ -1,0 +1,99 @@
+//[ Canvas.jo
+  !
+  ! The `Canvas` capability: a single raster surface an agent paints shapes and
+  ! text onto, then saves as an image. No layout and no pages — this is the
+  ! imaging model in isolation (diagrams, charts, thumbnails, annotations).
+  !
+  ! The painting methods — `textAt`, `fill`, `stroke`, `fillStroke`, `imageAt`
+  ! — are the shared *imaging model* ("Surface") that `PdfPage` will also offer.
+  ! Jo has no interface inheritance, so the sharing is a contract kept by hand,
+  ! not a supertype — hence no standalone `Surface` interface (it would be dead
+  ! code nothing could implement). Each method reads its state from the ambient
+  ! `DrawingContext` params and declares exactly which ones it consumes.
+  !
+  ! Coordinates are pixels, top-left origin. `textAt` places a baseline; it
+  ! does not wrap. Environment errors (a missing image, an unwritable target)
+  ! come back as `Result`.
+//]
+
+namespace harpe.caps.drawing
+
+import harpe.caps.Path
+import harpe.caps.ImageSize
+
+//[ A raster surface under construction. //]
+interface Canvas
+  //[ The surface size in pixels. //]
+  def width: Int
+  def height: Int
+
+  //[ Draw `text` with its left edge at `x` and its baseline at `baseline`,
+    ! in the ambient font and text color. One line, absolute position.
+  //]
+  def textAt(x: Float, baseline: Float, text: String): Unit receives
+      DrawingContext.font,
+      DrawingContext.textColor,
+      DrawingContext.alpha,
+      DrawingContext.transform
+
+  //[ Fill `shape` with the ambient fill color. //]
+  def fill(shape: Shape): Unit receives
+      DrawingContext.fillColor,
+      DrawingContext.alpha,
+      DrawingContext.transform
+
+  //[ Stroke `shape`'s outline with the ambient stroke color and line width. //]
+  def stroke(shape: Shape): Unit receives
+      DrawingContext.strokeColor,
+      DrawingContext.lineWidth,
+      DrawingContext.alpha,
+      DrawingContext.transform
+
+  //[ Fill then stroke `shape`. //]
+  def fillStroke(shape: Shape): Unit receives
+      DrawingContext.fillColor,
+      DrawingContext.strokeColor,
+      DrawingContext.lineWidth,
+      DrawingContext.alpha,
+      DrawingContext.transform
+
+  //[ Draw the image at `src`, its top-left at (`x`, `y`), scaled to `width`
+    ! pixels wide (aspect preserved).
+  //]
+  def imageAt(src: Path, x: Float, y: Float, width: Float): Result[Unit, String]
+
+  //[ Write the surface to `target`; the format follows the extension
+    ! (`.png`, `.jpg`, …).
+  //]
+  def save(target: Path): Result[Unit, String]
+end
+
+//[ Create raster surfaces, and answer the font/image facts drawing needs.
+  !
+  ! Facts live here, not on `Canvas`: glyph metrics and image sizes are facts
+  ! about fonts and files, independent of any one surface — the same split as
+  ! `PdfWriter`. Metrics read the ambient `DrawingContext.font`.
+//]
+interface CanvasWriter
+  //[ A new surface of `width` × `height` pixels filled with `background`. //]
+  def create(width: Int, height: Int, background: Color): Canvas
+
+  //[ Register a TrueType font file under `family`. Unlike PDF's built-in
+    ! fonts, a raster backend has none — a usable font must be registered or
+    ! bundled.
+  //]
+  def registerFont(family: String, src: Path): Result[Unit, String]
+
+  //[ The advance width of `text` in the ambient font. //]
+  def stringWidth(text: String): Float receives DrawingContext.font
+
+  //[ The ambient font's ascent / descent (both positive, in pixels). //]
+  def fontAscent: Float receives DrawingContext.font
+  def fontDescent: Float receives DrawingContext.font
+
+  //[ The pixel dimensions of the image at `src`. //]
+  def imageSize(src: Path): Result[ImageSize, String]
+end
+
+//[ The ambient canvas backend. //]
+param canvasWriter: CanvasWriter
