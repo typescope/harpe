@@ -203,10 +203,8 @@ private def buildAndRun(
     file.write(runAudit, "")
     osMod.chmod(runAudit, 438) // 0o666
 
-  val runCmd = if useRunSh then
-    py.list(runScript, runOut, ..extraParams)
-  else
-    py.list("python3", runOut, ..extraParams)
+  val runCmd = if useRunSh then py.list(runScript, runOut, ..extraParams)
+               else py.list("python3", runOut, ..extraParams)
 
   // Untrusted guest code runs with a minimal PATH-only environment (guestEnv),
   // inheriting none of the host's secrets — plus the audit-log path the sandbox
@@ -334,6 +332,9 @@ def runCodeTool(
     if !osMod.access(runScript, osMod.X_OK).asBool then
       abort "sandbox run.sh exists but is not executable — run `chmod +x \{runScript}` (see docs/concepts/sandbox.md)"
 
+  val params = match extraParams
+                  case Some(params) => params
+                  case None => []
   new Tool(
     "runCode",
     "Write a Jo program (namespace UserTask, def runTask), compile it against the agent sandbox, and run it. Returns the program's stdout, or the compile error if it does not build.",

@@ -30,8 +30,9 @@ private def readAPI(sandBoxDir: String, name: String): Tool.RunOutcome =
 
 //[ The read-only reference tools over the sandbox directory. //]
 def apiTool(sandboxDir: String): Tool =
-  Tool:
-    "getAPI"
-    "get a specific programming interface definition from Jo source file, name param is the file name without `.jo` suffix."
-    [Tool.strParam("name", "API name")]
-    input => new Tool.RunOutcome(readAPI(sandboxDir, input.string("name")), "get api")
+  new Tool(
+    "getAPI",
+    "get a specific programming interface definition from Jo source file, name param is the file name without `.jo` suffix.",
+    [Tool.strParam("name", "API name")],
+    input => readAPI(sandboxDir, input.string("name"))
+  )

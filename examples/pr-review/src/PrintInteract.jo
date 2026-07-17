@@ -4,7 +4,7 @@ import jo.IO.stdout
 import harpe.Interact
 import harpe.turns.*
 
-private class PrintInteract()
+private class PrintInteract(out: String => Unit)
   view Interact
 
   def emit(event: TurnEvent): Unit = with IO.stdout = out in
@@ -14,6 +14,8 @@ private class PrintInteract()
         if attempt == 0 then "thinking..."
         else "retrying \{attempt}/\{maxAttempts}..."
       println label
+
+    case ModelRequestEnded => pass
 
     case TransientError(detail, delaySeconds) =>
       println "  · transient error (\{detail}); retrying in \{delaySeconds}s"
