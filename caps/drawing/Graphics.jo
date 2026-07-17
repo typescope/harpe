@@ -1,0 +1,44 @@
+//[ Graphics.jo
+  !
+  ! The ambient graphics backend: it mints `Canvas` surfaces and answers the
+  ! font and image facts drawing needs.
+  !
+  ! Facts live here, not on `Canvas`: glyph metrics and image sizes are facts
+  ! about fonts and files, independent of any one surface. Metrics read the
+  ! ambient `DrawingContext.font`.
+//]
+
+namespace harpe.caps.drawing
+
+import harpe.caps.Path
+import harpe.caps.ImageSize
+
+//[ Create raster surfaces, and answer font/image facts. //]
+interface Graphics
+  //[ A new surface of `width` × `height` pixels, filled with `background` — or
+    ! transparent when `background` is `None`.
+  //]
+  def create(width: Int, height: Int, background: Option[Color]): Canvas
+
+  //[ Register the font file at `src` under `family`, so text in that `family`
+    ! renders with it — for a custom font that is not installed on the machine.
+    !
+    ! `src` is a TrueType or OpenType file: a single-face `.ttf`/`.otf`, or a
+    ! `.ttc` collection (its first face is used). `Err` if the file is missing
+    ! or not a readable font.
+  //]
+  def registerFont(family: String, src: Path): Result[Unit, String]
+
+  //[ The advance width of `text` in the ambient font. //]
+  def stringWidth(text: String): Float receives DrawingContext.font
+
+  //[ The ambient font's ascent / descent (both positive, in pixels). //]
+  def fontAscent: Float receives DrawingContext.font
+  def fontDescent: Float receives DrawingContext.font
+
+  //[ The pixel dimensions of the image at `src`. //]
+  def imageSize(src: Path): Result[ImageSize, String]
+end
+
+//[ The ambient graphics backend. //]
+param graphics: Graphics

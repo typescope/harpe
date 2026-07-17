@@ -1,6 +1,6 @@
 //[ PillowCanvas.jo
   !
-  ! A `CanvasWriter` / `Canvas` backed by Pillow. The imaging model on a raster
+  ! A `Graphics` / `Canvas` backend backed by Pillow. The imaging model on a raster
   ! surface: shapes are flattened to points and drawn as polygons/polylines,
   ! text is placed on a baseline, and the ambient `DrawingContext.transform` is
   ! applied in Jo — a raster backend has no CTM, so the matrix is software
@@ -25,16 +25,15 @@ private def pilFont: py.Dynamic = py.module("PIL.ImageFont")
 
 private def curveSteps: Int = 16
 
-//[ Flatten a shape to one point list per subpath, with `tf` applied to every
+//[ Flatten path `ops` to one point list per subpath, with `tf` applied to every
   ! point. Curves are sampled; this is the CTM-free backend's software CTM.
 //]
-private def flatten(shape: Shape, tf: Matrix): List[List[Point]] =
+private def flatten(ops: List[PathOp], tf: Matrix): List[List[Point]] =
   var done = List.empty[List[Point]]
   var cur = List.empty[Point]
   var px = 0.0
   var py = 0.0
   var i = 0
-  val ops = shape.ops
   val n = ops.size
 
   while i < n do
@@ -101,16 +100,19 @@ private def pyPoints(points: List[Point]): py.List =
 
   out
 
-//[ The Pillow-backed canvas backend, resolving a `Path` against `root`. //]
-class PillowCanvasWriter(root: String)
-  view CanvasWriter
+//[ The Pillow-backed graphics backend, resolving a `Path` against `root`. //]
+class PillowGraphics(root: String)
+  view Graphics
 
   val finder: FontFinder = new FontFinder()
 
-  def create(width: Int, height: Int, background: Color): Canvas =
-    val size = py.tuple(width, height)
-    val fill = py.tuple(background.r, background.g, background.b, 255)
-    val img = pilImage.callDynamic("new", "RGBA", size, fill)
+  def create(width: Int, height: Int, background: Option[Color]): Canvas =
+    val fill =
+      match background
+      case Some(c) => py.tuple(c.r, c.g, c.b, 255)
+      case None    => py.tuple(0, 0, 0, 0)
+
+    val img = pilImage.callDynamic("new", "RGBA", py.tuple(width, height), fill)
     new PillowCanvas(this, img, width, height)
 
   def registerFont(family: String, src: Path): Result[Unit, String] =
@@ -151,7 +153,7 @@ class PillowCanvasWriter(root: String)
 end
 
 //[ A single Pillow raster surface. //]
-class PillowCanvas(writer: PillowCanvasWriter, image: py.Dynamic, w: Int, h: Int)
+class PillowCanvas(writer: PillowGraphics, image: py.Dynamic, w: Int, h: Int)
   view Canvas
 
   var img: py.Dynamic = image
@@ -160,13 +162,13 @@ class PillowCanvas(writer: PillowCanvasWriter, image: py.Dynamic, w: Int, h: Int
 
   def height: Int = h
 
-  def fill(shape: Shape): Unit receives
+  def fill(region: Region): Unit receives
       DrawingContext.fillColor,
       DrawingContext.alpha,
       DrawingContext.transform
   =
     val color = DrawingContext.fillColor
-    val subpaths = flatten(shape, DrawingContext.transform)
+    val subpaths = flatten(region.ops, DrawingContext.transform)
     onLayer: draw =>
       var i = 0
       val n = subpaths.size
@@ -179,7 +181,7 @@ class PillowCanvas(writer: PillowCanvasWriter, image: py.Dynamic, w: Int, h: Int
 
         i = i + 1
 
-  def stroke(shape: Shape): Unit receives
+  def stroke(outline: Trace | Region): Unit receives
       DrawingContext.strokeColor,
       DrawingContext.lineWidth,
       DrawingContext.alpha,
@@ -187,7 +189,12 @@ class PillowCanvas(writer: PillowCanvasWriter, image: py.Dynamic, w: Int, h: Int
   =
     val color = DrawingContext.strokeColor
     val lw = DrawingContext.lineWidth.toInt.max(1)
-    val subpaths = flatten(shape, DrawingContext.transform)
+    val ops =
+      match outline
+      case t: Trace  => t.ops
+      case r: Region => r.ops
+
+    val subpaths = flatten(ops, DrawingContext.transform)
     onLayer: draw =>
       var i = 0
       val n = subpaths.size
@@ -200,15 +207,15 @@ class PillowCanvas(writer: PillowCanvasWriter, image: py.Dynamic, w: Int, h: Int
 
         i = i + 1
 
-  def fillStroke(shape: Shape): Unit receives
+  def fillStroke(region: Region): Unit receives
       DrawingContext.fillColor,
       DrawingContext.strokeColor,
       DrawingContext.lineWidth,
       DrawingContext.alpha,
       DrawingContext.transform
   =
-    fill(shape)
-    stroke(shape)
+    fill(region)
+    stroke(region)
 
   def textAt(x: Float, baseline: Float, text: String): Unit receives
       DrawingContext.font,

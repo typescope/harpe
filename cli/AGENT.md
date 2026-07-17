@@ -35,7 +35,7 @@ The `data/` directory holds files the user shares with you. Your program reaches
 it through capabilities received by `runTask` — declare the ones you use:
 
 ```Jo
-def runTask(): Unit receives IO.stdout, fs, pdfReader, excelReader, wordReader, excelWriter, wordWriter, image, ocr, canvasWriter
+def runTask(): Unit receives IO.stdout, fs, pdfReader, excelReader, wordReader, excelWriter, wordWriter, image, ocr, graphics
 ```
 
 (declare the ones you use; `fs`'s document opens also need their backend param —
@@ -63,17 +63,19 @@ def runTask(): Unit receives IO.stdout, fs, pdfReader, excelReader, wordReader, 
   saving to a new path transforms without touching the source.
 - `image: Image` — `dimensions(p)`, `metadata(p)`, `resize`, `crop`, `convert`.
 - `ocr: OCR` — `text(p)` reads the text out of an image.
-- `canvasWriter: CanvasWriter` — draw a raster image (diagram, chart, thumbnail).
-  `create(w, h, background)` returns a `Canvas` you paint on: `fill(shape)` /
-  `stroke(shape)` / `fillStroke(shape)` over `Shape` values (`Shape.rect`/
-  `roundRect`/`circle` or `moveTo`/`lineTo`/`curveTo`/`close`), `textAt(x,
-  baseline, text)`, `imageAt(src, x, y, w)`, then `save(target)` — the target is
-  a `Path` from the root like any other, e.g. `fs.root / "chart.png"`. Drawing
-  state is the ambient `DrawingContext` params (`fillColor`, `strokeColor`,
+- `graphics: Graphics` — draw a raster image (diagram, chart, thumbnail).
+  `create(w, h, Some(color))` (or `None` for a transparent background) returns a
+  `Canvas` you paint on: `fill(region)` / `fillStroke(region)` over a closed
+  `Region` (`Region.rect`/`roundRect`/`circle`), `stroke(outline)` over an open
+  `Trace` (`Trace.from(x,y).lineTo(...).curveTo(...)`) or a closed `Region`,
+  `textAt(x, baseline, text)`, `imageAt(src, x, y, w)`, then `save(target)` — the
+  target is a `Path` from the root, e.g. `fs.root / "chart.png"`. Drawing state
+  is the ambient `DrawingContext` params (`fillColor`, `strokeColor`,
   `textColor`, `lineWidth`, `alpha`, `font`, `transform`), changed by rebinding:
-  `with DrawingContext.fillColor = c in canvas.fill(box)`. Font/image facts are
-  on the writer: `stringWidth(text)`, `fontAscent`/`fontDescent`, `imageSize(p)`.
-  Coordinates are pixels, top-left origin. (`import harpe.caps.drawing.*`.)
+  `with DrawingContext.fillColor = c in canvas.fill(region)`. Font/image facts
+  are on `graphics`: `stringWidth(text)`, `fontAscent`/`fontDescent`,
+  `imageSize(p)`. Coordinates are pixels, top-left origin.
+  (`import harpe.caps.drawing.*`.)
 
 Errors come back as values, never exceptions: `Result` (match `Ok(v)`/`Err(e)`,
 or `.success` to unwrap) and `Option` (match `Some(v)`/`None`). A scanned PDF

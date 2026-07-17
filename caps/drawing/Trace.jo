@@ -1,0 +1,39 @@
+//[ Trace.jo
+  !
+  ! An open outline, built fluently: begin at a point with `Trace.from`, extend
+  ! with `lineTo`/`curveTo` (and `moveTo` to start another subpath), then either
+  ! leave it open to `stroke`, or `close` it into a `Region` to fill. Curves are
+  ! cubic Béziers; the backend flattens them. Geometry is in the surface's own
+  ! units, top-left origin.
+//]
+
+namespace harpe.caps.drawing
+
+//[ One path-building operation. //]
+class MoveTo(x: Float, y: Float)
+class LineTo(x: Float, y: Float)
+class CurveTo(x1: Float, y1: Float, x2: Float, y2: Float, x3: Float, y3: Float)
+object ClosePath
+
+type PathOp = MoveTo | LineTo | CurveTo | ClosePath
+
+//[ An open outline under construction. //]
+class Trace(ops: List[PathOp])
+  //[ Extend the outline with a straight segment to (`x`, `y`). //]
+  def lineTo(x: Float, y: Float): Trace = new Trace(ops ++ [new LineTo(x, y)])
+
+  //[ Extend with a cubic Bézier through the two control points to (`x3`, `y3`). //]
+  def curveTo(x1: Float, y1: Float, x2: Float, y2: Float, x3: Float, y3: Float): Trace =
+    new Trace(ops ++ [new CurveTo(x1, y1, x2, y2, x3, y3)])
+
+  //[ Begin a new subpath at (`x`, `y`) without connecting to the last point. //]
+  def moveTo(x: Float, y: Float): Trace = new Trace(ops ++ [new MoveTo(x, y)])
+
+  //[ Close the current subpath, yielding a fillable `Region`. //]
+  def close(): Region = new Region(ops ++ [ClosePath])
+end
+
+section Trace
+  //[ Begin an outline at (`x`, `y`) — the start of its first subpath. //]
+  def from(x: Float, y: Float): Trace = new Trace([new MoveTo(x, y)])
+end

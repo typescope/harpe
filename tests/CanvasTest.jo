@@ -19,7 +19,7 @@ section CanvasTest
   def run(): Unit receives stdout =
     val dir = tempfile.mkdtemp()
 
-    with canvasWriter = new PillowCanvasWriter(dir) in draw()
+    with graphics = new PillowGraphics(dir) in draw()
 
     val out = "\{dir}/canvas.png"
 
@@ -28,11 +28,11 @@ section CanvasTest
     else
       abort "canvas: no output produced"
 
-  private def draw(): Unit receives canvasWriter =
-    val cv = canvasWriter.create(460, 260, Color.white)
+  private def draw(): Unit receives graphics =
+    val cv = graphics.create(460, 260, Some(Color.white))
 
     with DrawingContext.fillColor = new Color(233, 238, 250) in
-      cv.fill(Shape.roundRect(20.0, 20.0, 420.0, 220.0, 14.0))
+      cv.fill(Region.roundRect(20.0, 20.0, 420.0, 220.0, 14.0))
 
     with
       DrawingContext.font = Font.bold(26.0),
@@ -40,11 +40,18 @@ section CanvasTest
     in
       cv.textAt(38.0, 62.0, "Canvas capability ✓")
 
+    // an open Trace, stroked (no close)
+    with
+      DrawingContext.strokeColor = new Color(150, 160, 190),
+      DrawingContext.lineWidth = 1.5
+    in
+      cv.stroke(Trace.from(38.0, 74.0).lineTo(300.0, 74.0))
+
     with
       DrawingContext.strokeColor = new Color(70, 90, 180),
       DrawingContext.lineWidth = 3.0
     in
-      cv.stroke(Shape.circle(92.0, 168.0, 46.0))
+      cv.stroke(Region.circle(92.0, 168.0, 46.0))
 
     // transform probe: a 1×1 unit rect scaled into a bar, then translated
     with
@@ -52,7 +59,7 @@ section CanvasTest
       DrawingContext.transform =
         Matrix.scale(230.0, 12.0).andThen(Matrix.translate(180.0, 108.0))
     in
-      cv.fill(Shape.rect(0.0, 0.0, 1.0, 1.0))
+      cv.fill(Region.rect(0.0, 0.0, 1.0, 1.0))
 
     disk(cv, 210.0, new Color(220, 60, 60))
     disk(cv, 250.0, new Color(60, 180, 90))
@@ -66,5 +73,5 @@ section CanvasTest
       DrawingContext.fillColor = color,
       DrawingContext.alpha = 0.45
     in
-      cv.fill(Shape.circle(cx, 196.0, 34.0))
+      cv.fill(Region.circle(cx, 196.0, 34.0))
 end
