@@ -19,14 +19,18 @@ section CanvasTest
   def run(): Unit receives stdout =
     val dir = tempfile.mkdtemp()
 
-    with graphics = new PillowGraphics(dir) in draw()
+    with graphics = new PillowGraphics(dir) in
+      draw()
+      poster()
 
-    val out = "\{dir}/canvas.png"
+    wrote("\{dir}/canvas.png")
+    wrote("\{dir}/poster.png")
 
-    if os.path.exists(out) && os.path.getsize(out) > 0 then
-      println "  canvas: drew + saved a \{os.path.getsize(out)}-byte PNG"
+  private def wrote(path: String): Unit receives stdout =
+    if os.path.exists(path) && os.path.getsize(path) > 0 then
+      println "  canvas: wrote a \{os.path.getsize(path)}-byte PNG"
     else
-      abort "canvas: no output produced"
+      abort "canvas: no output at \{path}"
 
   private def draw(): Unit receives graphics =
     val cv = graphics.create(460, 260, Some(Color.white))
@@ -74,4 +78,38 @@ section CanvasTest
       DrawingContext.alpha = 0.45
     in
       cv.fill(Region.circle(cx, 196.0, 34.0))
+
+  // --- flow: a centered title over two justified columns ---
+  private def poster(): Unit receives graphics =
+    val cv = graphics.create(520, 340, Some(Color.white))
+    val title = new Rect(30.0, 24.0, 460.0, 44.0)
+    val colL = new Rect(30.0, 92.0, 220.0, 228.0)
+    val colR = new Rect(270.0, 92.0, 220.0, 228.0)
+
+    // the title band is its own flow; the two columns are another
+    with
+      DrawingContext.font = Font.bold(26.0),
+      DrawingContext.textColor = new Color(25, 35, 80),
+      Typesetting.align = Align.center
+    in
+      with flow = Flow(cv, [title]) in flow.paragraph("The Box Calculus")
+
+    with
+      DrawingContext.font = Font.sans(11.0),
+      DrawingContext.textColor = new Color(45, 45, 55),
+      Typesetting.align = Align.justify
+    in
+      with flow = Flow(cv, [colL, colR]) in
+        flow.paragraph(body())
+        flow.space(6.0)
+        flow.paragraph(body())
+
+    val root: Path = Path.root
+    val _ = cv.save(root / "poster.png")
+
+  private def body(): String =
+    "Everything already laid out is a box, rigid and measured, drawable "
+      + "anywhere. A line is a row of boxes; a paragraph a stack of lines; a "
+      + "page a stack of paragraphs. Layout is box algebra, and flexibility is "
+      + "quarantined in the functions that turn flexible material into boxes."
 end

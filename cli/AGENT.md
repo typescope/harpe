@@ -75,7 +75,14 @@ def runTask(): Unit receives IO.stdout, fs, pdfReader, excelReader, wordReader, 
   `with DrawingContext.fillColor = c in canvas.fill(region)`. Font/image facts
   are on `graphics`: `stringWidth(text)`, `fontAscent`/`fontDescent`,
   `imageSize(p)`. Coordinates are pixels, top-left origin.
-  (`import harpe.caps.drawing.*`.)
+  For paragraphs, flow wrapped text into regions:
+  `with flow = Flow(canvas, [Rect(x, y, w, h), ...]) in flow.paragraph(text)`
+  fills the rects in order (two rects = two columns; a paragraph splits across
+  them), `flow.space(h)` adds a gap, `flow.overflowed` tells you if it did not
+  fit. Alignment is the `Typesetting.align` param (`Align.left`/`right`/
+  `center`/`justify`), font/color the ambient `DrawingContext`. Distinct
+  regions with distinct styling (a title band, then columns) are just separate
+  flows over separate rect lists. (`import harpe.caps.drawing.*`.)
 
 Errors come back as values, never exceptions: `Result` (match `Ok(v)`/`Err(e)`,
 or `.success` to unwrap) and `Option` (match `Some(v)`/`None`). A scanned PDF

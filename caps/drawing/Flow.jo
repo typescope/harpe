@@ -1,0 +1,174 @@
+//[ Flow.jo
+  !
+  ! Structured text flowed into a list of rectangular regions — the text-layout
+  ! layer over the `Canvas` imaging primitives. Pure Jo: it wraps with
+  ! `graphics.stringWidth` and draws with `canvas.textAt`, so it needs no
+  ! backend of its own; every `Canvas` gets it.
+  !
+  ! A `Flow` is stateful and immediate — each call draws and advances a cursor.
+  ! Content fills the rects in order (two columns are just two rects; a
+  ! paragraph splits across them), and `overflowed` reports when the rects ran
+  ! out. Bound as the ambient `flow`:
+  !
+  !   with flow = Flow(canvas, columns) in
+  !     flow.paragraph(body)
+  !
+  ! Distinct regions with distinct styling — a title band, then columns — are
+  ! best done as separate flows over separate rect lists; `nextBox` also skips
+  ! to the next rect within one flow.
+//]
+
+namespace harpe.caps.drawing
+
+//[ A cursor flowing text through `boxes`, drawing onto `canvas`. //]
+class Flow(canvas: Canvas, boxes: List[Rect])
+  var boxIndex: Int = 0     // the rect being filled
+  var y: Float = 0.0        // offset from that rect's top to the next line
+  var overflowed: Bool = false
+
+  //[ Flow a wrapped paragraph in the current rect's width, at the ambient font,
+    ! color, alignment, and leading; it continues into the next rect when the
+    ! current one is full.
+  //]
+  def paragraph(text: String): Unit receives
+      graphics,
+      DrawingContext.font,
+      DrawingContext.textColor,
+      Typesetting.align,
+      Typesetting.leading
+  =
+    val lineHeight = Typesetting.leading * DrawingContext.font.size
+    val spaceW = graphics.stringWidth(" ")
+    val words = wordsOf(text)
+
+    var line = List.empty[String]
+    var lineW = 0.0
+    var i = 0
+
+    while i < words.size do
+      val word = words.get(i)
+      val wordW = graphics.stringWidth(word)
+      val gap = if line.isEmpty then 0.0 else spaceW
+
+      if !line.isEmpty && lineW + gap + wordW > currentWidth() then
+        drawLine(line, lineHeight, false)
+        line = [word]
+        lineW = wordW
+      else
+        line = line ++ [word]
+        lineW = lineW + gap + wordW
+
+      i = i + 1
+
+    if !line.isEmpty then
+      drawLine(line, lineHeight, true)
+
+  //[ Advance the cursor `height` pixels (a vertical gap between blocks). //]
+  def space(height: Float): Unit = y = y + height
+
+  //[ Finish the current box and move to the next one in the list. //]
+  def nextBox(): Unit =
+    boxIndex = boxIndex + 1
+    y = 0.0
+
+  //[ The width of the rect currently being filled (0 once they are exhausted). //]
+  private def currentWidth(): Float =
+    if boxIndex >= boxes.size then 0.0 else boxes.get(boxIndex).width
+
+  //[ Ensure the current rect has `lineHeight` of vertical room, advancing rects
+    ! as needed; `false` (and `overflowed`) when the rects are exhausted.
+  //]
+  private def ensureRoom(lineHeight: Float): Bool =
+    var ok = false
+    var done = false
+
+    while !done do
+      if boxIndex >= boxes.size then
+        overflowed = true
+        done = true
+      else if y + lineHeight <= boxes.get(boxIndex).height then
+        ok = true
+        done = true
+      else
+        boxIndex = boxIndex + 1
+        y = 0.0
+
+    ok
+
+  //[ Draw one wrapped line of `words`, aligned; drop it if the rects are full. //]
+  private def drawLine(words: List[String], lineHeight: Float, isLast: Bool): Unit receives
+      graphics,
+      DrawingContext.font,
+      DrawingContext.textColor,
+      Typesetting.align
+  =
+    if ensureRoom(lineHeight) then
+      val box = boxes.get(boxIndex)
+      val baseline = box.y + y + graphics.fontAscent
+      val text = joinWords(words)
+      val natural = graphics.stringWidth(text)
+
+      match Typesetting.align
+      case _: Align.center =>
+        canvas.textAt(box.x + (box.width - natural) / 2.0, baseline, text)
+
+      case _: Align.right =>
+        canvas.textAt(box.x + box.width - natural, baseline, text)
+
+      case _: Align.justify =>
+        if isLast || words.size <= 1 then
+          canvas.textAt(box.x, baseline, text)
+        else
+          drawJustified(words, box, baseline, natural)
+
+      case _: Align.left =>
+        canvas.textAt(box.x, baseline, text)
+
+      y = y + lineHeight
+
+  //[ Draw `words` with the leftover space distributed across the gaps. //]
+  private def drawJustified(words: List[String], box: Rect, baseline: Float, natural: Float): Unit receives
+      graphics,
+      DrawingContext.font,
+      DrawingContext.textColor
+  =
+    val gap = graphics.stringWidth(" ") + (box.width - natural) / (words.size - 1).toFloat
+    var x = box.x
+    var j = 0
+
+    while j < words.size do
+      val word = words.get(j)
+      canvas.textAt(x, baseline, word)
+      x = x + graphics.stringWidth(word) + gap
+      j = j + 1
+end
+
+//[ The ambient flow. //]
+param flow: Flow
+
+//[ The words of `text`, splitting on spaces and dropping empties. //]
+private def wordsOf(text: String): List[String] =
+  val parts = text.split(" ")
+  var out = List.empty[String]
+  var i = 0
+
+  while i < parts.size do
+    val p = parts.get(i)
+
+    if p != "" then
+      out = out ++ [p]
+
+    i = i + 1
+
+  out
+
+//[ Join `words` with single spaces. //]
+private def joinWords(words: List[String]): String =
+  var s = ""
+  var i = 0
+
+  while i < words.size do
+    s = if i == 0 then words.get(i) else "\{s} \{words.get(i)}"
+    i = i + 1
+
+  s
