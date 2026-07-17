@@ -5,6 +5,7 @@ import harpe.logging.*
 import harpe.ffi.os
 import harpe.media.*
 import harpe.caps.*
+import harpe.caps.drawing.*
 import SandboxAPI
 
 // The agent's per-turn entry. The guest links jo.main = SandboxRuntime.main. It
@@ -37,7 +38,8 @@ private def run(): Unit receives stdout =
     pdfWriter = new FpdfWriter(root),
     wordReader = new DocxReader(root),
     image = new PillowImage(root),
-    ocr = new TesseractOcr(root)
+    ocr = new TesseractOcr(root),
+    canvasWriter = new PillowCanvasWriter(root)
   in SandboxAPI.runTask()
 
 // The audit backend: a JSONL file the host named in HARPE_AUDIT_LOG, or a no-op
