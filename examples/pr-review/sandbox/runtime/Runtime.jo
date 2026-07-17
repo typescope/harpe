@@ -116,15 +116,14 @@ end
 
 //[ Main entry point //]
 def main(): Unit receives args, stdout =
-  if args.size < 4 then
+  if args.size < 2 then
     println args
     println "Error: missing arguments"
     println "Usage: python3 task.py <prUrl> <dryRun>"
     abort "Missing arguments"
 
-  println args
-  val prUrl  = args[1]
-  val dryRun = args[2] == "true"
+  val prUrl  = args[0]
+  val dryRun = args[1] == "true"
   val tmp = py.module("tempfile").mkdtemp().asString
   val sandbox: Sandbox = Sandbox.create(tmp)
 
