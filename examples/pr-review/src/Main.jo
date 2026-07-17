@@ -6,6 +6,7 @@ import harpe.*
 import harpe.ffi.loadDotenv
 import harpe.turns.Answered
 import harpe.tools.runCodeTool
+import harpe.tools.apiTool
 
 //[ agent entry point  //]
 def main(): Unit receives args, stdout =
@@ -23,8 +24,11 @@ def main(): Unit receives args, stdout =
 private def review(pr: String, dryRun: Bool): Unit receives stdout, workspace, logger =
   val memory = new Memory
   val basePrompt = workspace.read("AGENT.md") rescue None => ""
-  val tools = runCodeTool(workspace.guestDir, extraParams = List(pr, dryRun)) ++
-     memoryTools(memory)
+  val tools = [
+    runCodeTool(workspace.guestDir, extraParams = List(pr, dryRun)),
+    apiTool(workspace.apiDir)
+  ]
+
   val context = new WindowedContext(basePrompt, memory, history)
   val agent = new Agent(Defaults.model(), tools, context)
   val interact = new PrintInteract()
