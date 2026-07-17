@@ -247,8 +247,9 @@ private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, ex
   pdfDraft.addParagraph("Hello PDF.")
   pdfDraft.metadata("Made", "Harpe")
   pdfDraft.addTable([["h1", "h2"], ["v1", "v2"]])
-  check("pdf addImage", pdfDraft.addImage(root / "pic.png", 40).isOk)
-  pdfDraft.addPageBreak()
+  check("pdf image", pdfDraft.image(root / "pic.png", 40.0).isOk)
+  pdfDraft.line(10.0, pdfDraft.y, 60.0, pdfDraft.y)
+  pdfDraft.addPage()
   pdfDraft.addParagraph("Page two.")
   check("pdf builder save", pdfDraft.save(root / "made.pdf").isOk)
   val made = fs.openPDF(root / "made.pdf").success

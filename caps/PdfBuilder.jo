@@ -1,35 +1,98 @@
 //[ PdfBuilder.jo
   !
-  ! A PDF under construction: metadata, headings, paragraphs, tables, images, and
-  ! page breaks (pages also break automatically), then `save` to a target `Path`.
+  ! A PDF under construction, at the drawing level: fonts, colors, positioned
+  ! cells, lines, and images — the primitives any layout composes from. The
+  ! convenience methods (headings, paragraphs, tables) are pure compositions of
+  ! them. `save` to a target `Path` at the end.
+  !
+  ! Units are millimeters; an A4 page is 210x297 with ~10mm margins.
 //]
 
 namespace harpe.caps
 
 //[ A PDF being built. //]
 interface PdfBuilder
-  //[ Set the document's title and author metadata. //]
+  //[ Set the document title and author metadata. //]
   def metadata(title: String, author: String): Unit
 
-  //[ Append a heading (`level` 1-9; smaller is larger type). //]
-  def addHeading(text: String, level: Int): Unit
+  //[ Start a new page (content also flows onto new pages automatically). //]
+  def addPage(): Unit
 
-  //[ Append a body paragraph. //]
-  def addParagraph(text: String): Unit
-
-  //[ Append a table of text cells, one inner list per row; the first row is the
-    ! shaded header.
+  //[ Set the current font: family ("helvetica", "times", "courier"), style
+    ! ("", "B", "I", "BI", "U"), and size in points.
   //]
-  def addTable(rows: List[List[String]]): Unit
+  def setFont(family: String, style: String, size: Float): Unit
 
-  //[ Append the image at `src`, scaled to `width` millimeters (a page is ~190 mm
-    ! wide inside the margins).
+  //[ Set the text / fill / line color (0-255 each). //]
+  def setTextColor(r: Int, g: Int, b: Int): Unit
+  def setFillColor(r: Int, g: Int, b: Int): Unit
+  def setDrawColor(r: Int, g: Int, b: Int): Unit
+
+  //[ One rectangular cell of text at the cursor: `width` 0 extends to the right
+    ! margin; optional border and background fill.
   //]
-  def addImage(src: Path, width: Int): Result[Unit, String]
+  def cell(width: Float, height: Float, text: String, border: Bool, fill: Bool): Unit
 
-  //[ Start a new page. //]
-  def addPageBreak(): Unit
+  //[ Word-wrapped text at the cursor, breaking pages as needed. //]
+  def multiCell(width: Float, height: Float, text: String): Unit
+
+  //[ Move the cursor to the next line, `height` mm down. //]
+  def lineBreak(height: Float): Unit
+
+  //[ The cursor position and page geometry, in mm. //]
+  def x: Float
+  def y: Float
+  def setXY(x: Float, y: Float): Unit
+  def pageWidth: Float
+
+  //[ A straight line between two points. //]
+  def line(x1: Float, y1: Float, x2: Float, y2: Float): Unit
+
+  //[ The image at `src`, drawn at the cursor scaled to `width` mm. //]
+  def image(src: Path, width: Float): Result[Unit, String]
 
   //[ Write the document to `target`. //]
   def save(target: Path): Result[Unit, String]
+
+  // --- conveniences, composed purely from the primitives ---
+
+  //[ A heading (`level` 1-9; smaller is larger type). //]
+  def addHeading(text: String, level: Int): Unit =
+    val size = if level < 1 then 20 else if level > 6 then 12 else 20 - level * 2
+    setFont("helvetica", "B", size.toFloat)
+    setTextColor(30, 30, 90)
+    multiCell(0.0, 10.0, text)
+    setTextColor(0, 0, 0)
+    lineBreak(2.0)
+
+  //[ A body paragraph. //]
+  def addParagraph(text: String): Unit =
+    setFont("helvetica", "", 11.0)
+    multiCell(0.0, 6.0, text)
+    lineBreak(2.0)
+
+  //[ A table of text cells, one inner list per row; the first row is the shaded
+    ! header. //]
+  def addTable(rows: List[List[String]]): Unit =
+    if rows.size == 0 then return pass
+
+    val width = pageWidth / rows.get(0).size.toFloat
+    setFillColor(225, 228, 235)
+
+    var i = 0
+
+    while i < rows.size do
+      setFont("helvetica", if i == 0 then "B" else "", 10.0)
+
+      val row = rows.get(i)
+      var j = 0
+
+      while j < row.size do
+        cell(width, 8.0, row.get(j), true, i == 0)
+        j = j + 1
+
+      lineBreak(8.0)
+      i = i + 1
+
+    lineBreak(2.0)
 end
