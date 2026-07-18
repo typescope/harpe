@@ -100,7 +100,8 @@ class Flow(canvas: Canvas, boxes: List[Rect])
       emitLine(lineHeight, true)
 
   //[ Finalize the buffered word (if any) as a run and place it. //]
-  private def flushWord(word: Flow.Word, spaceW: Float, lineHeight: Float): Unit receives
+  private
+  def flushWord(word: Flow.Word, spaceW: Float, lineHeight: Float): Unit receives
       graphics,
       DrawingContext.font,
       DrawingContext.textColor,
@@ -113,7 +114,8 @@ class Flow(canvas: Canvas, boxes: List[Rect])
   //[ Add `run` to the current line, first emitting the line if `run` would push
     ! it past the rect width at a legal break point.
   //]
-  private def place(run: Flow.Run, spaceW: Float, lineHeight: Float): Unit receives
+  private
+  def place(run: Flow.Run, spaceW: Float, lineHeight: Float): Unit receives
       graphics,
       DrawingContext.font,
       DrawingContext.textColor,
@@ -170,45 +172,47 @@ class Flow(canvas: Canvas, boxes: List[Rect])
     ! rects are full. Baseline and line height use the ambient font, so a line
     ! of mixed fonts shares one baseline.
   //]
-  private def emitLine(lineHeight: Float, isLast: Bool): Unit receives
+  private
+  def emitLine(lineHeight: Float, isLast: Bool): Unit receives
       graphics,
       DrawingContext.font,
       DrawingContext.textColor,
       Typesetting.align
   =
-    if ensureRoom(lineHeight) then
-      val box = boxes.get(boxIndex)
-      val baseline = box.y + y + graphics.fontAscent
-      val spaceW = graphics.stringWidth(" ")
-      val natural = lineWidth(spaceW)
+    if !ensureRoom(lineHeight) then return
 
-      // extra space per gap when justifying (not the last line)
-      val justify = isJustify(Typesetting.align)
-      val gaps = line.size - 1
-      val extra =
-        if justify && !isLast && gaps > 0 then (box.width - natural) / gaps.toFloat
-        else 0.0
+    val box = boxes.get(boxIndex)
+    val baseline = box.y + y + graphics.fontAscent
+    val spaceW = graphics.stringWidth(" ")
+    val natural = lineWidth(spaceW)
 
-      val startX =
-        match Typesetting.align
-        case _: Align.center => box.x + (box.width - natural) / 2.0
-        case _: Align.right  => box.x + box.width - natural
-        case _               => box.x
+    // extra space per gap when justifying (not the last line)
+    val justify = isJustify(Typesetting.align)
+    val gaps = line.size - 1
+    val extra =
+      if justify && !isLast && gaps > 0 then (box.width - natural) / gaps.toFloat
+      else 0.0
 
-      var x = startX
-      var idx = 0
+    val startX =
+      match Typesetting.align
+      case _: Align.center => box.x + (box.width - natural) / 2.0
+      case _: Align.right  => box.x + box.width - natural
+      case _               => box.x
 
-      for run in line do
-        if idx > 0 then
-          x = x + extra + (if run.spaceBefore then spaceW else 0.0)
+    var x = startX
+    var idx = 0
 
-        with DrawingContext.font = run.font in
-          canvas.textAt(x, baseline, run.text)
+    for run in line do
+      if idx > 0 then
+        x = x + extra + (if run.spaceBefore then spaceW else 0.0)
 
-        x = x + run.width
-        idx = idx + 1
+      with DrawingContext.font = run.font in
+        canvas.textAt(x, baseline, run.text)
 
-      y = y + lineHeight
+      x = x + run.width
+      idx = idx + 1
+
+    y = y + lineHeight
 
   //[ The natural width of the buffered line (run widths plus interword space). //]
   private def lineWidth(spaceW: Float): Float =
@@ -249,12 +253,14 @@ section Flow
     ! that covers it, whether whitespace preceded it, and whether it is a wide
     ! (CJK) character (breakable on either side).
   //]
-  private[drawing] class Run(text: String, font: Font, width: Float, spaceBefore: Bool, wide: Bool)
+  private[drawing]
+  class Run(text: String, font: Font, width: Float, spaceBefore: Bool, wide: Bool)
 
   //[ The word being accumulated: its text and font, whether whitespace preceded
     ! it, and whether whitespace has been seen since the last run was placed.
   //]
-  private[drawing] class Word
+  private[drawing]
+  class Word
     var text: String = ""
     var font: Font = new Font("sans", "", 12.0)
     var space: Bool = false
@@ -264,7 +270,8 @@ section Flow
   //[ Whether `codePoint` is wide/ideographic — breakable on either side (CJK
     ! ideographs, kana, Hangul, and CJK symbols/punctuation).
   //]
-  private[drawing] def isWide(codePoint: Int): Bool =
+  private[drawing]
+  def isWide(codePoint: Int): Bool =
     (codePoint >= 0x3040 && codePoint <= 0x30FF) ||   // hiragana + katakana
     (codePoint >= 0x3400 && codePoint <= 0x9FFF) ||   // CJK ideographs (incl. ext. A)
     (codePoint >= 0xF900 && codePoint <= 0xFAFF) ||   // compatibility ideographs
@@ -272,41 +279,45 @@ section Flow
     (codePoint >= 0x3000 && codePoint <= 0x303F) ||   // CJK symbols and punctuation
     (codePoint >= 0xFF00 && codePoint <= 0xFFEF)      // halfwidth/fullwidth forms
 
-  private[drawing] def isSpace(codePoint: Int): Bool =
+  private[drawing]
+  def isSpace(codePoint: Int): Bool =
     codePoint == 32 || codePoint == 9 || codePoint == 10 || codePoint == 13
 
-  private[drawing] def sameFont(a: Font, b: Font): Bool =
+  private[drawing]
+  def sameFont(a: Font, b: Font): Bool =
     a.family == b.family && a.style == b.style && a.size == b.size
 
   //[ The font — the ambient one, else the first in the fallback chain — that
     ! covers `codePoint`; the ambient font if none do.
   //]
-  private[drawing] def fontFor(codePoint: Int): Font receives
+  private[drawing]
+  def fontFor(codePoint: Int): Font receives
       graphics,
       DrawingContext.font,
       Typesetting.fontFallback
   =
     val base = DrawingContext.font
 
-    if graphics.covers(base, codePoint) then base
-    else
-      var i = 0
-      var found = base
-      var done = false
-      val chain = Typesetting.fontFallback
+    if graphics.covers(base, codePoint) then return base
 
-      while i < chain.size && !done do
-        val candidate = new Font(chain.get(i), base.style, base.size)
+    var i = 0
+    var found = base
+    var done = false
+    val chain = Typesetting.fontFallback
 
-        if graphics.covers(candidate, codePoint) then
-          found = candidate
-          done = true
+    while i < chain.size && !done do
+      val candidate = new Font(chain.get(i), base.style, base.size)
 
-        i = i + 1
+      if graphics.covers(candidate, codePoint) then
+        found = candidate
+        done = true
 
-      found
+      i = i + 1
+
+    found
 
   //[ Measure `text` in `font`. //]
-  private[drawing] def measure(text: String, font: Font): Float receives graphics =
+  private[drawing]
+  def measure(text: String, font: Font): Float receives graphics =
     with DrawingContext.font = font in graphics.stringWidth(text)
 end
