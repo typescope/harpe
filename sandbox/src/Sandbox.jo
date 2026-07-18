@@ -38,6 +38,12 @@ interface Sandbox
 
   //[ A runtime environment value, or `fallback` when unset. //]
   def envOr(key: String, fallback: String): String
+
+  def fileExists(path: String): Bool
+
+  def readFile(path: String): String
+
+  def writeFile(path: String, content: String): Unit
 end
 
 //[ Build the default Sandbox: logs to stderr, reads env from the process
@@ -45,14 +51,17 @@ end
   ! `view Sandbox` instead of calling this.
 //]
 section Sandbox
-  def create(): Sandbox = new SandboxImpl
+  def create(root: String): Sandbox = new SandboxImpl(root)
 end
 
-private class SandboxImpl(rootDir: String)
+private class SandboxImpl
   view Sandbox
+  val root: String
 
-  if !os.path.isDir(rootDir) then:
-    os.makedirs(rootDir)
+  def SandboxImpl(rootDir: String): SandboxImpl =
+    this.root = rootDir
+    if osMod.path.isDir(rootDir).asBool == false then
+      osMod.makedirs(rootDir)
 
   def log(level: String, message: String): Unit =
     sysMod.stderr.write("[\{level}] \{message}\n")
@@ -66,11 +75,12 @@ private class SandboxImpl(rootDir: String)
     osMod.environ.cast[py.Dict].get(key, fallback).asString
 
   private def getFullPath(path: String): String =
-    val root  = os.path.abspath(rootDir)
-    val fullPath = os.path.abspath(os.path.normpath(os.path.join(root, path)))
-    if fullPath.startsWith(rootDir) then fullPath else ""
+    val rpath  = osMod.path.abspath(root)
+    val fullPath = osMod.path.abspath(
+      osMod.path.normpath(osMod.path.join(rpath, path)))
+    if fullPath.startsWith(rpath).asBool then fullPath.asString else ""
 
-  def fileExists(path: String): String = os.path.isfile(getFullPath(path))
+  def fileExists(path: String): Bool = osMod.path.isfile(getFullPath(path)).asBool
 
   def readFile(path: String): String =
     val fullPath = getFullPath(path)
@@ -83,4 +93,3 @@ private class SandboxImpl(rootDir: String)
       val f = py.open(fullPath, "w")
       f.write(content)
       f.close()
-end

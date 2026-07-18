@@ -1,17 +1,16 @@
-namespace GithubRuntime
+namespace SandboxRuntime
 
 import jo.IO.stdout
 import jo.IO.args
 import SandboxAPI
 import harpe.sandbox.*
-import harpe.ffi.*
 
 //[ JSON-encode a string value — adds surrounding quotes and escapes special chars //]
 private def jsonStr(s: String): String = jsonMod.dumps(s).asString
 
 //[ Build a JSON array of LineComment objects for the review payload //]
-private def buildCommentsJson(comments: List[GithubAPI.LineComment]): String =
-  val comment = (c: GithubAPI.LineComment) =>
+private def buildCommentsJson(comments: List[SandboxAPI.LineComment]): String =
+  val comment = (c: SandboxAPI.LineComment) =>
     """
     {"path":\{jsonStr(c.path)}, "line":\{c.line.toString}, "body":\{jsonStr(c.body)}}
     """
@@ -19,48 +18,58 @@ private def buildCommentsJson(comments: List[GithubAPI.LineComment]): String =
 
 private class PR(owner: String, repo: String, num: Int)
 
-def parsePrURL(url: String) => Opt[PR]:
-  if url.trim is `^(https://)?github\.com/(?owner[^/]+)/(?repo[^/]+)/pull/(num\d+)$` then:
-    new PR(owner, repo, num.toInt)
+private def parsePrURL(url: String): Option[PR] =
+  if url.trim is `^(https://)?github\.com/(?<owner>[^/]+)/(?<repo>[^/]+)/pull/(?<num>\d+)$` then
+    Some(new PR(owner, repo, num.toInt))
   else
     None
 
 //[ GitHub interface backed by local snapshot files + live GitHub API //]
-class GithubImpl(sd Sandbox, prUrl: String, dryRun: Bool, token: String)
-  view GithubAPI.GitHub
+class GithubImpl
+  val sd: Sandbox
+  val dryRun: Bool
+  val prInfo: SandboxAPI.PRInfo
+  private var pr: PR
+  private val client: GithubClient
 
-  val pr = parsePrURL(prUrl)
-  if pr is None then:
-    abort "invalid PR url:" + prUrl
+  view SandboxAPI.GitHub
 
-  val client = new GithubClient(token)
-  val prInfo = getPR()
+  def GithubImpl(sd: Sandbox, prUrl: String, dryRun: Bool, token: String): GithubImpl =
+    this.sd = sd
+    this.dryRun = dryRun
+    this.pr = new PR("", "", 0)
+    match parsePrURL(prUrl)
+    case Some(pr) => this.pr = pr
+    case None => abort ("invalid PR url:" + prUrl)
 
-  private def getPR(): GithubAPI.PRInfo =
+    this.client = new GithubClient(token)
+    this.prInfo = getPR()
+
+  private def getPR(): SandboxAPI.PRInfo =
     val pr = client.getPR(pr.owner, pr.repo, pr.num)
 
-    var diffs: List[GithubAPI.FileDiff] = []
+    var diffs: List[SandboxAPI.FileDiff] = []
     for d in pr["diffs"].cast[py.List] do
-      diffs = diffs + new GithubAPI.FileDiff(
-        d.path.asString,
-        d.status.asString,
-        d.additions.asInt,
-        d.deletions.asInt,
-        d.patch.asString
+      diffs = diffs + new SandboxAPI.FileDiff(
+        d["path"].asString,
+        d["status"].asString,
+        d["additions"].asInt,
+        d["deletions"].asInt,
+        d["patch"].asString
       )
 
-    new GithubAPI.PRInfo(
-      pr.number.asInt,
-      pr.title.asString,
-      pr.body.asString,
-      pr.base_br.asString,
-      pr.head_br.asString,
-      pr.head_sha.asString,
-      pr.state.asString,
+    new SandboxAPI.PRInfo(
+      pr["number"].asInt,
+      pr["title"].asString,
+      pr["body"].asString,
+      pr["base_br"].asString,
+      pr["head_br"].asString,
+      pr["head_sha"].asString,
+      pr["state"].asString,
       diffs
     )
 
-  def getPRInfo(): GithubAPI.PRInfo = prInfo
+  def getPRInfo(): SandboxAPI.PRInfo = prInfo
 
   //[ Read repo file //]
   def readFile(path: String): String =
@@ -73,12 +82,12 @@ class GithubImpl(sd Sandbox, prUrl: String, dryRun: Bool, token: String)
       content
 
   //[ Write operations — call the real GitHub API (or print in dry-run mode) //]
-  def submitReview(verdict: GithubAPI.ReviewVerdict, body: String, comments: List[GithubAPI.LineComment]): Unit receives stdout =
+  def submitReview(verdict: SandboxAPI.ReviewVerdict, body: String, comments: List[SandboxAPI.LineComment]): Unit receives stdout =
     val PR(owner, repo, num) = pr
     val verdictStr = match verdict
-      case GithubAPI.Approve        => "APPROVE"
-      case GithubAPI.RequestChanges => "REQUEST_CHANGES"
-      case GithubAPI.CommentOnly    => "COMMENT"
+      case SandboxAPI.Approve        => "APPROVE"
+      case SandboxAPI.RequestChanges => "REQUEST_CHANGES"
+      case SandboxAPI.CommentOnly    => "COMMENT"
     end
     val commentsJson = buildCommentsJson(comments)
     if dryRun then
@@ -127,10 +136,9 @@ def main(): Unit receives args, stdout =
   val tmp = py.module("tempfile").mkdtemp().asString
   val sandbox: Sandbox = Sandbox.create(tmp)
 
-  match sandbox.env("GITHUB_TOKEN"):
+  match sandbox.env("GITHUB_TOKEN")
     case Some(token) =>
       val ghImpl = new GithubImpl(sandbox, prUrl, dryRun, token)
       with SandboxAPI.github = ghImpl in
         SandboxAPI.runTask()
     case _ => abort "missing github token from process environment"
-end
