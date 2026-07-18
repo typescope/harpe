@@ -16,6 +16,11 @@
   ! Distinct regions with distinct styling — a title band, then columns — are
   ! best done as separate flows over separate rect lists; `nextBox` also skips
   ! to the next rect within one flow.
+  !
+  ! `paragraph` streams the string a code point at a time, holding only the
+  ! current line and the current word (a `Flow.Word`); the `section Flow`
+  ! companion holds `Word` and the character-level helpers (font fallback, break
+  ! classes), all internal to this file.
 //]
 
 namespace harpe.caps.drawing
@@ -26,11 +31,18 @@ class Flow(canvas: Canvas, boxes: List[Rect])
   var y: Float = 0.0        // offset from that rect's top to the next line
   var overflowed: Bool = false
 
+  // The line being composed — only one line and one word are ever buffered,
+  // never the whole paragraph. Reset at each `paragraph`.
+  private val line: mutable.List[Flow.Run] = mutable.List[Flow.Run]()
+  private var lineW: Float = 0.0
+  private var lastWide: Bool = false
+
   //[ Flow a wrapped paragraph in the current rect's width, at the ambient font,
     ! color, alignment, and leading; it continues into the next rect when the
-    ! current one is full. Each character is drawn with a font that covers it
-    ! (fallback), and lines break at spaces or — for spaceless scripts like CJK
-    ! — between characters, so a line never exceeds the rect width.
+    ! current one is full. Each code point is drawn with a font that covers it
+    ! (fallback), and a line is emitted the moment the next word — or, for
+    ! spaceless scripts like CJK, the next character — would exceed the rect
+    ! width. So a line never overruns the rect.
   //]
   def paragraph(text: String): Unit receives
       graphics,
@@ -42,29 +54,85 @@ class Flow(canvas: Canvas, boxes: List[Rect])
   =
     val lineHeight = Typesetting.leading * DrawingContext.font.size
     val spaceW = graphics.stringWidth(" ")
-    val items = itemsOf(text)
 
-    var line = List.empty[Item]
-    var lineW = 0.0
-    var lastWide = false
+    line.clear()
+    lineW = 0.0
+    lastWide = false
+    val word = new Flow.Word()
 
-    for it in items do
-      val gap = if it.spaceBefore && !line.isEmpty then spaceW else 0.0
-      // may break before this item: at a space, before a wide char, or after one
-      val canBreak = !line.isEmpty && (it.spaceBefore || it.wide || lastWide)
+    for ch in text do
+      val cp = ch.toInt
 
-      if canBreak && lineW + gap + it.width > currentWidth() then
-        drawItems(line, lineHeight, false)
-        line = [it]
-        lineW = it.width
+      if Flow.isSpace(cp) then
+        flushWord(word, spaceW, lineHeight)
+        word.pending = true
+        continue
+
+      val f = Flow.fontFor(cp)
+
+      if Flow.isWide(cp) then
+        flushWord(word, spaceW, lineHeight)
+        place:
+          Flow.Run: ch.toString, f, Flow.measure(ch.toString, f), word.pending, wide = true
+          spaceW
+          lineHeight
+        word.pending = false
+
+      else if word.text == "" then
+        word.text = ch.toString
+        word.font = f
+        word.space = word.pending
+        word.pending = false
+
+      else if !Flow.sameFont(f, word.font) then
+        flushWord(word, spaceW, lineHeight)
+        word.text = ch.toString
+        word.font = f
+        word.space = false
+
       else
-        line = line ++ [it]
-        lineW = lineW + gap + it.width
+        word.text = word.text + ch.toString
+    end
 
-      lastWide = it.wide
+    flushWord(word, spaceW, lineHeight)
 
-    if !line.isEmpty then
-      drawItems(line, lineHeight, true)
+    if line.size > 0 then
+      emitLine(lineHeight, true)
+
+  //[ Finalize the buffered word (if any) as a run and place it. //]
+  private def flushWord(word: Flow.Word, spaceW: Float, lineHeight: Float): Unit receives
+      graphics,
+      DrawingContext.font,
+      DrawingContext.textColor,
+      Typesetting.align
+  =
+    if word.text != "" then
+      place(new Flow.Run(word.text, word.font, Flow.measure(word.text, word.font), word.space, false), spaceW, lineHeight)
+      word.text = ""
+
+  //[ Add `run` to the current line, first emitting the line if `run` would push
+    ! it past the rect width at a legal break point.
+  //]
+  private def place(run: Flow.Run, spaceW: Float, lineHeight: Float): Unit receives
+      graphics,
+      DrawingContext.font,
+      DrawingContext.textColor,
+      Typesetting.align
+  =
+    val gap = if run.spaceBefore && line.size > 0 then spaceW else 0.0
+    // may break before this run: at a space, before a wide char, or after one
+    val canBreak = line.size > 0 && (run.spaceBefore || run.wide || lastWide)
+
+    if canBreak && lineW + gap + run.width > rectWidth() then
+      emitLine(lineHeight, false)
+      line.clear()
+      line.append(run)
+      lineW = run.width
+    else
+      line.append(run)
+      lineW = lineW + gap + run.width
+
+    lastWide = run.wide
 
   //[ Advance the cursor `height` pixels (a vertical gap between blocks). //]
   def space(height: Float): Unit = y = y + height
@@ -75,7 +143,7 @@ class Flow(canvas: Canvas, boxes: List[Rect])
     y = 0.0
 
   //[ The width of the rect currently being filled (0 once they are exhausted). //]
-  private def currentWidth(): Float =
+  private def rectWidth(): Float =
     if boxIndex >= boxes.size then 0.0 else boxes.get(boxIndex).width
 
   //[ Ensure the current rect has `lineHeight` of vertical room, advancing rects
@@ -98,11 +166,11 @@ class Flow(canvas: Canvas, boxes: List[Rect])
 
     ok
 
-  //[ Draw one line of `items`, each in its own font, aligned; drop it if the
+  //[ Draw the buffered line, each run in its own font, aligned; drop it if the
     ! rects are full. Baseline and line height use the ambient font, so a line
     ! of mixed fonts shares one baseline.
   //]
-  private def drawItems(items: List[Item], lineHeight: Float, isLast: Bool): Unit receives
+  private def emitLine(lineHeight: Float, isLast: Bool): Unit receives
       graphics,
       DrawingContext.font,
       DrawingContext.textColor,
@@ -112,11 +180,11 @@ class Flow(canvas: Canvas, boxes: List[Rect])
       val box = boxes.get(boxIndex)
       val baseline = box.y + y + graphics.fontAscent
       val spaceW = graphics.stringWidth(" ")
-      val natural = lineWidth(items, spaceW)
+      val natural = lineWidth(spaceW)
 
       // extra space per gap when justifying (not the last line)
       val justify = isJustify(Typesetting.align)
-      val gaps = items.size - 1
+      val gaps = line.size - 1
       val extra =
         if justify && !isLast && gaps > 0 then (box.width - natural) / gaps.toFloat
         else 0.0
@@ -130,28 +198,28 @@ class Flow(canvas: Canvas, boxes: List[Rect])
       var x = startX
       var idx = 0
 
-      for it in items do
+      for run in line do
         if idx > 0 then
-          x = x + extra + (if it.spaceBefore then spaceW else 0.0)
+          x = x + extra + (if run.spaceBefore then spaceW else 0.0)
 
-        with DrawingContext.font = it.font in
-          canvas.textAt(x, baseline, it.text)
+        with DrawingContext.font = run.font in
+          canvas.textAt(x, baseline, run.text)
 
-        x = x + it.width
+        x = x + run.width
         idx = idx + 1
 
       y = y + lineHeight
 
-  //[ The natural width of a line of `items` (item widths plus interword space). //]
-  private def lineWidth(items: List[Item], spaceW: Float): Float =
+  //[ The natural width of the buffered line (run widths plus interword space). //]
+  private def lineWidth(spaceW: Float): Float =
     var w = 0.0
     var idx = 0
 
-    for it in items do
-      if idx > 0 && it.spaceBefore then
+    for run in line do
+      if idx > 0 && run.spaceBefore then
         w = w + spaceW
 
-      w = w + it.width
+      w = w + run.width
       idx = idx + 1
 
     w
@@ -164,3 +232,81 @@ end
 
 //[ The ambient flow. //]
 param flow: Flow
+
+//[ The current-word scratch and character-level layout helpers, internal to
+  ! `Flow`.
+  !
+  ! Two jobs fold into the streaming: font fallback (each code point is drawn
+  ! with the first font — ambient, then the `Typesetting.fontFallback` chain —
+  ! that has a glyph for it, so mixed-script text avoids missing-glyph boxes) and
+  ! break classes (a "word" is a maximal run of same-font, non-wide characters,
+  ! breakable only at whitespace; each wide/CJK code point is its own run,
+  ! breakable on either side — which is what lets CJK, spaceless, wrap at
+  ! character boundaries).
+//]
+section Flow
+  //[ A measured run — a word or a single wide character — carrying the font
+    ! that covers it, whether whitespace preceded it, and whether it is a wide
+    ! (CJK) character (breakable on either side).
+  //]
+  private[drawing] class Run(text: String, font: Font, width: Float, spaceBefore: Bool, wide: Bool)
+
+  //[ The word being accumulated: its text and font, whether whitespace preceded
+    ! it, and whether whitespace has been seen since the last run was placed.
+  //]
+  private[drawing] class Word
+    var text: String = ""
+    var font: Font = new Font("sans", "", 12.0)
+    var space: Bool = false
+    var pending: Bool = false
+  end
+
+  //[ Whether `codePoint` is wide/ideographic — breakable on either side (CJK
+    ! ideographs, kana, Hangul, and CJK symbols/punctuation).
+  //]
+  private[drawing] def isWide(codePoint: Int): Bool =
+    (codePoint >= 0x3040 && codePoint <= 0x30FF) ||   // hiragana + katakana
+    (codePoint >= 0x3400 && codePoint <= 0x9FFF) ||   // CJK ideographs (incl. ext. A)
+    (codePoint >= 0xF900 && codePoint <= 0xFAFF) ||   // compatibility ideographs
+    (codePoint >= 0xAC00 && codePoint <= 0xD7AF) ||   // Hangul syllables
+    (codePoint >= 0x3000 && codePoint <= 0x303F) ||   // CJK symbols and punctuation
+    (codePoint >= 0xFF00 && codePoint <= 0xFFEF)      // halfwidth/fullwidth forms
+
+  private[drawing] def isSpace(codePoint: Int): Bool =
+    codePoint == 32 || codePoint == 9 || codePoint == 10 || codePoint == 13
+
+  private[drawing] def sameFont(a: Font, b: Font): Bool =
+    a.family == b.family && a.style == b.style && a.size == b.size
+
+  //[ The font — the ambient one, else the first in the fallback chain — that
+    ! covers `codePoint`; the ambient font if none do.
+  //]
+  private[drawing] def fontFor(codePoint: Int): Font receives
+      graphics,
+      DrawingContext.font,
+      Typesetting.fontFallback
+  =
+    val base = DrawingContext.font
+
+    if graphics.covers(base, codePoint) then base
+    else
+      var i = 0
+      var found = base
+      var done = false
+      val chain = Typesetting.fontFallback
+
+      while i < chain.size && !done do
+        val candidate = new Font(chain.get(i), base.style, base.size)
+
+        if graphics.covers(candidate, codePoint) then
+          found = candidate
+          done = true
+
+        i = i + 1
+
+      found
+
+  //[ Measure `text` in `font`. //]
+  private[drawing] def measure(text: String, font: Font): Float receives graphics =
+    with DrawingContext.font = font in graphics.stringWidth(text)
+end
