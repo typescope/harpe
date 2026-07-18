@@ -28,40 +28,43 @@ class Flow(canvas: Canvas, boxes: List[Rect])
 
   //[ Flow a wrapped paragraph in the current rect's width, at the ambient font,
     ! color, alignment, and leading; it continues into the next rect when the
-    ! current one is full.
+    ! current one is full. Each character is drawn with a font that covers it
+    ! (fallback), and lines break at spaces or — for spaceless scripts like CJK
+    ! — between characters, so a line never exceeds the rect width.
   //]
   def paragraph(text: String): Unit receives
       graphics,
       DrawingContext.font,
       DrawingContext.textColor,
       Typesetting.align,
-      Typesetting.leading
+      Typesetting.leading,
+      Typesetting.fontFallback
   =
     val lineHeight = Typesetting.leading * DrawingContext.font.size
     val spaceW = graphics.stringWidth(" ")
-    val words = wordsOf(text)
+    val items = itemsOf(text)
 
-    var line = List.empty[String]
+    var line = List.empty[Item]
     var lineW = 0.0
-    var i = 0
+    var lastWide = false
 
-    while i < words.size do
-      val word = words.get(i)
-      val wordW = graphics.stringWidth(word)
-      val gap = if line.isEmpty then 0.0 else spaceW
+    for it in items do
+      val gap = if it.spaceBefore && !line.isEmpty then spaceW else 0.0
+      // may break before this item: at a space, before a wide char, or after one
+      val canBreak = !line.isEmpty && (it.spaceBefore || it.wide || lastWide)
 
-      if !line.isEmpty && lineW + gap + wordW > currentWidth() then
-        drawLine(line, lineHeight, false)
-        line = [word]
-        lineW = wordW
+      if canBreak && lineW + gap + it.width > currentWidth() then
+        drawItems(line, lineHeight, false)
+        line = [it]
+        lineW = it.width
       else
-        line = line ++ [word]
-        lineW = lineW + gap + wordW
+        line = line ++ [it]
+        lineW = lineW + gap + it.width
 
-      i = i + 1
+      lastWide = it.wide
 
     if !line.isEmpty then
-      drawLine(line, lineHeight, true)
+      drawItems(line, lineHeight, true)
 
   //[ Advance the cursor `height` pixels (a vertical gap between blocks). //]
   def space(height: Float): Unit = y = y + height
@@ -95,8 +98,11 @@ class Flow(canvas: Canvas, boxes: List[Rect])
 
     ok
 
-  //[ Draw one wrapped line of `words`, aligned; drop it if the rects are full. //]
-  private def drawLine(words: List[String], lineHeight: Float, isLast: Bool): Unit receives
+  //[ Draw one line of `items`, each in its own font, aligned; drop it if the
+    ! rects are full. Baseline and line height use the ambient font, so a line
+    ! of mixed fonts shares one baseline.
+  //]
+  private def drawItems(items: List[Item], lineHeight: Float, isLast: Bool): Unit receives
       graphics,
       DrawingContext.font,
       DrawingContext.textColor,
@@ -105,70 +111,56 @@ class Flow(canvas: Canvas, boxes: List[Rect])
     if ensureRoom(lineHeight) then
       val box = boxes.get(boxIndex)
       val baseline = box.y + y + graphics.fontAscent
-      val text = joinWords(words)
-      val natural = graphics.stringWidth(text)
+      val spaceW = graphics.stringWidth(" ")
+      val natural = lineWidth(items, spaceW)
 
-      match Typesetting.align
-      case _: Align.center =>
-        canvas.textAt(box.x + (box.width - natural) / 2.0, baseline, text)
+      // extra space per gap when justifying (not the last line)
+      val justify = isJustify(Typesetting.align)
+      val gaps = items.size - 1
+      val extra =
+        if justify && !isLast && gaps > 0 then (box.width - natural) / gaps.toFloat
+        else 0.0
 
-      case _: Align.right =>
-        canvas.textAt(box.x + box.width - natural, baseline, text)
+      val startX =
+        match Typesetting.align
+        case _: Align.center => box.x + (box.width - natural) / 2.0
+        case _: Align.right  => box.x + box.width - natural
+        case _               => box.x
 
-      case _: Align.justify =>
-        if isLast || words.size <= 1 then
-          canvas.textAt(box.x, baseline, text)
-        else
-          drawJustified(words, box, baseline, natural)
+      var x = startX
+      var idx = 0
 
-      case _: Align.left =>
-        canvas.textAt(box.x, baseline, text)
+      for it in items do
+        if idx > 0 then
+          x = x + extra + (if it.spaceBefore then spaceW else 0.0)
+
+        with DrawingContext.font = it.font in
+          canvas.textAt(x, baseline, it.text)
+
+        x = x + it.width
+        idx = idx + 1
 
       y = y + lineHeight
 
-  //[ Draw `words` with the leftover space distributed across the gaps. //]
-  private def drawJustified(words: List[String], box: Rect, baseline: Float, natural: Float): Unit receives
-      graphics,
-      DrawingContext.font,
-      DrawingContext.textColor
-  =
-    val gap = graphics.stringWidth(" ") + (box.width - natural) / (words.size - 1).toFloat
-    var x = box.x
-    var j = 0
+  //[ The natural width of a line of `items` (item widths plus interword space). //]
+  private def lineWidth(items: List[Item], spaceW: Float): Float =
+    var w = 0.0
+    var idx = 0
 
-    while j < words.size do
-      val word = words.get(j)
-      canvas.textAt(x, baseline, word)
-      x = x + graphics.stringWidth(word) + gap
-      j = j + 1
+    for it in items do
+      if idx > 0 && it.spaceBefore then
+        w = w + spaceW
+
+      w = w + it.width
+      idx = idx + 1
+
+    w
+
+  private def isJustify(align: Align): Bool =
+    match align
+    case _: Align.justify => true
+    case _                => false
 end
 
 //[ The ambient flow. //]
 param flow: Flow
-
-//[ The words of `text`, splitting on spaces and dropping empties. //]
-private def wordsOf(text: String): List[String] =
-  val parts = text.split(" ")
-  var out = List.empty[String]
-  var i = 0
-
-  while i < parts.size do
-    val p = parts.get(i)
-
-    if p != "" then
-      out = out ++ [p]
-
-    i = i + 1
-
-  out
-
-//[ Join `words` with single spaces. //]
-private def joinWords(words: List[String]): String =
-  var s = ""
-  var i = 0
-
-  while i < words.size do
-    s = if i == 0 then words.get(i) else "\{s} \{words.get(i)}"
-    i = i + 1
-
-  s

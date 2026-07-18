@@ -22,6 +22,7 @@ import harpe.ffi.os
 private def pilImage: py.Dynamic = py.module("PIL.Image")
 private def pilDraw: py.Dynamic = py.module("PIL.ImageDraw")
 private def pilFont: py.Dynamic = py.module("PIL.ImageFont")
+private def ttLib: py.Dynamic = py.module("fontTools.ttLib")
 
 private def curveSteps: Int = 16
 
@@ -105,6 +106,7 @@ class PillowGraphics(root: String)
   view Graphics
 
   val finder: FontFinder = new FontFinder()
+  var cmaps: Map[String, py.Dynamic] = Map.empty[String, py.Dynamic]
 
   def create(width: Int, height: Int, background: Option[Color]): Canvas =
     val fill =
@@ -117,6 +119,26 @@ class PillowGraphics(root: String)
 
   def registerFont(family: String, src: Path): Result[Unit, String] =
     orMessage: py.try(registerAt(family, src))
+
+  def covers(font: Font, codePoint: Int): Bool =
+    match finder.resolve(font.family, font.style)
+    case None => false
+    case Some(path) =>
+      match cmapOf(path)
+      case None       => false
+      case Some(cmap) => !py.isNone(cmap.get(codePoint))
+
+  //[ The font's best Unicode cmap (code point → glyph), loaded once per file. //]
+  private def cmapOf(path: String): Option[py.Dynamic] =
+    match cmaps.getOpt(path)
+    case Some(cmap) => Some(cmap)
+    case None =>
+      match py.try(ttLib.TTFont(path, fontNumber = 0).getBestCmap())
+      case Ok(cmap) =>
+        cmaps = cmaps.add(path, cmap)
+        Some(cmap)
+
+      case Err(_) => None
 
   def stringWidth(text: String): Float receives DrawingContext.font =
     loadFont(DrawingContext.font).getlength(text).asFloat

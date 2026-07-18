@@ -131,6 +131,14 @@ class FontFinder()
        winName("arial", style),
        spaceName("Arial", style)]
 
+    case "cjk" =>
+      val weight = if style == "B" || style == "BI" then "Bold" else "Regular"
+      ["NotoSansCJK-\{weight}.ttc".toLower,
+       "NotoSansCJKsc-\{weight}.otf".toLower,
+       "NotoSansSC-\{weight}.otf".toLower,
+       "NotoSansSC-\{weight}.ttf".toLower,
+       "NotoSerifCJK-\{weight}.ttc".toLower]
+
     case named =>
       // an explicitly named family: best effort by filename
       [spaceName(named, style), "\{named}.ttf".toLower]

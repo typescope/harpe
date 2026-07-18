@@ -1,20 +1,107 @@
+//[ drawing.jo — how to make a poster with the `graphics` capability.
+  !
+  ! `graphics` mints a `Canvas` (a raster surface) and answers font/image facts.
+  ! You paint on the canvas with the imaging primitives — `fill`/`stroke` over
+  ! `Region`/`Trace` shapes, `textAt` for one line of text — and flow paragraphs
+  ! into rectangles with `Flow`. Drawing state (font, colors, line width, alpha,
+  ! transform) is the ambient `DrawingContext`, changed by rebinding with `with`.
+  ! Coordinates are pixels, top-left origin. Save with `canvas.save(path)`.
+  !
+  ! Run it: it writes `poster.png` into data/.
+//]
+
 namespace UserTask
+
 import SandboxAPI.*
 import harpe.caps.*
+import harpe.caps.drawing.*
 
-// Placeholder guest program — the model's generated code replaces this each turn.
-// It demonstrates the granted capabilities: list the data/ tree, then describe
-// each PDF in it.
-def runTask(): Unit receives IO.stdout, fs, pdfReader =
-  for entry in fs.list(fs.root).success do
-    val name = entry.path.toString
+def runTask(): Unit receives IO.stdout, fs, graphics =
+  val width = 600
+  val height = 520
+  val w = width.toFloat
+  val h = height.toFloat
 
-    if name.endsWith(".pdf") then
-      match fs.openPDF(entry.path)
-      case Ok(doc) =>
-        println "\{name}: PDF, \{doc.pageCount} page(s)"
-        doc.close()
+  // A new surface, opaque light-gray. Pass `None` instead of `Some(color)` for
+  // a transparent background.
+  val cv = graphics.create(width, height, Some(new Color(245, 247, 251)))
 
-      case Err(e) => println "\{name}: unreadable (\{e})"
+  // --- a solid title band across the top: fill a rectangular Region ---
+  with DrawingContext.fillColor = new Color(25, 35, 80) in
+    cv.fill(Region.rect(0.0, 0.0, w, 120.0))
 
-    else println: name
+  // --- title, centered in the band via a one-rect flow ---
+  val band = new Rect(40.0, 34.0, w - 80.0, 60.0)
+  with
+    DrawingContext.font = Font.bold(34.0),
+    DrawingContext.textColor = Color.white,
+    Typesetting.align = Align.center
+  in
+    with flow = Flow(cv, [band]) in
+      flow.paragraph("The Box Calculus")
+
+  // --- a subtitle, placed directly with textAt (centered using stringWidth) ---
+  with
+    DrawingContext.font = Font.sans(14.0),
+    DrawingContext.textColor = new Color(200, 210, 235)
+  in
+    val subtitle = "an imaging + layout capability"
+    val subW = graphics.stringWidth(subtitle)
+    cv.textAt((w - subW) / 2.0, 104.0, subtitle)
+
+  // --- an accent: a stroked circle (open outlines can be stroked, not filled) ---
+  with
+    DrawingContext.strokeColor = new Color(120, 150, 230),
+    DrawingContext.lineWidth = 3.0
+  in
+    cv.stroke(Region.circle(w / 2.0, 165.0, 20.0))
+
+  // --- two columns of justified body text ---
+  val margin = 44.0
+  val gutter = 24.0
+  val colW = (w - 2.0 * margin - gutter) / 2.0
+  val top = 195.0
+  val colH = h - top - margin
+  val left = new Rect(margin, top, colW, colH)
+  val right = new Rect(margin + colW + gutter, top, colW, colH)
+
+  with
+    DrawingContext.font = Font.sans(12.0),
+    DrawingContext.textColor = new Color(40, 45, 55),
+    Typesetting.align = Align.justify,
+    Typesetting.leading = 1.45
+  in
+    // Both columns are one flow: a paragraph wraps in the left column and
+    // continues into the right when the left is full.
+    with flow = Flow(cv, [left, right]) in
+      flow.paragraph(intro())
+      flow.space(8.0)
+      flow.paragraph(detail())
+      flow.space(8.0)
+      flow.paragraph(more())
+
+      if flow.overflowed then
+        println "note: some body text did not fit the columns"
+
+  // --- save into data/; the target is a Path from the root ---
+  match cv.save(fs.root / "poster.png")
+  case Ok(_)  => println "wrote poster.png"
+  case Err(e) => println "save failed: \{e}"
+
+private def intro(): String =
+  "Everything already laid out is a box: rigid, measured, and drawable "
+    + "anywhere. A line is a row of boxes; a paragraph is a stack of lines; a "
+    + "page is a stack of paragraphs."
+
+private def detail(): String =
+  "Layout is box algebra, and flexibility is quarantined in the functions that "
+    + "turn flexible material into boxes — line breaking and page breaking. "
+    + "Everything else is composition, which is why the calculus stays small."
+
+private def more(): String =
+  "This paragraph is long enough that it fills the left column and continues "
+    + "into the right one: a single flow pours through its boxes in order, and a "
+    + "paragraph splits across them wherever it runs out of room. Two columns "
+    + "are simply two rectangles. Alignment, font, and color come from the "
+    + "ambient DrawingContext and Typesetting parameters, so the same paragraph "
+    + "call renders left, right, centered, or justified depending on the binding."

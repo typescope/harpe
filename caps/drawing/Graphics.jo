@@ -29,6 +29,12 @@ interface Graphics
   //]
   def registerFont(family: String, src: Path): Result[Unit, String]
 
+  //[ Whether `font` has a glyph for `codePoint`. The text layer uses this to
+    ! pick a covering font per character (fallback), so mixed-script text avoids
+    ! missing-glyph boxes without the caller choosing fonts by hand.
+  //]
+  def covers(font: Font, codePoint: Int): Bool
+
   //[ The advance width of `text` in the ambient font. //]
   def stringWidth(text: String): Float receives DrawingContext.font
 

@@ -1,0 +1,126 @@
+//[ TextLayout.jo
+  !
+  ! Turning a string into measured, font-resolved layout items — the shared
+  ! kernel the flow layer breaks into lines. Two jobs fold together here:
+  !
+  !   * font fallback — each code point is drawn with the first font (ambient,
+  !     then the `Typesetting.fontFallback` chain) that has a glyph for it, so
+  !     mixed-script text avoids missing-glyph boxes automatically;
+  !   * break classes — a "word" is a maximal run of same-font, non-wide
+  !     characters (breakable only at whitespace), while each wide (CJK) code
+  !     point is its own item, breakable on either side. That is what lets the
+  !     line breaker wrap CJK, which has no spaces, at character boundaries.
+//]
+
+namespace harpe.caps.drawing
+
+//[ A measured text item — a word or a single wide character — carrying the
+  ! font that covers it, whether whitespace preceded it, and whether it is a
+  ! wide (CJK) character (breakable on either side).
+//]
+class Item(text: String, font: Font, width: Float, spaceBefore: Bool, wide: Bool)
+
+//[ Whether `codePoint` is wide/ideographic — breakable on either side (CJK
+  ! ideographs, kana, Hangul, and CJK symbols/punctuation).
+//]
+def isWide(codePoint: Int): Bool =
+  (codePoint >= 0x3040 && codePoint <= 0x30FF) ||   // hiragana + katakana
+  (codePoint >= 0x3400 && codePoint <= 0x9FFF) ||   // CJK ideographs (incl. ext. A)
+  (codePoint >= 0xF900 && codePoint <= 0xFAFF) ||   // compatibility ideographs
+  (codePoint >= 0xAC00 && codePoint <= 0xD7AF) ||   // Hangul syllables
+  (codePoint >= 0x3000 && codePoint <= 0x303F) ||   // CJK symbols and punctuation
+  (codePoint >= 0xFF00 && codePoint <= 0xFFEF)      // halfwidth/fullwidth forms
+
+private def isSpace(codePoint: Int): Bool =
+  codePoint == 32 || codePoint == 9 || codePoint == 10 || codePoint == 13
+
+private def sameFont(a: Font, b: Font): Bool =
+  a.family == b.family && a.style == b.style && a.size == b.size
+
+//[ The font — the ambient one, else the first in the fallback chain — that
+  ! covers `codePoint`; the ambient font if none do.
+//]
+def fontFor(codePoint: Int): Font receives
+    graphics,
+    DrawingContext.font,
+    Typesetting.fontFallback
+=
+  val base = DrawingContext.font
+
+  if graphics.covers(base, codePoint) then base
+  else
+    var i = 0
+    var found = base
+    var done = false
+    val chain = Typesetting.fontFallback
+
+    while i < chain.size && !done do
+      val candidate = new Font(chain.get(i), base.style, base.size)
+
+      if graphics.covers(candidate, codePoint) then
+        found = candidate
+        done = true
+
+      i = i + 1
+
+    found
+
+//[ Measure `text` in `font`. //]
+private def measure(text: String, font: Font): Float receives graphics =
+  with DrawingContext.font = font in graphics.stringWidth(text)
+
+//[ Split `text` into layout items — words and single wide characters — each
+  ! resolved to a covering font and measured.
+//]
+def itemsOf(text: String): List[Item] receives
+    graphics,
+    DrawingContext.font,
+    Typesetting.fontFallback
+=
+  var items = List.empty[Item]
+  var buf = ""
+  var bufFont = DrawingContext.font
+  var wordSpace = false      // whitespace preceded the current word
+  var pending = false        // whitespace seen since the last item
+
+  for ch in text do
+    val cp = ch.toInt
+    val glyph = ch.toString
+
+    if isSpace(cp) then
+      if buf != "" then
+        items = items.prepend(new Item(buf, bufFont, measure(buf, bufFont), wordSpace, false))
+        buf = ""
+
+      pending = true
+
+    else
+      val f = fontFor(cp)
+
+      if isWide(cp) then
+        if buf != "" then
+          items = items.prepend(new Item(buf, bufFont, measure(buf, bufFont), wordSpace, false))
+          buf = ""
+
+        items = items.prepend(new Item(glyph, f, measure(glyph, f), pending, true))
+        pending = false
+
+      else if buf == "" then
+        buf = glyph
+        bufFont = f
+        wordSpace = pending
+        pending = false
+
+      else if !sameFont(f, bufFont) then
+        items = items.prepend(new Item(buf, bufFont, measure(buf, bufFont), wordSpace, false))
+        buf = glyph
+        bufFont = f
+        wordSpace = false
+
+      else
+        buf = buf + glyph
+
+  if buf != "" then
+    items = items.prepend(new Item(buf, bufFont, measure(buf, bufFont), wordSpace, false))
+
+  items.reverse
