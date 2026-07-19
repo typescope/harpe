@@ -3,6 +3,10 @@
   ! A child at its natural size, positioned inside the room it is given. `ax` and
   ! `ay` are fractions — 0 the near edge, 0.5 centred, 1 the far edge — rather
   ! than an enum, because fractions compose with arithmetic and enums do not.
+  !
+  ! It shrink-wraps its child on both axes. Positioning only bites when `layout`
+  ! hands it more room than that, which is the general contract: `measure` is the
+  ! intrinsic size, `layout` fills whatever rect it is given.
 //]
 
 namespace harpe.caps.layout.elements
@@ -18,7 +22,7 @@ class Aligned(child: Element, ax: Float, ay: Float)
 
   def measure(c: Constraints): Measured receives graphics =
     val m = child.measure(c.loosened)
-    new Measured(c.clampW(c.maxW), c.clampH(m.height), m.baseline)
+    new Measured(c.clampW(m.width), c.clampH(m.height), m.baseline)
 
   def layout(bounds: Rect): Laid receives graphics =
     val m = child.measure(Constraints.upTo(bounds.width, bounds.height))

@@ -2,12 +2,12 @@
   !
   ! Children laid left to right.
   !
-  ! `Cross.baseline` is the default and the interesting case: every child
-  ! reports a baseline, so a row of mixed font sizes lines up with no vertical
-  ! arithmetic at the call site. The row's own height is
-  ! `max(baseline) + max(height - baseline)` — the two halves maximised
-  ! independently, so a deep descender in one child cannot push the shared
-  ! baseline off.
+  ! `Cross.baseline` is the default and the interesting case: every child reports
+  ! a baseline, so a row of mixed font sizes lines up with no vertical arithmetic
+  ! at the call site.
+  !
+  ! Both methods work from one `Track`, so the size this row reports and the
+  ! places it puts its children are the same computation read twice.
 //]
 
 namespace harpe.caps.layout.elements
@@ -22,38 +22,22 @@ class Row(children: List[Element], gap: Float, cross: Cross)
   def flexWeight: Float = 0.0
 
   def measure(c: Constraints): Measured receives graphics =
-    val widths = distribute(children, gap, c.maxW, c.maxH, true)
-    var above = 0.0
-    var below = 0.0
-    var i = 0
-
-    while i < children.size do
-      val m = children.get(i).measure(
-        new Constraints(widths.get(i), widths.get(i), 0.0, c.maxH))
-
-      if m.baseline > above then
-        above = m.baseline
-
-      val tail = m.height - m.baseline
-
-      if tail > below then
-        below = tail
-
-      i = i + 1
-
-    new Measured(c.clampW(totalOf(widths, gap)), c.clampH(above + below), above)
+    val track = resolve(children, gap, c.maxW, c.maxH, true)
+    new Measured(
+      c.clampW(track.total(gap)),
+      c.clampH(track.above + track.below),
+      track.above)
 
   def layout(bounds: Rect): Laid receives graphics =
-    val widths = distribute(children, gap, bounds.width, bounds.height, true)
-    val self = measure(Constraints.of(bounds))
+    val track = resolve(children, gap, bounds.width, bounds.height, true)
+    val baseline = track.above
     var kids = List.empty[Laid]
     var x = bounds.x
     var i = 0
 
     while i < children.size do
-      val child = children.get(i)
-      val w = widths.get(i)
-      val m = child.measure(new Constraints(w, w, 0.0, bounds.height))
+      val w = track.sizes.get(i)
+      val m = track.metrics.get(i)
 
       val h =
         match cross
@@ -64,14 +48,14 @@ class Row(children: List[Element], gap: Float, cross: Cross)
         match cross
         case _: Cross.center   => bounds.y + (bounds.height - h) / 2.0
         case _: Cross.finish   => bounds.y + bounds.height - h
-        case _: Cross.baseline => bounds.y + self.baseline - m.baseline
+        case _: Cross.baseline => bounds.y + baseline - m.baseline
         case _                 => bounds.y
 
-      kids = kids ++ [child.layout(new Rect(x, y, w, h))]
+      kids = kids ++ [children.get(i).layout(new Rect(x, y, w, h))]
       x = x + w + gap
       i = i + 1
 
-    new Laid(this, bounds, self.baseline, kids)
+    new Laid(this, bounds, baseline, kids)
 
   def draw(cv: Canvas, node: Laid): Unit receives
       graphics, Style.alpha, Style.transform, Style.clip

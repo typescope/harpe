@@ -149,8 +149,15 @@ section Element
   //[ A rigid square gap — the usual spacer between stacked blocks. //]
   def gap(size: Float): Element = new Space(size, size)
 
-  //[ A hairline that fills the width it is given. //]
-  def rule(thickness: Float, paint: Paint): Element = new Rule(thickness, paint)
+  //[ A hairline that fills the width it is given.
+    !
+    ! Not an element of its own: a zero-width `space`, stretched to full width by
+    ! its column, filled by a `background`. A stroke centred in a
+    ! `thickness`-tall box and a fill of that box are the same pixels, so the
+    ! composition is exact.
+  //]
+  def rule(thickness: Float, paint: Paint): Element =
+    new Background(new Space(0.0, thickness), paint, 0.0)
 
   // --- containers --------------------------------------------------------
   //
@@ -222,10 +229,12 @@ section Element
   def clip(child: Element, radius: Float): Element = new Clip(child, radius)
 
   //[ A filled rounded rectangle behind a child. //]
-  def panel(child: Element, fill: Paint, radius: Float): Element =
-    new Panel(child, Some(fill), None, Stroke.of(1.0), radius)
+  def background(child: Element, paint: Paint, radius: Float): Element =
+    new Background(child, paint, radius)
 
-  //[ An outlined rounded rectangle around a child. //]
-  def framed(child: Element, border: Paint, stroke: Stroke, radius: Float): Element =
-    new Panel(child, None, Some(border), stroke, radius)
+  //[ A stroked rounded rectangle around a child. Compose the two for a card
+    ! that is both filled and outlined: `border(background(x, fill, r), …, r)`.
+  //]
+  def border(child: Element, paint: Paint, stroke: Stroke, radius: Float): Element =
+    new Border(child, paint, stroke, radius)
 end

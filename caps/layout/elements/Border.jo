@@ -1,0 +1,39 @@
+//[ Border.jo
+  !
+  ! A stroked rounded rectangle around a child.
+  !
+  ! The mirror of `Background`, and deliberately a separate element: a card that
+  ! is both filled and outlined composes the two, so neither has to carry an
+  ! optional half of the other's job.
+  !
+  ! The outline is painted *before* the child, so content is never overdrawn by
+  ! its own frame.
+//]
+
+namespace harpe.caps.layout.elements
+
+import harpe.caps.layout.*
+import harpe.caps.drawing.*
+
+//[ A stroked rounded rectangle around a child. //]
+class Border(child: Element, paint: Paint, stroke: Stroke, radius: Float)
+  view Element
+
+  def flexWeight: Float = 0.0
+
+  def measure(c: Constraints): Measured receives graphics = child.measure(c)
+
+  def layout(bounds: Rect): Laid receives graphics =
+    val kid = child.layout(bounds)
+    new Laid(this, bounds, kid.baseline, [kid])
+
+  def draw(cv: Canvas, node: Laid): Unit receives
+      graphics, Style.alpha, Style.transform, Style.clip
+  =
+    val b = node.bounds
+
+    with Style.strokePaint = paint, Style.stroke = stroke in
+      cv.stroke(Region.roundRect(b.x, b.y, b.width, b.height, radius))
+
+    Element.paintChildren(cv, node)
+end
