@@ -186,7 +186,7 @@ selects by env:
 | `PROVIDER`            | Key                 | `MODEL` default   | Extra                       |
 |-----------------------|---------------------|-------------------|-----------------------------|
 | `anthropic` (default) | `ANTHROPIC_API_KEY` | `claude-opus-4-6` | —                           |
-| `openai`              | `OPENAI_API_KEY`    | `gpt-4o`          | `OPENAI_BASE_URL` (optional — Groq, llama.cpp, …) |
+| `openai`              | `OPENAI_API_KEY`    | `gpt-5.6`         | `OPENAI_BASE_URL` (optional — Groq, llama.cpp, …) |
 
 Or edit `Config.model()` to return any `Model` — `harpe.models.echo()` is a
 keyless dummy for wiring tests. A new provider is one file: a class that

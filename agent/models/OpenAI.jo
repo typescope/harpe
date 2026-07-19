@@ -118,10 +118,13 @@ private class OpenAIModel(client: py.Dynamic, model: String)
     if rendered.transient != "" then
       messages.append(py.dict("role" ~ "user", "content" ~ rendered.transient))
 
+    // `max_completion_tokens`, not the legacy `max_tokens`: current OpenAI models
+    // require it (reasoning models reject `max_tokens` outright). Compatible
+    // endpoints follow the OpenAI protocol.
     val attempt = py.try:
       client.chat.completions.create:
         model = model
-        max_tokens = 8096
+        max_completion_tokens = 8096
         messages = messages
         tools = toolSpecs
 
