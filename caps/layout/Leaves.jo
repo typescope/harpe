@@ -1,0 +1,153 @@
+//[ Leaves.jo
+  !
+  ! The elements with no children: text, arbitrary drawing, blank space, and a
+  ! rule.
+  !
+  ! `Graphic` is the escape hatch down to the imaging model, and it is why the
+  ! layout engine needs no plugin API: anything you can draw on a `Canvas` is an
+  ! element that measures, composes and lands like any other. Its lambda draws in
+  ! **local coordinates** — (0, 0) is the element's own top-left, wherever layout
+  ! puts it.
+//]
+
+namespace harpe.caps.layout
+
+import harpe.caps.drawing.*
+
+//[ A wrapped paragraph.
+  !
+  ! Styling is captured when the element is built, not when it is drawn, so a
+  ! text element renders identically wherever it is placed and `measure` never
+  ! depends on ambient state. Build under `with Style.font = … in …` to style it.
+  !
+  ! Width shrink-wraps to the longest line, up to the room offered. To make a
+  ! centred or right-aligned block fill its parent, put it in a `column` (which
+  ! stretches by default) or wrap it in `sized`.
+//]
+class TextBox(text: String, font: Font, paint: Paint, align: Align, leading: Float)
+  view Element
+
+  def flexWeight: Float = 0.0
+
+  // one-entry cache: wrapping depends only on the width, since style is captured
+  var cachedWidth: Float = 0.0 - 1.0
+  var cachedLines: List[GlyphRun] = List.empty[GlyphRun]
+
+  def measure(c: Constraints): Measured receives graphics =
+    val lines = linesFor(c.maxW)
+    var widest = 0.0
+
+    for run in lines do
+      if run.width > widest then
+        widest = run.width
+
+    val height = leading * font.size * lines.size.toFloat
+    new Measured(c.clampW(widest), c.clampH(height), ascent())
+
+  def layout(bounds: Rect): Laid receives graphics =
+    new Laid(this, bounds, ascent(), List.empty[Laid])
+
+  def draw(cv: Canvas, node: Laid): Unit receives
+      graphics,
+      Style.alpha,
+      Style.transform,
+      Style.clip
+  =
+    val lines = linesFor(node.bounds.width)
+
+    with
+      Style.font = font,
+      Style.textPaint = paint,
+      Typesetting.align = align,
+      Typesetting.leading = leading
+    in
+      val _ = Text.draw(cv, lines, node.bounds)
+
+  private def ascent(): Float receives graphics =
+    with Style.font = font in graphics.fontAscent
+
+  private def linesFor(width: Float): List[GlyphRun] receives graphics =
+    if width == cachedWidth then
+      return cachedLines
+
+    val lines = with Style.font = font in Text.wrap(text, width)
+    cachedWidth = width
+    cachedLines = lines
+    lines
+end
+
+//[ Arbitrary drawing of a fixed size. `paint` draws in local coordinates, with
+  ! (0, 0) at the element's top-left.
+//]
+class Graphic(w: Float, h: Float, paint: Painter)
+  view Element
+
+  def flexWeight: Float = 0.0
+
+  def measure(c: Constraints): Measured receives graphics =
+    new Measured(c.clampW(w), c.clampH(h), c.clampH(h))
+
+  def layout(bounds: Rect): Laid receives graphics =
+    new Laid(this, bounds, bounds.height, List.empty[Laid])
+
+  def draw(cv: Canvas, node: Laid): Unit receives
+      graphics,
+      Style.alpha,
+      Style.transform,
+      Style.clip
+  =
+    // shift the local origin to wherever the element landed
+    val local = Matrix.translate(node.bounds.x, node.bounds.y)
+
+    with Style.transform = local.andThen(Style.transform) in
+      paint(cv)
+end
+
+//[ Blank space of a fixed size — a rigid gap. //]
+class Space(w: Float, h: Float)
+  view Element
+
+  def flexWeight: Float = 0.0
+
+  def measure(c: Constraints): Measured receives graphics =
+    new Measured(c.clampW(w), c.clampH(h), c.clampH(h))
+
+  def layout(bounds: Rect): Laid receives graphics =
+    new Laid(this, bounds, bounds.height, List.empty[Laid])
+
+  def draw(cv: Canvas, node: Laid): Unit receives
+      graphics,
+      Style.alpha,
+      Style.transform,
+      Style.clip
+  =
+    pass
+end
+
+//[ A horizontal hairline that fills the width it is given. //]
+class Rule(thickness: Float, paint: Paint)
+  view Element
+
+  def flexWeight: Float = 0.0
+
+  def measure(c: Constraints): Measured receives graphics =
+    new Measured(c.maxW, c.clampH(thickness), c.clampH(thickness))
+
+  def layout(bounds: Rect): Laid receives graphics =
+    new Laid(this, bounds, bounds.height, List.empty[Laid])
+
+  def draw(cv: Canvas, node: Laid): Unit receives
+      graphics,
+      Style.alpha,
+      Style.transform,
+      Style.clip
+  =
+    val b = node.bounds
+    val y = b.y + b.height / 2.0
+
+    with
+      Style.strokePaint = paint,
+      Style.stroke = Stroke.of(thickness)
+    in
+      cv.stroke(Trace.from(b.x, y).lineTo(b.x + b.width, y))
+end

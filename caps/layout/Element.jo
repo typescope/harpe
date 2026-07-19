@@ -1,0 +1,215 @@
+//[ Element.jo
+  !
+  ! The layout protocol: three methods, one per phase.
+  !
+  !   build   →  Element tree     pure data, inspectable
+  !   layout  →  Laid tree        positions resolved, still data
+  !   paint   →  Canvas ops
+  !
+  ! `layout` returns a positioned subtree instead of mutating anything, so what
+  ! comes out is data you can query: where a node landed, what its baseline is,
+  ! what its children are. That is what makes layout assertions possible without
+  ! rendering a pixel, and it is what a diagram layer would resolve connector
+  ! anchors against.
+  !
+  ! **Constraints go down, sizes come up, the parent positions.** `measure`
+  ! answers "how big do you want to be, given this room"; the parent then hands
+  ! each child an absolute `Rect` in `layout`.
+  !
+  ! **`draw` recurses into children itself**, rather than an engine walker doing
+  ! it. That single choice is what lets `clip` be an ordinary element — it
+  ! rebinds `Style.clip` around the call that paints its child — with no special
+  ! case anywhere. Containers that need nothing special call `paintChildren`.
+  !
+  ! Elements capture their styling when built, not when drawn, so one draws
+  ! identically wherever it is placed. Jo's closures give this for free: a
+  ! `graphic`'s paint lambda captures the ambient `Style` at its definition site.
+//]
+
+namespace harpe.caps.layout
+
+import harpe.caps.drawing.*
+
+//[ What a `graphic` paints with: a canvas, plus the ambient state that has to
+  ! reach it.
+  !
+  ! The `receives` clause is load-bearing, not decoration. Jo captures context
+  ! params **lexically**, so a bare `Canvas => Unit` would silently see the
+  ! declaration-site defaults — an identity transform and no clip — and a
+  ! `graphic` inside a `clip` or a rotated subtree would ignore both. Declaring
+  ! them is what makes the enclosing bindings flow in.
+  !
+  ! Only the three compositional pieces travel. Paints, fonts and stroke
+  ! geometry do not: a painter is self-contained by design, and binds whatever
+  ! it draws with itself.
+//]
+type Painter = Canvas => Unit receives
+    graphics,
+    Style.transform,
+    Style.clip,
+    Style.alpha
+
+//[ A laid-out node: an element, where it landed, and its laid-out children. //]
+class Laid(element: Element, bounds: Rect, baseline: Float, children: List[Laid])
+  //[ The absolute y of this node's text baseline. //]
+  def baselineY: Float = bounds.y + baseline
+
+  //[ The node's centre — the anchor a connector would attach to. //]
+  def centre: Point =
+    new Point(bounds.x + bounds.width / 2.0, bounds.y + bounds.height / 2.0)
+end
+
+//[ Something that can be measured, positioned, and painted. //]
+interface Element
+  //[ The size this element wants, given the room in `c`. The result must
+    ! satisfy `c`.
+  //]
+  def measure(c: Constraints): Measured receives graphics
+
+  //[ Resolve this element and its subtree into absolute positions.
+    !
+    ! `bounds` is the rect the parent decided on, and the element **occupies all
+    ! of it** — this is not a second chance to shrink. Ask `measure` for an
+    ! intrinsic size; `layout` only answers where things land. (Wrappers such as
+    ! `sized` and `align` may hand a child a smaller rect than they got, which is
+    ! exactly how you shrink-wrap something inside a larger frame.)
+  //]
+  def layout(bounds: Rect): Laid receives graphics
+
+  //[ Paint this element, and then its children, within its laid bounds. //]
+  def draw(cv: Canvas, node: Laid): Unit receives
+      graphics,
+      Style.alpha,
+      Style.transform,
+      Style.clip
+
+  //[ How elastic this element is along its container's main axis. Zero means
+    ! rigid, and every element but `flex` answers zero. Declaring it on the
+    ! interface is what lets `row` and `column` read elasticity off any element
+    ! without pattern-matching on its type — so a user-defined element can be
+    ! elastic too.
+  //]
+  def flexWeight: Float
+end
+
+section Element
+  //[ Paint every child in order. The default recursion, for containers with no
+    ! state of their own to establish.
+  //]
+  def paintChildren(cv: Canvas, node: Laid): Unit receives
+      graphics,
+      Style.alpha,
+      Style.transform,
+      Style.clip
+  =
+    for child in node.children do
+      child.element.draw(cv, child)
+
+  //[ Lay `root` out into `frame`, paint it onto `cv`, and return the positioned
+    ! tree — the whole engine, in one call.
+  //]
+  def render(cv: Canvas, root: Element, frame: Rect): Laid receives
+      graphics,
+      Style.alpha,
+      Style.transform,
+      Style.clip
+  =
+    val node = root.layout(frame)
+    root.draw(cv, node)
+    node
+
+  //[ Lay `root` out into `frame` without drawing anything — for inspection and
+    ! for tests that assert on geometry rather than pixels.
+  //]
+  def place(root: Element, frame: Rect): Laid receives graphics =
+    root.layout(frame)
+
+  // --- leaves ------------------------------------------------------------
+
+  //[ A wrapped paragraph in the ambient style. The style is captured now, so
+    ! build under `with Style.font = … in …` to style it.
+  //]
+  def text(content: String): Element receives
+      Style.font,
+      Style.textPaint,
+      Typesetting.align,
+      Typesetting.leading
+  =
+    new TextBox(content, Style.font, Style.textPaint,
+                Typesetting.align, Typesetting.leading)
+
+  //[ Arbitrary drawing of a fixed size, in local coordinates. //]
+  def graphic(w: Float, h: Float, paint: Painter): Element =
+    new Graphic(w, h, paint)
+
+  //[ A rigid blank box. //]
+  def space(w: Float, h: Float): Element = new Space(w, h)
+
+  //[ A rigid square gap — the usual spacer between stacked blocks. //]
+  def gap(size: Float): Element = new Space(size, size)
+
+  //[ A hairline that fills the width it is given. //]
+  def rule(thickness: Float, paint: Paint): Element = new Rule(thickness, paint)
+
+  // --- containers --------------------------------------------------------
+  //
+  // Children are varargs, so a tree is written as a colon block — one child per
+  // line, which is the shape the data already has:
+  //
+  //   Element.column:
+  //     heading
+  //     Element.gap(12.0)
+  //     swatch(magenta, "magenta")
+  //
+  // Computed children splice in with a prefix `..`, and mix freely with written
+  // ones — so a chart with a bar per data point needs no separate entry point:
+  //
+  //   Element.column:
+  //     heading
+  //     ..bars(data)
+  //     footer
+  //
+  // None of them takes a gap. Spacing is `Element.gap(n)` between children,
+  // which costs a line and buys uneven spacing for free. For a uniform gap, or
+  // any cross-axis alignment other than the default, use the class directly:
+  // `new Row(children, gap, Cross.finish)`.
+
+  //[ Children left to right, aligned on their shared baseline. //]
+  def row(children: ..Element): Element =
+    new Row(children, 0.0, Cross.baseline)
+
+  //[ Children top to bottom, each stretched to the full width. //]
+  def column(children: ..Element): Element =
+    new Column(children, 0.0, Cross.stretch)
+
+  //[ Children layered in z-order; later children paint over earlier ones. //]
+  def stack(children: ..Element): Element = new Stack(children)
+
+  // --- wrappers ----------------------------------------------------------
+
+  def pad(child: Element, insets: Insets): Element = new Pad(child, insets)
+
+  //[ `ax`/`ay` are fractions: 0 near edge, 0.5 centred, 1 far edge. //]
+  def align(child: Element, ax: Float, ay: Float): Element =
+    new Aligned(child, ax, ay)
+
+  def centred(child: Element): Element = new Aligned(child, 0.5, 0.5)
+
+  def sized(child: Element, w: Float, h: Float): Element = new Sized(child, w, h)
+
+  //[ Make a child elastic along its container's main axis. //]
+  def flex(weight: Float, child: Element): Element = new Flex(weight, child)
+
+  //[ A flexible blank — pushes its siblings apart. //]
+  def spring: Element = new Flex(1.0, new Space(0.0, 0.0))
+
+  def clip(child: Element, radius: Float): Element = new Clip(child, radius)
+
+  //[ A filled rounded rectangle behind a child. //]
+  def panel(child: Element, fill: Paint, radius: Float): Element =
+    new Panel(child, Some(fill), None, Stroke.of(1.0), radius)
+
+  //[ An outlined rounded rectangle around a child. //]
+  def framed(child: Element, border: Paint, stroke: Stroke, radius: Float): Element =
+    new Panel(child, None, Some(border), stroke, radius)
+end

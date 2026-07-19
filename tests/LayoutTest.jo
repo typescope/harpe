@@ -1,0 +1,247 @@
+//[ LayoutTest.jo
+  !
+  ! The layout engine, asserted on the positioned tree rather than on pixels.
+  !
+  ! This is the payoff of `layout` returning data instead of drawing: almost
+  ! every rule in the engine — flex distribution, baseline alignment, insets,
+  ! stretching — is checkable without rendering anything, so these run fast and
+  ! fail with a number rather than a diff image.
+  !
+  ! Only the last group renders, because clipping is the one rule whose effect
+  ! exists solely in pixels.
+//]
+
+namespace harpe.test.LayoutTest
+
+import jo.IO.stdout
+import harpe.caps.*
+import harpe.caps.drawing.*
+import harpe.caps.layout.*
+import harpe.media.*
+import harpe.ffi.tempfile
+
+private def pilImage: py.Dynamic = py.module("PIL.Image")
+
+private def check(label: String, cond: Bool): Unit receives stdout =
+  assert: cond, "\{label} failed"
+  println "  ok \{label}"
+
+private def near(a: Float, b: Float): Bool =
+  val d = a - b
+  (if d < 0.0 then 0.0 - d else d) < 0.01
+
+private def frame(w: Float, h: Float): Rect = new Rect(0.0, 0.0, w, h)
+
+def run(): Unit receives stdout =
+  val dir = tempfile.mkdtemp()
+
+  with graphics = new CairoGraphics(dir) in
+    columns()
+    rows()
+    flexing()
+    wrappers()
+    textFlow()
+    nestedClips(dir)
+
+// --- column ------------------------------------------------------------
+
+private def columns(): Unit receives stdout, graphics =
+  val a = Element.space(10.0, 20.0)
+  val b = Element.space(10.0, 30.0)
+  val laid = Element.place(new Column([a, b], 8.0, Cross.stretch), frame(200.0, 200.0))
+
+  val first = laid.children.get(0)
+  val second = laid.children.get(1)
+
+  check("column starts at the top", near(first.bounds.y, 0.0))
+  check("column gap separates children", near(second.bounds.y, 28.0))
+  check("column stretches children to full width",
+    near(first.bounds.width, 200.0) && near(second.bounds.width, 200.0))
+  check("column keeps each child's height",
+    near(first.bounds.height, 20.0) && near(second.bounds.height, 30.0))
+
+  // computed children splice in with a prefix `..`, and mix with written ones —
+  // this is what a chart with a bar per data point relies on
+  val bars = [Element.space(10.0, 10.0),
+              Element.space(10.0, 20.0),
+              Element.space(10.0, 30.0)]
+
+  val mixed = Element.place(
+    Element.column(Element.space(10.0, 5.0), ..bars, Element.space(10.0, 7.0)),
+    frame(100.0, 300.0))
+
+  check("a spliced list contributes every child", mixed.children.size == 5)
+  check("written children keep their place around a splice",
+    near(mixed.children.get(0).bounds.height, 5.0)
+      && near(mixed.children.get(4).bounds.height, 7.0))
+  check("spliced children stack in order",
+    near(mixed.children.get(1).bounds.height, 10.0)
+      && near(mixed.children.get(3).bounds.height, 30.0))
+
+// --- row and the baseline rule -----------------------------------------
+
+private def rows(): Unit receives stdout, graphics =
+  val small = with Style.font = Font.sans(10.0) in Element.text("x")
+  val big = with Style.font = Font.sans(30.0) in Element.text("X")
+  val laid = Element.place(new Row([small, big], 6.0, Cross.baseline), frame(400.0, 100.0))
+
+  val one = laid.children.get(0)
+  val two = laid.children.get(1)
+
+  // the whole point of carrying a baseline: mixed sizes sit on one line
+  check("row aligns mixed font sizes on one baseline",
+    near(one.baselineY, two.baselineY))
+  check("the taller child sets the row baseline",
+    near(laid.baseline, two.baseline))
+  check("the smaller child is pushed down", one.bounds.y > two.bounds.y)
+  check("row lays children left to right",
+    two.bounds.x > one.bounds.x)
+  check("row gap separates children",
+    near(two.bounds.x, one.bounds.x + one.bounds.width + 6.0))
+
+// --- flex --------------------------------------------------------------
+
+private def flexing(): Unit receives stdout, graphics =
+  val fixed = Element.space(100.0, 10.0)
+  val one = Element.flex(1.0, Element.space(0.0, 10.0))
+  val two = Element.flex(2.0, Element.space(0.0, 10.0))
+  val laid = Element.place(Element.row(fixed, one, two), frame(400.0, 50.0))
+
+  val kids = laid.children
+
+  check("a rigid child keeps its size", near(kids.get(0).bounds.width, 100.0))
+  check("flex splits the slack by weight (1 of 3 of 300)",
+    near(kids.get(1).bounds.width, 100.0))
+  check("flex splits the slack by weight (2 of 3 of 300)",
+    near(kids.get(2).bounds.width, 200.0))
+  check("flex children fill the row exactly",
+    near(kids.get(2).bounds.x + kids.get(2).bounds.width, 400.0))
+
+  // a spring is just a weightless flex: it pushes its siblings apart
+  val left = Element.space(20.0, 10.0)
+  val right = Element.space(20.0, 10.0)
+  val spread = Element.place(
+    Element.row(left, Element.spring, right), frame(300.0, 50.0))
+
+  check("a spring pushes the last child to the far edge",
+    near(spread.children.get(2).bounds.x, 280.0))
+
+  // gaps come out of the slack, not out of the flexed children
+  val gapped = Element.place(
+    new Row([Element.flex(1.0, Element.space(0.0, 10.0)),
+             Element.flex(1.0, Element.space(0.0, 10.0))], 20.0, Cross.baseline),
+    frame(220.0, 50.0))
+
+  check("gaps are taken out of the slack before flexing",
+    near(gapped.children.get(0).bounds.width, 100.0))
+
+// --- pad, align, sized, stack ------------------------------------------
+
+private def wrappers(): Unit receives stdout, graphics =
+  val padded = Element.place(
+    Element.pad(Element.space(10.0, 10.0), Insets.all(12.0)), frame(200.0, 200.0))
+  val inner = padded.children.get(0)
+
+  check("pad insets the child", near(inner.bounds.x, 12.0) && near(inner.bounds.y, 12.0))
+  check("pad shrinks the child's room",
+    near(inner.bounds.width, 176.0))
+
+  val centred = Element.place(
+    Element.centred(Element.space(40.0, 20.0)), frame(200.0, 100.0))
+  val mid = centred.children.get(0)
+
+  check("centred puts the child in the middle", near(mid.bounds.x, 80.0))
+  check("centred works vertically too", near(mid.bounds.y, 40.0))
+
+  val right = Element.place(
+    Element.align(Element.space(40.0, 20.0), 1.0, 0.0), frame(200.0, 100.0))
+
+  check("align 1.0 pins to the far edge",
+    near(right.children.get(0).bounds.x, 160.0))
+
+  val forced = Element.place(
+    Element.sized(Element.space(10.0, 10.0), 55.0, 33.0), frame(200.0, 200.0))
+
+  check("sized forces an exact size",
+    near(forced.bounds.width, 55.0) && near(forced.bounds.height, 33.0))
+
+  val layered = Element.place(
+    Element.stack(Element.space(10.0, 10.0), Element.space(20.0, 20.0)),
+    frame(120.0, 90.0))
+
+  check("stack gives every child the same bounds",
+    near(layered.children.get(0).bounds.width, layered.children.get(1).bounds.width))
+  check("stack fills its frame", near(layered.children.get(0).bounds.width, 120.0))
+
+// --- text --------------------------------------------------------------
+
+private def textFlow(): Unit receives stdout, graphics =
+  val words = "one two three four five six seven eight nine ten eleven twelve"
+
+  with Style.font = Font.sans(12.0) in
+    val block = Element.text(words)
+
+    // intrinsic size is what `measure` answers — `layout` fills what it is given
+    val wide = block.measure(Constraints.upTo(600.0, 400.0))
+    val narrow = block.measure(Constraints.upTo(90.0, 400.0))
+
+    check("a narrower column wraps to a taller block", narrow.height > wide.height)
+    check("text shrink-wraps below the room offered", wide.width < 600.0)
+    check("text reports a baseline", wide.baseline > 0.0)
+    check("the baseline is above the first line's bottom",
+      wide.baseline < wide.height)
+
+    // the one-entry wrap cache must not corrupt a re-measure at an old width
+    val again = block.measure(Constraints.upTo(600.0, 400.0))
+    check("re-measuring at a cached width agrees", near(again.height, wide.height))
+
+    // and in a real composition the column gives the block its measured height
+    val col = Element.place(Element.column(block), frame(90.0, 400.0))
+    check("a column gives a text child its measured height",
+      near(col.children.get(0).bounds.height, narrow.height))
+
+  // the contract: a root element fills the frame it is laid into
+  val leaf = Element.place(Element.space(10.0, 10.0), frame(120.0, 60.0))
+  check("layout fills the rect it is handed", near(leaf.bounds.width, 120.0))
+  check("Laid.centre is the middle of the bounds", near(leaf.centre.x, 60.0))
+
+// --- clipping, the one rule that only exists in pixels ------------------
+
+//[ Paint the whole local 200×200 box green. Lifted out of the `graphic` call
+  ! because Jo will not parse a multi-line lambda inside a call's parentheses.
+//]
+private def fillAll(canvas: Canvas): Unit receives
+    graphics,
+    Style.transform,
+    Style.clip,
+    Style.alpha
+=
+  with Style.fillPaint = Paint.of(Color.rgb255(20, 160, 90)) in
+    canvas.fill(Region.rect(0.0, 0.0, 200.0, 200.0))
+
+private def nestedClips(dir: String): Unit receives stdout, graphics =
+  val cv = graphics.create(200.0, 200.0, 1.0, Some(Color.white))
+
+  val paintAll = Element.graphic(200.0, 200.0, canvas => fillAll(canvas))
+
+  // inner clips to 200x100, outer to 100x200 — the visible area is 100x100
+  val innerClipped = Element.sized(Element.clip(paintAll, 0.0), 200.0, 100.0)
+  val outerClipped = Element.sized(Element.clip(innerClipped, 0.0), 100.0, 200.0)
+
+  val _ = Element.render(cv, outerClipped, frame(200.0, 200.0))
+  val _2 = cv.save(out("clips.png"))
+
+  val img = pilImage.open("\{dir}/clips.png").convert("RGB")
+
+  check("inside both clips is painted", green_at(img, 50, 50))
+  check("outside the outer clip is untouched", !green_at(img, 150, 50))
+  check("outside the inner clip is untouched — clips intersect, not replace",
+    !green_at(img, 50, 150))
+
+private def green_at(img: py.Dynamic, x: Int, y: Int): Bool =
+  val p = img.getpixel(py.tuple(x, y))
+  p[1].asInt > 120 && p[0].asInt < 120
+
+private def out(name: String): Path =
+  val root: Path = Path.root
+  root / name

@@ -1,17 +1,20 @@
 //[ Task.jo — draw a poster with the `graphics` capability.
   !
-  ! A portrait poster: a framed light study at the top, a display title, and a
-  ! caption block. It is meant to be edited — change the palette, the copy, or
-  ! the composition and re-run.
+  ! The whole sheet is one `Element` tree: nothing here computes a coordinate.
+  ! Rows, columns, springs and padding decide where things land, and
+  ! `Element.render` lays the tree into the page and paints it.
   !
-  ! Two things worth copying from it:
+  ! Three things worth copying:
   !
-  ! - **Geometry is in logical units, not pixels.** The surface is 600 × 820 at
+  ! - **Geometry is in logical units, not pixels.** The sheet is 600 × 820 at
   !   `scale = 3`, so the file is 1800 × 2460 without a single coordinate
   !   changing. Raise `scale` for print, lower it for a thumbnail.
-  ! - **Colour comes from one palette section**, so restyling the whole poster
-  !   is a handful of edits in one place rather than a hunt through the drawing
-  !   code.
+  ! - **A `spring` is how you push things apart.** It is a weightless flexible
+  !   blank: put one between two elements and it eats the slack, so the foot of
+  !   the sheet sits on the bottom margin no matter how tall the caption grows.
+  ! - **Drop to drawing with `Element.graphic`.** Its painter draws in local
+  !   coordinates — (0, 0) is the element's own corner — so artwork does not
+  !   care where layout puts it.
   !
   ! Run it: it writes `poster.png` into data/.
 //]
@@ -21,12 +24,14 @@ namespace UserTask
 import SandboxAPI.*
 import harpe.caps.*
 import harpe.caps.drawing.*
+import harpe.caps.layout.*
 
 // --- the sheet -----------------------------------------------------------
 
 private def sheetW: Float = 600.0
 private def sheetH: Float = 820.0
 private def margin: Float = 56.0
+private def contentW: Float = sheetW - 2.0 * margin
 
 // --- palette: every colour in the poster, in one place -------------------
 
@@ -44,152 +49,184 @@ def runTask(): Unit receives IO.stdout, fs, graphics =
   // 600 x 820 of geometry, rendered at 1800 x 2460 pixels
   val cv = graphics.create(sheetW, sheetH, 3.0, None)
 
-  background(cv)
-  lightStudy(cv)
-  masthead(cv)
-  title(cv)
-  caption(cv)
-  colophon(cv)
+  val page =
+    Element.stack:
+      Element.graphic: sheetW, sheetH, c => paintBackground(c)
+      Element.pad: sheet(), Insets.all(margin)
+
+  val _ = Element.render(cv, page, new Rect(0.0, 0.0, sheetW, sheetH))
 
   match cv.save(fs.root / "poster.png")
   case Ok(_)  => println "wrote poster.png"
   case Err(e) => println "save failed: \{e}"
 
-//[ A vertical ink gradient across the whole sheet. //]
-private def background(cv: Canvas): Unit =
-  with
-    Style.fillPaint =
-      Paint.linear(0.0, 0.0, 0.0, sheetH, inkTop, inkBottom)
-  in
-    cv.fill(Region.rect(0.0, 0.0, sheetW, sheetH))
-
-//[ The framed panel: a soft radial glow, then three discs screened over each
-  ! other so their overlaps brighten instead of muddying.
-  !
-  ! Each disc gets its own `group` with `Blend.screen`, because blending is a
-  ! property of how a group lands on what is already there. Inside one group
-  ! the discs would simply paint over each other.
+//[ The sheet's contents, top to bottom. The two springs are what hold the
+  ! colophon on the bottom margin.
 //]
-private def lightStudy(cv: Canvas): Unit =
-  val panel = Region.roundRect(margin, 104.0, sheetW - 2.0 * margin, 330.0, 18.0)
+private def sheet(): Element receives graphics =
+  Element.column:
+    masthead()
+    Element.rule: 1.0, Paint.of(hairline.fade(0.5))
+    Element.gap(18.0)
+    lightStudy()
+    Element.gap(30.0)
+    title()
+    Element.gap(22.0)
+    Element.rule: 1.0, Paint.of(hairline)
+    Element.gap(20.0)
+    caption()
+    Element.spring
+    Element.rule: 1.0, Paint.of(hairline.fade(0.5))
+    Element.gap(14.0)
+    colophon()
 
-  // everything in this block is confined to the panel
-  with Style.clip = Some(panel) in
-    with
-      Style.fillPaint =
-        Paint.radial(300.0, 250.0, 250.0, glow.fade(0.75), glow.fade(0.0))
-    in
-      cv.fill(Region.rect(margin, 104.0, sheetW - 2.0 * margin, 330.0))
-
-    disc(cv, 238.0, 232.0, 104.0, magenta)
-    disc(cv, 350.0, 244.0, 104.0, cyan)
-    disc(cv, 294.0, 330.0, 104.0, amber)
-
-  // a hairline frame on top of the artwork
-  with
-    Style.strokePaint = Paint.of(hairline.fade(0.55)),
-    Style.stroke = Stroke.of(1.0)
-  in
-    cv.stroke(panel)
-
-private def disc(cv: Canvas, cx: Float, cy: Float, r: Float, color: Color): Unit =
-  cv.group: 0.92, Blend.screen, () =>
-    with Style.fillPaint = Paint.of(color) in
-      cv.fill(Region.circle(cx, cy, r))
-
-//[ A small label and a rule across the head of the sheet. //]
-private def masthead(cv: Canvas): Unit receives graphics =
+//[ A label on the left, an index on the right, pushed apart by a spring. //]
+private def masthead(): Element receives graphics =
   with
     Style.font = Font.bold(12.0),
     Style.textPaint = Paint.of(muted)
   in
-    cv.textAt(margin, 74.0, "HARPE / CANVAS")
+    Element.pad:
+      Element.row:
+        Element.text("HARPE / CANVAS")
+        Element.spring
+        Element.text("NO. 01")
+      new Insets(0.0, 0.0, 12.0, 0.0)
 
-    val note = "NO. 01"
-    val w = graphics.stringWidth(note)
-    cv.textAt(sheetW - margin - w, 74.0, note)
-
-  rule(cv, 86.0, hairline.fade(0.5))
-
-//[ The display title. Lines are placed by hand rather than wrapped, because a
-  ! title's line breaks are a design decision, not a measurement.
+//[ The framed artwork: a soft glow with three discs screened over it, clipped
+  ! to a rounded panel and outlined.
 //]
-private def title(cv: Canvas): Unit receives graphics =
+private def lightStudy(): Element receives graphics =
+  Element.framed:
+    Element.clip:
+      Element.sized:
+        Element.graphic: contentW, 330.0, c => paintStudy(c)
+        contentW
+        330.0
+      18.0
+    Paint.of(hairline.fade(0.55))
+    Stroke.of(1.0)
+    18.0
+
+//[ Display type. Line breaks in a title are a design decision, so each line is
+  ! its own element rather than something the wrapper chose.
+//]
+private def title(): Element receives graphics =
   with
     Style.font = Font.bold(46.0),
-    Style.textPaint = Paint.of(paper)
+    Style.textPaint = Paint.of(paper),
+    Typesetting.leading = 1.08
   in
-    cv.textAt(margin, 512.0, "Shapes, paints,")
-    cv.textAt(margin, 562.0, "and light.")
+    Element.column:
+      Element.text("Shapes, paints,")
+      Element.text("and light.")
 
-//[ A caption block on the left, and a key to the three inks on the right, so
-  ! the foot of the sheet carries weight on both sides.
-//]
-private def caption(cv: Canvas): Unit receives graphics =
-  rule(cv, 596.0, hairline)
+//[ Body copy on the left, a key to the three inks on the right. //]
+private def caption(): Element receives graphics =
+  Element.row:
+    Element.flex: 1.0, body()
+    Element.space: 28.0, 0.0
+    Element.sized: inkKey(), 150.0, 108.0
 
+private def body(): Element receives graphics =
   with
     Style.font = Font.sans(13.0),
     Style.textPaint = Paint.of(muted),
     Typesetting.leading = 1.6
   in
-    val column = new Rect(margin, 618.0, 316.0, 130.0)
-    val _ = Text.paragraph(cv, body(), column)
+    Element.text(copy())
 
-  inkKey(cv)
-
-private def body(): String =
+private def copy(): String =
   """
   Every fill takes a paint, so a gradient costs no more than a flat colour.
   Every stroke carries its own geometry. Groups composite a whole subtree at
   once, which is what lets these three discs overlap without going muddy.
   """
 
-//[ A swatch and a label per ink, right of the caption. //]
-private def inkKey(cv: Canvas): Unit receives graphics =
-  val x = 412.0
+//[ A heading and three swatch rows. //]
+private def inkKey(): Element receives graphics =
+  val heading =
+    with
+      Style.font = Font.bold(9.5),
+      Style.textPaint = Paint.of(muted.fade(0.75))
+    in
+      Element.text("INKS / SCREEN")
 
-  with
-    Style.font = Font.bold(9.5),
-    Style.textPaint = Paint.of(muted.fade(0.75))
-  in
-    cv.textAt(x, 618.0, "INKS / SCREEN")
+  Element.column:
+    heading
+    Element.gap(12.0)
+    swatch: magenta, "magenta"
+    Element.gap(9.0)
+    swatch: cyan, "cyan"
+    Element.gap(9.0)
+    swatch: amber, "amber"
 
-  swatch(cv, x, 646.0, magenta, "magenta")
-  swatch(cv, x, 672.0, cyan, "cyan")
-  swatch(cv, x, 698.0, amber, "amber")
-
-private def swatch(cv: Canvas, x: Float, y: Float, color: Color, label: String): Unit =
-  with Style.fillPaint = Paint.of(color) in
-    cv.fill(Region.circle(x + 5.0, y - 4.0, 5.0))
-
-  with
-    Style.font = Font.sans(11.0),
-    Style.textPaint = Paint.of(muted)
-  in
-    cv.textAt(x + 18.0, y, label)
-
-//[ Three metadata columns along the foot: the outer two hold the margins, the
-  ! middle one is centred on the sheet.
+//[ A disc and a label, sharing one baseline — which is exactly what `row` does
+  ! for free once every element carries one.
 //]
-private def colophon(cv: Canvas): Unit receives graphics =
-  rule(cv, 762.0, hairline.fade(0.5))
+private def swatch(color: Color, label: String): Element receives graphics =
+  val dot = Element.graphic(10.0, 10.0, c => paintDot(c, color))
 
+  val text =
+    with
+      Style.font = Font.sans(11.0),
+      Style.textPaint = Paint.of(muted)
+    in
+      Element.text(label)
+
+  new Row([dot, text], 8.0, Cross.finish)
+
+//[ Three metadata columns along the foot, spread by springs. //]
+private def colophon(): Element receives graphics =
   with
     Style.font = Font.sans(10.5),
     Style.textPaint = Paint.of(muted.fade(0.85))
   in
-    val middle = "600 x 820 at 3x"
-    val right = "drawn in jo"
+    Element.row:
+      Element.text("cairo + harfbuzz")
+      Element.spring
+      Element.text("600 x 820 at 3x")
+      Element.spring
+      Element.text("drawn in jo")
 
-    cv.textAt(margin, 786.0, "cairo + harfbuzz")
-    cv.textAt((sheetW - graphics.stringWidth(middle)) / 2.0, 786.0, middle)
-    cv.textAt(sheetW - margin - graphics.stringWidth(right), 786.0, right)
+// --- painters ------------------------------------------------------------
+//
+// A `Painter` must declare what ambient state reaches it. Jo captures context
+// params lexically, so without the `receives` clause these would silently see
+// an identity transform and no clip, and would ignore the layout entirely.
 
-//[ A hairline across the text column, at baseline `y`. //]
-private def rule(cv: Canvas, y: Float, color: Color): Unit =
+private def paintBackground(cv: Canvas): Unit receives
+    graphics, Style.transform, Style.clip, Style.alpha
+=
+  with Style.fillPaint = Paint.linear(0.0, 0.0, 0.0, sheetH, inkTop, inkBottom) in
+    cv.fill(Region.rect(0.0, 0.0, sheetW, sheetH))
+
+private def paintStudy(cv: Canvas): Unit receives
+    graphics, Style.transform, Style.clip, Style.alpha
+=
   with
-    Style.strokePaint = Paint.of(color),
-    Style.stroke = Stroke.of(1.0)
+    Style.fillPaint =
+      Paint.radial(contentW / 2.0, 146.0, 250.0, glow.fade(0.75), glow.fade(0.0))
   in
-    cv.stroke(Trace.from(margin, y).lineTo(sheetW - margin, y))
+    cv.fill(Region.rect(0.0, 0.0, contentW, 330.0))
+
+  disc(cv, 182.0, 128.0, magenta)
+  disc(cv, 294.0, 140.0, cyan)
+  disc(cv, 238.0, 226.0, amber)
+
+//[ One disc, screened onto what is already there. Blending is a property of how
+  ! a group lands, so each disc needs its own group — inside a single group they
+  ! would just paint over each other.
+//]
+private def disc(cv: Canvas, cx: Float, cy: Float, color: Color): Unit receives
+    Style.transform, Style.clip, Style.alpha
+=
+  cv.group: 0.92, Blend.screen, () =>
+    with Style.fillPaint = Paint.of(color) in
+      cv.fill(Region.circle(cx, cy, 104.0))
+
+private def paintDot(cv: Canvas, color: Color): Unit receives
+    graphics, Style.transform, Style.clip, Style.alpha
+=
+  with Style.fillPaint = Paint.of(color) in
+    cv.fill(Region.circle(5.0, 5.0, 5.0))

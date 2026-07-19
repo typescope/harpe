@@ -355,12 +355,14 @@ class CairoCanvas(g: CairoGraphics, surface: py.Dynamic, cr: py.Dynamic,
   =
     val _ = cr.save()
 
-    match Style.clip
-    case Some(region) =>
-      emitPath(region.ops)
-      val _2 = cr.clip()
+    // successive clips intersect in cairo, which is exactly the nesting rule
+    val regions = Style.clip
+    var i = 0
 
-    case None => pass
+    while i < regions.size do
+      emitPath(regions.get(i).ops)
+      val _2 = cr.clip()
+      i = i + 1
 
     val m = Style.transform
     val _3 = cr.transform(cc.Matrix(m.a, m.b, m.c, m.d, m.e, m.f))

@@ -47,5 +47,10 @@ section Style
   param alpha: Float = 1.0
   param font: Font = new Font("sans", "", 16.0)
   param transform: Matrix = Matrix.identity
-  param clip: Option[Region] = None
+
+  //[ Clip regions, outermost first. The visible area is their **intersection**,
+    ! so nesting narrows rather than replaces — a clipped panel inside a clipped
+    ! card behaves the way it reads. Append to nest; `[]` clips nothing.
+  //]
+  param clip: List[Region] = []
 end
