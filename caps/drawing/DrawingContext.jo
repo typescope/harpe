@@ -5,20 +5,41 @@
   ! State is not set through methods — each field is a context parameter with a
   ! default, changed by rebinding over a block:
   !
-  !   with DrawingContext.fillColor = Color.white in canvas.fill(box)
+  !   with DrawingContext.fillPaint = Paint.of(Color.white) in
+  !     canvas.fill(box)
   !
   ! A surface method declares exactly which of these it consumes (via
   ! `receives`), so a signature says precisely what state an op depends on.
+  !
+  ! Two kinds of state, synced differently by the backend. Scalar state (paints,
+  ! stroke, alpha, font) is re-emitted per op by diffing against what was last
+  ! emitted. Accumulative state (`transform`, `clip`) composes and cannot be
+  ! un-set, so the backend brackets it with save/restore.
+  !
+  ! Group opacity is deliberately NOT here — see `Canvas.group`.
 //]
 
 namespace harpe.caps.drawing
 
+//[ Which points a path encloses when it self-intersects or has subpaths.
+  ! `nonZero` is the usual default; `evenOdd` is what punches a hole through an
+  ! inner subpath.
+//]
+type FillRule = FillRule.nonZero | FillRule.evenOdd
+
+section FillRule
+  object nonZero
+  object evenOdd
+end
+
 section DrawingContext
-  param fillColor: Color = Color.black
-  param strokeColor: Color = Color.black
-  param textColor: Color = Color.black
-  param lineWidth: Float = 1.0
+  param fillPaint: Paint = new Solid(Color.black)
+  param strokePaint: Paint = new Solid(Color.black)
+  param textPaint: Paint = new Solid(Color.black)
+  param stroke: Stroke = Stroke.of(1.0)
+  param fillRule: FillRule = FillRule.nonZero
   param alpha: Float = 1.0
   param font: Font = new Font("sans", "", 16.0)
   param transform: Matrix = Matrix.identity
+  param clip: Option[Region] = None
 end

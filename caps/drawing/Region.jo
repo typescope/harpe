@@ -17,18 +17,23 @@ section Region
   def rect(x: Float, y: Float, w: Float, h: Float): Region =
     Trace.from(x, y).lineTo(x + w, y).lineTo(x + w, y + h).lineTo(x, y + h).close()
 
-  //[ A rectangle with corner radius `r`. //]
+  //[ A rectangle with corner radius `r`, clamped to half the shorter side — an
+    ! over-large radius yields a stadium, never a self-intersecting tangle.
+  //]
   def roundRect(x: Float, y: Float, w: Float, h: Float, r: Float): Region =
-    val k = kappa * r
-    Trace.from(x + r, y)
-      .lineTo(x + w - r, y)
-      .curveTo(x + w - r + k, y, x + w, y + r - k, x + w, y + r)
-      .lineTo(x + w, y + h - r)
-      .curveTo(x + w, y + h - r + k, x + w - r + k, y + h, x + w - r, y + h)
-      .lineTo(x + r, y + h)
-      .curveTo(x + r - k, y + h, x, y + h - r + k, x, y + h - r)
-      .lineTo(x, y + r)
-      .curveTo(x, y + r - k, x + r - k, y, x + r, y)
+    val limit = (if w < h then w else h) / 2.0
+    val rr = if r < 0.0 then 0.0 else if r > limit then limit else r
+    val k = kappa * rr
+
+    Trace.from(x + rr, y)
+      .lineTo(x + w - rr, y)
+      .curveTo(x + w - rr + k, y, x + w, y + rr - k, x + w, y + rr)
+      .lineTo(x + w, y + h - rr)
+      .curveTo(x + w, y + h - rr + k, x + w - rr + k, y + h, x + w - rr, y + h)
+      .lineTo(x + rr, y + h)
+      .curveTo(x + rr - k, y + h, x, y + h - rr + k, x, y + h - rr)
+      .lineTo(x, y + rr)
+      .curveTo(x, y + rr - k, x + rr - k, y, x + rr, y)
       .close()
 
   //[ A circle of radius `r` centered at (`cx`, `cy`), as four Béziers. //]

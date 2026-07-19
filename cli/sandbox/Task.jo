@@ -1,11 +1,17 @@
-//[ drawing.jo — how to make a poster with the `graphics` capability.
+//[ Task.jo — draw a poster with the `graphics` capability.
   !
-  ! `graphics` mints a `Canvas` (a raster surface) and answers font/image facts.
-  ! You paint on the canvas with the imaging primitives — `fill`/`stroke` over
-  ! `Region`/`Trace` shapes, `textAt` for one line of text — and flow paragraphs
-  ! into rectangles with `Flow`. Drawing state (font, colors, line width, alpha,
-  ! transform) is the ambient `DrawingContext`, changed by rebinding with `with`.
-  ! Coordinates are pixels, top-left origin. Save with `canvas.save(path)`.
+  ! A portrait poster: a framed light study at the top, a display title, and a
+  ! caption block. It is meant to be edited — change the palette, the copy, or
+  ! the composition and re-run.
+  !
+  ! Two things worth copying from it:
+  !
+  ! - **Geometry is in logical units, not pixels.** The surface is 600 × 820 at
+  !   `scale = 3`, so the file is 1800 × 2460 without a single coordinate
+  !   changing. Raise `scale` for print, lower it for a thumbnail.
+  ! - **Colour comes from one palette section**, so restyling the whole poster
+  !   is a handful of edits in one place rather than a hunt through the drawing
+  !   code.
   !
   ! Run it: it writes `poster.png` into data/.
 //]
@@ -16,92 +22,174 @@ import SandboxAPI.*
 import harpe.caps.*
 import harpe.caps.drawing.*
 
+// --- the sheet -----------------------------------------------------------
+
+private def sheetW: Float = 600.0
+private def sheetH: Float = 820.0
+private def margin: Float = 56.0
+
+// --- palette: every colour in the poster, in one place -------------------
+
+private def inkTop: Color = Color.rgb255(8, 10, 30)
+private def inkBottom: Color = Color.rgb255(30, 27, 78)
+private def glow: Color = Color.rgb255(96, 76, 210)
+private def magenta: Color = Color.rgb255(240, 60, 130)
+private def cyan: Color = Color.rgb255(40, 215, 215)
+private def amber: Color = Color.rgb255(250, 185, 70)
+private def paper: Color = Color.rgb255(245, 246, 255)
+private def muted: Color = Color.rgb255(150, 158, 205)
+private def hairline: Color = Color.rgb255(86, 94, 150)
+
 def runTask(): Unit receives IO.stdout, fs, graphics =
-  val width = 600
-  val height = 520
-  val w = width.toFloat
-  val h = height.toFloat
+  // 600 x 820 of geometry, rendered at 1800 x 2460 pixels
+  val cv = graphics.create(sheetW, sheetH, 3.0, None)
 
-  // A new surface, opaque light-gray. Pass `None` instead of `Some(color)` for
-  // a transparent background.
-  val cv = graphics.create(width, height, Some(new Color(245, 247, 251)))
+  background(cv)
+  lightStudy(cv)
+  masthead(cv)
+  title(cv)
+  caption(cv)
+  colophon(cv)
 
-  // --- a solid title band across the top: fill a rectangular Region ---
-  with DrawingContext.fillColor = new Color(25, 35, 80) in
-    cv.fill(Region.rect(0.0, 0.0, w, 120.0))
-
-  // --- title, centered in the band via a one-rect flow ---
-  val band = new Rect(40.0, 34.0, w - 80.0, 60.0)
-  with
-    DrawingContext.font = Font.bold(34.0),
-    DrawingContext.textColor = Color.white,
-    Typesetting.align = Align.center
-  in
-    with flow = Flow(cv, [band]) in
-      flow.paragraph("The Box Calculus")
-
-  // --- a subtitle, placed directly with textAt (centered using stringWidth) ---
-  with
-    DrawingContext.font = Font.sans(14.0),
-    DrawingContext.textColor = new Color(200, 210, 235)
-  in
-    val subtitle = "an imaging + layout capability"
-    val subW = graphics.stringWidth(subtitle)
-    cv.textAt((w - subW) / 2.0, 104.0, subtitle)
-
-  // --- an accent: a stroked circle (open outlines can be stroked, not filled) ---
-  with
-    DrawingContext.strokeColor = new Color(120, 150, 230),
-    DrawingContext.lineWidth = 3.0
-  in
-    cv.stroke(Region.circle(w / 2.0, 165.0, 20.0))
-
-  // --- two columns of justified body text ---
-  val margin = 44.0
-  val gutter = 24.0
-  val colW = (w - 2.0 * margin - gutter) / 2.0
-  val top = 195.0
-  val colH = h - top - margin
-  val left = new Rect(margin, top, colW, colH)
-  val right = new Rect(margin + colW + gutter, top, colW, colH)
-
-  with
-    DrawingContext.font = Font.sans(12.0),
-    DrawingContext.textColor = new Color(40, 45, 55),
-    Typesetting.align = Align.justify,
-    Typesetting.leading = 1.45
-  in
-    // Both columns are one flow: a paragraph wraps in the left column and
-    // continues into the right when the left is full.
-    with flow = Flow(cv, [left, right]) in
-      flow.paragraph(intro())
-      flow.space(8.0)
-      flow.paragraph(detail())
-      flow.space(8.0)
-      flow.paragraph(more())
-
-      if flow.overflowed then
-        println "note: some body text did not fit the columns"
-
-  // --- save into data/; the target is a Path from the root ---
   match cv.save(fs.root / "poster.png")
   case Ok(_)  => println "wrote poster.png"
   case Err(e) => println "save failed: \{e}"
 
-private def intro(): String =
-  "Everything already laid out is a box: rigid, measured, and drawable "
-    + "anywhere. A line is a row of boxes; a paragraph is a stack of lines; a "
-    + "page is a stack of paragraphs."
+//[ A vertical ink gradient across the whole sheet. //]
+private def background(cv: Canvas): Unit =
+  with
+    DrawingContext.fillPaint =
+      Paint.linear(0.0, 0.0, 0.0, sheetH, inkTop, inkBottom)
+  in
+    cv.fill(Region.rect(0.0, 0.0, sheetW, sheetH))
 
-private def detail(): String =
-  "Layout is box algebra, and flexibility is quarantined in the functions that "
-    + "turn flexible material into boxes — line breaking and page breaking. "
-    + "Everything else is composition, which is why the calculus stays small."
+//[ The framed panel: a soft radial glow, then three discs screened over each
+  ! other so their overlaps brighten instead of muddying.
+  !
+  ! Each disc gets its own `group` with `Blend.screen`, because blending is a
+  ! property of how a group lands on what is already there. Inside one group
+  ! the discs would simply paint over each other.
+//]
+private def lightStudy(cv: Canvas): Unit =
+  val panel = Region.roundRect(margin, 104.0, sheetW - 2.0 * margin, 330.0, 18.0)
 
-private def more(): String =
-  "This paragraph is long enough that it fills the left column and continues "
-    + "into the right one: a single flow pours through its boxes in order, and a "
-    + "paragraph splits across them wherever it runs out of room. Two columns "
-    + "are simply two rectangles. Alignment, font, and color come from the "
-    + "ambient DrawingContext and Typesetting parameters, so the same paragraph "
-    + "call renders left, right, centered, or justified depending on the binding."
+  // everything in this block is confined to the panel
+  with DrawingContext.clip = Some(panel) in
+    with
+      DrawingContext.fillPaint =
+        Paint.radial(300.0, 250.0, 250.0, glow.fade(0.75), glow.fade(0.0))
+    in
+      cv.fill(Region.rect(margin, 104.0, sheetW - 2.0 * margin, 330.0))
+
+    disc(cv, 238.0, 232.0, 104.0, magenta)
+    disc(cv, 350.0, 244.0, 104.0, cyan)
+    disc(cv, 294.0, 330.0, 104.0, amber)
+
+  // a hairline frame on top of the artwork
+  with
+    DrawingContext.strokePaint = Paint.of(hairline.fade(0.55)),
+    DrawingContext.stroke = Stroke.of(1.0)
+  in
+    cv.stroke(panel)
+
+private def disc(cv: Canvas, cx: Float, cy: Float, r: Float, color: Color): Unit =
+  cv.group: 0.92, Blend.screen, () =>
+    with DrawingContext.fillPaint = Paint.of(color) in
+      cv.fill(Region.circle(cx, cy, r))
+
+//[ A small label and a rule across the head of the sheet. //]
+private def masthead(cv: Canvas): Unit receives graphics =
+  with
+    DrawingContext.font = Font.bold(12.0),
+    DrawingContext.textPaint = Paint.of(muted)
+  in
+    cv.textAt(margin, 74.0, "HARPE / CANVAS")
+
+    val note = "NO. 01"
+    val w = graphics.stringWidth(note)
+    cv.textAt(sheetW - margin - w, 74.0, note)
+
+  rule(cv, 86.0, hairline.fade(0.5))
+
+//[ The display title. Lines are placed by hand rather than wrapped, because a
+  ! title's line breaks are a design decision, not a measurement.
+//]
+private def title(cv: Canvas): Unit receives graphics =
+  with
+    DrawingContext.font = Font.bold(46.0),
+    DrawingContext.textPaint = Paint.of(paper)
+  in
+    cv.textAt(margin, 512.0, "Shapes, paints,")
+    cv.textAt(margin, 562.0, "and light.")
+
+//[ A caption block on the left, and a key to the three inks on the right, so
+  ! the foot of the sheet carries weight on both sides.
+//]
+private def caption(cv: Canvas): Unit receives graphics =
+  rule(cv, 596.0, hairline)
+
+  with
+    DrawingContext.font = Font.sans(13.0),
+    DrawingContext.textPaint = Paint.of(muted),
+    Typesetting.leading = 1.6
+  in
+    val column = new Rect(margin, 618.0, 316.0, 130.0)
+    val _ = Text.paragraph(cv, body(), column)
+
+  inkKey(cv)
+
+private def body(): String =
+  """
+  Every fill takes a paint, so a gradient costs no more than a flat colour.
+  Every stroke carries its own geometry. Groups composite a whole subtree at
+  once, which is what lets these three discs overlap without going muddy.
+  """
+
+//[ A swatch and a label per ink, right of the caption. //]
+private def inkKey(cv: Canvas): Unit receives graphics =
+  val x = 412.0
+
+  with
+    DrawingContext.font = Font.bold(9.5),
+    DrawingContext.textPaint = Paint.of(muted.fade(0.75))
+  in
+    cv.textAt(x, 618.0, "INKS / SCREEN")
+
+  swatch(cv, x, 646.0, magenta, "magenta")
+  swatch(cv, x, 672.0, cyan, "cyan")
+  swatch(cv, x, 698.0, amber, "amber")
+
+private def swatch(cv: Canvas, x: Float, y: Float, color: Color, label: String): Unit =
+  with DrawingContext.fillPaint = Paint.of(color) in
+    cv.fill(Region.circle(x + 5.0, y - 4.0, 5.0))
+
+  with
+    DrawingContext.font = Font.sans(11.0),
+    DrawingContext.textPaint = Paint.of(muted)
+  in
+    cv.textAt(x + 18.0, y, label)
+
+//[ Three metadata columns along the foot: the outer two hold the margins, the
+  ! middle one is centred on the sheet.
+//]
+private def colophon(cv: Canvas): Unit receives graphics =
+  rule(cv, 762.0, hairline.fade(0.5))
+
+  with
+    DrawingContext.font = Font.sans(10.5),
+    DrawingContext.textPaint = Paint.of(muted.fade(0.85))
+  in
+    val middle = "600 x 820 at 3x"
+    val right = "drawn in jo"
+
+    cv.textAt(margin, 786.0, "cairo + harfbuzz")
+    cv.textAt((sheetW - graphics.stringWidth(middle)) / 2.0, 786.0, middle)
+    cv.textAt(sheetW - margin - graphics.stringWidth(right), 786.0, right)
+
+//[ A hairline across the text column, at baseline `y`. //]
+private def rule(cv: Canvas, y: Float, color: Color): Unit =
+  with
+    DrawingContext.strokePaint = Paint.of(color),
+    DrawingContext.stroke = Stroke.of(1.0)
+  in
+    cv.stroke(Trace.from(margin, y).lineTo(sheetW - margin, y))

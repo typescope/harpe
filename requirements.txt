@@ -9,3 +9,12 @@ openpyxl>=3.1,<4              # spreadsheet reader (read-only streaming mode)
 pytesseract>=0.3,<1           # OCR: Tesseract backend (system binary optional; degrades to a message)
 rapidocr-onnxruntime>=1.3,<2  # OCR: RapidOCR backend (pure pip) — tests read real text through it
 fpdf2>=2.7,<3                 # PDF writing (PdfWriter)
+
+# Drawing capability (harpe.media CairoCanvas). cairocffi rather than pycairo:
+# building a cairo font face from a font file needs a cairo entry point neither
+# binding exposes, and cairocffi is pure CFFI so it can simply be declared —
+# pycairo's C API is a PyCapsule with no exported symbols.
+# Needs the system libraries libcairo and libfreetype.
+cairocffi>=1.7,<2             # cairo bindings: anti-aliasing, joins, clip, gradients, groups
+uharfbuzz>=0.39,<1            # text shaping: kerning, ligatures, positioned glyph ids
+cffi>=1.16,<2                 # declares the cairo/FreeType entry points cairocffi omits

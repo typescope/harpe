@@ -1,12 +1,15 @@
 //[ CanvasTest.jo
   !
-  ! Drives the `Canvas` capability end to end through the `PillowCanvas`
-  ! backend: panel, title text, a stroked circle, the transform probe (one
-  ! unit rect scaled into a bar), and three alpha-blended disks. Writes a PNG
-  ! to a temp dir and checks it exists and is non-empty.
+  ! Drives the `Canvas` capability end to end through the cairo backend, and
+  ! asserts things that can actually regress.
+  !
+  ! The old version of this suite checked that the output file was non-empty,
+  ! which no rendering bug can fail. These probe the pixels instead: that edges
+  ! are anti-aliased, that `group` composites differently from per-op `alpha`,
+  ! that `clip` and `scale` do what they say, and that shaping really runs.
 //]
 
-namespace harpe.test
+namespace harpe.test.CanvasTest
 
 import jo.IO.stdout
 import harpe.caps.*
@@ -15,101 +18,234 @@ import harpe.media.*
 import harpe.ffi.os
 import harpe.ffi.tempfile
 
-section CanvasTest
-  def run(): Unit receives stdout =
-    val dir = tempfile.mkdtemp()
+private def pilImage: py.Dynamic = py.module("PIL.Image")
 
-    with graphics = new PillowGraphics(dir) in
-      draw()
-      poster()
+private def check(label: String, cond: Bool): Unit receives stdout =
+  assert: cond, "\{label} failed"
+  println "  ok \{label}"
 
-    wrote("\{dir}/canvas.png")
-    wrote("\{dir}/poster.png")
+//[ A saved PNG, opened for pixel probing. //]
+private class Probe(img: py.Dynamic)
+  //[ The (r, g, b) of the pixel at (`x`, `y`). //]
+  def at(x: Int, y: Int): List[Int] =
+    val p = img.getpixel(py.tuple(x, y))
+    [p[0].asInt, p[1].asInt, p[2].asInt]
 
-  private def wrote(path: String): Unit receives stdout =
-    if os.path.exists(path) && os.path.getsize(path) > 0 then
-      println "  canvas: wrote a \{os.path.getsize(path)}-byte PNG"
-    else
-      abort "canvas: no output at \{path}"
+  def pxWidth: Int = img.width.asInt
 
-  private def draw(): Unit receives graphics =
-    val cv = graphics.create(460, 260, Some(Color.white))
+  def pxHeight: Int = img.height.asInt
 
-    with DrawingContext.fillColor = new Color(233, 238, 250) in
-      cv.fill(Region.roundRect(20.0, 20.0, 420.0, 220.0, 14.0))
+  //[ How many distinct red-channel values appear in the box. Two means hard,
+    ! stair-stepped edges; many means anti-aliasing.
+    !
+    ! This samples an area rather than a scanline on purpose. A straight scan
+    ! across a curve's widest point crosses the boundary perpendicular, where
+    ! only one or two pixels get partial coverage — an anti-aliased edge would
+    ! score barely higher than an aliased one. Sampling a region catches the
+    ! shallow parts of the arc, where coverage actually varies.
+  //]
+  def shadesIn(x0: Int, y0: Int, x1: Int, y1: Int): Int =
+    var seen = List.empty[Int]
+    var y = y0
 
-    with
-      DrawingContext.font = Font.bold(26.0),
-      DrawingContext.textColor = new Color(25, 35, 80)
-    in
-      cv.textAt(38.0, 62.0, "Canvas capability ✓")
+    while y < y1 do
+      var x = x0
 
-    // an open Trace, stroked (no close)
-    with
-      DrawingContext.strokeColor = new Color(150, 160, 190),
-      DrawingContext.lineWidth = 1.5
-    in
-      cv.stroke(Trace.from(38.0, 74.0).lineTo(300.0, 74.0))
+      while x < x1 do
+        val v = at(x, y).get(0)
 
-    with
-      DrawingContext.strokeColor = new Color(70, 90, 180),
-      DrawingContext.lineWidth = 3.0
-    in
-      cv.stroke(Region.circle(92.0, 168.0, 46.0))
+        if !seen.contains(v) then
+          seen = seen ++ [v]
 
-    // transform probe: a 1×1 unit rect scaled into a bar, then translated
-    with
-      DrawingContext.fillColor = new Color(70, 90, 180),
-      DrawingContext.transform =
-        Matrix.scale(230.0, 12.0).andThen(Matrix.translate(180.0, 108.0))
-    in
-      cv.fill(Region.rect(0.0, 0.0, 1.0, 1.0))
+        x = x + 1
 
-    disk(cv, 210.0, new Color(220, 60, 60))
-    disk(cv, 250.0, new Color(60, 180, 90))
-    disk(cv, 290.0, new Color(60, 90, 220))
+      y = y + 1
 
-    val root: Path = Path.root
-    val _ = cv.save(root / "canvas.png")
-
-  private def disk(cv: Canvas, cx: Float, color: Color): Unit =
-    with
-      DrawingContext.fillColor = color,
-      DrawingContext.alpha = 0.45
-    in
-      cv.fill(Region.circle(cx, 196.0, 34.0))
-
-  // --- flow: a centered title over two justified columns ---
-  private def poster(): Unit receives graphics =
-    val cv = graphics.create(520, 340, Some(Color.white))
-    val title = new Rect(30.0, 24.0, 460.0, 44.0)
-    val colL = new Rect(30.0, 92.0, 220.0, 228.0)
-    val colR = new Rect(270.0, 92.0, 220.0, 228.0)
-
-    // the title band is its own flow; the two columns are another
-    with
-      DrawingContext.font = Font.bold(26.0),
-      DrawingContext.textColor = new Color(25, 35, 80),
-      Typesetting.align = Align.center
-    in
-      with flow = Flow(cv, [title]) in flow.paragraph("The Box Calculus")
-
-    with
-      DrawingContext.font = Font.sans(11.0),
-      DrawingContext.textColor = new Color(45, 45, 55),
-      Typesetting.align = Align.justify
-    in
-      with flow = Flow(cv, [colL, colR]) in
-        flow.paragraph(body())
-        flow.space(6.0)
-        flow.paragraph(body())
-
-    val root: Path = Path.root
-    val _ = cv.save(root / "poster.png")
-
-  private def body(): String =
-    "Everything already laid out is a box, rigid and measured, drawable "
-      + "anywhere. A line is a row of boxes; a paragraph a stack of lines; a "
-      + "page a stack of paragraphs. Layout is box algebra, and flexibility is "
-      + "quarantined in the functions that turn flexible material into boxes."
+    seen.size
 end
+
+private def probeOf(dir: String, name: String): Probe =
+  new Probe(pilImage.open("\{dir}/\{name}").convert("RGB"))
+
+//[ A target under the canvas root. The binding is typed because a bare
+  ! `Path.root / name` resolves `/` as integer division.
+//]
+private def out(name: String): Path =
+  val root: Path = Path.root
+  root / name
+
+def run(): Unit receives stdout =
+  val dir = tempfile.mkdtemp()
+
+  matrixMath()
+
+  with graphics = new CairoGraphics(dir) in
+    antialiasing(dir)
+    groupVersusAlpha(dir)
+    clipAndScale(dir)
+    shapedText(dir)
+
+// --- pure geometry, no rendering ---------------------------------------
+
+private def near(a: Float, b: Float): Bool =
+  val d = a - b
+  (if d < 0.0 then 0.0 - d else d) < 0.0001
+
+private def matrixMath(): Unit receives stdout =
+  val q = Matrix.rotate(Matrix.pi / 2.0)
+  val p = q.apply(new Point(1.0, 0.0))
+  check("rotate 90 maps (1,0) to (0,1)", near(p.x, 0.0) && near(p.y, 1.0))
+
+  check("sin 0", near(Matrix.sin(0.0), 0.0))
+  check("sin pi/6 is 0.5", near(Matrix.sin(Matrix.pi / 6.0), 0.5))
+  check("cos pi is -1", near(Matrix.cos(Matrix.pi), 0.0 - 1.0))
+  check("sin reduces past 2pi",
+    near(Matrix.sin(7.0), Matrix.sin(7.0 - 6.283185307179586)))
+
+  val m = Matrix.translate(30.0, 10.0).andThen(Matrix.scale(2.0, 3.0))
+
+  match m.invert
+  case None => check("invertible matrix inverts", false)
+  case Some(inv) =>
+    val back = inv.apply(m.apply(new Point(7.0, 5.0)))
+    check("invert round-trips a point", near(back.x, 7.0) && near(back.y, 5.0))
+
+  check("singular matrix has no inverse", Matrix.scale(0.0, 0.0).invert.isEmpty)
+
+// --- the headline: cairo anti-aliases, Pillow did not ------------------
+
+private def antialiasing(dir: String): Unit receives stdout, graphics =
+  val cv = graphics.create(120.0, 120.0, 1.0, Some(Color.white))
+
+  with DrawingContext.fillPaint = Paint.of(Color.rgb255(40, 60, 160)) in
+    cv.fill(Region.circle(60.0, 60.0, 45.0))
+
+  val _ = cv.save(out("aa.png"))
+  val p = probeOf(dir, "aa.png")
+
+  // the upper-right quadrant of the arc, where coverage varies most
+  check("circle edge is anti-aliased (Pillow gave 2 shades)",
+    p.shadesIn(58, 10, 112, 62) > 20)
+  check("circle interior is the fill color", p.at(60, 60).get(2) > 130)
+  check("outside the circle is background", p.at(3, 60).get(0) > 240)
+
+// --- group composites the subtree; alpha composites each op ------------
+
+private def groupVersusAlpha(dir: String): Unit receives stdout, graphics =
+  val red = Paint.of(Color.rgb255(220, 60, 50))
+  val blue = Paint.of(Color.rgb255(50, 90, 210))
+
+  // per-op alpha: the discs blend against each other, so the overlap differs
+  val a = graphics.create(200.0, 100.0, 1.0, Some(Color.white))
+
+  with DrawingContext.alpha = 0.5 in
+    with DrawingContext.fillPaint = red in
+      a.fill(Region.circle(70.0, 50.0, 40.0))
+
+    with DrawingContext.fillPaint = blue in
+      a.fill(Region.circle(110.0, 50.0, 40.0))
+
+  val _ = a.save(out("alpha.png"))
+
+  // group: the pair is drawn opaque offscreen, then composited once
+  val g = graphics.create(200.0, 100.0, 1.0, Some(Color.white))
+
+  g.group: 0.5, Blend.normal, () =>
+    with DrawingContext.fillPaint = red in
+      g.fill(Region.circle(70.0, 50.0, 40.0))
+
+    with DrawingContext.fillPaint = blue in
+      g.fill(Region.circle(110.0, 50.0, 40.0))
+
+  val _2 = g.save(out("group.png"))
+
+  val pa = probeOf(dir, "alpha.png")
+  val pg = probeOf(dir, "group.png")
+
+  // (95, 50) is inside both discs; (125, 50) is inside the blue one only
+  val alphaOverlap = pa.at(95, 50)
+  val alphaBlue = pa.at(125, 50)
+  val groupOverlap = pg.at(95, 50)
+  val groupBlue = pg.at(125, 50)
+
+  check("per-op alpha shows a seam where the discs overlap",
+    alphaOverlap.get(0) != alphaBlue.get(0) || alphaOverlap.get(2) != alphaBlue.get(2))
+
+  check("group has no seam: overlap equals the top disc",
+    groupOverlap.get(0) == groupBlue.get(0) && groupOverlap.get(2) == groupBlue.get(2))
+
+  check("group and per-op alpha genuinely differ",
+    groupOverlap.get(0) != alphaOverlap.get(0))
+
+// --- clip bounds drawing; scale changes pixels, not geometry -----------
+
+private def clipAndScale(dir: String): Unit receives stdout, graphics =
+  val cv = graphics.create(100.0, 100.0, 2.0, Some(Color.white))
+
+  with
+    DrawingContext.clip = Some(Region.rect(0.0, 0.0, 50.0, 100.0)),
+    DrawingContext.fillPaint = Paint.of(Color.rgb255(20, 140, 90))
+  in
+    cv.fill(Region.rect(0.0, 0.0, 100.0, 100.0))
+
+  val _ = cv.save(out("clip.png"))
+  val p = probeOf(dir, "clip.png")
+
+  check("scale 2 doubles the pixel width", p.pxWidth == 200)
+  check("scale 2 doubles the pixel height", p.pxHeight == 200)
+  check("inside the clip is painted", p.at(40, 100).get(1) > 100)
+  check("outside the clip is untouched", p.at(160, 100).get(0) > 240)
+
+// --- shaped text -------------------------------------------------------
+
+private def shapedText(dir: String): Unit receives stdout, graphics =
+  with DrawingContext.font = Font.sans(20.0) in
+    val wide = graphics.stringWidth("AV Wave fi")
+    val narrow = graphics.stringWidth("AV")
+    check("stringWidth grows with the string", wide > narrow)
+    check("stringWidth is positive", narrow > 0.0)
+
+    val run = graphics.shape("AV Wave fi")
+    check("shaping produces glyphs", run.glyphs.size > 0)
+    check("shaping applies the fi ligature (10 chars, 9 glyphs)",
+      run.glyphs.size == 9)
+    check("run width matches stringWidth", near(run.width, wide))
+    check("empty string shapes to no glyphs", graphics.shape("").glyphs.isEmpty)
+    check("ascent is positive", graphics.fontAscent > 0.0)
+    check("descent is positive", graphics.fontDescent > 0.0)
+
+  val cv = graphics.create(300.0, 120.0, 1.0, Some(Color.white))
+
+  with
+    DrawingContext.font = Font.sans(20.0),
+    DrawingContext.textPaint = Paint.of(Color.rgb255(20, 20, 40))
+  in
+    val box = new Rect(10.0, 10.0, 280.0, 100.0)
+    val used = Text.paragraph(cv, body(), box)
+    check("paragraph advanced past a single line", used > 30.0)
+
+  val _ = cv.save(out("text.png"))
+  val p = probeOf(dir, "text.png")
+  check("text drew dark pixels", darkCount(p, 10, 10, 290, 110) > 200)
+
+private def body(): String =
+  "Shaped text wraps greedily across the box, one line at a time, and every "
+    + "line is measured by the shaper rather than guessed."
+
+//[ How many pixels in the box are appreciably darker than the background. //]
+private def darkCount(p: Probe, x0: Int, y0: Int, x1: Int, y1: Int): Int =
+  var n = 0
+  var y = y0
+
+  while y < y1 do
+    var x = x0
+
+    while x < x1 do
+      if p.at(x, y).get(0) < 128 then
+        n = n + 1
+
+      x = x + 1
+
+    y = y + 1
+
+  n

@@ -44,3 +44,8 @@ def newType(name: String, bases: Any, attrs: Any): py.Dynamic =
 
 //[ Round `x` to `ndigits` decimal places (Python `round`). //]
 def round(x: Float, ndigits: Int): Float = module.round(x, ndigits).asFloat
+
+//[ Python's `int(x)` — used to read an integer out of a foreign value such as
+  ! a cffi pointer cast to `intptr_t`.
+//]
+def int(x: Any): Int = module.callDynamic("int", x).asInt

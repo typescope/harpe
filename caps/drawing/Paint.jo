@@ -1,0 +1,40 @@
+//[ Paint.jo
+  !
+  ! What a fill or a stroke is painted with: a flat color or a gradient.
+  !
+  ! Paint is a value, like the shapes it fills. Flat fills everywhere are the
+  ! clearest tell of a generated image, so gradients are core vocabulary rather
+  ! than an extra.
+//]
+
+namespace harpe.caps.drawing
+
+//[ One gradient stop: a color at `offset` along the gradient, `offset` in
+  ! [0, 1].
+//]
+class Stop(offset: Float, color: Color)
+
+//[ A flat color. //]
+class Solid(color: Color)
+
+//[ A gradient along the line from (`x0`, `y0`) to (`x1`, `y1`). //]
+class LinearGradient(x0: Float, y0: Float, x1: Float, y1: Float, stops: List[Stop])
+
+//[ A gradient radiating from (`cx`, `cy`) out to radius `r`. //]
+class RadialGradient(cx: Float, cy: Float, r: Float, stops: List[Stop])
+
+//[ What a fill or stroke is painted with. //]
+type Paint = Solid | LinearGradient | RadialGradient
+
+section Paint
+  //[ A flat paint of `color`. //]
+  def of(color: Color): Paint = new Solid(color)
+
+  //[ A two-stop linear gradient — the common case. //]
+  def linear(x0: Float, y0: Float, x1: Float, y1: Float, from: Color, to: Color): Paint =
+    new LinearGradient(x0, y0, x1, y1, [new Stop(0.0, from), new Stop(1.0, to)])
+
+  //[ A two-stop radial gradient, `from` at the centre. //]
+  def radial(cx: Float, cy: Float, r: Float, from: Color, to: Color): Paint =
+    new RadialGradient(cx, cy, r, [new Stop(0.0, from), new Stop(1.0, to)])
+end

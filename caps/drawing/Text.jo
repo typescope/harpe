@@ -1,0 +1,141 @@
+//[ Text.jo
+  !
+  ! Shaped text: the glyph vocabulary, plus a deliberately thin wrapping layer.
+  !
+  ! A `GlyphRun` is the output of shaping — positioned glyph ids, not characters.
+  ! Everything below the shaper works in glyphs, which is what makes kerning and
+  ! ligatures come out right: `graphics.shape` runs the text through HarfBuzz,
+  ! and `canvas.glyphs` draws exactly what it produced.
+  !
+  ! `wrap` is the thin layer, and its limits are deliberate — it is here to make
+  ! the imaging model usable, not to be the text engine:
+  !
+  ! - one script per string, no itemization and no font fallback, so a code
+  !   point the ambient font lacks renders as a missing-glyph box
+  ! - greedy breaking at whitespace only — no UAX #14, no kinsoku, and a word
+  !   wider than the box overruns it rather than breaking
+  ! - `Align.justify` renders as `Align.left`
+  !
+  ! The real engine (itemize → shape → break → justify, over vendored UCD
+  ! tables) replaces this layer wholesale. See `drawing-engine.md`.
+//]
+
+namespace harpe.caps.drawing
+
+//[ One positioned glyph. `id` is an index into the font, not a code point;
+  ! `cluster` is the offset in the source text it came from.
+//]
+class Glyph(id: Int, xAdvance: Float, xOffset: Float, yOffset: Float, cluster: Int)
+
+//[ A run of shaped glyphs in one font. //]
+class GlyphRun(font: Font, glyphs: List[Glyph])
+  //[ The run's total advance width. //]
+  def width: Float =
+    var w = 0.0
+
+    for g in glyphs do
+      w = w + g.xAdvance
+
+    w
+end
+
+section Text
+  //[ Greedily wrap `text` to `width`, returning one shaped run per line.
+    ! Whitespace separates words; a word wider than `width` overruns.
+  //]
+  def wrap(text: String, width: Float): List[GlyphRun] receives
+      graphics,
+      DrawingContext.font
+  =
+    val ws = words(text)
+    val spaceW = graphics.shape(" ").width
+    var lines = List.empty[GlyphRun]
+    var cur = ""
+    var curW = 0.0
+    var i = 0
+
+    while i < ws.size do
+      val w = ws.get(i)
+      val ww = graphics.shape(w).width
+      val gap = if cur == "" then 0.0 else spaceW
+
+      if cur != "" && curW + gap + ww > width then
+        lines = lines ++ [graphics.shape(cur)]
+        cur = w
+        curW = ww
+      else
+        cur = if cur == "" then w else cur + " " + w
+        curW = curW + gap + ww
+
+      i = i + 1
+
+    if cur != "" then
+      lines = lines ++ [graphics.shape(cur)]
+
+    lines
+
+  //[ Draw `lines` into `box`, one line per `leading`-scaled line height, at the
+    ! ambient alignment. Returns the y offset just past the last baseline, so a
+    ! caller can stack blocks. Lines past the bottom of `box` are still drawn —
+    ! clipping and overflow are the layout engine's job, not this layer's.
+  //]
+  def draw(cv: Canvas, lines: List[GlyphRun], box: Rect): Float receives
+      graphics,
+      DrawingContext.font,
+      DrawingContext.textPaint,
+      DrawingContext.alpha,
+      DrawingContext.transform,
+      Typesetting.align,
+      Typesetting.leading
+  =
+    val lineHeight = Typesetting.leading * DrawingContext.font.size
+    var y = graphics.fontAscent
+
+    for run in lines do
+      val w = run.width
+
+      val x =
+        match Typesetting.align
+        case _: Align.center => box.x + (box.width - w) / 2.0
+        case _: Align.right  => box.x + box.width - w
+        case _               => box.x
+
+      cv.glyphs(run, x, box.y + y)
+      y = y + lineHeight
+
+    y
+
+  //[ Wrap `text` to `box`'s width and draw it — the common case. //]
+  def paragraph(cv: Canvas, text: String, box: Rect): Float receives
+      graphics,
+      DrawingContext.font,
+      DrawingContext.textPaint,
+      DrawingContext.alpha,
+      DrawingContext.transform,
+      Typesetting.align,
+      Typesetting.leading
+  =
+    draw(cv, wrap(text, box.width), box)
+
+  //[ Split `text` on whitespace, dropping empty runs. //]
+  private def words(text: String): List[String] =
+    var out = List.empty[String]
+    var cur = ""
+
+    for ch in text do
+      if isSpace(ch.toInt) then
+        if cur != "" then
+          out = out ++ [cur]
+          cur = ""
+
+      else
+        cur = cur + ch.toString
+
+    if cur != "" then
+      out = out ++ [cur]
+
+    out
+
+  private def isSpace(codePoint: Int): Bool =
+    codePoint == 32 || codePoint == 9 || codePoint == 10 || codePoint == 13
+end

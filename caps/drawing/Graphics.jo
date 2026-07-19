@@ -4,8 +4,14 @@
   ! font and image facts drawing needs.
   !
   ! Facts live here, not on `Canvas`: glyph metrics and image sizes are facts
-  ! about fonts and files, independent of any one surface. Metrics read the
-  ! ambient `DrawingContext.font`.
+  ! about fonts and files, independent of any one surface. Text is measured by
+  ! shaping it — `shape` is the only way to learn a string's width, because the
+  ! width depends on kerning and ligatures that only the shaper knows.
+  !
+  ! This interface is the entire FFI floor of the drawing engine. It carries
+  ! exactly two kinds of thing: facts (`shape`, metrics, `imageSize`) and
+  ! emission (`create`, and the `Canvas` it returns). Everything else is pure
+  ! Jo.
 //]
 
 namespace harpe.caps.drawing
@@ -13,12 +19,14 @@ namespace harpe.caps.drawing
 import harpe.caps.Path
 import harpe.caps.ImageSize
 
-//[ Create raster surfaces, and answer font/image facts. //]
+//[ Create surfaces, and answer font/image facts. //]
 interface Graphics
-  //[ A new surface of `width` × `height` pixels, filled with `background` — or
-    ! transparent when `background` is `None`.
+  //[ A new surface `width` × `height` logical units, at `scale` device pixels
+    ! per unit, filled with `background` — or transparent when `background` is
+    ! `None`.
   //]
-  def create(width: Int, height: Int, background: Option[Color]): Canvas
+  def create(width: Float, height: Float, scale: Float,
+             background: Option[Color]): Canvas
 
   //[ Register the font file at `src` under `family`, so text in that `family`
     ! renders with it — for a custom font that is not installed on the machine.
@@ -29,16 +37,17 @@ interface Graphics
   //]
   def registerFont(family: String, src: Path): Result[Unit, String]
 
-  //[ Whether `font` has a glyph for `codePoint`. The text layer uses this to
-    ! pick a covering font per character (fallback), so mixed-script text avoids
-    ! missing-glyph boxes without the caller choosing fonts by hand.
+  //[ Shape `text` in the ambient font: the positioned glyphs a renderer draws,
+    ! with kerning and ligatures applied. This is both how text is measured
+    ! (`run.width`) and how it is drawn (`canvas.glyphs`).
   //]
-  def covers(font: Font, codePoint: Int): Bool
+  def shape(text: String): GlyphRun receives DrawingContext.font
 
   //[ The advance width of `text` in the ambient font. //]
-  def stringWidth(text: String): Float receives DrawingContext.font
+  def stringWidth(text: String): Float receives DrawingContext.font =
+    shape(text).width
 
-  //[ The ambient font's ascent / descent (both positive, in pixels). //]
+  //[ The ambient font's ascent / descent (both positive, in logical units). //]
   def fontAscent: Float receives DrawingContext.font
   def fontDescent: Float receives DrawingContext.font
 
