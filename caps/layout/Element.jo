@@ -195,6 +195,12 @@ section Element
   def rowAt(cross: Cross, children: ..Element): Element =
     new Row(children, 0.0, cross)
 
+  //[ `row` with one gap between every pair of children — for a list of like
+    ! things, where interleaving `Element.gap(n)` by hand is just noise.
+  //]
+  def rowGap(gap: Float, children: ..Element): Element =
+    new Row(children, gap, Cross.baseline)
+
   //[ Children top to bottom, each stretched to the full width. //]
   def column(children: ..Element): Element =
     new Column(children, 0.0, Cross.stretch)
@@ -204,6 +210,10 @@ section Element
   //]
   def columnAt(cross: Cross, children: ..Element): Element =
     new Column(children, 0.0, cross)
+
+  //[ `column` with one gap between every pair of children. //]
+  def columnGap(gap: Float, children: ..Element): Element =
+    new Column(children, gap, Cross.stretch)
 
   //[ Children layered in z-order; later children paint over earlier ones. //]
   def stack(children: ..Element): Element = new Stack(children)
