@@ -29,6 +29,7 @@
 namespace harpe.caps.layout
 
 import harpe.caps.drawing.*
+import harpe.caps.layout.elements.*
 
 //[ What a `graphic` paints with: a canvas, plus the ambient state that has to
   ! reach it.
@@ -169,18 +170,33 @@ section Element
   //     ..bars(data)
   //     footer
   //
-  // None of them takes a gap. Spacing is `Element.gap(n)` between children,
-  // which costs a line and buys uneven spacing for free. For a uniform gap, or
-  // any cross-axis alignment other than the default, use the class directly:
-  // `new Row(children, gap, Cross.finish)`.
+  // None of them takes a gap. Spacing is an `Element.gap(n)` child, which costs
+  // a line and buys uneven spacing for free. Cross-axis alignment has its own
+  // entry points, `rowAt`/`columnAt`.
+  //
+  // The classes behind these live in `harpe.caps.layout.elements`. Reaching for
+  // one directly is only needed for a uniform gap — `new Row(children, gap,
+  // cross)` — which is rare enough not to earn a factory.
 
   //[ Children left to right, aligned on their shared baseline. //]
   def row(children: ..Element): Element =
     new Row(children, 0.0, Cross.baseline)
 
+  //[ `row` with a different cross-axis alignment — `Cross.finish` to sit
+    ! children on a common bottom edge, `Cross.center` to centre them.
+  //]
+  def rowAt(cross: Cross, children: ..Element): Element =
+    new Row(children, 0.0, cross)
+
   //[ Children top to bottom, each stretched to the full width. //]
   def column(children: ..Element): Element =
     new Column(children, 0.0, Cross.stretch)
+
+  //[ `column` with a different cross-axis alignment. `Cross.stretch` (the
+    ! default) hands each child the full width; `Cross.start` shrink-wraps them.
+  //]
+  def columnAt(cross: Cross, children: ..Element): Element =
+    new Column(children, 0.0, cross)
 
   //[ Children layered in z-order; later children paint over earlier ones. //]
   def stack(children: ..Element): Element = new Stack(children)

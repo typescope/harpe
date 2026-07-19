@@ -1,0 +1,38 @@
+//[ Rule.jo
+  !
+  ! A horizontal hairline that fills the width it is given — the one leaf that
+  ! deliberately takes all the room offered rather than shrink-wrapping.
+//]
+
+namespace harpe.caps.layout.elements
+
+import harpe.caps.layout.*
+import harpe.caps.drawing.*
+
+//[ A horizontal hairline that fills the width it is given. //]
+class Rule(thickness: Float, paint: Paint)
+  view Element
+
+  def flexWeight: Float = 0.0
+
+  def measure(c: Constraints): Measured receives graphics =
+    new Measured(c.maxW, c.clampH(thickness), c.clampH(thickness))
+
+  def layout(bounds: Rect): Laid receives graphics =
+    new Laid(this, bounds, bounds.height, List.empty[Laid])
+
+  def draw(cv: Canvas, node: Laid): Unit receives
+      graphics,
+      Style.alpha,
+      Style.transform,
+      Style.clip
+  =
+    val b = node.bounds
+    val y = b.y + b.height / 2.0
+
+    with
+      Style.strokePaint = paint,
+      Style.stroke = Stroke.of(thickness)
+    in
+      cv.stroke(Trace.from(b.x, y).lineTo(b.x + b.width, y))
+end

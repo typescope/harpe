@@ -1,0 +1,32 @@
+//[ Flex.jo
+  !
+  ! Marks a child elastic along its container's main axis.
+  !
+  ! It is the only element whose `flexWeight` is not zero. Everything else
+  ! delegates to the child, so a flexed child behaves exactly like the child —
+  ! and because the containers read elasticity off the interface rather than
+  ! pattern-matching on this type, a user-defined element can be elastic too.
+//]
+
+namespace harpe.caps.layout.elements
+
+import harpe.caps.layout.*
+import harpe.caps.drawing.*
+
+//[ Marks a child elastic along its container's main axis. //]
+class Flex(weight: Float, child: Element)
+  view Element
+
+  def flexWeight: Float = weight
+
+  def measure(c: Constraints): Measured receives graphics = child.measure(c)
+
+  def layout(bounds: Rect): Laid receives graphics =
+    val kid = child.layout(bounds)
+    new Laid(this, bounds, kid.baseline, [kid])
+
+  def draw(cv: Canvas, node: Laid): Unit receives
+      graphics, Style.alpha, Style.transform, Style.clip
+  =
+    Element.paintChildren(cv, node)
+end
