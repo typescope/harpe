@@ -50,13 +50,19 @@ private section OpenAI
         msgs.append(py.dict("role" ~ "user", "content" ~ text))
 
       case Assistant(text, calls) =>
-        val tcList = py.list()
-        for c in calls do
-          val fn = py.dict("name" ~ c.name, "arguments" ~ json.dumps(c.input.raw))
-          tcList.append(py.dict("id" ~ c.id, "type" ~ "function", "function" ~ fn))
-        end
+        val msg = py.dict("role" ~ "assistant", "content" ~ text)
 
-        val msg = py.dict("role" ~ "assistant", "content" ~ text, "tool_calls" ~ tcList)
+        // OpenAI rejects an empty `tool_calls` array, so attach the key only when
+        // the assistant actually made calls (a text-only reply omits it).
+        if calls.size > 0 then
+          val tcList = py.list()
+          for c in calls do
+            val fn = py.dict("name" ~ c.name, "arguments" ~ json.dumps(c.input.raw))
+            tcList.append(py.dict("id" ~ c.id, "type" ~ "function", "function" ~ fn))
+          end
+
+          msg["tool_calls"] = tcList
+
         msgs.append(msg)
 
       case ToolResults(results) =>
