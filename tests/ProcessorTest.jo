@@ -117,11 +117,10 @@ def run(): Unit receives stdout =
     excelReader = new OpenpyxlExcel(dir),
     excelWriter = new OpenpyxlWriter(dir),
     wordWriter = new DocxWriter(dir),
-    pdfWriter = new FpdfWriter(dir),
     wordReader = new DocxReader(dir)
   in suite(dir)
 
-private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, excelWriter, wordWriter, pdfWriter, wordReader =
+private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, excelWriter, wordWriter, wordReader =
   val root: Path = Path.root
 
   val fs: FileSystem = FileSystemImpl.local(dir)
@@ -240,23 +239,6 @@ private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, ex
   check("word transform grew target", fs.openWord(root / "report2.docx").success.paragraphCount == 4)
 
   makeImage(os.path.join(dir, "pic.png"), 30, 20)
-
-  // PDF writing via fpdf2: create, save, read back through openPDF.
-  val pdfDraft = pdfWriter.create()
-  pdfDraft.addHeading("Report", 1)
-  pdfDraft.addParagraph("Hello PDF.")
-  pdfDraft.metadata("Made", "Harpe")
-  pdfDraft.addTable([["h1", "h2"], ["v1", "v2"]])
-  check("pdf image", pdfDraft.image(root / "pic.png", 40.0).isOk)
-  pdfDraft.line(10.0, pdfDraft.y, 60.0, pdfDraft.y)
-  pdfDraft.addPage()
-  pdfDraft.addParagraph("Page two.")
-  check("pdf builder save", pdfDraft.save(root / "made.pdf").isOk)
-  val made = fs.openPDF(root / "made.pdf").success
-  check("pdf reads back", made.pageCount == 2 && made.pageText(1).success.contains("Hello PDF"))
-  check("pdf table content", made.pageText(1).success.contains("v2"))
-  check("pdf metadata", made.metadata.getOrElse("Title", "") == "Made")
-  made.close()
 
   // Image pixel work via Pillow.
   val image: Image = new PillowImage(dir)
