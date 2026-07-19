@@ -128,17 +128,15 @@ def main(): Unit receives args, stdout =
   if args.size < 2 then
     println args
     println "Error: missing arguments"
-    println "Usage: python3 task.py <prUrl> <dryRun>"
+    println "Usage: python3 task.py <prUrl> <githubToken> <dryRun>"
     abort "Missing arguments"
 
   val prUrl  = args[0]
-  val dryRun = args[1] == "true"
+  val token  = args[1]
+  var dryRun =  if args.size >= 3 then args[2] == "true" else false
   val tmp = py.module("tempfile").mkdtemp().asString
   val sandbox: Sandbox = Sandbox.create(tmp)
 
-  match sandbox.env("GITHUB_TOKEN")
-    case Some(token) =>
-      val ghImpl = new GithubImpl(sandbox, prUrl, dryRun, token)
-      with SandboxAPI.github = ghImpl in
-        SandboxAPI.runTask()
-    case _ => abort "missing github token from process environment"
+  val ghImpl = new GithubImpl(sandbox, prUrl, dryRun, token)
+  with SandboxAPI.github = ghImpl in
+    SandboxAPI.runTask()

@@ -24,7 +24,7 @@ An example program should look like the following:
 ```jo
     namespace UserTask
     import jo.IO.stdout
-    import GithubAPI.*
+    import SandboxAPI.*
 
     def runTask(): Unit receives stdout, github =
         val pr    = github.getPR() // get PR info
