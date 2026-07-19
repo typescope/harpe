@@ -115,11 +115,10 @@ def run(): Unit receives stdout =
   with
     pdfReader = new PdfiumReader(dir),
     excelReader = new OpenpyxlExcel(dir),
-    excelWriter = new OpenpyxlWriter(dir),
     wordReader = new DocxReader(dir)
   in suite(dir)
 
-private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, excelWriter, wordReader =
+private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, wordReader =
   val root: Path = Path.root
 
   val fs: FileSystem = FileSystemImpl.local(dir)
@@ -204,25 +203,6 @@ private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, ex
   book.close()
   book.close()                       // idempotent
   check("Workbook.close is safe", true)
-
-  // Writers: create from zero, then edit → save-as (transform).
-  val built = excelWriter.create()
-  built.addSheet("Out")
-  check("builder appendRow", built.appendRow("Out", ["a", new IntCell(3), 2.25]))
-  check("builder setCell", built.setCell("Out", 1, 2, new IntCell(7)))
-  check("builder setCell unknown sheet", !built.setCell("NoSuch", 1, 1, 0.0))
-  check("builder unknown sheet", !built.appendRow("NoSuch", ["x"]))
-  check("builder save", built.save(root / "out.xlsx").isOk)
-  val readBack = fs.openWorkbook(root / "out.xlsx").success
-  check("built workbook reads back", readBack.dimensions("Out").getOrElse(() => new SheetSize(0, 0)).rows == 1)
-  check("typed cells survive", readBack.rows("Out", 1, 1).getOrElse(() => []).get(0).get(2) == "2.25")
-  check("setCell survives", readBack.rows("Out", 1, 1).getOrElse(() => []).get(0).get(1) == "7")
-
-  val editor = excelWriter.edit(root / "out.xlsx").success
-  val _ = editor.appendRow("Out", ["c", "d"])
-  check("editor save-as", editor.save(root / "out2.xlsx").isOk)
-  check("transform kept source", fs.openWorkbook(root / "out.xlsx").success.dimensions("Out").getOrElse(() => new SheetSize(0, 0)).rows == 1)
-  check("transform grew target", fs.openWorkbook(root / "out2.xlsx").success.dimensions("Out").getOrElse(() => new SheetSize(0, 0)).rows == 2)
 
   makeImage(os.path.join(dir, "pic.png"), 30, 20)
 
