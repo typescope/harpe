@@ -47,19 +47,25 @@ section Defaults
     !                     its own).
   //]
   def model(): Model receives IO.stdout =
-    val provider = os.getenv("PROVIDER", "anthropic")
-    if provider == "openai" then
-      val key = os.getenv("OPENAI_API_KEY", "")
-      if key == "" then
+    val provider = os.getenv("PROVIDER", "")
+    val openAiKey = os.getenv("OPENAI_API_KEY", "")
+    val anthropicKey = os.getenv("ANTHROPIC_API_KEY", "")
+    if provider == "openai" || provider == "" && openAiKey != "" then
+      if openAiKey == "" then
         println "Error: OPENAI_API_KEY is not set (put it in .env or the environment)."
         sys.exit(1)
-      openai(key, os.getenv("MODEL", "gpt-4o"), os.getenv("OPENAI_BASE_URL", ""))
-    else
-      val key = os.getenv("ANTHROPIC_API_KEY", "")
-      if key == "" then
+      openai(openAiKey, os.getenv("MODEL", "gpt-4o"), os.getenv("OPENAI_BASE_URL", ""))
+
+    else if provider == "anthropic" || anthropicKey != "" then
+      if anthropicKey == "" then
         println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
         sys.exit(1)
-      anthropic(key, os.getenv("MODEL", "claude-opus-4-6"), cachePolicy())
+      anthropic(anthropicKey, os.getenv("MODEL", "claude-opus-4-6"), cachePolicy())
+
+    else
+      println "Error: neither ANTHROPIC_API_KEY nor OPENAI_API_KEY is not set (put it in .env or the environment)."
+      sys.exit(1)
+      abort "Not reachable"
 
   //[ The Anthropic prompt-cache policy from PROMPT_CACHE (default "5m"). //]
   private def cachePolicy(): AnthropicCache =
