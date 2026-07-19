@@ -77,19 +77,23 @@ class CairoGraphics(root: String)
 
     case None => pass
 
-    new CairoCanvas(this, surface, cr, width, height, scale, false)
+    new CairoCanvas(this, surface, cr, width, height, scale, None)
 
-  //[ A vector surface writing a single-page PDF to `target`. PDF is measured in
+  //[ A vector `Canvas` that renders a single-page PDF. Symmetric with `create`:
+    ! the size is given here, the file name later, to `save`. PDF is measured in
     ! points, so geometry is in points and there is no `scale` — the output is
-    ! resolution-independent. `save` closes the page and finalises the file.
+    ! resolution-independent.
+    !
+    ! The page renders into an in-memory buffer; `save` finalises it and writes
+    ! that buffer to the target. This is what lets the target live on `save`,
+    ! matching the raster path, rather than being fixed at creation.
   //]
-  def createPdf(target: String, width: Float, height: Float): Canvas =
-    val real = Native.resolve(root, target)
-    Native.makedirs(Native.dirname(real))
-    val surface = cc.PDFSurface(real, width, height)
+  def createPdf(width: Float, height: Float): Canvas =
+    val buffer = io.BytesIO()
+    val surface = cc.PDFSurface(buffer, width, height)
     val cr = cc.Context(surface)
 
-    new CairoCanvas(this, surface, cr, width, height, 1.0, true)
+    new CairoCanvas(this, surface, cr, width, height, 1.0, Some(buffer))
 
   def registerFont(family: String, src: String): Result[Unit, String] =
     orMessage: py.try(registerAt(family, src))
@@ -255,10 +259,10 @@ class CairoGraphics(root: String)
 end
 
 //[ A single cairo surface — a raster `ImageSurface`, or a vector `PDFSurface`
-  ! when `isPdf`.
+  ! backed by the `pdfBuffer` it renders into.
 //]
 class CairoCanvas(g: CairoGraphics, surface: py.Dynamic, cr: py.Dynamic,
-                  w: Float, h: Float, sc: Float, isPdf: Bool)
+                  w: Float, h: Float, sc: Float, pdfBuffer: Option[py.Dynamic])
   view Canvas
 
   def width: Float = w
@@ -495,17 +499,22 @@ class CairoCanvas(g: CairoGraphics, surface: py.Dynamic, cr: py.Dynamic,
       val _8 = cr.paint_with_alpha(Style.alpha)
 
   private def saveTo(target: String): Unit =
-    if isPdf then
-      // the file was named at createPdf; close the page and finalise it
+    val real = Native.resolve(g.root, target)
+    Native.makedirs(Native.dirname(real))
+
+    match pdfBuffer
+    case Some(buffer) =>
+      // finalise the page, then write the rendered bytes to the target
       val _ = surface.show_page()
       val _2 = surface.finish()
-    else
-      val real = Native.resolve(g.root, target)
-      Native.makedirs(Native.dirname(real))
+      val out = py.open(real, "wb")
+      val _3 = out.write(buffer.getvalue())
+      val _4 = out.close()
 
+    case None =>
       if real.toLower.endsWith(".svg") then
         abort "this surface is raster; .svg output needs a vector surface"
 
-      val _3 = surface.flush()
-      val _4 = surface.write_to_png(real)
+      val _5 = surface.flush()
+      val _6 = surface.write_to_png(real)
 end
