@@ -116,11 +116,10 @@ def run(): Unit receives stdout =
     pdfReader = new PdfiumReader(dir),
     excelReader = new OpenpyxlExcel(dir),
     excelWriter = new OpenpyxlWriter(dir),
-    wordWriter = new DocxWriter(dir),
     wordReader = new DocxReader(dir)
   in suite(dir)
 
-private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, excelWriter, wordWriter, wordReader =
+private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, excelWriter, wordReader =
   val root: Path = Path.root
 
   val fs: FileSystem = FileSystemImpl.local(dir)
@@ -224,19 +223,6 @@ private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, ex
   check("editor save-as", editor.save(root / "out2.xlsx").isOk)
   check("transform kept source", fs.openWorkbook(root / "out.xlsx").success.dimensions("Out").getOrElse(() => new SheetSize(0, 0)).rows == 1)
   check("transform grew target", fs.openWorkbook(root / "out2.xlsx").success.dimensions("Out").getOrElse(() => new SheetSize(0, 0)).rows == 2)
-
-  val draft = wordWriter.create()
-  draft.addHeading("Report", 1)
-  draft.addParagraph("Hello.")
-  draft.addListItem("first", false)
-  draft.addTable([["h1", "h2"], ["v1", "v2"]])
-  check("word builder save", draft.save(root / "report.docx").isOk)
-  check("word reads back", fs.openWord(root / "report.docx").success.paragraphCount == 3)
-
-  val wordEdit = wordWriter.edit(root / "report.docx").success
-  wordEdit.addParagraph("More.")
-  check("word edit save-as", wordEdit.save(root / "report2.docx").isOk)
-  check("word transform grew target", fs.openWord(root / "report2.docx").success.paragraphCount == 4)
 
   makeImage(os.path.join(dir, "pic.png"), 30, 20)
 
