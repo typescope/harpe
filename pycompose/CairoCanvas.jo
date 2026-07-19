@@ -88,7 +88,7 @@ class CairoGraphics(root: String)
     ! that buffer to the target. This is what lets the target live on `save`,
     ! matching the raster path, rather than being fixed at creation.
   //]
-  def createPdf(width: Float, height: Float): Canvas =
+  def createPdf(width: Float, height: Float): CairoCanvas =
     val buffer = io.BytesIO()
     val surface = cc.PDFSurface(buffer, width, height)
     val cr = cc.Context(surface)
@@ -361,6 +361,15 @@ class CairoCanvas(g: CairoGraphics, surface: py.Dynamic, cr: py.Dynamic,
       Style.clip
   =
     orMessage: py.try(placeImage(src, x, y, width))
+
+  //[ Finish the current PDF page and begin a fresh, blank one. This is the one
+    ! document-level operation the backend adds on top of the single-surface
+    ! `Canvas` model: compose composes each page, and this sequences them into
+    ! one file. Draw a page, `nextPage`, draw the next; `save` writes them all.
+    ! A no-op on a raster surface.
+  //]
+  def nextPage(): Unit =
+    val _ = cr.show_page()
 
   def save(target: String): Result[Unit, String] =
     orMessage: py.try(saveTo(target))
