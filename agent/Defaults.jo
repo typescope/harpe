@@ -47,19 +47,12 @@ section Defaults
     !                     its own).
   //]
   def model(): Model receives IO.stdout =
-    val provider = os.getenv("PROVIDER", "")
     val openAiKey = os.getenv("OPENAI_API_KEY", "")
     val anthropicKey = os.getenv("ANTHROPIC_API_KEY", "")
-    if provider == "openai" || provider == "" && openAiKey != "" then
-      if openAiKey == "" then
-        println "Error: OPENAI_API_KEY is not set (put it in .env or the environment)."
-        sys.exit(1)
+    if openAiKey != "" then
       openai(openAiKey, os.getenv("MODEL", "gpt-4o"), os.getenv("OPENAI_BASE_URL", ""))
 
-    else if provider == "anthropic" || anthropicKey != "" then
-      if anthropicKey == "" then
-        println "Error: ANTHROPIC_API_KEY is not set (put it in .env or the environment)."
-        sys.exit(1)
+    else if anthropicKey != "" then
       anthropic(anthropicKey, os.getenv("MODEL", "claude-opus-4-6"), cachePolicy())
 
     else

@@ -15,7 +15,7 @@ carries both its driver code and its identity (`AGENT.md`, `skills/`,
 ```sh
 cd cli                        # or web/, or telegram/
 pip install -r requirements.txt
-cp .env.example .env          # set ANTHROPIC_API_KEY (or PROVIDER=openai + OPENAI_API_KEY)
+cp .env.example .env          # set ANTHROPIC_API_KEY (or OPENAI_API_KEY)
 jo start                      # builds the sandbox guest, then launches the agent
 ```
 
