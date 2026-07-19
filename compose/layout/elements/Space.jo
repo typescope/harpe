@@ -1,0 +1,32 @@
+//[ Space.jo
+  !
+  ! A rigid blank box. Wrapped in `flex` it becomes a spring, which is how the
+  ! containers express every kind of main-axis distribution without a second
+  ! alignment enum.
+//]
+
+namespace compose.layout.elements
+
+import compose.layout.*
+import compose.drawing.*
+
+//[ Blank space of a fixed size. //]
+class Space(w: Float, h: Float)
+  view Element
+
+  def flexWeight: Float = 0.0
+
+  def measure(c: Constraints): Measured receives graphics =
+    new Measured(c.clampW(w), c.clampH(h), c.clampH(h))
+
+  def layout(bounds: Rect): Laid receives graphics =
+    new Laid(this, bounds, bounds.height, List.empty[Laid])
+
+  def draw(cv: Canvas, node: Laid): Unit receives
+      graphics,
+      Style.alpha,
+      Style.transform,
+      Style.clip
+  =
+    pass
+end

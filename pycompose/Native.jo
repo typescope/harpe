@@ -1,0 +1,57 @@
+//[ Native.jo
+  !
+  ! The few Python built-ins the cairo backend and font discovery need, wrapped.
+  !
+  ! `pycompose` is deliberately standalone — it depends on `compose` and nothing
+  ! else — so it does not borrow harpe's `ffi` wrappers. This is that handful,
+  ! re-declared here.
+//]
+
+namespace pycompose
+
+private def osMod: py.Dynamic = py.module("os")
+private def sysMod: py.Dynamic = py.module("sys")
+private def biMod: py.Dynamic = py.module("builtins")
+
+//[ One entry yielded by `os.walk`: a `(dirpath, dirnames, filenames)` tuple. //]
+interface WalkEntry
+  def dirpath: String = py.dynamic(this)[0].asString
+  def filenames: py.List = py.dynamic(this)[2].cast[py.List]
+
+section Native
+  def exists(path: String): Bool = osMod.path.exists(path).asBool
+  def isdir(path: String): Bool = osMod.path.isdir(path).asBool
+  def dirname(path: String): String = osMod.path.dirname(path).asString
+  def join(base: String, name: String): String = osMod.path.join(base, name).asString
+
+  def makedirs(path: String): Unit =
+    val _ = osMod.makedirs(path, exist_ok = true)
+
+  def walk(top: String): py.Dynamic = osMod.walk(top, followlinks = true)
+
+  //[ An environment variable, or `None` when it is unset. //]
+  def env(name: String): Option[String] =
+    val v = osMod.environ.get(name, py.none)
+    if py.isNone(v) then None else Some(v.asString)
+
+  //[ The platform identifier: "linux", "darwin", "win32", … //]
+  def platform: String = sysMod.platform.asString
+
+  //[ Materialize a Python iterable as a list. //]
+  def list(x: Any): py.List = biMod.callDynamic("list", x).cast[py.List]
+
+  //[ Python's `int(x)` — reads an integer out of a foreign value. //]
+  def intOf(x: Any): Int = biMod.callDynamic("int", x).asInt
+
+  //[ The next item from a Python iterator, or `fallback` when exhausted. //]
+  def next(it: Any, fallback: Any): py.Dynamic = biMod.next(it, fallback)
+
+  //[ `getattr(obj, name)`. //]
+  def attr(obj: Any, name: String): py.Dynamic = biMod.getattr(obj, name)
+
+  //[ Resolve a file path against `root`: absolute paths pass through, relative
+    ! ones join onto the root.
+  //]
+  def resolve(root: String, path: String): String =
+    if path.startsWith("/") then path else join(root, path)
+end

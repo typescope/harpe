@@ -1,0 +1,284 @@
+//[ Gallery.jo — the compose examples, each rendered to a file by `main`.
+  !
+  ! Every example builds an image with the pure `compose` engine and hands it to
+  ! this backend to save. Together they exercise the whole stack: Level 1 shapes,
+  ! paints, strokes, groups, clips and transforms; the Level 2 layout engine; and
+  ! the Level 3 prose vocabulary.
+//]
+
+namespace pycompose
+
+import jo.IO.stdout
+import compose.drawing.*
+import compose.layout.*
+import compose.layout.elements.*
+import compose.prose.*
+
+section Gallery
+  def renderAll(dir: String, backend: CairoGraphics): Unit receives stdout =
+    with graphics = backend in
+      shapes(dir)
+      gradients(dir)
+      groups(dir)
+      clipping(dir)
+      transforms(dir)
+      justify(dir)
+      card(dir)
+      poster(dir, backend)
+
+  //[ Save `cv` to `dir/name.png` and report. //]
+  private def emit(dir: String, name: String, cv: Canvas): Unit receives stdout =
+    match cv.save("\{dir}/\{name}.png")
+    case Ok(_)  => println "  wrote \{name}.png"
+    case Err(e) => println "  \{name}.png failed: \{e}"
+
+  private def white: Color = Color.white
+  private def ink: Color = Color.rgb255(30, 34, 54)
+
+  // --- 1. shapes: fills, strokes, caps/joins, dashes, even-odd hole -----
+
+  private def shapes(dir: String): Unit receives graphics, stdout =
+    val cv = graphics.create(420.0, 300.0, 2.0, Some(white))
+
+    with Style.fillPaint = Paint.of(Color.rgb255(70, 100, 210)) in
+      cv.fill(Region.roundRect(30.0, 30.0, 150.0, 90.0, 16.0))
+
+    with
+      Style.strokePaint = Paint.of(Color.rgb255(210, 70, 90)),
+      Style.stroke = Stroke.smooth(6.0)
+    in
+      cv.stroke(Trace.from(210.0, 40.0).lineTo(270.0, 110.0).lineTo(330.0, 40.0))
+
+    with
+      Style.strokePaint = Paint.of(Color.rgb255(120, 130, 160)),
+      Style.stroke = Stroke.of(2.0).dashed([8.0, 6.0])
+    in
+      cv.stroke(Trace.from(30.0, 150.0).lineTo(390.0, 150.0))
+
+    // an even-odd donut: outer circle minus inner subpath punches a hole
+    val donut = new Region(Region.circle(110.0, 230.0, 55.0).ops
+      ++ Region.circle(110.0, 230.0, 26.0).ops)
+
+    with
+      Style.fillPaint = Paint.of(Color.rgb255(40, 160, 110)),
+      Style.fillRule = FillRule.evenOdd
+    in
+      cv.fill(donut)
+
+    with
+      Style.fillPaint = Paint.of(ink),
+      Style.strokePaint = Paint.of(Color.rgb255(250, 190, 70)),
+      Style.stroke = Stroke.of(3.0)
+    in
+      cv.fillStroke(Region.rect(230.0, 185.0, 150.0, 90.0))
+
+    emit(dir, "shapes", cv)
+
+  // --- 2. gradients: linear and radial ---------------------------------
+
+  private def gradients(dir: String): Unit receives graphics, stdout =
+    val cv = graphics.create(420.0, 220.0, 2.0, Some(white))
+
+    with
+      Style.fillPaint =
+        Paint.linear(30.0, 0.0, 200.0, 0.0,
+          Color.rgb255(255, 120, 60), Color.rgb255(120, 40, 200))
+    in
+      cv.fill(Region.roundRect(30.0, 30.0, 170.0, 160.0, 12.0))
+
+    with
+      Style.fillPaint =
+        Paint.radial(310.0, 110.0, 85.0,
+          Color.rgb255(255, 245, 200), Color.rgb255(40, 90, 160))
+    in
+      cv.fill(Region.circle(310.0, 110.0, 80.0))
+
+    emit(dir, "gradients", cv)
+
+  // --- 3. groups: screen-blended discs (the "light" motif) --------------
+
+  private def groups(dir: String): Unit receives graphics, stdout =
+    val cv = graphics.create(360.0, 300.0, 2.0, Some(Color.rgb255(12, 14, 34)))
+
+    disc(cv, 140.0, 120.0, Color.rgb255(240, 60, 130))
+    disc(cv, 220.0, 120.0, Color.rgb255(40, 210, 210))
+    disc(cv, 180.0, 195.0, Color.rgb255(250, 185, 70))
+
+    emit(dir, "groups", cv)
+
+  private def disc(cv: Canvas, cx: Float, cy: Float, color: Color): Unit =
+    cv.group: 0.92, Blend.screen, () =>
+      with Style.fillPaint = Paint.of(color) in
+        cv.fill(Region.circle(cx, cy, 66.0))
+
+  // --- 4. clipping: content confined to a rounded panel -----------------
+
+  private def clipping(dir: String): Unit receives graphics, stdout =
+    val cv = graphics.create(360.0, 240.0, 2.0, Some(white))
+    val panel = Region.roundRect(30.0, 30.0, 300.0, 180.0, 20.0)
+
+    with Style.clip = [panel] in
+      var i = 0
+
+      while i < 40 do
+        val x = 30.0 + i.toFloat * 9.0
+
+        with Style.strokePaint = Paint.of(Color.rgb255(80, 120, 220).fade(0.6)),
+             Style.stroke = Stroke.of(5.0)
+        in
+          cv.stroke(Trace.from(x, 20.0).lineTo(x - 60.0, 220.0))
+
+        i = i + 1
+
+    with Style.strokePaint = Paint.of(ink), Style.stroke = Stroke.of(1.5) in
+      cv.stroke(panel)
+
+    emit(dir, "clipping", cv)
+
+  // --- 5. transforms: rotation, including rotated text ------------------
+
+  private def transforms(dir: String): Unit receives graphics, stdout =
+    val cv = graphics.create(360.0, 300.0, 2.0, Some(white))
+    var i = 0
+
+    while i < 8 do
+      val angle = i.toFloat * (Matrix.pi / 8.0)
+
+      with
+        Style.transform = Matrix.rotateAbout(angle, 180.0, 150.0),
+        Style.fillPaint = Paint.of(Color.rgb255(70, 100, 210).fade(0.5))
+      in
+        cv.fill(Region.roundRect(180.0, 60.0, 120.0, 26.0, 8.0))
+
+      i = i + 1
+
+    with
+      Style.font = Font.bold(22.0),
+      Style.textPaint = Paint.of(ink),
+      Style.transform = Matrix.rotateAbout(0.0 - 0.35, 180.0, 150.0)
+    in
+      cv.textAt(120.0, 156.0, "rotated text")
+
+    emit(dir, "transforms", cv)
+
+  // --- 6. justify: left vs justified columns ----------------------------
+
+  private def justify(dir: String): Unit receives graphics, stdout =
+    val cv = graphics.create(520.0, 220.0, 2.0, Some(white))
+    val prose =
+      """
+      Every fill takes a paint, so a gradient costs no more than a flat colour,
+      and every stroke carries its own geometry: width, caps, joins and dashes.
+      """
+
+    with Style.font = Font.sans(14.0), Style.textPaint = Paint.of(ink) in
+      with Typesetting.align = Align.left in
+        val _ = Text.paragraph(cv, "LEFT", new Rect(24.0, 16.0, 220.0, 24.0))
+        val _2 = Text.paragraph(cv, prose, new Rect(24.0, 44.0, 220.0, 170.0))
+
+      with Typesetting.align = Align.justify in
+        val _3 = Text.paragraph(cv, "JUSTIFY", new Rect(276.0, 16.0, 220.0, 24.0))
+        val _4 = Text.paragraph(cv, prose, new Rect(276.0, 44.0, 220.0, 170.0))
+
+    emit(dir, "justify", cv)
+
+  // --- 7. card: the layout engine + prose -------------------------------
+
+  private def card(dir: String): Unit receives graphics, stdout =
+    val cv = graphics.create(480.0, 260.0, 3.0, Some(Color.rgb255(246, 247, 251)))
+
+    val content =
+      Element.column:
+        Element.row:
+          Prose.heading("Quarterly report")
+          Element.spring
+          Prose.label("DRAFT")
+        Element.gap(10.0)
+        rule(Color.rgb255(150, 158, 190).fade(0.5))
+        Element.gap(12.0)
+        Prose.body(cardCopy())
+        Element.spring
+        Prose.caption("composed with the layout engine")
+
+    val card = Element.background(Element.pad(content, Insets.all(24.0)),
+                                  Paint.of(white), 14.0)
+
+    val _ = Element.render(cv, card, new Rect(20.0, 20.0, 440.0, 220.0))
+    emit(dir, "card", cv)
+
+  private def cardCopy(): String =
+    """
+    Nothing in this card computes a coordinate. The row aligns its children on a
+    shared baseline, the column stretches them to full width, and the spring
+    above the footer eats whatever space is left over.
+    """
+
+  private def rule(color: Color): Element =
+    Element.background(Element.space(0.0, 1.0), Paint.of(color), 0.0)
+
+  // --- 8. poster: the full piece, to PNG and PDF ------------------------
+
+  private def poster(dir: String, backend: CairoGraphics): Unit receives graphics, stdout =
+    val png = graphics.create(360.0, 480.0, 3.0, None)
+    drawPoster(png)
+    emit(dir, "poster", png)
+
+    // the same drawing to a vector PDF surface
+    val pdf = backend.createPdf("\{dir}/poster.pdf", 360.0, 480.0)
+    drawPoster(pdf)
+
+    match pdf.save("\{dir}/poster.pdf")
+    case Ok(_)  => println "  wrote poster.pdf"
+    case Err(e) => println "  poster.pdf failed: \{e}"
+
+  private def drawPoster(cv: Canvas): Unit receives graphics =
+    val paper = Color.rgb255(245, 246, 255)
+    val muted = Color.rgb255(150, 158, 205)
+
+    with
+      Style.fillPaint =
+        Paint.linear(0.0, 0.0, 0.0, 480.0,
+          Color.rgb255(8, 10, 30), Color.rgb255(30, 27, 78))
+    in
+      cv.fill(Region.rect(0.0, 0.0, 360.0, 480.0))
+
+    // the light study, clipped to a rounded panel
+    val panel = Region.roundRect(36.0, 40.0, 288.0, 220.0, 18.0)
+
+    with Style.clip = [panel] in
+      discAt(cv, 150.0, 120.0, Color.rgb255(240, 60, 130))
+      discAt(cv, 210.0, 130.0, Color.rgb255(40, 215, 215))
+      discAt(cv, 180.0, 190.0, Color.rgb255(250, 185, 70))
+
+    with Style.strokePaint = Paint.of(Color.rgb255(86, 94, 150).fade(0.6)),
+         Style.stroke = Stroke.of(1.0)
+    in
+      cv.stroke(panel)
+
+    with
+      Style.font = Font.bold(30.0),
+      Style.textPaint = Paint.of(paper)
+    in
+      cv.textAt(36.0, 320.0, "Shapes, paints,")
+      cv.textAt(36.0, 356.0, "and light.")
+
+    with
+      Style.font = Font.sans(12.0),
+      Style.textPaint = Paint.of(muted),
+      Typesetting.leading = 1.5,
+      Typesetting.align = Align.justify
+    in
+      val _ = Text.paragraph(cv, posterCopy(), new Rect(36.0, 384.0, 288.0, 80.0))
+
+  private def discAt(cv: Canvas, cx: Float, cy: Float, color: Color): Unit =
+    cv.group: 0.9, Blend.screen, () =>
+      with Style.fillPaint = Paint.of(color) in
+        cv.fill(Region.circle(cx, cy, 74.0))
+
+  private def posterCopy(): String =
+    """
+    Every fill takes a paint, so a gradient costs no more than a flat colour.
+    Groups composite a whole subtree at once, which is what lets these three
+    discs overlap without going muddy.
+    """
+end

@@ -1,0 +1,75 @@
+//[ Constraints.jo
+  !
+  ! The measurement vocabulary: what a parent offers a child (`Constraints`),
+  ! what the child asks for back (`Measured`), and the padding value both use.
+  !
+  ! **Constraints are always bounded.** There is no infinite axis, because an
+  ! image has a fixed frame and every constraint descends from a known rect.
+  ! That is the one real simplification the "images, not documents" scope buys:
+  ! all the intrinsic-size machinery a general UI toolkit needs for unbounded
+  ! axes simply does not arise.
+//]
+
+namespace compose.layout
+
+import compose.drawing.*
+
+//[ The size range a parent offers a child. //]
+class Constraints(minW: Float, maxW: Float, minH: Float, maxH: Float)
+  //[ The same maxima with the minima dropped — "at most this big". //]
+  def loosened: Constraints = new Constraints(0.0, maxW, 0.0, maxH)
+
+  //[ These constraints with the width pinned to `w`. //]
+  def tightW(w: Float): Constraints = new Constraints(w, w, minH, maxH)
+
+  //[ These constraints with the height pinned to `h`. //]
+  def tightH(h: Float): Constraints = new Constraints(minW, maxW, h, h)
+
+  def clampW(w: Float): Float =
+    if w < minW then minW else if w > maxW then maxW else w
+
+  def clampH(h: Float): Float =
+    if h < minH then minH else if h > maxH then maxH else h
+
+  //[ Room left after `insets` are taken out, never negative. //]
+  def deflate(insets: Insets): Constraints =
+    new Constraints(
+      atLeastZero(minW - insets.horizontal),
+      atLeastZero(maxW - insets.horizontal),
+      atLeastZero(minH - insets.vertical),
+      atLeastZero(maxH - insets.vertical))
+end
+
+section Constraints
+  //[ Exactly `w` × `h`. //]
+  def tight(w: Float, h: Float): Constraints = new Constraints(w, w, h, h)
+
+  //[ At most `w` × `h`. //]
+  def upTo(w: Float, h: Float): Constraints = new Constraints(0.0, w, 0.0, h)
+
+  //[ Exactly the size of `box`. //]
+  def of(box: Rect): Constraints = tight(box.width, box.height)
+end
+
+//[ What an element asked for: a size, plus the baseline its text sits on
+  ! (measured down from the top). The baseline is what lets a row of mixed font
+  ! sizes line up.
+//]
+class Measured(width: Float, height: Float, baseline: Float)
+
+//[ Padding on four sides. //]
+class Insets(top: Float, right: Float, bottom: Float, left: Float)
+  def horizontal: Float = left + right
+  def vertical: Float = top + bottom
+end
+
+section Insets
+  def all(v: Float): Insets = new Insets(v, v, v, v)
+
+  //[ `h` on the left and right, `v` on the top and bottom. //]
+  def xy(h: Float, v: Float): Insets = new Insets(v, h, v, h)
+
+  def zero: Insets = new Insets(0.0, 0.0, 0.0, 0.0)
+end
+
+private def atLeastZero(v: Float): Float = if v < 0.0 then 0.0 else v

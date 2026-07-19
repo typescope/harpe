@@ -1,0 +1,70 @@
+//[ TextBox.jo
+  !
+  ! A wrapped paragraph — the only element that consults the shaper.
+  !
+  ! Styling is captured when the element is built, not when it is drawn, so a
+  ! text element renders identically wherever it is placed and `measure` never
+  ! depends on ambient state. That is also what makes the wrap cache sound: with
+  ! style fixed, the line breaks depend on the width alone.
+//]
+
+namespace compose.layout.elements
+
+import compose.layout.*
+import compose.drawing.*
+
+//[ A wrapped paragraph in a captured style. //]
+class TextBox(text: String, font: Font, paint: Paint, align: Align, leading: Float)
+  view Element
+
+  def flexWeight: Float = 0.0
+
+  // one-entry cache: wrapping depends only on the width, since style is captured
+  var cachedWidth: Float = 0.0 - 1.0
+  var cachedLines: List[Line] = List.empty[Line]
+
+  def measure(c: Constraints): Measured receives graphics =
+    val lines = linesFor(c.maxW)
+    val spaceW = with Style.font = font in graphics.shape(" ").width
+    var widest = 0.0
+
+    for line in lines do
+      val w = line.naturalWidth(spaceW)
+
+      if w > widest then
+        widest = w
+
+    val height = leading * font.size * lines.size.toFloat
+    new Measured(c.clampW(widest), c.clampH(height), ascent())
+
+  def layout(bounds: Rect): Laid receives graphics =
+    new Laid(this, bounds, ascent(), List.empty[Laid])
+
+  def draw(cv: Canvas, node: Laid): Unit receives
+      graphics,
+      Style.alpha,
+      Style.transform,
+      Style.clip
+  =
+    val lines = linesFor(node.bounds.width)
+
+    with
+      Style.font = font,
+      Style.textPaint = paint,
+      Typesetting.align = align,
+      Typesetting.leading = leading
+    in
+      val _ = Text.draw(cv, lines, node.bounds)
+
+  private def ascent(): Float receives graphics =
+    with Style.font = font in graphics.fontAscent
+
+  private def linesFor(width: Float): List[Line] receives graphics =
+    if width == cachedWidth then
+      return cachedLines
+
+    val lines = with Style.font = font in Text.wrap(text, width)
+    cachedWidth = width
+    cachedLines = lines
+    lines
+end

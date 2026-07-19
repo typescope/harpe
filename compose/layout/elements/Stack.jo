@@ -1,0 +1,60 @@
+//[ Stack.jo
+  !
+  ! Children layered in z-order, all filling the same bounds. Later children
+  ! paint over earlier ones — this is how artwork goes behind content.
+//]
+
+namespace compose.layout.elements
+
+import compose.layout.*
+import compose.drawing.*
+
+//[ Children layered in z-order, all filling the same bounds. //]
+class Stack(children: List[Element])
+  view Element
+
+  def flexWeight: Float = 0.0
+
+  def measure(c: Constraints): Measured receives graphics =
+    var widest = 0.0
+    var tallest = 0.0
+    var first = 0.0
+    var i = 0
+
+    while i < children.size do
+      val m = children.get(i).measure(c.loosened)
+
+      if m.width > widest then
+        widest = m.width
+
+      if m.height > tallest then
+        tallest = m.height
+
+      if i == 0 then
+        first = m.baseline
+
+      i = i + 1
+
+    new Measured(c.clampW(widest), c.clampH(tallest), first)
+
+  def layout(bounds: Rect): Laid receives graphics =
+    var kids = List.empty[Laid]
+    var baseline = 0.0
+    var i = 0
+
+    while i < children.size do
+      val child = children.get(i)
+
+      if i == 0 then
+        baseline = child.measure(Constraints.of(bounds)).baseline
+
+      kids = kids ++ [child.layout(bounds)]
+      i = i + 1
+
+    new Laid(this, bounds, baseline, kids)
+
+  def draw(cv: Canvas, node: Laid): Unit receives
+      graphics, Style.alpha, Style.transform, Style.clip
+  =
+    Element.paintChildren(cv, node)
+end

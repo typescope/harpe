@@ -1,0 +1,50 @@
+//[ Stroke.jo
+  !
+  ! Stroke geometry: how a line is drawn, as a value. Width alone does not make
+  ! a quality stroke — ends and corners do, and a dash pattern is the difference
+  ! between a chart gridline and a border.
+//]
+
+namespace compose.drawing
+
+//[ How a stroke ends. //]
+type Cap = Cap.butt | Cap.round | Cap.square
+
+section Cap
+  object butt
+  object round
+  object square
+end
+
+//[ How a stroke turns a corner. //]
+type Join = Join.miter | Join.round | Join.bevel
+
+section Join
+  object miter
+  object round
+  object bevel
+end
+
+//[ Stroke geometry. `dash` is an on/off length sequence (empty for a solid
+  ! line), and `miterLimit` is the ratio past which a miter join is cut to a
+  ! bevel.
+//]
+class Stroke(width: Float, cap: Cap, join: Join, miterLimit: Float,
+             dash: List[Float], dashOffset: Float)
+  //[ This stroke at a different width. //]
+  def sized(w: Float): Stroke = new Stroke(w, cap, join, miterLimit, dash, dashOffset)
+
+  //[ This stroke with an on/off dash pattern. //]
+  def dashed(lengths: List[Float]): Stroke =
+    new Stroke(width, cap, join, miterLimit, lengths, 0.0)
+end
+
+section Stroke
+  //[ A solid stroke of `width`, butt ends and miter corners. //]
+  def of(width: Float): Stroke =
+    new Stroke(width, Cap.butt, Join.miter, 10.0, [], 0.0)
+
+  //[ A solid stroke with round ends and corners — what most drawn lines want. //]
+  def smooth(width: Float): Stroke =
+    new Stroke(width, Cap.round, Join.round, 10.0, [], 0.0)
+end
