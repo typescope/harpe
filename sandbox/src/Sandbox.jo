@@ -78,7 +78,7 @@ private class SandboxImpl
     val rpath  = osMod.path.abspath(root)
     val fullPath = osMod.path.abspath(
       osMod.path.normpath(osMod.path.join(rpath, path)))
-    if fullPath.startsWith(rpath).asBool then fullPath.asString else ""
+    if fullPath.startswith(rpath).asBool then fullPath.asString else ""
 
   def fileExists(path: String): Bool = osMod.path.isfile(getFullPath(path)).asBool
 
@@ -90,6 +90,7 @@ private class SandboxImpl
   def writeFile(path: String, content: String): Unit =
     val fullPath = getFullPath(path)
     if fullPath != "" then
+      osMod.makedirs(osMod.path.dirname(fullPath), exist_ok = true)
       val f = py.open(fullPath, "w")
       f.write(content)
       f.close()
