@@ -1,23 +1,28 @@
 //[ Text.jo
   !
-  ! Shaped text: the glyph vocabulary, plus a deliberately thin wrapping layer.
+  ! Shaped text: the glyph vocabulary, and wrapping into lines.
   !
   ! A `GlyphRun` is the output of shaping — positioned glyph ids, not characters.
   ! Everything below the shaper works in glyphs, which is what makes kerning and
   ! ligatures come out right: `graphics.shape` runs the text through HarfBuzz,
   ! and `canvas.glyphs` draws exactly what it produced.
   !
-  ! `wrap` is the thin layer, and its limits are deliberate — it is here to make
-  ! the imaging model usable, not to be the text engine:
+  ! A wrapped paragraph is a list of `Line`s, each a list of shaped word runs.
+  ! Keeping the words distinct (rather than one run per line) is what lets
+  ! `Align.justify` widen the gaps between them — a line is placed word by word,
+  ! with a gap that is the normal space width, or, when justifying, the space
+  ! that makes the line fill its box.
+  !
+  ! Still deliberately thin, and still not the whole text engine:
   !
   ! - one script per string, no itemization and no font fallback, so a code
   !   point the ambient font lacks renders as a missing-glyph box
   ! - greedy breaking at whitespace only — no UAX #14, no kinsoku, and a word
   !   wider than the box overruns it rather than breaking
-  ! - `Align.justify` renders as `Align.left`
+  ! - all whitespace (including newlines) is a soft break; there is no hard break
   !
-  ! The real engine (itemize → shape → break → justify, over vendored UCD
-  ! tables) replaces this layer wholesale. See `drawing-engine.md`.
+  ! Those three all belong to the break stage, which arrives with the vendored
+  ! UCD tables. See `drawing-engine.md`.
 //]
 
 namespace harpe.caps.drawing
@@ -39,47 +44,65 @@ class GlyphRun(font: Font, glyphs: List[Glyph])
     w
 end
 
+//[ One wrapped line: the shaped words on it, in order. //]
+class Line(words: List[GlyphRun])
+  //[ The words' combined width, without the spaces between them. //]
+  def wordsWidth: Float =
+    var w = 0.0
+
+    for run in words do
+      w = w + run.width
+
+    w
+
+  //[ The number of inter-word gaps — what justification distributes across. //]
+  def gaps: Int = if words.size > 1 then words.size - 1 else 0
+
+  //[ The line's natural width, with `spaceW`-wide gaps. //]
+  def naturalWidth(spaceW: Float): Float = wordsWidth + spaceW * gaps.toFloat
+end
+
 section Text
-  //[ Greedily wrap `text` to `width`, returning one shaped run per line.
-    ! Whitespace separates words; a word wider than `width` overruns.
+  //[ Greedily wrap `text` to `width`, one `Line` per visual line. Whitespace
+    ! separates words; a word wider than `width` overruns onto its own line.
   //]
-  def wrap(text: String, width: Float): List[GlyphRun] receives
-      graphics,
-      Style.font
-  =
+  def wrap(text: String, width: Float): List[Line] receives graphics, Style.font =
     val ws = words(text)
     val spaceW = graphics.shape(" ").width
-    var lines = List.empty[GlyphRun]
-    var cur = ""
+    var lines = List.empty[Line]
+    var cur = List.empty[GlyphRun]
     var curW = 0.0
     var i = 0
 
     while i < ws.size do
-      val w = ws.get(i)
-      val ww = graphics.shape(w).width
-      val gap = if cur == "" then 0.0 else spaceW
+      val run = graphics.shape(ws.get(i))
+      val gap = if cur.isEmpty then 0.0 else spaceW
 
-      if cur != "" && curW + gap + ww > width then
-        lines = lines ++ [graphics.shape(cur)]
-        cur = w
-        curW = ww
+      if !cur.isEmpty && curW + gap + run.width > width then
+        lines = lines ++ [new Line(cur)]
+        cur = [run]
+        curW = run.width
       else
-        cur = if cur == "" then w else cur + " " + w
-        curW = curW + gap + ww
+        cur = cur ++ [run]
+        curW = curW + gap + run.width
 
       i = i + 1
 
-    if cur != "" then
-      lines = lines ++ [graphics.shape(cur)]
+    if !cur.isEmpty then
+      lines = lines ++ [new Line(cur)]
 
     lines
 
-  //[ Draw `lines` into `box`, one line per `leading`-scaled line height, at the
+  //[ Draw `lines` into `box`, one per `leading`-scaled line height, at the
     ! ambient alignment. Returns the y offset just past the last baseline, so a
     ! caller can stack blocks. Lines past the bottom of `box` are still drawn —
     ! clipping and overflow are the layout engine's job, not this layer's.
+    !
+    ! `justify` stretches the inter-word gaps to fill the box, but never on the
+    ! last line (which would leave a sparse final row) nor on a line with no
+    ! gaps to stretch.
   //]
-  def draw(cv: Canvas, lines: List[GlyphRun], box: Rect): Float receives
+  def draw(cv: Canvas, lines: List[Line], box: Rect): Float receives
       graphics,
       Style.font,
       Style.textPaint,
@@ -89,21 +112,48 @@ section Text
       Typesetting.leading
   =
     val lineHeight = Typesetting.leading * Style.font.size
+    val spaceW = graphics.shape(" ").width
     var y = graphics.fontAscent
+    var idx = 0
 
-    for run in lines do
-      val w = run.width
-
-      val x =
-        match Typesetting.align
-        case _: Align.center => box.x + (box.width - w) / 2.0
-        case _: Align.right  => box.x + box.width - w
-        case _               => box.x
-
-      cv.glyphs(run, x, box.y + y)
+    for line in lines do
+      val isLast = idx == lines.size - 1
+      drawLine(cv, line, box, box.y + y, spaceW, isLast)
       y = y + lineHeight
+      idx = idx + 1
 
     y
+
+  //[ Place one line's words, left to right, at the alignment's starting x with
+    ! its gap width.
+  //]
+  private def drawLine(cv: Canvas, line: Line, box: Rect, baseline: Float,
+                       spaceW: Float, isLast: Bool): Unit receives
+      Style.textPaint, Style.alpha, Style.transform, Style.clip, Typesetting.align
+  =
+    val justify = isJustify(Typesetting.align) && !isLast && line.gaps > 0
+    val natural = line.naturalWidth(spaceW)
+
+    val gap =
+      if justify then (box.width - line.wordsWidth) / line.gaps.toFloat
+      else spaceW
+
+    val startX =
+      match Typesetting.align
+      case _: Align.center => box.x + (box.width - natural) / 2.0
+      case _: Align.right  => box.x + box.width - natural
+      case _               => box.x
+
+    var x = startX
+
+    for run in line.words do
+      cv.glyphs(run, x, baseline)
+      x = x + run.width + gap
+
+  private def isJustify(align: Align): Bool =
+    match align
+    case _: Align.justify => true
+    case _                => false
 
   //[ Wrap `text` to `box`'s width and draw it — the common case. //]
   def paragraph(cv: Canvas, text: String, box: Rect): Float receives

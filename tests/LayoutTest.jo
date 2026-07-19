@@ -42,6 +42,7 @@ def run(): Unit receives stdout =
     flexing()
     wrappers()
     textFlow()
+    justify(dir)
     nestedClips(dir)
 
 // --- column ------------------------------------------------------------
@@ -205,6 +206,76 @@ private def textFlow(): Unit receives stdout, graphics =
   val leaf = Element.place(Element.space(10.0, 10.0), frame(120.0, 60.0))
   check("layout fills the rect it is handed", near(leaf.bounds.width, 120.0))
   check("Laid.centre is the middle of the bounds", near(leaf.centre.x, 60.0))
+
+// --- justify: the gaps stretch, but not on the last line ---------------
+
+private def justify(dir: String): Unit receives stdout, graphics =
+  val cv = graphics.create(240.0, 160.0, 1.0, Some(Color.white))
+  val box = new Rect(10.0, 10.0, 220.0, 140.0)
+  val prose = "one two three four five six seven eight nine ten eleven twelve"
+
+  with
+    Style.font = Font.sans(13.0),
+    Style.textPaint = Paint.of(Color.rgb255(20, 20, 30)),
+    Typesetting.align = Align.justify
+  in
+    val _ = Text.paragraph(cv, prose, box)
+
+  val _2 = cv.save(out("justify.png"))
+  val img = pilImage.open("\{dir}/justify.png").convert("RGB")
+
+  // a justified line reaches the right edge of the box; a ragged one would not
+  check("a justified line fills to the right edge", inkNear(img, 228, 20))
+  check("justify leaves the left edge flush", inkNear(img, 11, 20))
+
+  // the last line is left as-is: short, so its right end is blank
+  val lastY = lastInkRow(img, 20, 148)
+  check("the last line is not justified (ragged right)", !inkNear(img, 228, lastY))
+
+//[ Whether any dark pixel sits within a few px of column `x`, around row `y`. //]
+private def inkNear(img: py.Dynamic, x: Int, y: Int): Bool =
+  var found = false
+  var dy = 0 - 6
+
+  while dy <= 6 do
+    var dx = 0 - 4
+
+    while dx <= 4 do
+      if dark(img, x + dx, y + dy) then
+        found = true
+
+      dx = dx + 1
+
+    dy = dy + 1
+
+  found
+
+//[ The lowest row that still carries ink, scanning up from `hi`. //]
+private def lastInkRow(img: py.Dynamic, lo: Int, hi: Int): Int =
+  var y = hi
+
+  while y > lo do
+    if rowHasInk(img, y) then
+      return y
+
+    y = y - 1
+
+  lo
+
+private def rowHasInk(img: py.Dynamic, y: Int): Bool =
+  var x = 11
+  var found = false
+
+  while x < 230 do
+    if dark(img, x, y) then
+      found = true
+
+    x = x + 3
+
+  found
+
+private def dark(img: py.Dynamic, x: Int, y: Int): Bool =
+  img.getpixel(py.tuple(x, y))[0].asInt < 140
 
 // --- clipping, the one rule that only exists in pixels ------------------
 

@@ -21,15 +21,18 @@ class TextBox(text: String, font: Font, paint: Paint, align: Align, leading: Flo
 
   // one-entry cache: wrapping depends only on the width, since style is captured
   var cachedWidth: Float = 0.0 - 1.0
-  var cachedLines: List[GlyphRun] = List.empty[GlyphRun]
+  var cachedLines: List[Line] = List.empty[Line]
 
   def measure(c: Constraints): Measured receives graphics =
     val lines = linesFor(c.maxW)
+    val spaceW = with Style.font = font in graphics.shape(" ").width
     var widest = 0.0
 
-    for run in lines do
-      if run.width > widest then
-        widest = run.width
+    for line in lines do
+      val w = line.naturalWidth(spaceW)
+
+      if w > widest then
+        widest = w
 
     val height = leading * font.size * lines.size.toFloat
     new Measured(c.clampW(widest), c.clampH(height), ascent())
@@ -56,7 +59,7 @@ class TextBox(text: String, font: Font, paint: Paint, align: Align, leading: Flo
   private def ascent(): Float receives graphics =
     with Style.font = font in graphics.fontAscent
 
-  private def linesFor(width: Float): List[GlyphRun] receives graphics =
+  private def linesFor(width: Float): List[Line] receives graphics =
     if width == cachedWidth then
       return cachedLines
 
