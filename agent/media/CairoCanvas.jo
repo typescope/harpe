@@ -80,8 +80,8 @@ class CairoGraphics(root: String)
   def registerFont(family: String, src: Path): Result[Unit, String] =
     orMessage: py.try(registerAt(family, src))
 
-  def shape(text: String): GlyphRun receives DrawingContext.font =
-    val font = DrawingContext.font
+  def shape(text: String): GlyphRun receives Style.font =
+    val font = Style.font
 
     if text == "" then
       return new GlyphRun(font, List.empty[Glyph])
@@ -116,14 +116,14 @@ class CairoGraphics(root: String)
 
     new GlyphRun(font, glyphs)
 
-  def fontAscent: Float receives DrawingContext.font =
-    val font = DrawingContext.font
+  def fontAscent: Float receives Style.font =
+    val font = Style.font
     val path = fontPath(font)
     val ext = hbFontFor(path).get_font_extents("ltr")
     ext.ascender.asFloat * font.size / upemFor(path)
 
-  def fontDescent: Float receives DrawingContext.font =
-    val font = DrawingContext.font
+  def fontDescent: Float receives Style.font =
+    val font = Style.font
     val path = fontPath(font)
     val ext = hbFontFor(path).get_font_extents("ltr")
     val d = ext.descender.asFloat
@@ -252,24 +252,24 @@ class CairoCanvas(g: CairoGraphics, surface: py.Dynamic, cr: py.Dynamic,
   def scale: Float = sc
 
   def fill(region: Region): Unit receives
-      DrawingContext.fillPaint,
-      DrawingContext.fillRule,
-      DrawingContext.alpha,
-      DrawingContext.transform,
-      DrawingContext.clip
+      Style.fillPaint,
+      Style.fillRule,
+      Style.alpha,
+      Style.transform,
+      Style.clip
   =
     scoped: () =>
       applyFillRule()
       emitPath(region.ops)
-      applyPaint(DrawingContext.fillPaint)
+      applyPaint(Style.fillPaint)
       val _ = cr.fill()
 
   def stroke(outline: Trace | Region): Unit receives
-      DrawingContext.strokePaint,
-      DrawingContext.stroke,
-      DrawingContext.alpha,
-      DrawingContext.transform,
-      DrawingContext.clip
+      Style.strokePaint,
+      Style.stroke,
+      Style.alpha,
+      Style.transform,
+      Style.clip
   =
     val ops =
       match outline
@@ -279,32 +279,32 @@ class CairoCanvas(g: CairoGraphics, surface: py.Dynamic, cr: py.Dynamic,
     scoped: () =>
       emitPath(ops)
       applyStroke()
-      applyPaint(DrawingContext.strokePaint)
+      applyPaint(Style.strokePaint)
       val _ = cr.stroke()
 
   def fillStroke(region: Region): Unit receives
-      DrawingContext.fillPaint,
-      DrawingContext.fillRule,
-      DrawingContext.strokePaint,
-      DrawingContext.stroke,
-      DrawingContext.alpha,
-      DrawingContext.transform,
-      DrawingContext.clip
+      Style.fillPaint,
+      Style.fillRule,
+      Style.strokePaint,
+      Style.stroke,
+      Style.alpha,
+      Style.transform,
+      Style.clip
   =
     scoped: () =>
       applyFillRule()
       emitPath(region.ops)
-      applyPaint(DrawingContext.fillPaint)
+      applyPaint(Style.fillPaint)
       val _ = cr.fill_preserve()
       applyStroke()
-      applyPaint(DrawingContext.strokePaint)
+      applyPaint(Style.strokePaint)
       val _2 = cr.stroke()
 
   def glyphs(run: GlyphRun, x: Float, baseline: Float): Unit receives
-      DrawingContext.textPaint,
-      DrawingContext.alpha,
-      DrawingContext.transform,
-      DrawingContext.clip
+      Style.textPaint,
+      Style.alpha,
+      Style.transform,
+      Style.clip
   =
     if run.glyphs.isEmpty then
       return
@@ -312,7 +312,7 @@ class CairoCanvas(g: CairoGraphics, surface: py.Dynamic, cr: py.Dynamic,
     scoped: () =>
       val _ = cr.set_font_face(g.faceFor(run.font))
       val _2 = cr.set_font_size(run.font.size)
-      applyPaint(DrawingContext.textPaint)
+      applyPaint(Style.textPaint)
 
       val list = py.list()
       var penX = x
@@ -336,9 +336,9 @@ class CairoCanvas(g: CairoGraphics, surface: py.Dynamic, cr: py.Dynamic,
     val _5 = cr.set_operator(cc.OPERATOR_OVER)
 
   def imageAt(src: Path, x: Float, y: Float, width: Float): Result[Unit, String] receives
-      DrawingContext.alpha,
-      DrawingContext.transform,
-      DrawingContext.clip
+      Style.alpha,
+      Style.transform,
+      Style.clip
   =
     orMessage: py.try(placeImage(src, x, y, width))
 
@@ -350,19 +350,19 @@ class CairoCanvas(g: CairoGraphics, surface: py.Dynamic, cr: py.Dynamic,
     ! push, not a buffer allocation, so this is cheap per operation.
   //]
   private def scoped(body: () => Unit): Unit receives
-      DrawingContext.transform,
-      DrawingContext.clip
+      Style.transform,
+      Style.clip
   =
     val _ = cr.save()
 
-    match DrawingContext.clip
+    match Style.clip
     case Some(region) =>
       emitPath(region.ops)
       val _2 = cr.clip()
 
     case None => pass
 
-    val m = DrawingContext.transform
+    val m = Style.transform
     val _3 = cr.transform(cc.Matrix(m.a, m.b, m.c, m.d, m.e, m.f))
 
     body()
@@ -384,8 +384,8 @@ class CairoCanvas(g: CairoGraphics, surface: py.Dynamic, cr: py.Dynamic,
       i = i + 1
 
   //[ Install `paint` as the cairo source, folding the ambient alpha into it. //]
-  private def applyPaint(paint: Paint): Unit receives DrawingContext.alpha =
-    val a = DrawingContext.alpha
+  private def applyPaint(paint: Paint): Unit receives Style.alpha =
+    val a = Style.alpha
 
     match paint
     case s: Solid =>
@@ -411,8 +411,8 @@ class CairoCanvas(g: CairoGraphics, surface: py.Dynamic, cr: py.Dynamic,
       val _ = grad.add_color_stop_rgba(s.offset, c.r, c.g, c.b, c.a * alpha)
       i = i + 1
 
-  private def applyStroke(): Unit receives DrawingContext.stroke =
-    val st = DrawingContext.stroke
+  private def applyStroke(): Unit receives Style.stroke =
+    val st = Style.stroke
     val _ = cr.set_line_width(st.width)
     val _2 = cr.set_miter_limit(st.miterLimit)
 
@@ -437,9 +437,9 @@ class CairoCanvas(g: CairoGraphics, surface: py.Dynamic, cr: py.Dynamic,
 
     val _6 = cr.set_dash(dashes, st.dashOffset)
 
-  private def applyFillRule(): Unit receives DrawingContext.fillRule =
+  private def applyFillRule(): Unit receives Style.fillRule =
     val _ =
-      match DrawingContext.fillRule
+      match Style.fillRule
       case _: FillRule.evenOdd => cr.set_fill_rule(cc.FILL_RULE_EVEN_ODD)
       case _                   => cr.set_fill_rule(cc.FILL_RULE_WINDING)
 
@@ -454,9 +454,9 @@ class CairoCanvas(g: CairoGraphics, surface: py.Dynamic, cr: py.Dynamic,
     ! cairo as a PNG stream, and paint it scaled into place.
   //]
   private def placeImage(src: Path, x: Float, y: Float, width: Float): Unit receives
-      DrawingContext.alpha,
-      DrawingContext.transform,
-      DrawingContext.clip
+      Style.alpha,
+      Style.transform,
+      Style.clip
   =
     val im = pilImage.open(resolvePath(g.root, src)).convert("RGBA")
     val buffer = io.BytesIO()
@@ -474,7 +474,7 @@ class CairoCanvas(g: CairoGraphics, surface: py.Dynamic, cr: py.Dynamic,
       val _5 = cr.set_source_surface(img, 0.0, 0.0)
       val _6 = cr.callDynamic("rectangle", 0.0, 0.0, iw, ih)
       val _7 = cr.callDynamic("clip")
-      val _8 = cr.paint_with_alpha(DrawingContext.alpha)
+      val _8 = cr.paint_with_alpha(Style.alpha)
 
   private def saveTo(target: Path): Unit =
     val real = resolvePath(g.root, target)

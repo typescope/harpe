@@ -58,7 +58,7 @@ def runTask(): Unit receives IO.stdout, fs, graphics =
 //[ A vertical ink gradient across the whole sheet. //]
 private def background(cv: Canvas): Unit =
   with
-    DrawingContext.fillPaint =
+    Style.fillPaint =
       Paint.linear(0.0, 0.0, 0.0, sheetH, inkTop, inkBottom)
   in
     cv.fill(Region.rect(0.0, 0.0, sheetW, sheetH))
@@ -74,9 +74,9 @@ private def lightStudy(cv: Canvas): Unit =
   val panel = Region.roundRect(margin, 104.0, sheetW - 2.0 * margin, 330.0, 18.0)
 
   // everything in this block is confined to the panel
-  with DrawingContext.clip = Some(panel) in
+  with Style.clip = Some(panel) in
     with
-      DrawingContext.fillPaint =
+      Style.fillPaint =
         Paint.radial(300.0, 250.0, 250.0, glow.fade(0.75), glow.fade(0.0))
     in
       cv.fill(Region.rect(margin, 104.0, sheetW - 2.0 * margin, 330.0))
@@ -87,21 +87,21 @@ private def lightStudy(cv: Canvas): Unit =
 
   // a hairline frame on top of the artwork
   with
-    DrawingContext.strokePaint = Paint.of(hairline.fade(0.55)),
-    DrawingContext.stroke = Stroke.of(1.0)
+    Style.strokePaint = Paint.of(hairline.fade(0.55)),
+    Style.stroke = Stroke.of(1.0)
   in
     cv.stroke(panel)
 
 private def disc(cv: Canvas, cx: Float, cy: Float, r: Float, color: Color): Unit =
   cv.group: 0.92, Blend.screen, () =>
-    with DrawingContext.fillPaint = Paint.of(color) in
+    with Style.fillPaint = Paint.of(color) in
       cv.fill(Region.circle(cx, cy, r))
 
 //[ A small label and a rule across the head of the sheet. //]
 private def masthead(cv: Canvas): Unit receives graphics =
   with
-    DrawingContext.font = Font.bold(12.0),
-    DrawingContext.textPaint = Paint.of(muted)
+    Style.font = Font.bold(12.0),
+    Style.textPaint = Paint.of(muted)
   in
     cv.textAt(margin, 74.0, "HARPE / CANVAS")
 
@@ -116,8 +116,8 @@ private def masthead(cv: Canvas): Unit receives graphics =
 //]
 private def title(cv: Canvas): Unit receives graphics =
   with
-    DrawingContext.font = Font.bold(46.0),
-    DrawingContext.textPaint = Paint.of(paper)
+    Style.font = Font.bold(46.0),
+    Style.textPaint = Paint.of(paper)
   in
     cv.textAt(margin, 512.0, "Shapes, paints,")
     cv.textAt(margin, 562.0, "and light.")
@@ -129,8 +129,8 @@ private def caption(cv: Canvas): Unit receives graphics =
   rule(cv, 596.0, hairline)
 
   with
-    DrawingContext.font = Font.sans(13.0),
-    DrawingContext.textPaint = Paint.of(muted),
+    Style.font = Font.sans(13.0),
+    Style.textPaint = Paint.of(muted),
     Typesetting.leading = 1.6
   in
     val column = new Rect(margin, 618.0, 316.0, 130.0)
@@ -150,8 +150,8 @@ private def inkKey(cv: Canvas): Unit receives graphics =
   val x = 412.0
 
   with
-    DrawingContext.font = Font.bold(9.5),
-    DrawingContext.textPaint = Paint.of(muted.fade(0.75))
+    Style.font = Font.bold(9.5),
+    Style.textPaint = Paint.of(muted.fade(0.75))
   in
     cv.textAt(x, 618.0, "INKS / SCREEN")
 
@@ -160,12 +160,12 @@ private def inkKey(cv: Canvas): Unit receives graphics =
   swatch(cv, x, 698.0, amber, "amber")
 
 private def swatch(cv: Canvas, x: Float, y: Float, color: Color, label: String): Unit =
-  with DrawingContext.fillPaint = Paint.of(color) in
+  with Style.fillPaint = Paint.of(color) in
     cv.fill(Region.circle(x + 5.0, y - 4.0, 5.0))
 
   with
-    DrawingContext.font = Font.sans(11.0),
-    DrawingContext.textPaint = Paint.of(muted)
+    Style.font = Font.sans(11.0),
+    Style.textPaint = Paint.of(muted)
   in
     cv.textAt(x + 18.0, y, label)
 
@@ -176,8 +176,8 @@ private def colophon(cv: Canvas): Unit receives graphics =
   rule(cv, 762.0, hairline.fade(0.5))
 
   with
-    DrawingContext.font = Font.sans(10.5),
-    DrawingContext.textPaint = Paint.of(muted.fade(0.85))
+    Style.font = Font.sans(10.5),
+    Style.textPaint = Paint.of(muted.fade(0.85))
   in
     val middle = "600 x 820 at 3x"
     val right = "drawn in jo"
@@ -189,7 +189,7 @@ private def colophon(cv: Canvas): Unit receives graphics =
 //[ A hairline across the text column, at baseline `y`. //]
 private def rule(cv: Canvas, y: Float, color: Color): Unit =
   with
-    DrawingContext.strokePaint = Paint.of(color),
-    DrawingContext.stroke = Stroke.of(1.0)
+    Style.strokePaint = Paint.of(color),
+    Style.stroke = Stroke.of(1.0)
   in
     cv.stroke(Trace.from(margin, y).lineTo(sheetW - margin, y))

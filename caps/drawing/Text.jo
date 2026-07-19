@@ -45,7 +45,7 @@ section Text
   //]
   def wrap(text: String, width: Float): List[GlyphRun] receives
       graphics,
-      DrawingContext.font
+      Style.font
   =
     val ws = words(text)
     val spaceW = graphics.shape(" ").width
@@ -81,14 +81,14 @@ section Text
   //]
   def draw(cv: Canvas, lines: List[GlyphRun], box: Rect): Float receives
       graphics,
-      DrawingContext.font,
-      DrawingContext.textPaint,
-      DrawingContext.alpha,
-      DrawingContext.transform,
+      Style.font,
+      Style.textPaint,
+      Style.alpha,
+      Style.transform,
       Typesetting.align,
       Typesetting.leading
   =
-    val lineHeight = Typesetting.leading * DrawingContext.font.size
+    val lineHeight = Typesetting.leading * Style.font.size
     var y = graphics.fontAscent
 
     for run in lines do
@@ -108,10 +108,10 @@ section Text
   //[ Wrap `text` to `box`'s width and draw it — the common case. //]
   def paragraph(cv: Canvas, text: String, box: Rect): Float receives
       graphics,
-      DrawingContext.font,
-      DrawingContext.textPaint,
-      DrawingContext.alpha,
-      DrawingContext.transform,
+      Style.font,
+      Style.textPaint,
+      Style.alpha,
+      Style.transform,
       Typesetting.align,
       Typesetting.leading
   =

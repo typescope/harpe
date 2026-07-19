@@ -41,15 +41,15 @@ interface Graphics
     ! with kerning and ligatures applied. This is both how text is measured
     ! (`run.width`) and how it is drawn (`canvas.glyphs`).
   //]
-  def shape(text: String): GlyphRun receives DrawingContext.font
+  def shape(text: String): GlyphRun receives Style.font
 
   //[ The advance width of `text` in the ambient font. //]
-  def stringWidth(text: String): Float receives DrawingContext.font =
+  def stringWidth(text: String): Float receives Style.font =
     shape(text).width
 
   //[ The ambient font's ascent / descent (both positive, in logical units). //]
-  def fontAscent: Float receives DrawingContext.font
-  def fontDescent: Float receives DrawingContext.font
+  def fontAscent: Float receives Style.font
+  def fontDescent: Float receives Style.font
 
   //[ The pixel dimensions of the image at `src`. //]
   def imageSize(src: Path): Result[ImageSize, String]

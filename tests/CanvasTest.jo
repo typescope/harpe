@@ -117,7 +117,7 @@ private def matrixMath(): Unit receives stdout =
 private def antialiasing(dir: String): Unit receives stdout, graphics =
   val cv = graphics.create(120.0, 120.0, 1.0, Some(Color.white))
 
-  with DrawingContext.fillPaint = Paint.of(Color.rgb255(40, 60, 160)) in
+  with Style.fillPaint = Paint.of(Color.rgb255(40, 60, 160)) in
     cv.fill(Region.circle(60.0, 60.0, 45.0))
 
   val _ = cv.save(out("aa.png"))
@@ -138,11 +138,11 @@ private def groupVersusAlpha(dir: String): Unit receives stdout, graphics =
   // per-op alpha: the discs blend against each other, so the overlap differs
   val a = graphics.create(200.0, 100.0, 1.0, Some(Color.white))
 
-  with DrawingContext.alpha = 0.5 in
-    with DrawingContext.fillPaint = red in
+  with Style.alpha = 0.5 in
+    with Style.fillPaint = red in
       a.fill(Region.circle(70.0, 50.0, 40.0))
 
-    with DrawingContext.fillPaint = blue in
+    with Style.fillPaint = blue in
       a.fill(Region.circle(110.0, 50.0, 40.0))
 
   val _ = a.save(out("alpha.png"))
@@ -151,10 +151,10 @@ private def groupVersusAlpha(dir: String): Unit receives stdout, graphics =
   val g = graphics.create(200.0, 100.0, 1.0, Some(Color.white))
 
   g.group: 0.5, Blend.normal, () =>
-    with DrawingContext.fillPaint = red in
+    with Style.fillPaint = red in
       g.fill(Region.circle(70.0, 50.0, 40.0))
 
-    with DrawingContext.fillPaint = blue in
+    with Style.fillPaint = blue in
       g.fill(Region.circle(110.0, 50.0, 40.0))
 
   val _2 = g.save(out("group.png"))
@@ -183,8 +183,8 @@ private def clipAndScale(dir: String): Unit receives stdout, graphics =
   val cv = graphics.create(100.0, 100.0, 2.0, Some(Color.white))
 
   with
-    DrawingContext.clip = Some(Region.rect(0.0, 0.0, 50.0, 100.0)),
-    DrawingContext.fillPaint = Paint.of(Color.rgb255(20, 140, 90))
+    Style.clip = Some(Region.rect(0.0, 0.0, 50.0, 100.0)),
+    Style.fillPaint = Paint.of(Color.rgb255(20, 140, 90))
   in
     cv.fill(Region.rect(0.0, 0.0, 100.0, 100.0))
 
@@ -199,7 +199,7 @@ private def clipAndScale(dir: String): Unit receives stdout, graphics =
 // --- shaped text -------------------------------------------------------
 
 private def shapedText(dir: String): Unit receives stdout, graphics =
-  with DrawingContext.font = Font.sans(20.0) in
+  with Style.font = Font.sans(20.0) in
     val wide = graphics.stringWidth("AV Wave fi")
     val narrow = graphics.stringWidth("AV")
     check("stringWidth grows with the string", wide > narrow)
@@ -217,8 +217,8 @@ private def shapedText(dir: String): Unit receives stdout, graphics =
   val cv = graphics.create(300.0, 120.0, 1.0, Some(Color.white))
 
   with
-    DrawingContext.font = Font.sans(20.0),
-    DrawingContext.textPaint = Paint.of(Color.rgb255(20, 20, 40))
+    Style.font = Font.sans(20.0),
+    Style.textPaint = Paint.of(Color.rgb255(20, 20, 40))
   in
     val box = new Rect(10.0, 10.0, 280.0, 100.0)
     val used = Text.paragraph(cv, body(), box)

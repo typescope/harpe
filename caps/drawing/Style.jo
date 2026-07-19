@@ -1,11 +1,13 @@
-//[ DrawingContext.jo
+//[ Style.jo
   !
-  ! Drawing state: the ambient parameters every surface op reads.
+  ! Drawing state: the ambient parameters every surface op reads. This is what
+  ! PDF and cairo call the *graphics state* — paints, stroke geometry, fill
+  ! rule, alpha, font, transform and clip.
   !
   ! State is not set through methods — each field is a context parameter with a
   ! default, changed by rebinding over a block:
   !
-  !   with DrawingContext.fillPaint = Paint.of(Color.white) in
+  !   with Style.fillPaint = Paint.of(Color.white) in
   !     canvas.fill(box)
   !
   ! A surface method declares exactly which of these it consumes (via
@@ -17,6 +19,10 @@
   ! un-set, so the backend brackets it with save/restore.
   !
   ! Group opacity is deliberately NOT here — see `Canvas.group`.
+  !
+  ! Note for the layers above: this name is spent. The vocabulary layer's
+  ! per-element styling is `TextStyle` / `BlockStyle` inside a `StyleSheet`, not
+  ! a bare `Style`.
 //]
 
 namespace harpe.caps.drawing
@@ -32,7 +38,7 @@ section FillRule
   object evenOdd
 end
 
-section DrawingContext
+section Style
   param fillPaint: Paint = new Solid(Color.black)
   param strokePaint: Paint = new Solid(Color.black)
   param textPaint: Paint = new Solid(Color.black)

@@ -6,7 +6,7 @@
   ! `Text.paragraph`.
   !
   ! Drawing state (paints, stroke geometry, alpha, transform, clip) is the
-  ! ambient `DrawingContext`, changed by rebinding with `with`. Nothing is set
+  ! ambient `Style`, changed by rebinding with `with`. Nothing is set
   ! through methods, and nothing has to be restored — when the block ends the
   ! previous state is back.
   !
@@ -41,15 +41,15 @@ def runTask(): Unit receives IO.stdout, fs, graphics =
 //[ A gradient band across the top, with the title shaped and centred on it. //]
 private def titleBand(cv: Canvas, w: Float): Unit receives graphics =
   with
-    DrawingContext.fillPaint =
+    Style.fillPaint =
       Paint.linear(0.0, 0.0, w, 120.0,
         Color.rgb255(28, 38, 86), Color.rgb255(72, 96, 190))
   in
     cv.fill(Region.rect(0.0, 0.0, w, 120.0))
 
   with
-    DrawingContext.font = Font.bold(34.0),
-    DrawingContext.textPaint = Paint.of(Color.white),
+    Style.font = Font.bold(34.0),
+    Style.textPaint = Paint.of(Color.white),
     Typesetting.align = Align.center
   in
     val band = new Rect(40.0, 30.0, w - 80.0, 60.0)
@@ -57,8 +57,8 @@ private def titleBand(cv: Canvas, w: Float): Unit receives graphics =
 
   // a subtitle placed directly, centred using the shaper's own measurement
   with
-    DrawingContext.font = Font.sans(14.0),
-    DrawingContext.textPaint = Paint.of(Color.rgb255(198, 210, 240))
+    Style.font = Font.sans(14.0),
+    Style.textPaint = Paint.of(Color.rgb255(198, 210, 240))
   in
     val sub = "shapes, paints, groups, shaped text"
     cv.textAt((w - graphics.stringWidth(sub)) / 2.0, 104.0, sub)
@@ -67,22 +67,22 @@ private def titleBand(cv: Canvas, w: Float): Unit receives graphics =
 private def badge(cv: Canvas, w: Float): Unit =
   // rotate about the badge's own centre by composing translate/rotate/translate
   with
-    DrawingContext.transform = Matrix.rotateAbout(0.0 - 0.12, 90.0, 168.0),
-    DrawingContext.fillPaint = Paint.of(Color.rgb255(240, 196, 60)),
-    DrawingContext.strokePaint = Paint.of(Color.rgb255(150, 110, 20)),
-    DrawingContext.stroke = Stroke.smooth(2.0)
+    Style.transform = Matrix.rotateAbout(0.0 - 0.12, 90.0, 168.0),
+    Style.fillPaint = Paint.of(Color.rgb255(240, 196, 60)),
+    Style.strokePaint = Paint.of(Color.rgb255(150, 110, 20)),
+    Style.stroke = Stroke.smooth(2.0)
   in
     cv.fillStroke(Region.roundRect(30.0, 146.0, 120.0, 44.0, 10.0))
 
   with
-    DrawingContext.font = Font.bold(15.0),
-    DrawingContext.textPaint = Paint.of(Color.rgb255(70, 50, 10)),
-    DrawingContext.transform = Matrix.rotateAbout(0.0 - 0.12, 90.0, 168.0)
+    Style.font = Font.bold(15.0),
+    Style.textPaint = Paint.of(Color.rgb255(70, 50, 10)),
+    Style.transform = Matrix.rotateAbout(0.0 - 0.12, 90.0, 168.0)
   in
     cv.textAt(48.0, 174.0, "rotated")
 
   // Inside a group the discs are drawn opaque and the *result* is faded once,
-  // so their overlaps stay clean. Using DrawingContext.alpha instead would
+  // so their overlaps stay clean. Using Style.alpha instead would
   // fade each disc separately and darken every overlap.
   cv.group: 0.55, Blend.normal, () =>
     disc(cv, 250.0, Color.rgb255(220, 70, 60))
@@ -91,13 +91,13 @@ private def badge(cv: Canvas, w: Float): Unit =
 
   // a dashed rule under the whole header
   with
-    DrawingContext.strokePaint = Paint.of(Color.rgb255(170, 178, 200)),
-    DrawingContext.stroke = Stroke.of(1.5).dashed([6.0, 5.0])
+    Style.strokePaint = Paint.of(Color.rgb255(170, 178, 200)),
+    Style.stroke = Stroke.of(1.5).dashed([6.0, 5.0])
   in
     cv.stroke(Trace.from(40.0, 212.0).lineTo(w - 40.0, 212.0))
 
 private def disc(cv: Canvas, cx: Float, color: Color): Unit =
-  with DrawingContext.fillPaint = Paint.of(color) in
+  with Style.fillPaint = Paint.of(color) in
     cv.fill(Region.circle(cx, 168.0, 32.0))
 
 //[ Two columns of wrapped body text. //]
@@ -109,8 +109,8 @@ private def columns(cv: Canvas, w: Float, h: Float): Unit receives graphics =
   val colH = h - top - margin
 
   with
-    DrawingContext.font = Font.sans(12.0),
-    DrawingContext.textPaint = Paint.of(Color.rgb255(40, 45, 55)),
+    Style.font = Font.sans(12.0),
+    Style.textPaint = Paint.of(Color.rgb255(40, 45, 55)),
     Typesetting.leading = 1.45
   in
     val left = new Rect(margin, top, colW, colH)
