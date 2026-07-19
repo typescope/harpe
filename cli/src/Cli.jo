@@ -14,10 +14,13 @@
 //]
 
 namespace harpe.cli
+import harpe.ffi.os
+import harpe.ffi.time
+
+import harpe.ffi.dotenv
 
 import jo.IO.stdout
 import harpe.*
-import harpe.ffi.loadDotenv
 import harpe.logging.Logging
 import harpe.logging.JsonlLogger
 import harpe.logging.logger
@@ -29,7 +32,7 @@ import harpe.turns.Interrupted
 //[ The entry point   //]
 def main(): Unit receives stdout =
   if Defaults.checkAgentDir() then
-    loadDotenv(".env")
+    dotenv.load(".env")
     val wspace = new Workspace(os.path.abspath("."))
     with workspace = wspace in
       Logging.withLogger(new JsonlLogger(wspace.relative("logs/agent.jsonl")), () => runChat())

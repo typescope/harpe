@@ -1,0 +1,58 @@
+//[ RapidOcr.jo
+  !
+  ! A concrete `OCR` capability backed by RapidOCR — PaddleOCR's models run through
+  ! ONNX runtime. Pure pip (`rapidocr-onnxruntime`), no system binary, and stronger
+  ! than Tesseract on photos and rotated text. It resolves a `Path` against its root
+  ! and reads the file directly.
+  !
+  ! The engine loads its models on first use and is kept for the reader's lifetime.
+  ! When the package is absent, `text` answers `Err` rather than crashing.
+//]
+
+namespace harpe.media
+
+import harpe.caps.*
+
+import harpe.ffi.builtins
+
+//[ A RapidOCR-backed OCR reader, resolving a `Path` against `root`. //]
+class RapidOcr
+  val root: String
+  var engineRef: py.Dynamic
+
+  def RapidOcr(root: String) =
+    this.root = root
+    this.engineRef = py.dynamic(py.none)
+
+  view OCR
+
+  def text(src: Path): Result[String, String] =
+    orMessage: py.try(recognize(resolvePath(root, src)))
+
+  //[ Run the engine.
+    !
+    ! Its result is `(lines, elapse)` with each line `[box, text, confidence]`, or
+    ! `(None, _)` when the image holds no text.
+  //]
+  private def recognize(path: String): String =
+    val lines = py.call(engine, path)[0]
+
+    if py.isNone(lines) then ""
+    else
+      val n = builtins.len(lines)
+      var result = ""
+      var i = 0
+
+      while i < n do
+        val line = py.dynamic(py.dynamic(lines)[i])[1].asString
+        result = if i == 0 then line else result + "\n" + line
+        i = i + 1
+
+      result
+
+  private def engine(): py.Dynamic =
+    if py.isNone(engineRef) then
+      this.engineRef = py.module("rapidocr_onnxruntime").RapidOCR()
+
+    engineRef
+end

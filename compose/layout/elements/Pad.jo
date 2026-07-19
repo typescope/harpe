@@ -1,0 +1,40 @@
+//[ Pad.jo
+  !
+  ! A child inset on four sides. The insets come out of the constraints on the
+  ! way down and are added back to the measurement on the way up, so a padded
+  ! element reports the size it actually occupies.
+//]
+
+namespace compose.layout.elements
+
+import compose.layout.*
+import compose.drawing.*
+
+//[ A child inset on four sides. //]
+class Pad(child: Element, insets: Insets)
+  view Element
+
+  def flexWeight: Float = 0.0
+
+  def measure(c: Constraints): Measured receives graphics =
+    val m = child.measure(c.deflate(insets))
+    new Measured(
+      c.clampW(m.width + insets.horizontal),
+      c.clampH(m.height + insets.vertical),
+      m.baseline + insets.top)
+
+  def layout(bounds: Rect): Laid receives graphics =
+    val inner = new Rect(
+      bounds.x + insets.left,
+      bounds.y + insets.top,
+      atLeastZero(bounds.width - insets.horizontal),
+      atLeastZero(bounds.height - insets.vertical))
+
+    val kid = child.layout(inner)
+    new Laid(this, bounds, kid.baseline + insets.top, [kid])
+
+  def draw(cv: Canvas, node: Laid): Unit receives
+      graphics, Style.alpha, Style.transform, Style.clip
+  =
+    Element.paintChildren(cv, node)
+end

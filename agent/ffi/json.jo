@@ -1,0 +1,15 @@
+//[ json.jo
+  !
+  ! JSON encode/decode, wrapping Python's `json` module — mirroring `os` and
+  ! `time`. Referenced as `json.dumps(...)` / `json.loads(...)`.
+//]
+
+namespace harpe.ffi.json
+
+private def module: py.Dynamic = py.module("json")
+
+//[ Serialize a value to a JSON string. //]
+def dumps(value: Any): String = module.dumps(value).asString
+
+//[ Parse a JSON string into a Python value (dict/list/scalar). //]
+def loads(text: String): py.Dynamic = module.loads(text)

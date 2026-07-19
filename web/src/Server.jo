@@ -21,8 +21,12 @@
 //]
 
 namespace harpe.web
+import harpe.ffi.secrets
+import harpe.ffi.time
+import harpe.ffi.json
+import harpe.ffi.threading
+import harpe.ffi.file
 
-import harpe.ffi.*
 import harpe.Agent
 import harpe.Memory
 import harpe.Workspace
@@ -41,7 +45,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
   // request on its own thread), so registry access is guarded by registryLock;
   // turns within one session are serialized by the session's own lock.
   private val registry = py.dict()
-  private val registryLock = threadingMod.Lock()
+  private val registryLock = threading.lock()
 
   //[ The WSGI application: establish the request context, then route. Each
     ! request runs on its own thread, which does not inherit the process's
@@ -57,7 +61,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     val path = environ.get("PATH_INFO", "/").asString
 
     if method == "GET" && (path == "/" || path.startsWith("/c/")) then
-      respond(startResp, "200 OK", "text/html; charset=utf-8", readFile(indexPath()))
+      respond(startResp, "200 OK", "text/html; charset=utf-8", file.read(indexPath()))
 
     else if path == "/api/info" then
       respondJson(startResp, py.dict("name" ~ name))
@@ -91,7 +95,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     ! resumes it (from memory, or loaded from disk).
   //]
   private def handleMessage(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace, logger =
-    val body = jsonMod.loads(readBody(environ)).cast[py.Dict]
+    val body = json.loads(readBody(environ)).cast[py.Dict]
     val text = body.get("text", "").asString
     val reqId = body.get("session", "").asString
 
@@ -101,7 +105,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     val write = py.call(startResp, "200 OK", headers)
 
     val sink: Sink = (obj: py.Dict) =>
-      py.call(write, py.dynamic(jsonMod.dumps(obj).asString + "\n").encode())
+      py.call(write, py.dynamic(json.dumps(obj) + "\n").encode())
 
     if text.trim == "" then
       sink(py.dict("type" ~ "error", "detail" ~ "empty message"))
@@ -127,7 +131,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     ! back. Unknown or idle sessions are a no-op — stopping is idempotent.
   //]
   private def handleStop(environ: py.Dynamic, startResp: py.Dynamic): py.List =
-    val body = jsonMod.loads(readBody(environ)).cast[py.Dict]
+    val body = json.loads(readBody(environ)).cast[py.Dict]
     val id = body.get("session", "").asString
 
     registryLock.acquire()
@@ -138,7 +142,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
 
   //[ A fresh session under a newly-minted, time-sortable id. //]
   private def createSession(): Session receives workspace =
-    val id = time.strftime("%Y%m%dT%H%M%S") + "-" + py.module("secrets").token_hex(2).asString
+    val id = time.strftime("%Y%m%dT%H%M%S") + "-" + secrets.tokenHex(2)
     val memory = new Memory
     val agent = Config.agent:
       brain
@@ -244,11 +248,11 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
   //[ Read and decode a request body using its CONTENT_LENGTH. //]
   private def readBody(environ: py.Dynamic): String =
     val raw = environ.get("CONTENT_LENGTH", "").asString
-    val length = if raw == "" then 0 else builtins.int(raw).asInt
+    val length = Int.parse(raw) rescue None => 0
     environ.get("wsgi.input").read(length).decode().asString
 
   private def respondJson(startResp: py.Dynamic, dict: py.Dict): py.List =
-    respond(startResp, "200 OK", "application/json", jsonMod.dumps(dict).asString)
+    respond(startResp, "200 OK", "application/json", json.dumps(dict))
 
   //[ A complete, non-streamed response from a string body. //]
   private def respond(startResp: py.Dynamic, status: String, ctype: String, body: String): py.List =

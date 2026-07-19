@@ -1,0 +1,370 @@
+//[ RunCode.jo
+  !
+  ! The `runCode` tool: compile the model's program against the agent sandbox and
+  ! run it, capturing the result — timed and emitted as a `harpe.tools.runCode`
+  ! log entry to the caller's injected channel. This is the program-execution log,
+  ! distinct from the conversational session history; the format and destination
+  ! are the `Logger` backend's policy (see `harpe.logging`).
+  !
+  ! How it compiles — and why it is concurrency-safe. Building the sandbox's guest
+  ! module once (`jo build`, the user's one-time prep) records the *exact* compiler
+  ! invocation in the target's `.done` sidecar: the backend, every `--lib`
+  ! (checking libraries) and `--link-lib` (link libraries) pointing at the
+  ! dependencies' already-built, read-only `.sast`, the `--link` map, and the
+  ! source/`-o`/`--sast` paths — one argument per line. `runCode` replays that
+  ! invocation with only the source, output, and `--sast` swapped for per-run
+  ! paths, so it compiles the ONE program against immutable prebuilt libraries.
+  !
+  ! Because the libraries are read-only and every run writes its own source,
+  ! output, and sast dir, concurrent runs never touch shared state — no warming,
+  ! no per-run package copy, no dependency re-resolution. A semaphore still bounds
+  ! how many compiler/interpreter processes run at once.
+//]
+
+namespace harpe.tools
+import harpe.ffi.os
+import harpe.ffi.time
+import harpe.ffi.glob
+import harpe.ffi.threading
+import harpe.ffi.subprocess
+import harpe.ffi.builtins
+import harpe.ffi.file
+import harpe.ffi.text
+import harpe.ffi.json
+
+import harpe.*
+import harpe.broker.*
+import harpe.logging.*
+
+private def shutilMod: py.Dynamic = py.module("shutil")
+private def tempfileMod: py.Dynamic = py.module("tempfile")
+
+// A monomorphic empty service map — `Map.empty` is polymorphic and cannot be used
+// directly as a default parameter value.
+private def noServices: Map[String, Service] = Map.empty
+
+//[ The log category for this tool's records — one program compile+run each.
+  ! Reverse-namespaced (namespace + tool name) so it is unique in the open set and
+  ! filterable by prefix; see the category convention on `harpe.logging.Entry`.
+//]
+private def runCodeCategory: String = "harpe.tools.runCode"
+
+//[ Locate the compiler-invocation record left by `jo build` for the guest — the
+  ! `*.py.done` sidecar next to the built target. `None` if the guest has not been
+  ! built yet.
+//]
+private def findDoneFile(sandboxDir: String): Option[String] =
+  val hits = glob.glob(os.path.join(sandboxDir, ".build/*/jo-*/target/*.py.done"))
+  if hits.size == 0 then None else Some(hits.get(0).asString)
+
+//[ Replay the recorded invocation (`lines`, one argument per line) with this
+  ! run's paths swapped in: the source file (the lone `.jo` positional), the `-o`
+  ! output, and the `--sast` output directory. Everything else — the compiler
+  ! path, backend, `--lib`/`--link-lib`, `--link` map — is reused verbatim.
+//]
+private def replayArgs(lines: List[String], runSrc: String, runOut: String, runSast: String): py.List =
+  val args = py.list()
+
+  val Output = 0 // -o
+  val Sast = 1   // --sast
+
+  var mode = -1   // the previous flag whose value to replace next
+
+  for line in lines if line != "" do
+    if mode == Output then
+      args.append(py.dynamic(runOut))
+      mode = -1
+
+    else if mode == Sast then
+      args.append(py.dynamic(runSast))
+      mode = -1
+
+    else if line == "-o" then
+      args.append(py.dynamic(line))
+      mode = Output
+
+    else if line == "--sast" then
+      args.append(py.dynamic(line))
+      mode = Sast
+
+    else if line.endsWith(".jo") then
+      continue
+
+    else
+      args.append(py.dynamic(line))
+  end
+
+  args.append(py.dynamic(runSrc))
+  args
+
+//[ One bounded, isolated run: acquire a build slot, compile+run in a fresh temp
+  ! directory, then delete it and release the slot — always, even on failure. If
+  ! the guest has not been built, return a clear message instead (no build here).
+//]
+private def runCode(
+    code: String,
+    sandboxDir: String,
+    gate: py.Dynamic,
+    buildTimeout: Float,
+    runTimeout: Float,
+    maxResultChars: Int,
+    runScript: String,
+    services: Map[String, Service],
+    dataRoot: String)
+: Tool.RunOutcome receives logger =
+  match findDoneFile(sandboxDir)
+  case None =>
+    new Tool.RunOutcome(
+      "The sandbox is not built. Run `jo build` in the sandbox project once before starting the agent.",
+      "sandbox not built")
+
+  case Some(donePath) =>
+    gate.acquire()
+    val runDir = tempfileMod.mkdtemp(prefix = "run-").asString
+
+    // Per-run broker: a Unix socket in the run dir, bound to this run's services.
+    // The guest reaches it via HARPE_BROKER_SOCK. Skipped entirely when no services
+    // are granted, so an agent that uses none pays nothing.
+    val brokerSock = os.path.join(runDir, "broker.sock")
+    val broker: Option[Broker] =
+      if services.isEmpty then None
+      else
+        match py.try(Broker.start(brokerSock, services))
+        case Ok(b)  => Some(b)
+        case Err(_) => None
+
+    val guestSock =
+      match broker
+      case Some(_) => brokerSock
+      case None    => ""
+
+    val outcome = py.try(buildAndRun(code, donePath, runDir, buildTimeout, runTimeout, runScript, guestSock, dataRoot))
+
+    match broker
+    case Some(b) => val _ = py.try(b.stop())
+    case None    => pass
+
+    val _ = py.try(shutilMod.rmtree(runDir, ignore_errors = true))
+    gate.release()
+
+    // Bound only the text the model sees; `buildAndRun` has already logged the full
+    // output/error to the run log, so nothing is lost from the record.
+    match outcome
+    case Ok(outc) => Tool.RunOutcome: Tool.elide(outc.result, maxResultChars), outc.summary
+    case Err(e)   => Tool.RunOutcome("The run failed unexpectedly: \{e.message}", "internal error")
+
+//[ Compile and run `code` in `runDir` by replaying the recorded invocation from
+  ! `donePath`, logging the outcome.
+//]
+private def buildAndRun(
+    code: String,
+    donePath: String,
+    runDir: String,
+    buildTimeout: Float,
+    runTimeout: Float,
+    runScript: String,
+    brokerSock: String,
+    dataRoot: String)
+: Tool.RunOutcome receives logger =
+  // Each run emits one `harpe.tools.runCode` log entry — the program under test
+  // plus the fields specific to how it ended — to the injected channel. What
+  // becomes of the entry (format, destination) is the Logger backend's policy.
+
+  val runSrc   = os.path.join(runDir, "Task.jo")
+  val runOut   = os.path.join(runDir, "out.py")
+  val runSast  = os.path.join(runDir, "sast")
+  val runAudit = os.path.join(runDir, "audit.jsonl")
+
+  os.makedirs(runSast)
+  file.write(runSrc, code)
+
+  val args = replayArgs(file.read(donePath).lines, runSrc, runOut, runSast)
+
+  // 1. Compile — the security checkpoint — timed, bounded, and error-captured.
+  val t0 = time.now()
+  val build = subprocess.runCapped(args, buildTimeout)
+  val compileSeconds = builtins.round(time.now() - t0, 2)
+
+  if build.timedOut then
+    logger.log:
+      runCodeCategory
+      "code"           ~ code
+      "compiled"       ~ false
+      "compileSeconds" ~ compileSeconds
+      "timedOut"       ~ true
+      "phase"          ~ "compile"
+    return new Tool.RunOutcome(
+      "The build timed out after \{buildTimeout}s.",
+      "build timed out · \{buildTimeout}s")
+
+  if build.returnCode != 0 then
+    val compileError = text.stripAnsi(build.err).trim
+    logger.log:
+      runCodeCategory
+      "code"           ~ code
+      "compiled"       ~ false
+      "compileSeconds" ~ compileSeconds
+      "compileError"   ~ compileError
+    return new Tool.RunOutcome(
+      "The program did not compile (\{compileSeconds}s):\n\{compileError}",
+      "did not compile · \{compileSeconds}s")
+
+  // 2. Run the compiled program (its path is the `-o` we just supplied).
+  if !os.path.isfile(runOut) then
+    return new Tool.RunOutcome("The program compiled but no executable was found.", "no executable produced")
+
+  // A `sandbox/run.sh` wrapper (defense in depth) owns how the program runs — the
+  // interpreter, any uid drop, and OS-level confinement (ulimit/landrun/bwrap/…).
+  // When present, run the guest through it (`run.sh <out.py>`) and make the run
+  // artifacts readable to whatever uid it may drop to (mkdtemp is 0700, ours).
+  // Absent: run the system Python directly. See docs/concepts/sandbox.md.
+  val useRunSh = os.path.isfile(runScript)
+
+  if useRunSh then
+    val osMod = py.module("os")
+    osMod.chmod(runDir, 493)   // 0o755 — traverse + read the directory
+    osMod.chmod(runOut, 420)   // 0o644 — read the compiled program
+    // Pre-create the audit log world-writable, so a uid-dropping run.sh can still
+    // append to it (the dir is not writable to the dropped user).
+    file.write(runAudit, "")
+    osMod.chmod(runAudit, 438) // 0o666
+
+  val runCmd = if useRunSh then py.list(runScript, runOut) else py.list("python3", runOut)
+
+  // Untrusted guest code runs with a minimal PATH-only environment (guestEnv),
+  // inheriting none of the host's secrets — plus the audit-log path the sandbox
+  // runtime writes its records to. The build step above keeps the full env — it is
+  // the trusted compiler needing the toolchain.
+  val runEnv = subprocess.guestEnv()
+  runEnv.set("HARPE_AUDIT_LOG", runAudit)
+  runEnv.set("HARPE_SCRATCH_DIR", runDir)
+
+  if dataRoot != "" then
+    runEnv.set("HARPE_DATA_DIR", dataRoot)
+
+  if brokerSock != "" then
+    runEnv.set("HARPE_BROKER_SOCK", brokerSock)
+
+  val t1 = time.now()
+  val run = subprocess.runCapped(runCmd, runTimeout, env = runEnv)
+  val runSeconds = builtins.round(time.now() - t1, 2)
+
+  if run.timedOut then
+    logger.log:
+      runCodeCategory
+      "code"           ~ code
+      "compiled"       ~ true
+      "compileSeconds" ~ compileSeconds
+      "runSeconds"     ~ runSeconds
+      "timedOut"       ~ true
+      "phase"          ~ "run"
+    return new Tool.RunOutcome(
+      "The program ran too long and was stopped after \{runTimeout}s (possible infinite loop).",
+      "timed out · ran \{runSeconds}s")
+
+  val runReturnCode = run.returnCode
+  val runOutText = run.out.trim
+  val runErr = text.stripAnsi(run.err).trim
+
+  // Replay the records the sandboxed program logged (a JSONL file it wrote to)
+  // through this (contextual) logger, so they carry the turn's session context.
+  replayAudit(runAudit)
+
+  val result =
+    if runReturnCode != 0 then "The program crashed:\n\{runErr}"
+    else if runOutText == "" then "(the program produced no output)"
+    else runOutText
+
+  val summary =
+    if runReturnCode != 0 then "crashed · compiled \{compileSeconds}s, ran \{runSeconds}s"
+    else "ran · compiled \{compileSeconds}s, ran \{runSeconds}s"
+
+  logger.log:
+    runCodeCategory
+    "code"           ~ code
+    "compiled"       ~ true
+    "compileSeconds" ~ compileSeconds
+    "runSeconds"     ~ runSeconds
+    "exitCode"       ~ runReturnCode
+    "output"         ~ result
+  new Tool.RunOutcome(result, summary)
+
+//[ Replay the sandbox's audit log through the ambient (contextual) `logger`.
+  !
+  ! The sandbox runtime logged its records as JSONL to `path` (named via
+  ! HARPE_AUDIT_LOG); each line is one `Entry`. Re-emitting them through this
+  ! logger — running inside the turn's context scope — stamps each with the
+  ! session, so a sandboxed program's records land in the log alongside the tool's
+  ! own. A malformed line is skipped rather than failing the run.
+//]
+private def replayAudit(path: String): Unit receives logger =
+  if file.exists(path) then
+    for line in file.read(path).lines if line.trim != "" do
+      match py.try(json.loads(line))
+      case Ok(d)  => logger.logEntry(entryFromDict(d.cast[py.Dict]))
+      case Err(_) => pass
+
+//[ The core "act" tool: compile + run a Jo program against the agent sandbox.
+  !
+  ! Requires the sandbox to have been built once (`jo build`), which records
+  ! the compiler invocation this tool replays. Until then, calls return a "sandbox
+  ! not built" message rather than building anything themselves.
+  !
+  ! `buildTimeout` / `runTimeout` are host-side wall-clock backstops (seconds): a
+  ! guest stuck compiling or in an infinite loop is killed (process group and all)
+  ! rather than hanging the loop. Finer OS-level confinement (memory/CPU caps,
+  ! filesystem, uid) lives outside the process in the optional `sandbox/run.sh`
+  ! wrapper (see docs/concepts/sandbox.md).
+  !
+  ! `maxConcurrent` bounds how many builds+runs proceed at once (each spawns a
+  ! compiler + interpreter process); further calls wait for a slot. Concurrent
+  ! calls are isolated by construction — each compiles its own source against the
+  ! shared, read-only dependency libraries — so they never corrupt each other.
+  !
+  ! Each run emits one `harpe.tools.runCode` `Entry` (code, and the outcome's
+  ! compile/run timings, output or error) to the ambient `logger` channel — read
+  ! at call time, so the turn's `Logging.withContext` tags reach it. Its format and destination
+  ! are the `Logger` backend's policy — see `harpe.logging.Logging.withLogger`.
+  !
+  ! `maxResultChars` bounds the result text returned to the model (middle-elided,
+  ! head + tail kept) so one large program output cannot flood the context. The
+  ! full, un-elided output is still written to `logger`, so nothing is lost.
+  !
+  ! Defense in depth is external: if `sandbox/run.sh` (at the sandbox project root)
+  ! exists and is executable, each run goes through it — `run.sh <out.py>` — and
+  ! the script owns the interpreter, uid drop, and OS confinement (ulimit,
+  ! landrun, bwrap, docker, …). Absent, the guest runs under the system Python.
+  ! See `docs/concepts/sandbox.md`.
+//]
+def runCodeTool(
+    sandboxDir: String,
+    buildTimeout: Float = 120.0,
+    runTimeout: Float = 30.0,
+    maxConcurrent: Int = 4,
+    maxResultChars: Int = 4000,
+    services: Map[String, Service] = noServices,
+    dataDir: String = "")
+: Tool =
+  val gate = threading.semaphore(maxConcurrent)
+
+  // The agent's data directory, granted to the guest as its filesystem root via
+  // HARPE_DATA_DIR. Skipped when absent — the sandbox runtime then falls back to
+  // the per-run scratch dir.
+  val dataRoot = if dataDir != "" && os.path.isdir(dataDir) then os.path.abspath(dataDir) else ""
+
+  // The optional run.sh wrapper sits at sandbox/run.sh — i.e. at the sandbox
+  // project root. If it exists it must be executable, or every run would fail
+  // obscurely; catch that once at startup rather than per call.
+  val runScript = os.path.join(sandboxDir, "run.sh")
+
+  if os.path.isfile(runScript) then
+    val osMod = py.module("os")
+    if !osMod.access(runScript, osMod.X_OK).asBool then
+      abort "sandbox run.sh exists but is not executable — run `chmod +x \{runScript}` (see docs/concepts/sandbox.md)"
+
+  new Tool(
+    "runCode",
+    "Write a Jo program (namespace UserTask, def runTask), compile it against the agent sandbox, and run it. Returns the program's stdout, or the compile error if it does not build.",
+    [Tool.strParam("code", "The Jo source code to compile and run")],
+    input => runCode(input.string("code"), sandboxDir, gate, buildTimeout, runTimeout, maxResultChars, runScript, services, dataRoot)
+  )

@@ -22,16 +22,16 @@ you ── "SFO→JFK July 10, nonstop, under $600" ──▶ agent
 
 ## The whole thing
 
-An agent's capabilities are summed up by its **entry-point contract** in `sandbox/api` — the
+An agent's capabilities are summed up by its **entry-point contract** in the `api` module — the
 `receives` list is everything the agent may do:
 
 ```jo
-// sandbox/api/src/Entry.jo — the flight booker's capabilities
+// sandbox/Entry.jo (api module) — the flight booker's capabilities
 defer def runTask(): Unit receives stdout, flights, payment
 ```
 
 `flights` (read-only search) and `payment` (capped, asks to confirm) are published
-capabilities, wired into `sandbox/api` (their interfaces) and `sandbox/runtime` (their
+capabilities, wired into the `api` module (their interfaces) and the `runtime` module (their
 implementations); the agent replies by writing to `stdout`, which the runtime relays to the
 user. The top-level `jo.toml` pulls in the Harpe loop and points `main` at it (`Harpe.cli`) —
 that's the trigger — so `jo run` launches the agent with no source files; `.env` holds the
@@ -61,9 +61,10 @@ You get the usual agent shape:
 flight-bot/
   jo.toml          # the agent app: depends on the Harpe loop; `jo run` launches it
   sandbox/
-    api/           # the contract + capability interfaces
-    runtime/       # the implementations
-    guest/         # the model's code each turn (don't edit)
+    jo.toml        # one project, three modules — api, runtime, guest
+    Entry.jo       # api module: the contract + capability interfaces
+    Runtime.jo     # runtime module: the implementations
+    Task.jo        # guest module: the model's code each turn (don't edit)
   AGENT.md
   skills/
   .env.example     # copy to .env: model, API key, capability secrets
@@ -85,8 +86,10 @@ gives you a chat right in your terminal:
 
 ```toml
 # jo.toml
-[main.links]
-"jo.main" = "Harpe.cli"
+[module.app]
+links = [
+  { from = "jo.main", to = "Harpe.cli" },
+]
 ```
 
 We'll switch this to `Harpe.whatsapp` in Step 7. Nothing else will change.
@@ -106,25 +109,27 @@ three:
   capped (Step 5); the capability itself asks before each charge.
 
 Both `flights` and `payment` are published capabilities. Granting one is depending on its
-interface from `sandbox/api` and its implementation from `sandbox/runtime`, then listing it in the
-entry point:
+interface in the `api` module and its implementation in the `runtime` module, then listing it
+in the entry point:
 
 ```toml
-# sandbox/api/jo.toml      — the interfaces the model compiles against
-[main.dependencies]
-flights = "1.0"
-payment = "1.0"
-```
+# sandbox/jo.toml
 
-```toml
-# sandbox/runtime/jo.toml  — the implementations the runtime wires in
-[main.dependencies]
-flights-runtime = { version = "1.0", link = true }
-payment-runtime = { version = "1.0", link = true, maxAmount = "2000 USD" }
+[module.api]        # the interfaces the model compiles against
+packages = [
+  { name = "flights", version = "1.0" },
+  { name = "payment", version = "1.0" },
+]
+
+[module.runtime]    # the implementations the runtime wires in
+packages = [
+  { name = "flights-runtime", version = "1.0", link = true },
+  { name = "payment-runtime", version = "1.0", link = true, maxAmount = "2000 USD" },
+]
 ```
 
 ```jo
-// sandbox/api/src/Entry.jo
+// sandbox/Entry.jo (api module)
 defer def runTask(): Unit receives stdout, flights, payment
 ```
 
@@ -136,8 +141,8 @@ PAYMENT_KEY=...                    # your payment provider key
 ```
 
 To see what a capability lets the agent do, read its interface with `jo doc --spec
-sandbox/api/jo.toml`. `stdout` isn't listed in `[main.dependencies]` — the runtime supplies
-it and relays whatever the agent prints back to the user. Built in.
+sandbox/jo.toml api`. `stdout` isn't listed in the api module's `packages` — the runtime
+supplies it and relays whatever the agent prints back to the user. Built in.
 
 ## Step 4 — Teach it
 
@@ -176,12 +181,15 @@ the prompt.
 alone can't fully make safe. Two things handle it — and **neither is confirmation config
 you write**:
 
-- **A typed ceiling**, set on the implementation in `sandbox/runtime`. Even a confused or
+- **A typed ceiling**, set on the implementation in the `runtime` module. Even a confused or
   maliciously-prompted model physically cannot charge more than this:
 
   ```toml
-  # sandbox/runtime/jo.toml
-  payment-runtime = { version = "1.0", link = true, maxAmount = "2000 USD" }
+  # sandbox/jo.toml
+  [module.runtime]
+  packages = [
+    { name = "payment-runtime", version = "1.0", link = true, maxAmount = "2000 USD" },
+  ]
   ```
 
 - **Confirmation, built into the capability.** The `payment` capability asks before every
@@ -250,8 +258,10 @@ Point the trigger at the WhatsApp loop and add your credentials:
 
 ```toml
 # jo.toml
-[main.links]
-"jo.main" = "Harpe.whatsapp"
+[module.app]
+links = [
+  { from = "jo.main", to = "Harpe.whatsapp" },
+]
 ```
 
 ```sh

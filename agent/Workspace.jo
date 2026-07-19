@@ -1,0 +1,41 @@
+//[ Workspace.jo
+  !
+  ! A validated agent working directory — the root that tools and the loop
+  ! resolve their paths against. The driver checks the CWD is an agent directory,
+  ! builds a Workspace from it, and provides it as a context parameter so any
+  ! layer can pick it up without threading it by hand. It lives at the package
+  ! root (not under `tools/`) because it is a general agent concept.
+//]
+
+namespace harpe
+import harpe.ffi.os
+import harpe.ffi.file
+
+
+//[ Workspace
+  !
+  ! An agent's working directory and the conventional layout the built-in tools
+  ! assume: `sandbox/`, `skills/`, and `data/`.
+//]
+class Workspace(root: String)
+  def sandboxDir: String = os.path.join(root, "sandbox")
+  def skillsDir: String = os.path.join(root, "skills")
+  def relative(path: String): String = os.path.join(root, path)
+
+  //[ The text of a workspace file
+    !
+    ! `path` is relative to the `root`.
+    !
+    ! Returns `None` if the file does not exist.
+    !
+    ! A call site that wants a graceful default writes:
+    !
+    !     workspace.read("AGENT.md") rescue None => ""
+  //]
+  def read(path: String): Option[String] =
+    val p = relative(path)
+    if file.exists(p) then Some(file.read(p)) else None
+end
+
+//[ The agent's working directory, provided to tool builders as context. //]
+param workspace: Workspace

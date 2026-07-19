@@ -1,0 +1,26 @@
+//[ sys.jo
+  !
+  ! The interpreter process, wrapping Python's `sys` module — mirroring `os` and
+  ! `time`. Referenced as `sys.exit(...)` / `sys.stdoutWrite(...)`.
+//]
+
+namespace harpe.ffi.sys
+
+private def module: py.Dynamic = py.module("sys")
+
+//[ Terminate the process with `code` (0 = success).
+  !
+  ! Raises `SystemExit`, which unwinds without a traceback and — unlike
+  ! `KeyboardInterrupt` — is not an `Exception`, so `py.try` blocks around network
+  ! calls do not swallow it.
+//]
+def exit(code: Int): Unit = module.exit(code)
+
+//[ The platform identifier: "linux", "darwin" (macOS), "win32", … //]
+def platform: String = module.platform.asString
+
+//[ Write `s` to stdout verbatim (no added newline). //]
+def stdoutWrite(s: String): Unit = module.stdout.write(s)
+
+//[ Flush stdout. //]
+def stdoutFlush(): Unit = module.stdout.flush()

@@ -7,12 +7,14 @@
 //]
 
 namespace harpe.cli
+import harpe.ffi.sys
+import harpe.ffi.threading
+import harpe.ffi.builtins
 
-import harpe.ffi.*
-import time
+import harpe.ffi.time
 
 // "\r" + ESC + "[2K" — return to start of line and clear it.
-private def clearLine(): String = "\r" + builtins.chr(27).asString + "[2K"
+private def clearLine(): String = "\r" + builtins.chr(27) + "[2K"
 
 //[ A reusable spinner resource   //]
 class Spinner
@@ -21,22 +23,22 @@ class Spinner
 
   def start(message: String): Unit =
     stop()
-    val event   = threadingMod.Event()
+    val event   = threading.event()
     val started = time.now()
     val animate = () =>
       val frames = py.list("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
       var i = 0
       while !event.is_set().asBool do
         val frame = frames.get(i % 10).asString
-        val secs  = round1(time.now() - started)
-        sysMod.stdout.write("\r  " + frame + " " + message + " " + secs.toString + "s ")
-        sysMod.stdout.flush()
+        val secs  = builtins.round(time.now() - started, 1)
+        sys.stdoutWrite("\r  " + frame + " " + message + " " + secs.toString + "s ")
+        sys.stdoutFlush()
         i = i + 1
         event.wait(0.1)
-      sysMod.stdout.write(clearLine())
-      sysMod.stdout.flush()
+      sys.stdoutWrite(clearLine())
+      sys.stdoutFlush()
 
-    val t = threadingMod.Thread(target = animate, daemon = true)
+    val t = threading.thread(animate)
     stopEvent = Some(event)
     thread = Some(t)
     t.start()

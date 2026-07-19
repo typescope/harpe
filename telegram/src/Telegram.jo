@@ -13,9 +13,13 @@
 //]
 
 namespace harpe.telegram
+import harpe.ffi.os
+import harpe.ffi.sys
+import harpe.ffi.threading
+import harpe.ffi.signal
+import harpe.ffi.dotenv
 
 import jo.IO.stdout
-import harpe.ffi.*
 import harpe.Agent
 import harpe.workspace
 import harpe.Workspace
@@ -30,7 +34,7 @@ import harpe.logging.logger
 //[ The entry point //]
 def main(): Unit receives stdout =
   if Defaults.checkAgentDir() then
-    loadDotenv(".env")
+    dotenv.load(".env")
     val wspace = new Workspace(os.path.abspath("."))
     with workspace = wspace in
       Logging.withLogger(new JsonlLogger(wspace.relative("logs/agent.jsonl")), () => serve())
@@ -48,7 +52,7 @@ private def serve(): Unit receives stdout, workspace, logger =
   if !me.get("ok", false).asBool then
     println "Error: Telegram getMe failed — check TELEGRAM_BOT_TOKEN."
     println "  \{client.detail(me)}"
-    sysMod.exit(1)
+    sys.exit(1)
 
   val result = me.get("result").cast[py.Dict]
   val username = result.get("username").asString
@@ -63,7 +67,7 @@ private def serve(): Unit receives stdout, workspace, logger =
     println "  ⚠ TELEGRAM_ALLOWED_SENDERS is empty — all messages are rejected until you add sender ids."
 
   // Stop cleanly on Ctrl-C instead of dumping a traceback out of the poll loop.
-  shutdownOnSigint("\nHarpe ▸ shutting down.")
+  signal.shutdownOnSigint("\nHarpe ▸ shutting down.")
 
   bot.run()
 
@@ -81,7 +85,7 @@ private class TelegramBot(
   // genuinely concurrent interaction: the poll thread enqueuing to a session
   // versus a worker reaping its idle session (see `dispatch`/`workerLoop`).
   private val registry = py.dict()
-  private val registryLock = threadingMod.Lock()
+  private val registryLock = threading.lock()
 
   //[ The long-poll loop: fetch updates, advance the offset past each one, and
     ! dispatch text messages. `getUpdates` blocks until messages arrive or the
@@ -278,7 +282,7 @@ private class TelegramBot(
   //[ Start a chat's dedicated worker on a daemon thread (dies with the process). //]
   private def startWorker(chatId: String, session: Session): Unit =
     val loop = () => workerLoop(chatId, session)
-    val thread = threadingMod.Thread(target = loop, daemon = true)
+    val thread = threading.thread(loop)
     thread.start()
 
   //[ Is this sender permitted? An empty allowlist admits no one. //]

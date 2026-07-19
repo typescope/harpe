@@ -29,6 +29,81 @@ for detailed Jo syntax, use `skillsRead` tool to read `jo-syntax.md`.
 Workflow: write Jo → `runCode` → if it fails to compile, read the error and fix
 it → once it runs, use the output to answer. Keep answers concise.
 
+## Files and documents
+
+The `data/` directory holds files the user shares with you. Your program reaches
+it through capabilities received by `runTask` — declare the ones you use:
+
+```Jo
+def runTask(): Unit receives IO.stdout, fs, pdfReader, excelReader, wordReader, excelWriter, wordWriter, image, ocr, graphics
+```
+
+(declare the ones you use; `fs`'s document opens also need their backend param —
+`openPDF` needs `pdfReader`, `openWorkbook` needs `excelReader`, `openWord` needs
+`wordReader`)
+
+- `fs: FileSystem` — the read-only tree. Build paths from the root:
+  `fs.root / "letter.pdf"`. `fs.list(fs.root)` (sorted entries with
+  `.path`/`.isDirectory`), `fs.stat(p)` (size, modified time), `fs.readText(p)`
+  for a small file; for a big one `fs.openTextFile(p)` then `lines` / `head(n)` /
+  `tail(n)`. It also opens documents:
+  - `fs.openPDF(p)` → an open PDF: `pageCount`, `pageText(n)` (1-based; read the
+    pages you need, never the whole document), `outline`, `metadata`,
+    `pageContent(n)` (text/image/path counts — a scanned-page probe),
+    `pageImage(n, target)` (render a page to PNG).
+  - `fs.openWorkbook(p)` → an open spreadsheet: `sheets`, `dimensions(sheet)`,
+    `rows(sheet, start, count)` (a row window — size it with `dimensions` first).
+  - `fs.openWord(p)` → an open .docx: `paragraphCount`, `outline` (headings with
+    paragraph positions), `paragraphs(start, count)` (a paragraph window).
+
+  Close every open file, document, and workbook when done.
+- `excelWriter` / `wordWriter` — produce or transform documents in `data/`:
+  `create()` for a new one, `edit(p)` to load an existing one; build
+  (`addSheet`/`appendRow`; `addHeading`/`addParagraph`) then `save(target)` —
+  saving to a new path transforms without touching the source.
+- `image: Image` — `dimensions(p)`, `metadata(p)`, `resize`, `crop`, `convert`.
+- `ocr: OCR` — `text(p)` reads the text out of an image.
+- `graphics: Graphics` — draw a raster image (diagram, chart, thumbnail).
+  `create(w, h, Some(color))` (or `None` for a transparent background) returns a
+  `Canvas` you paint on: `fill(region)` / `fillStroke(region)` over a closed
+  `Region` (`Region.rect`/`roundRect`/`circle`), `stroke(outline)` over an open
+  `Trace` (`Trace.from(x,y).lineTo(...).curveTo(...)`) or a closed `Region`,
+  `textAt(x, baseline, text)`, `imageAt(src, x, y, w)`, then `save(target)` — the
+  target is a `Path` from the root, e.g. `fs.root / "chart.png"`. Drawing state
+  is the ambient `DrawingContext` params (`fillColor`, `strokeColor`,
+  `textColor`, `lineWidth`, `alpha`, `font`, `transform`), changed by rebinding:
+  `with DrawingContext.fillColor = c in canvas.fill(region)`. Font/image facts
+  are on `graphics`: `stringWidth(text)`, `fontAscent`/`fontDescent`,
+  `imageSize(p)`. Coordinates are pixels, top-left origin.
+  For paragraphs, flow wrapped text into regions:
+  `with flow = Flow(canvas, [Rect(x, y, w, h), ...]) in flow.paragraph(text)`
+  fills the rects in order (two rects = two columns; a paragraph splits across
+  them), `flow.space(h)` adds a gap, `flow.overflowed` tells you if it did not
+  fit. Alignment is the `Typesetting.align` param (`Align.left`/`right`/
+  `center`/`justify`), font/color the ambient `DrawingContext`. Distinct
+  regions with distinct styling (a title band, then columns) are just separate
+  flows over separate rect lists. (`import harpe.caps.drawing.*`.)
+
+Errors come back as values, never exceptions: `Result` (match `Ok(v)`/`Err(e)`,
+or `.success` to unwrap) and `Option` (match `Some(v)`/`None`). A scanned PDF
+page reads as empty text — render it with `pageImage`, then `ocr.text` the PNG:
+
+```Jo
+namespace UserTask
+import SandboxAPI.*
+
+def runTask(): Unit receives IO.stdout, fs, pdfReader, ocr =
+  val doc = fs.openPDF(fs.root / "report.pdf").success
+  val page = doc.pageText(3).success
+
+  if page != "" then println: page
+  else
+    val _ = doc.pageImage(3, fs.root / "p3.png").success
+    println: ocr.text(fs.root / "p3.png").success
+
+  doc.close()
+```
+
 ## Working memory
 
 You have a small working memory: named notes that persist across turns and are

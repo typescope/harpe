@@ -1,0 +1,83 @@
+//[ MediaTest.jo
+  !
+  ! Unit test for granted-media loading: `FileSystemProvider` as the host
+  ! `MediaProvider`, and the guest reaching it through `FileSystem.resolve` /
+  ! `FileSystem.load` over the broker — a granted resource inspected, then loaded into
+  ! a scratch dir and read back, with no bytes crossing the socket.
+//]
+
+namespace harpe.test.MediaTest
+
+import harpe.media.*
+import harpe.caps.*
+import harpe.broker.*
+import harpe.ffi.tempfile
+import harpe.ffi.file
+import harpe.ffi.os
+
+import jo.IO.stdout
+
+private def check(label: String, cond: Bool): Unit receives stdout =
+  assert: cond, "\{label} failed"
+  println "  ok \{label}"
+
+private def isSome(o: Option[Media]): Bool =
+  match o
+  case Some(_) => true
+  case None    => false
+
+// Drain a file's lines into "a|b|c", closing it.
+private def joinLines(f: TextFile): String =
+  var s = ""
+  for line in f.lines do
+    s = if s == "" then line else s + "|" + line
+
+  f.close()
+  s
+
+def run(): Unit receives stdout =
+  // A source directory holding one "granted" file.
+  val srcDir = tempfile.mkdtemp()
+  file.write(os.path.join(srcDir, "granted.txt"), "BODY")
+  val source = FileSystemProvider.byPath(srcDir)
+
+  check("source resolves a confined file", isSome(source.resolve("granted.txt")))
+  check("source rejects an escape",        !isSome(source.resolve("../etc/passwd")))
+  check("source rejects a miss",           !isSome(source.resolve("nope.txt")))
+
+  // The guest reaches the source through FileSystem, over the broker.
+  val scratch = tempfile.mkdtemp()
+  val sock = os.path.join(tempfile.mkdtemp(), "media.sock")
+  val service = new MediaService(id => source.resolve(id), (id, dest) => source.copyTo(id, dest), scratch)
+  val services = Map.empty[String, Service].add("media", service)
+  val broker = Broker.start(sock, services)
+
+  // One FileSystemImpl serves both views: FileSystem (reads) and MediaProvider (resolve/load).
+  val fs = new FileSystemImpl(scratch, Some(BrokerClient.connect(sock)))
+
+  // resolve: a cheap descriptor without materializing, host path never exposed.
+  match fs.resolve("granted.txt")
+  case None    => check("fs.resolve a granted id", false)
+  case Some(m) =>
+    check("fs.resolve a granted id", true)
+    check("fs.resolve reports name", m.fileName == "granted.txt")
+    val sizeOk =
+      match m.metaInt("sizeBytes")
+      case Some(n) => n == 4
+      case None    => false
+    check("fs.resolve reports size (from meta)", sizeOk)
+
+  val ungrantedResolve =
+    match fs.resolve("nope.txt")
+    case None    => true
+    case Some(_) => false
+  check("fs.resolve ungranted is None", ungrantedResolve)
+
+  // load: materialize into the scratch dir, read back locally.
+  val target = fs.root / "report.txt"
+  check("fs.load a granted id",       fs.load("granted.txt", target))
+  check("it appears in scratch",      fs.exists(target))
+  check("content was copied in",      joinLines(fs.openTextFile(target).success) == "BODY")
+  check("fs.load ungranted is false", !fs.load("nope.txt", fs.root / "x.txt"))
+
+  broker.stop()

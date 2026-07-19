@@ -1,0 +1,156 @@
+//[ OpenAI.jo
+  !
+  ! An OpenAI-compatible `Model`: renders the Jo tool model into OpenAI function
+  ! specs, converts the provider-agnostic history into OpenAI chat messages
+  ! (system as a leading message, tool results as `role: "tool"` entries), calls
+  ! `chat.completions.create`, and parses the response back into an `Assistant`.
+  ! Accepts a `baseUrl` so any OpenAI-compatible endpoint (Groq, Together, local
+  ! llama.cpp, etc.) can be used — pass `""` for the default OpenAI API.
+  ! All OpenAI-specific shape lives here; the loop never sees it.
+//]
+
+namespace harpe.models
+import harpe.ffi.json
+
+
+import harpe.Model
+import harpe.Model.*
+import harpe.Tool
+import harpe.Tool.*
+import harpe.logging.logger
+
+private section OpenAI
+  //[ One tool's OpenAI function spec, derived from the Jo `Tool` model. //]
+  def toolSpec(t: Tool): py.Dict =
+    val properties = py.dict()
+    val required = py.list()
+    for p in t.params do
+      properties.set(p.name, py.dict("type" ~ p.paramType.jsonType, "description" ~ p.description))
+      if p.required then required.append(p.name)
+    end
+
+    val parameters = py.dict("type" ~ "object", "properties" ~ properties, "required" ~ required)
+    val fn = py.dict("name" ~ t.name, "description" ~ t.description, "parameters" ~ parameters)
+    py.dict("type" ~ "function", "function" ~ fn)
+
+  //[ The conversation as OpenAI's `messages` array.
+    !
+    ! The system prompt becomes a leading `role: "system"` message. Tool results
+    ! each get their own `role: "tool"` message (one per result), which is how
+    ! the OpenAI API expects them — unlike Anthropic's single user-turn content
+    ! block array.
+  //]
+  def toMessages(system: String, history: List[Message]): py.List =
+    val msgs = py.list()
+    msgs.append(py.dict("role" ~ "system", "content" ~ system))
+
+    for m in history do
+      match m
+      case UserText(text) =>
+        msgs.append(py.dict("role" ~ "user", "content" ~ text))
+
+      case Assistant(text, calls) =>
+        val msg = py.dict("role" ~ "assistant", "content" ~ text)
+
+        // OpenAI rejects an empty `tool_calls` array, so attach the key only when
+        // the assistant actually made calls (a text-only reply omits it).
+        if calls.size > 0 then
+          val tcList = py.list()
+          for c in calls do
+            val fn = py.dict("name" ~ c.name, "arguments" ~ json.dumps(c.input.raw))
+            tcList.append(py.dict("id" ~ c.id, "type" ~ "function", "function" ~ fn))
+          end
+
+          msg["tool_calls"] = tcList
+
+        msgs.append(msg)
+
+      case ToolResults(results) =>
+        for r in results do
+          msgs.append(py.dict("role" ~ "tool", "tool_call_id" ~ r.id, "content" ~ r.content))
+      end // match
+    end // for
+
+    msgs
+
+  //[ Parse an OpenAI response into an `Assistant` reply.
+    !
+    ! `content` may be null when the model only returns tool calls; `tool_calls`
+    ! may be null when the model only returns text. Both are handled with
+    ! `py.try` so null-to-String conversion errors are caught gracefully.
+  //]
+  def parseReply(response: py.Dynamic): Assistant =
+    val choice = response.choices[0]
+    val msg = choice.message
+    // msg.content or msg.tool_calls can be None
+    val text = if !msg.content.isNone then msg.content.asString else ""
+
+    var calls: List[ToolCall] = []
+    if !msg.tool_calls.isNone then
+      for tc in msg.tool_calls.cast[py.List] do
+        val argsJson = tc.function.arguments.asString
+        val argsDict = json.loads(argsJson).cast[py.Dict]
+        calls = calls + ToolCall(tc.id.asString, tc.function.name.asString, ToolInput(argsDict))
+
+    // A finish_reason of "length" means the reply was cut off — possibly mid
+    // tool call — so keep the text with a visible marker and drop the calls
+    // rather than running a tool on partial arguments.
+    val finish = choice.finish_reason
+
+    if !finish.isNone && finish.asString == "length" then
+      new Assistant((text + "\n\n[Reply truncated: max_tokens reached.]").trim, [])
+    else
+      new Assistant(text.trim, calls)
+end
+
+private class OpenAIModel(client: py.Dynamic, model: String)
+  view Model
+
+  def reply(rendered: Rendered, tools: List[Tool]): ReplyResult receives logger =
+    val toolSpecs = py.list()
+    for t in tools do toolSpecs.append(OpenAI.toolSpec(t))
+
+    val messages = OpenAI.toMessages(rendered.system, rendered.messages)
+
+    // The transient tail (working memory) rides after the transcript as a final
+    // user message. OpenAI-compatible endpoints cache long prompt prefixes
+    // automatically, so no explicit cache markers are needed here.
+    if rendered.transient != "" then
+      messages.append(py.dict("role" ~ "user", "content" ~ rendered.transient))
+
+    // `max_completion_tokens`, not the legacy `max_tokens`: current OpenAI models
+    // require it (reasoning models reject `max_tokens` outright). Compatible
+    // endpoints follow the OpenAI protocol.
+    val attempt = py.try:
+      client.chat.completions.create:
+        model = model
+        max_completion_tokens = 8096
+        messages = messages
+        tools = toolSpecs
+
+    match attempt
+    case Ok(response) =>
+      val u = response.usage
+      val inTok = u.prompt_tokens.asInt
+      val outTok = u.completion_tokens.asInt
+      logUsage("openai", model, inTok, outTok)
+      Model.Reply(OpenAI.parseReply(response), new Usage(inTok, outTok))
+
+    case Err(err) => classifyError(err)
+end
+
+//[ Build an OpenAI-compatible model from an API key, model id, and base URL.
+  !
+  ! Pass `baseUrl = ""` to use the default OpenAI API endpoint. Any
+  ! OpenAI-compatible provider (Groq, Together AI, local llama.cpp, etc.) can
+  ! be reached by setting `baseUrl` to the provider's `/v1` root.
+//]
+def openai(apiKey: String, model: String, baseUrl: String): Model =
+  // Explicit request timeout; internal SDK retries disabled — the turn engine
+  // owns the retry/backoff policy, and hidden SDK retries would multiply it.
+  val client =
+    if baseUrl == "" then
+      py.module("openai").OpenAI(api_key = apiKey, timeout = 600.0, max_retries = 0)
+    else
+      py.module("openai").OpenAI(api_key = apiKey, base_url = baseUrl, timeout = 600.0, max_retries = 0)
+  new OpenAIModel(client, model)

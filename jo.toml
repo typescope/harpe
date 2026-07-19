@@ -1,0 +1,52 @@
+jo = "0.12"
+
+# The capability interfaces a sandbox guest may be granted — pure Jo, no FFI, so a
+# guest module can depend on it without the harpe module (and its implementations)
+# ever entering the guest's dependency graph.
+[module.caps]
+kind = "lib"
+platform = "python"
+src = ["caps/"]
+compile-options = ["--test-pickling", "--check-tree"]
+
+[module.caps.package]
+name = "harpe-caps"
+version = "0.1.0"
+
+[module.harpe]
+kind = "lib"
+platform = "python"
+src = ["agent/"]
+compile-options = ["--test-pickling", "--check-tree"]
+enable-ffi = true
+modules = ["caps"]
+
+[module.harpe.package]
+name = "harpe"
+version = "0.1.0"
+
+[module.test]
+kind = "app"
+platform = "python"
+enable-ffi = true
+modules = ["harpe", "caps"]
+src = ["tests/"]
+
+# The compose drawing engine — a self-contained imaging + layout + prose library,
+# pure Jo with no dependencies. Experimental; deliberately outside the shippable
+# caps/harpe surface. Its Python backend lives in the separate pycompose module.
+[module.compose]
+kind = "lib"
+platform = "python"
+src = ["compose/"]
+compile-options = ["--test-pickling", "--check-tree"]
+
+# The cairo/HarfBuzz backend for compose, plus a gallery of examples. Its `main`
+# renders every example to PNG (and one to PDF). Depends only on compose — no
+# harpe. Needs cairocffi, uharfbuzz, cffi, pillow (and system libcairo/libfreetype).
+[module.pycompose]
+kind = "app"
+platform = "python"
+enable-ffi = true
+src = ["pycompose/"]
+modules = ["compose"]

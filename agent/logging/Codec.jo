@@ -1,0 +1,68 @@
+//[ Codec.jo
+  !
+  ! `Entry` ⇄ JSON-able `py.Dict`: the one place the logging layer maps a record to
+  ! and from its host representation. `JsonlLogger` uses `entryDict` to serialize;
+  ! the sandbox audit stream uses both directions — the runtime serializes an entry
+  ! to cross the subprocess boundary, and the host (`runCode`) reconstructs it with
+  ! `entryFromDict` to replay through its own contextual logger.
+//]
+
+namespace harpe.logging
+
+import harpe.ffi.builtins
+
+//[ An entry as a JSON-able dict: `time`, `category`, then its fields (each `Value`
+  ! unwrapped to its underlying host value; a nested map becomes a nested object).
+//]
+def entryDict(entry: Entry): py.Dict =
+  val d = py.dict("time" ~ entry.time, "category" ~ entry.category)
+  for k ~ v in entry.fields.toList do d.set(k, unwrap(v))
+  d
+
+//[ The inverse of `entryDict`: rebuild an `Entry` from a decoded JSON dict, its
+  ! non-reserved keys becoming typed fields. Used to replay a sandboxed program's
+  ! records on the host.
+//]
+def entryFromDict(d: py.Dict): Entry =
+  val time     = d.get("time", 0.0).asFloat
+  val category = d.get("category", "").asString
+
+  var fields = Map.empty[String, Value]
+  for k in py.iter(d.keys()) do
+    val key = k.asString
+    if key != "time" && key != "category" then
+      fields = fields.add(key, jsonToValue(d.get(key)))
+
+  new Entry(time, category, fields)
+
+//[ A field value as its underlying host value — the inverse of the `Value`
+  ! adapters. A nested map becomes a nested JSON object.
+//]
+private def unwrap(v: Value): Any =
+  match v
+  case s: String  => s
+  case f: Float   => f
+  case IntVal(n)  => n
+  case BoolVal(b) => b
+
+  case m: Map[String, Value] =>
+    val d = py.dict()
+    for k ~ vv in m.toList do d.set(k, unwrap(vv))
+    d
+
+//[ A decoded JSON value as a `Value`. `bool` is checked before `int` (Python's
+  ! `bool` is an `int` subclass), so `true`/`false` never decode as `1`/`0`.
+//]
+private def jsonToValue(obj: py.Dynamic): Value =
+  match builtins.typeName(obj)
+  case "bool"  => BoolVal(obj.asBool)
+  case "int"   => IntVal(obj.asInt)
+  case "float" => obj.asFloat
+
+  case "dict"  =>
+    var m = Map.empty[String, Value]
+    val d = obj.cast[py.Dict]
+    for k in py.iter(d.keys()) do m = m.add(k.asString, jsonToValue(d.get(k)))
+    m
+
+  case _ => obj.asString

@@ -33,16 +33,16 @@ code to crunch data far too large to read directly. That's what makes it an agen
 
 ## The whole thing
 
-The agent's capabilities are its entry-point contract in `sandbox/api`:
+The agent's capabilities are its entry-point contract in the `api` module:
 
 ```jo
-// sandbox/api/src/Entry.jo — what the monitor can do
+// sandbox/Entry.jo (api module) — what the monitor can do
 defer def runTask(): Unit receives inventory, email, reorder
 ```
 
 Both `inventory` (read-only DB access) and `reorder` (place a PO, capped) are **bespoke
-capabilities you write inline** — an interface in `sandbox/api` and an implementation in
-`sandbox/runtime`. No `capabilities/` directory, no published packages: for an agent like
+capabilities you write inline** — an interface in the `api` module and an implementation in
+the `runtime` module. No `capabilities/` directory, no published packages: for an agent like
 this, the api/runtime pair is where its capabilities live. The top-level `jo.toml` points
 `main` at Harpe's schedule loop (`Harpe.schedule`) — the trigger — so `jo run` works with no
 source files; the interval, the model, and the `OPERATOR` who oversees the agent live in
@@ -62,8 +62,8 @@ jo new inventory-monitor --template monitoring
 cd inventory-monitor
 ```
 
-You get the usual agent shape — the `jo.toml` agent app, the `sandbox/{api, runtime,
-guest}` projects, `AGENT.md`, `skills/`, `.env.example`, `data/`, `logs/` — plus the `CLAUDE.md`
+You get the usual agent shape — the `jo.toml` agent app, the sandbox project's `api`,
+`runtime`, and `guest` modules, `AGENT.md`, `skills/`, `.env.example`, `data/`, `logs/` — plus the `CLAUDE.md`
 + `.claude/skills/` that let Claude Code finish it. The steps below are what Claude does, and
 what you'd type by hand. (The two capabilities are the one part you author yourself — inline
 in `api`/`runtime`.)
@@ -75,8 +75,10 @@ A monitoring agent drives its own clock. Point `main` at Harpe's schedule loop i
 
 ```toml
 # jo.toml
-[main.links]
-"jo.main" = "Harpe.schedule"
+[module.app]
+links = [
+  { from = "jo.main", to = "Harpe.schedule" },
+]
 ```
 ```sh
 # .env
@@ -96,10 +98,10 @@ each made safe in a different way:
   grant outright.
 - **`inventory`** — access to the stock database, granted **read-only**. Its interface has
   no write or delete, so no matter what a turn's code says — or what a malformed policy asks —
-  the agent physically cannot mutate stock. Put the interface in `sandbox/api`:
+  the agent physically cannot mutate stock. Put the interface in the `api` module:
 
   ```jo
-  // sandbox/api/src/Inventory.jo
+  // sandbox/Inventory.jo (api module)
   namespace InventoryAPI
 
   class Sku(code: String, onHand: Int, weeklyVelocity: Float, expiresInDays: Int, leadTimeDays: Int)
@@ -112,7 +114,7 @@ each made safe in a different way:
   param inventory: Inventory
   ```
 
-  (The database-backed implementation goes in `sandbox/runtime` — you write that yourself.
+  (The database-backed implementation goes in the `runtime` module — you write that yourself.
   The interface in `api` is the read-only grant.)
 
 - **`reorder`** — drafts and places a purchase order. This **spends money and is
@@ -160,7 +162,7 @@ agent's authority — that's fixed by the granted capabilities, whatever the pol
 in the moment. You don't configure any of that, though — it's the capability's job:
 
 ```jo
-// sandbox/runtime/src/ReorderImpl.jo — the limit lives in the trusted implementation
+// sandbox/ReorderImpl.jo (runtime module) — the limit lives in the trusted implementation
 class ReorderImpl(limit: Money = Money("5000 USD"))
   ...
   view Reorder

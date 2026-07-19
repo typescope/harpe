@@ -1,0 +1,25 @@
+//[ BinaryFile.jo
+  !
+  ! An open binary file: whole-content and random-access byte reads. It holds an
+  ! open handle, so close it when done; reading after `close` is an error.
+//]
+
+namespace harpe.caps
+
+//[ An open, readable binary file. //]
+interface BinaryFile
+  //[ All the bytes. Loads the file — for a large one, use `read`. //]
+  def bytes: Bytes
+
+  //[ The bytes in the window [`offset`, `offset + length`).
+    !
+    ! A window past the end reads short.
+  //]
+  def read(offset: Int, length: Int): Bytes
+
+  //[ The file's size in bytes. //]
+  def size: Int
+
+  //[ Release the underlying file handle. Safe to call more than once. //]
+  def close(): Unit
+end

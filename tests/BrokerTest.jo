@@ -1,0 +1,58 @@
+//[ BrokerTest.jo
+  !
+  ! Unit test for `harpe.broker`: a registered service answering a request over the
+  ! Unix socket — the JSON result path, the raw binary-trailer path, and the
+  ! error path (an unknown service becomes an error response, not a dropped
+  ! connection).
+//]
+
+namespace harpe.test.BrokerTest
+
+import harpe.broker.*
+import harpe.ffi.tempfile
+import harpe.ffi.os
+
+import jo.IO.stdout
+
+private def check(label: String, cond: Bool): Unit receives stdout =
+  assert: cond, "\{label} failed"
+  println "  ok \{label}"
+
+// Echoes the op and the `msg` arg as JSON, and returns the msg's UTF-8 bytes on the
+// raw trailer (exercising the binary path without base64).
+private class EchoService
+  view Service
+
+  def handle(op: String, args: py.Dynamic): Reply =
+    val msg = args.cast[py.Dict].get("msg").asString
+    val result = py.dynamic(py.dict("op" ~ op, "msg" ~ msg))
+    Reply.bytes(result, py.dynamic(msg).callDynamic("encode", "utf-8"))
+end
+
+def run(): Unit receives stdout =
+  val dir = tempfile.mkdtemp()
+  val path = os.path.join(dir, "b.sock")
+
+  val services = Map.empty[String, Service].add("echo", new EchoService())
+  val broker = Broker.start(path, services)
+
+  val client = BrokerClient.connect(path)
+  val args = py.dynamic(py.dict("msg" ~ "hello"))
+  val reply = client.call("echo", "greet", args)
+
+  val result = reply.result.cast[py.Dict]
+  check("op echoed", result.get("op").asString == "greet")
+  check("json arg echoed", result.get("msg").asString == "hello")
+  check("raw blob trailer", reply.blob.callDynamic("decode", "utf-8").asString == "hello")
+
+  // A second call on the same connection (sequential reuse).
+  val reply2 = client.call("echo", "again", py.dynamic(py.dict("msg" ~ "world")))
+  check("second call", reply2.result.cast[py.Dict].get("msg").asString == "world")
+
+  // Unknown service → error response → the client aborts (not a hang/crash).
+  match py.try(client.call("nope", "x", args))
+  case Ok(_)  => check("unknown service should fail", false)
+  case Err(_) => check("unknown service errors cleanly", true)
+
+  client.close()
+  broker.stop()

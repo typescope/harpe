@@ -1,0 +1,52 @@
+//[ Classify.jo
+  !
+  ! Shared classification of provider SDK failures into `ReplyResult`s. Both the
+  ! Anthropic and OpenAI Python SDKs raise `APIStatusError` subclasses carrying
+  ! an HTTP `status_code`, plus statusless connection/timeout errors. The status
+  ! is the robust signal — exception class NAMES shift across SDK versions — so
+  ! it is consulted first, and the class name is only a fallback for statusless
+  ! errors.
+//]
+
+namespace harpe.models
+import harpe.ffi.builtins
+
+
+import harpe.Model.*
+import harpe.Tool
+import harpe.Tool.*
+
+
+//[ Classify a failed provider call: retryable (`Transient`) or not (`Fatal`).
+  !
+  ! By HTTP status when present (`err.status_code`, carried by `APIStatusError`
+  ! subclasses) — 408 (request timeout), 429 (rate limit), and 5xx (server
+  ! errors, including Anthropic's 529 "overloaded") are transient; any other
+  ! 4xx (auth, bad request, …) is fatal. Statusless errors — connection/timeout
+  ! failures that never reached the server — fall back to the class name:
+  ! connection/timeout blips are transient, the rest fatal.
+//]
+private def classifyError(err: py.Error): ReplyResult =
+  val status = statusOf(err)
+  val name = err.typeName
+
+  val transient =
+    if status > 0 then
+      status == 408 || status == 429 || status >= 500
+    else
+      name.contains("Connection") || name.contains("Timeout")
+
+  if transient then Transient("\{name}: \{err.message}")
+  else Fatal("\{name}: \{err.message}")
+
+//[ The exception's HTTP status, or 0 when it carries none. //]
+private def statusOf(err: py.Error): Int =
+  val raw = builtins.attrOr(err, "status_code", py.none)
+
+  if raw.isNone then
+    0
+
+  else
+    match py.try(raw.asInt)
+    case Ok(code) => code
+    case Err(_)   => 0

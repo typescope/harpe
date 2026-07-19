@@ -1,0 +1,92 @@
+//[ MediaService.jo
+  !
+  ! The host side of the `MediaProvider` capability (declared in the pure `caps`
+  ! module): the broker "media" service, plus the `Media` wire codecs. No bytes cross
+  ! the broker socket: the host writes into the shared scratch dir, the guest reads
+  ! it locally.
+//]
+
+namespace harpe.media
+
+import harpe.caps.*
+
+import harpe.broker.*
+import harpe.ffi.os
+import harpe.ffi.builtins
+
+//[ The broker "media" service, adapting a host source to the guest over the broker.
+  !
+  ! `stat` → `resolveFn`; `load` → rebuild `target` from its segments (re-validating
+  ! each), resolve it against the scratch root, then `copyFn(id, realPath)`. The source
+  ! functions work in real paths, host-side; `FileSystemProvider` supplies the shipped
+  ! pair.
+//]
+class MediaService(
+    resolveFn: String => Option[Media],
+    copyFn: (String, String) => Bool,
+    scratchRoot: String)
+  view Service
+
+  def handle(op: String, args: py.Dynamic): Reply =
+    match op
+    case "stat" => handleStat(args)
+    case "load" => handleLoad(args)
+    case _      => abort "media: unknown op '\{op}'"
+
+  private def handleStat(args: py.Dynamic): Reply =
+    val id = args.cast[py.Dict].get("id").asString
+    match resolveFn(id)
+    case None =>
+      Reply.of(py.dynamic(py.none))
+
+    case Some(m) =>
+      Reply.of(py.dynamic(mediaToDict(m)))
+
+  private def handleLoad(args: py.Dynamic): Reply =
+    val d = args.cast[py.Dict]
+    val id = d.get("id").asString
+    val realPath = resolvePath(scratchRoot, rebuild(d.get("target")))
+
+    os.makedirs(os.path.dirname(realPath))
+    Reply.of(py.dynamic(copyFn(id, realPath)))
+
+  // Rebuild a `Path` from wire segments; the `Join` constructor re-validates each.
+  private def rebuild(segs: py.Dynamic): Path =
+    var path: Path = Path.root
+    val n = builtins.len(segs)
+    var i = 0
+
+    while i < n do
+      path = path / py.dynamic(segs)[i].asString
+      i = i + 1
+
+    path
+end
+
+//[ Serialize a `Media` to a JSON-encodable dict — `meta` becomes a nested dict of
+  ! string/number values. //]
+def mediaToDict(m: Media): py.Dict =
+  val meta = py.dict()
+  for entry in m.meta.toList do
+    meta.set(entry.fst, entry.snd)
+
+  py.dict("mimeType" ~ m.mimeType, "fileName" ~ m.fileName, "meta" ~ py.dynamic(meta))
+
+//[ Rebuild a `Media` from such a dict, restoring each `meta` value's type. //]
+def mediaFromDict(d: py.Dict): Media =
+  val metaDict = d.get("meta").cast[py.Dict]
+  val keys: py.List = builtins.list(metaDict.keys())
+
+  var meta = Map.empty[String, Meta]
+  var i = 0
+  val n = builtins.len(keys)
+
+  while i < n do
+    val key = keys.get(i).asString
+    meta = meta.add(key, metaValue(metaDict.get(key)))
+    i = i + 1
+
+  new Media(d.get("mimeType").asString, d.get("fileName").asString, meta)
+
+private def metaValue(v: py.Dynamic): Meta =
+  if builtins.typeName(v) == "int" then v.asInt else v.asString

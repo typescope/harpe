@@ -1,0 +1,529 @@
+//[ CairoCanvas.jo
+  !
+  ! The cairo `Graphics` / `Canvas` backend. This is the entire FFI floor of the
+  ! drawing engine: it turns the imaging model into cairo calls, and answers the
+  ! shaping and metric facts layout needs.
+  !
+  ! Geometry arrives in logical units; the surface is allocated at
+  ! `width · scale` × `height · scale` device pixels and the context is scaled
+  ! once at creation, so every call below works in logical units and nothing
+  ! above this file mentions pixels.
+  !
+  ! Text is never drawn from a string by cairo's "toy" API. It is shaped by
+  ! HarfBuzz into positioned glyph ids and drawn with `show_glyphs`, which is
+  ! what makes kerning and ligatures come out right.
+  !
+  ! Needs `cairocffi`, `uharfbuzz` and `cffi` (and the system `libcairo` /
+  ! `libfreetype`).
+//]
+
+namespace pycompose
+
+import compose.drawing.*
+
+//[ Map a caught Python error to its message. //]
+private def orMessage[T](result: Result[T, py.Error]): Result[T, String] =
+  match result
+  case Ok(value) => Ok(value)
+  case Err(e)    => Err(e.message)
+
+private def cffiMod: py.Dynamic = py.module("cffi")
+private def cc: py.Dynamic = py.module("cairocffi")
+private def hb: py.Dynamic = py.module("uharfbuzz")
+private def io: py.Dynamic = py.module("io")
+private def pilImage: py.Dynamic = py.module("PIL.Image")
+
+//[ The C declarations needed to build a cairo font face from a font file.
+  ! Neither cairocffi nor pycairo exposes this; cairocffi is usable because it
+  ! is pure CFFI, so the missing entry points can simply be declared.
+//]
+private def cdefs: String =
+  """
+  typedef void* FT_Library; typedef void* FT_Face; typedef int FT_Error;
+  FT_Error FT_Init_FreeType(FT_Library*);
+  FT_Error FT_New_Face(FT_Library, const char*, long, FT_Face*);
+  void* cairo_ft_font_face_create_for_ft_face(FT_Face, int);
+  """
+
+//[ The cairo graphics backend, resolving a path against `root`. //]
+class CairoGraphics(root: String)
+  view Graphics
+
+  val finder: FontFinder = new FontFinder()
+
+  var ffiRef: Option[py.Dynamic] = None
+  var ftRef: Option[py.Dynamic] = None
+  var caRef: Option[py.Dynamic] = None
+  var ftLibRef: Option[py.Dynamic] = None
+
+  var faces: Map[String, py.Dynamic] = Map.empty[String, py.Dynamic]
+  var hbFonts: Map[String, py.Dynamic] = Map.empty[String, py.Dynamic]
+  var upems: Map[String, Float] = Map.empty[String, Float]
+
+  def create(width: Float, height: Float, scale: Float,
+             background: Option[Color]): Canvas =
+    val pxW = (width * scale).toInt
+    val pxH = (height * scale).toInt
+    val surface = cc.ImageSurface(cc.FORMAT_ARGB32, pxW, pxH)
+    val cr = cc.Context(surface)
+
+    // one scale for the whole surface: every later call is in logical units
+    val _ = cr.scale(scale, scale)
+
+    match background
+    case Some(c) =>
+      val _2 = cr.set_source_rgba(c.r, c.g, c.b, c.a)
+      val _3 = cr.paint()
+
+    case None => pass
+
+    new CairoCanvas(this, surface, cr, width, height, scale, None)
+
+  //[ A vector `Canvas` that renders a single-page PDF. Symmetric with `create`:
+    ! the size is given here, the file name later, to `save`. PDF is measured in
+    ! points, so geometry is in points and there is no `scale` — the output is
+    ! resolution-independent.
+    !
+    ! The page renders into an in-memory buffer; `save` finalises it and writes
+    ! that buffer to the target. This is what lets the target live on `save`,
+    ! matching the raster path, rather than being fixed at creation.
+  //]
+  def createPdf(width: Float, height: Float): CairoCanvas =
+    val buffer = io.BytesIO()
+    val surface = cc.PDFSurface(buffer, width, height)
+    val cr = cc.Context(surface)
+
+    new CairoCanvas(this, surface, cr, width, height, 1.0, Some(buffer))
+
+  def registerFont(family: String, src: String): Result[Unit, String] =
+    orMessage: py.try(registerAt(family, src))
+
+  def shape(text: String): GlyphRun receives Style.font =
+    val font = Style.font
+
+    if text == "" then
+      return new GlyphRun(font, List.empty[Glyph])
+
+    val path = fontPath(font)
+    val hbFont = hbFontFor(path)
+    val unitScale = font.size / upemFor(path)
+
+    val buf = hb.Buffer()
+    val _ = buf.add_str(text)
+    val _2 = buf.guess_segment_properties()
+    val _3 = hb.shape(hbFont, buf)
+
+    val infos = Native.list(buf.glyph_infos)
+    val poss = Native.list(buf.glyph_positions)
+
+    var glyphs = List.empty[Glyph]
+    var i = 0
+
+    while i < infos.size do
+      val info = infos.get(i)
+      val pos = poss.get(i)
+
+      glyphs = glyphs ++ [new Glyph(
+        info.codepoint.asInt,
+        pos.x_advance.asFloat * unitScale,
+        pos.x_offset.asFloat * unitScale,
+        pos.y_offset.asFloat * unitScale,
+        info.cluster.asInt)]
+
+      i = i + 1
+
+    new GlyphRun(font, glyphs)
+
+  def fontAscent: Float receives Style.font =
+    val font = Style.font
+    val path = fontPath(font)
+    val ext = hbFontFor(path).get_font_extents("ltr")
+    ext.ascender.asFloat * font.size / upemFor(path)
+
+  def fontDescent: Float receives Style.font =
+    val font = Style.font
+    val path = fontPath(font)
+    val ext = hbFontFor(path).get_font_extents("ltr")
+    val d = ext.descender.asFloat
+
+    // HarfBuzz reports descent below the baseline as negative
+    val positive = if d < 0.0 then 0.0 - d else d
+    positive * font.size / upemFor(path)
+
+  def imageSize(src: String): Result[ImageSize, String] =
+    orMessage: py.try(sizeOf(src))
+
+  //[ The cairo font face for `font`, built once per font file. //]
+  def faceFor(font: Font): py.Dynamic = cairoFace(fontPath(font))
+
+  //[ The font file backing `font`, or abort with a usable message. //]
+  private def fontPath(font: Font): String =
+    match finder.resolve(font.family, font.style)
+    case Some(path) => path
+    case None =>
+      abort "no font found for family '\{font.family}' style '\{font.style}'"
+
+  //[ The shared cffi handle, with the FreeType and cairo declarations loaded. //]
+  private def ffi(): py.Dynamic =
+    match ffiRef
+    case Some(f) => f
+    case None =>
+      val f = cffiMod.FFI()
+      val _ = f.cdef(cdefs)
+      ffiRef = Some(f)
+      f
+
+  private def ft(): py.Dynamic =
+    match ftRef
+    case Some(l) => l
+    case None =>
+      val l = ffi().dlopen("libfreetype.so.6")
+      ftRef = Some(l)
+      l
+
+  private def ca(): py.Dynamic =
+    match caRef
+    case Some(l) => l
+    case None =>
+      val l = ffi().dlopen("libcairo.so.2")
+      caRef = Some(l)
+      l
+
+  private def ftLib(): py.Dynamic =
+    match ftLibRef
+    case Some(l) => l
+    case None =>
+      val slot = ffi().callDynamic("new", "FT_Library*")
+
+      if ft().FT_Init_FreeType(slot).asInt != 0 then
+        abort "FreeType failed to initialize"
+
+      val l = slot[0]
+      ftLibRef = Some(l)
+      l
+
+  //[ Build (and cache) a cairo font face for the font file at `path`.
+    !
+    ! cairocffi has no public constructor for this, so the FreeType face is made
+    ! directly and handed to `cairo_ft_font_face_create_for_ft_face`. The
+    ! pointer crosses between two cffi universes as an integer address, which is
+    ! why the `intptr_t` round trip is here.
+  //]
+  private def cairoFace(path: String): py.Dynamic =
+    match faces.getOpt(path)
+    case Some(face) => face
+    case None =>
+      val slot = ffi().callDynamic("new", "FT_Face*")
+      val rc = ft().FT_New_Face(ftLib(), py.dynamic(path).encode(), 0, slot).asInt
+
+      if rc != 0 then
+        abort "FreeType could not read the font file '\{path}' (error \{rc})"
+
+      val raw = ca().cairo_ft_font_face_create_for_ft_face(slot[0], 0)
+      val addr = Native.intOf(ffi().callDynamic("cast", "intptr_t", raw))
+      val ptr = cc.ffi.callDynamic("cast", "cairo_font_face_t *", addr)
+      val fromPtr = Native.attr(cc.FontFace, "_from_pointer")
+      val face = py.call(fromPtr, ptr, true)
+
+      faces = faces.add(path, face)
+      face
+
+  private def hbFontFor(path: String): py.Dynamic =
+    match hbFonts.getOpt(path)
+    case Some(f) => f
+    case None =>
+      val face = hb.Face(hb.Blob.from_file_path(path))
+      val font = hb.Font(face)
+      hbFonts = hbFonts.add(path, font)
+      upems = upems.add(path, face.upem.asFloat)
+      font
+
+  private def upemFor(path: String): Float =
+    val _ = hbFontFor(path)
+
+    match upems.getOpt(path)
+    case Some(u) => u
+    case None    => 1000.0
+
+  private def registerAt(family: String, src: String): Unit =
+    val real = Native.resolve(root, src)
+
+    if !Native.exists(real) then
+      abort "no such font file: '\{src}'"
+
+    finder.register(family, real)
+
+  private def sizeOf(src: String): ImageSize =
+    val img = pilImage.open(Native.resolve(root, src))
+    new ImageSize(img.width.asInt, img.height.asInt)
+end
+
+//[ A single cairo surface — a raster `ImageSurface`, or a vector `PDFSurface`
+  ! backed by the `pdfBuffer` it renders into.
+//]
+class CairoCanvas(g: CairoGraphics, surface: py.Dynamic, cr: py.Dynamic,
+                  w: Float, h: Float, sc: Float, pdfBuffer: Option[py.Dynamic])
+  view Canvas
+
+  def width: Float = w
+
+  def height: Float = h
+
+  def scale: Float = sc
+
+  def fill(region: Region): Unit receives
+      Style.fillPaint,
+      Style.fillRule,
+      Style.alpha,
+      Style.transform,
+      Style.clip
+  =
+    scoped: () =>
+      applyFillRule()
+      emitPath(region.ops)
+      applyPaint(Style.fillPaint)
+      val _ = cr.fill()
+
+  def stroke(outline: Trace | Region): Unit receives
+      Style.strokePaint,
+      Style.stroke,
+      Style.alpha,
+      Style.transform,
+      Style.clip
+  =
+    val ops =
+      match outline
+      case t: Trace  => t.ops
+      case r: Region => r.ops
+
+    scoped: () =>
+      emitPath(ops)
+      applyStroke()
+      applyPaint(Style.strokePaint)
+      val _ = cr.stroke()
+
+  def fillStroke(region: Region): Unit receives
+      Style.fillPaint,
+      Style.fillRule,
+      Style.strokePaint,
+      Style.stroke,
+      Style.alpha,
+      Style.transform,
+      Style.clip
+  =
+    scoped: () =>
+      applyFillRule()
+      emitPath(region.ops)
+      applyPaint(Style.fillPaint)
+      val _ = cr.fill_preserve()
+      applyStroke()
+      applyPaint(Style.strokePaint)
+      val _2 = cr.stroke()
+
+  def glyphs(run: GlyphRun, x: Float, baseline: Float): Unit receives
+      Style.textPaint,
+      Style.alpha,
+      Style.transform,
+      Style.clip
+  =
+    if run.glyphs.isEmpty then
+      return
+
+    scoped: () =>
+      val _ = cr.set_font_face(g.faceFor(run.font))
+      val _2 = cr.set_font_size(run.font.size)
+      applyPaint(Style.textPaint)
+
+      val list = py.list()
+      var penX = x
+      var i = 0
+
+      while i < run.glyphs.size do
+        val gl = run.glyphs.get(i)
+        val _3 = list.append(
+          py.tuple(gl.id, penX + gl.xOffset, baseline - gl.yOffset))
+        penX = penX + gl.xAdvance
+        i = i + 1
+
+      val _4 = cr.show_glyphs(list)
+
+  def group(opacity: Float, blend: Blend, body: () => Unit): Unit =
+    val _ = cr.push_group()
+    body()
+    val _2 = cr.pop_group_to_source()
+    val _3 = cr.set_operator(operatorOf(blend))
+    val _4 = cr.paint_with_alpha(opacity)
+    val _5 = cr.set_operator(cc.OPERATOR_OVER)
+
+  def imageAt(src: String, x: Float, y: Float, width: Float): Result[Unit, String] receives
+      Style.alpha,
+      Style.transform,
+      Style.clip
+  =
+    orMessage: py.try(placeImage(src, x, y, width))
+
+  //[ Finish the current PDF page and begin a fresh, blank one. This is the one
+    ! document-level operation the backend adds on top of the single-surface
+    ! `Canvas` model: compose composes each page, and this sequences them into
+    ! one file. Draw a page, `nextPage`, draw the next; `save` writes them all.
+    ! A no-op on a raster surface.
+  //]
+  def nextPage(): Unit =
+    val _ = cr.show_page()
+
+  def save(target: String): Result[Unit, String] =
+    orMessage: py.try(saveTo(target))
+
+  //[ Run `body` with the ambient transform and clip established, and the
+    ! surrounding state restored afterwards. cairo's save/restore is a state
+    ! push, not a buffer allocation, so this is cheap per operation.
+  //]
+  private def scoped(body: () => Unit): Unit receives
+      Style.transform,
+      Style.clip
+  =
+    val _ = cr.save()
+
+    // successive clips intersect in cairo, which is exactly the nesting rule
+    val regions = Style.clip
+    var i = 0
+
+    while i < regions.size do
+      emitPath(regions.get(i).ops)
+      val _2 = cr.clip()
+      i = i + 1
+
+    val m = Style.transform
+    val _3 = cr.transform(cc.Matrix(m.a, m.b, m.c, m.d, m.e, m.f))
+
+    body()
+
+    val _4 = cr.restore()
+
+  //[ Emit `ops` as the current cairo path. //]
+  private def emitPath(ops: List[PathOp]): Unit =
+    val _ = cr.callDynamic("new_path")
+    var i = 0
+
+    while i < ops.size do
+      match ops.get(i)
+      case m: MoveTo  => val _2 = cr.move_to(m.x, m.y)
+      case l: LineTo  => val _3 = cr.line_to(l.x, l.y)
+      case c: CurveTo => val _4 = cr.curve_to(c.x1, c.y1, c.x2, c.y2, c.x3, c.y3)
+      case _: ClosePath => val _5 = cr.close_path()
+
+      i = i + 1
+
+  //[ Install `paint` as the cairo source, folding the ambient alpha into it. //]
+  private def applyPaint(paint: Paint): Unit receives Style.alpha =
+    val a = Style.alpha
+
+    match paint
+    case s: Solid =>
+      val c = s.color
+      val _ = cr.set_source_rgba(c.r, c.g, c.b, c.a * a)
+
+    case lg: LinearGradient =>
+      val grad = cc.LinearGradient(lg.x0, lg.y0, lg.x1, lg.y1)
+      addStops(grad, lg.stops, a)
+      val _ = cr.set_source(grad)
+
+    case rg: RadialGradient =>
+      val grad = cc.RadialGradient(rg.cx, rg.cy, 0.0, rg.cx, rg.cy, rg.r)
+      addStops(grad, rg.stops, a)
+      val _ = cr.set_source(grad)
+
+  private def addStops(grad: py.Dynamic, stops: List[Stop], alpha: Float): Unit =
+    var i = 0
+
+    while i < stops.size do
+      val s = stops.get(i)
+      val c = s.color
+      val _ = grad.add_color_stop_rgba(s.offset, c.r, c.g, c.b, c.a * alpha)
+      i = i + 1
+
+  private def applyStroke(): Unit receives Style.stroke =
+    val st = Style.stroke
+    val _ = cr.set_line_width(st.width)
+    val _2 = cr.set_miter_limit(st.miterLimit)
+
+    val _3 =
+      match st.cap
+      case _: Cap.round  => cr.set_line_cap(cc.LINE_CAP_ROUND)
+      case _: Cap.square => cr.set_line_cap(cc.LINE_CAP_SQUARE)
+      case _             => cr.set_line_cap(cc.LINE_CAP_BUTT)
+
+    val _4 =
+      match st.join
+      case _: Join.round => cr.set_line_join(cc.LINE_JOIN_ROUND)
+      case _: Join.bevel => cr.set_line_join(cc.LINE_JOIN_BEVEL)
+      case _             => cr.set_line_join(cc.LINE_JOIN_MITER)
+
+    val dashes = py.list()
+    var i = 0
+
+    while i < st.dash.size do
+      val _5 = dashes.append(st.dash.get(i))
+      i = i + 1
+
+    val _6 = cr.set_dash(dashes, st.dashOffset)
+
+  private def applyFillRule(): Unit receives Style.fillRule =
+    val _ =
+      match Style.fillRule
+      case _: FillRule.evenOdd => cr.set_fill_rule(cc.FILL_RULE_EVEN_ODD)
+      case _                   => cr.set_fill_rule(cc.FILL_RULE_WINDING)
+
+  private def operatorOf(blend: Blend): py.Dynamic =
+    match blend
+    case _: Blend.multiply => cc.OPERATOR_MULTIPLY
+    case _: Blend.screen   => cc.OPERATOR_SCREEN
+    case _: Blend.overlay  => cc.OPERATOR_OVERLAY
+    case _                 => cc.OPERATOR_OVER
+
+  //[ Load an image through Pillow (so any readable format works), hand it to
+    ! cairo as a PNG stream, and paint it scaled into place.
+  //]
+  private def placeImage(src: String, x: Float, y: Float, width: Float): Unit receives
+      Style.alpha,
+      Style.transform,
+      Style.clip
+  =
+    val im = pilImage.open(Native.resolve(g.root, src)).convert("RGBA")
+    val buffer = io.BytesIO()
+    val _ = im.save(buffer, format = "PNG")
+    val _2 = buffer.seek(0)
+
+    val img = cc.ImageSurface.create_from_png(buffer)
+    val iw = img.get_width().asFloat
+    val ih = img.get_height().asFloat
+    val factor = width / iw
+
+    scoped: () =>
+      val _3 = cr.translate(x, y)
+      val _4 = cr.scale(factor, factor)
+      val _5 = cr.set_source_surface(img, 0.0, 0.0)
+      val _6 = cr.callDynamic("rectangle", 0.0, 0.0, iw, ih)
+      val _7 = cr.callDynamic("clip")
+      val _8 = cr.paint_with_alpha(Style.alpha)
+
+  private def saveTo(target: String): Unit =
+    val real = Native.resolve(g.root, target)
+    Native.makedirs(Native.dirname(real))
+
+    match pdfBuffer
+    case Some(buffer) =>
+      // finalise the page, then write the rendered bytes to the target
+      val _ = surface.show_page()
+      val _2 = surface.finish()
+      val out = py.open(real, "wb")
+      val _3 = out.write(buffer.getvalue())
+      val _4 = out.close()
+
+    case None =>
+      if real.toLower.endsWith(".svg") then
+        abort "this surface is raster; .svg output needs a vector surface"
+
+      val _5 = surface.flush()
+      val _6 = surface.write_to_png(real)
+end

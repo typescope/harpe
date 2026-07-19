@@ -1,0 +1,51 @@
+//[ builtins.jo
+  !
+  ! A few Python built-in functions, wrapped — mirroring `os` and `time`. These are
+  ! the built-ins Jo has no direct equivalent for (attribute access, `chr`/`ord`,
+  ! `len`/`next` over Python objects, numeric rounding).
+//]
+
+namespace harpe.ffi.builtins
+
+private def module: py.Dynamic = py.module("builtins")
+
+//[ `getattr(obj, name)` — the attribute, raising if absent. //]
+def attr(obj: Any, name: String): py.Dynamic = module.getattr(obj, name)
+
+//[ `getattr(obj, name, fallback)` — the attribute, or `fallback` if absent. //]
+def attrOr(obj: Any, name: String, fallback: Any): py.Dynamic =
+  module.getattr(obj, name, fallback)
+
+//[ The one-character string for a code point. //]
+def chr(code: Int): String = module.chr(code).asString
+
+//[ The code point of a one-character string/bytes. //]
+def ord(ch: Any): Int = module.ord(ch).asInt
+
+//[ The length of a Python object (string, list, bytes, …). //]
+def len(x: Any): Int = module.len(x).asInt
+
+//[ Materialize a Python iterable (generator, dict keys, …) as a list. //]
+def list(x: Any): py.List = module.callDynamic("list", x).cast[py.List]
+
+//[ The name of a Python value's type (`"str"`, `"int"`, `"float"`, `"bool"`,
+  ! `"dict"`, …) — used to dispatch on a decoded JSON value.
+//]
+def typeName(x: Any): String =
+  module.getattr(module.callDynamic("type", x), "__name__").asString
+
+//[ The next item from a Python iterator, or `fallback` when exhausted. //]
+def next(it: Any, fallback: Any): py.Dynamic = module.next(it, fallback)
+
+//[ Build a class dynamically — Python's three-argument `type(name, bases, attrs)`.
+//]
+def newType(name: String, bases: Any, attrs: Any): py.Dynamic =
+  module.callDynamic("type", name, bases, attrs)
+
+//[ Round `x` to `ndigits` decimal places (Python `round`). //]
+def round(x: Float, ndigits: Int): Float = module.round(x, ndigits).asFloat
+
+//[ Python's `int(x)` — used to read an integer out of a foreign value such as
+  ! a cffi pointer cast to `intptr_t`.
+//]
+def int(x: Any): Int = module.callDynamic("int", x).asInt

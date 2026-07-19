@@ -36,15 +36,16 @@ hello/
   jo.toml          # the agent app: depends on the Harpe loop; `jo run` launches it
   AGENT.md         # the agent's instructions (its persona)
   sandbox/
-    api/           # what the agent can do: the runTask contract + capability interfaces
-    runtime/       # how it's done: the implementations
-    guest/         # the model's code lands here each turn (you don't edit this)
+    jo.toml        # one project, three modules — api, runtime, guest
+    Entry.jo       # api module: the runTask contract + capability interfaces
+    Runtime.jo     # runtime module: the implementations
+    Task.jo        # guest module: the model's code lands here each turn (you don't edit this)
   .env.example     # model + secrets go here (copy to .env)
 ```
 
 The scaffold has a few more files — `skills/`, `data/`, `logs/`, the Claude setup — but none of
 them matter for this walkthrough. [Concepts](@/tutorial/concepts.md#what-s-in-an-agent-project) tours
-the full shape and explains the three `sandbox/` projects.
+the full shape and explains the sandbox's three modules.
 
 ## 2. Add your model key
 
@@ -94,13 +95,13 @@ Run `jo run` again and the tone changes. No capability needed — this is just i
 ## 5. Grant a capability
 
 So far the agent can only talk. To let it *do* something, you grant a capability — which is
-just **an interface in `sandbox/api` and an implementation in `sandbox/runtime`** (no separate
-`capabilities/` directory). Give it a read-only `Clock`.
+just **an interface in the `api` module and an implementation in the `runtime` module** (no
+separate `capabilities/` directory). Give it a read-only `Clock`.
 
 Declare what it can do, and add it to the entry point's `receives` list:
 
 ```jo
-// sandbox/api/src/Clock.jo
+// sandbox/Clock.jo (api module)
 interface Clock
   def today(): String
 end
@@ -109,14 +110,14 @@ param clock: Clock
 ```
 
 ```jo
-// sandbox/api/src/Entry.jo — add `clock` so the model may receive it
+// sandbox/Entry.jo (api module) — add `clock` so the model may receive it
 defer def runTask(): Unit receives stdout, clock
 ```
 
 Implement it in the runtime (trusted code — this is the only place that touches Python):
 
 ```jo
-// sandbox/runtime/src/ClockImpl.jo
+// sandbox/ClockImpl.jo (runtime module)
 class ClockImpl()
   def today(): String = py.module("datetime").date.today().isoformat().asString
   view Clock
@@ -124,7 +125,7 @@ end
 ```
 
 ```sh
-jo build --spec sandbox/guest/jo.toml     # type-check the agent end to end
+jo build --spec sandbox/jo.toml guest     # type-check the agent end to end
 jo run
 ```
 
@@ -136,7 +137,7 @@ bot ▸ It's 2026-06-24.
 To answer, the model wrote and ran a small Jo program — the **only** thing it can do:
 
 ```jo
-// sandbox/guest/src/Task.jo — written by the model
+// sandbox/Task.jo (guest module) — written by the model
 namespace UserTask
 import jo.IO.stdout
 import agentapi.*
@@ -170,8 +171,8 @@ jo run
 ## What you just learned
 
 - An agent runs in **turns**; the LLM's only tool is to **write a Jo program** (`runTask`,
-  in `sandbox/guest`).
-- A **capability** is an `interface` in `sandbox/api` plus an implementation in `sandbox/runtime`;
+  in the `guest` module).
+- A **capability** is an `interface` in the `api` module plus an implementation in the `runtime` module;
   the entry point's **`receives`** list is the agent's entire authority — proven at compile
   time.
 - **`AGENT.md`** is the persona; **`.env`** holds the model and secrets; **`data/`** holds
@@ -179,7 +180,7 @@ jo run
 
 ## Next steps
 
-- [Concepts](@/tutorial/concepts.md) — the full model: the three `sandbox/` projects, the turn loop, and
+- [Concepts](@/tutorial/concepts.md) — the full model: the sandbox's three modules, the turn loop, and
   the security guarantee.
 - [Conversational agent](@/tutorial/conversational-agent.md) — a real flight booker with paid actions
   and confirmation.

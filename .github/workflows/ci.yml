@@ -37,7 +37,7 @@ jobs:
 
       - name: Build CLI sandbox guest
         working-directory: cli
-        run: jo build --spec sandbox/guest/jo.toml
+        run: jo build guest --spec sandbox/jo.toml
 
       - name: Build web agent
         working-directory: web
@@ -45,7 +45,7 @@ jobs:
 
       - name: Build web sandbox guest
         working-directory: web
-        run: jo build --spec sandbox/guest/jo.toml
+        run: jo build guest --spec sandbox/jo.toml
 
       - name: Build Telegram agent
         working-directory: telegram
@@ -53,8 +53,19 @@ jobs:
 
       - name: Build Telegram sandbox guest
         working-directory: telegram
-        run: jo build --spec sandbox/guest/jo.toml
+        run: jo build guest --spec sandbox/jo.toml
+
+      # The agent tests exercise the media processors (pypdfium2, markitdown,
+      # Pillow, RapidOCR), which the compiled Python reaches at run time.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install agent test dependencies
+        run: pip install -r requirements.txt
 
       - name: Test agent library
-        working-directory: agent
-        run: jo test
+        run: jo run test

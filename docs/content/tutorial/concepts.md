@@ -36,23 +36,27 @@ grant. That part is the same wherever you go, so learn it once here.
 ## What's in an agent project
 
 An agent is a small Jo **app** whose `jo.toml` pulls in the **Harpe loop** — so `jo run`
-launches a working agent with **no source files of your own**. The three projects you'll
-actually work in sit under `sandbox/`; they define and confine what the LLM can do:
+launches a working agent with **no source files of your own**. The work you'll actually do
+sits under `sandbox/` — one small Jo project whose three **modules** define and confine what
+the LLM can do:
 
 ```
 my-agent/
-  jo.toml        # the agent app: depends on the Harpe loop and points `main` at it
+  jo.toml              # the agent app: depends on the Harpe loop and points `main` at it
   sandbox/
-    api/         # the contract: the runTask the LLM implements + capability interfaces
-    runtime/     # the harness: implements the interfaces, builds capabilities, supplies them
-    guest/       # the LLM's code: implements runTask  (rewritten & recompiled each turn)
-  AGENT.md       # the agent's instructions (persona and rules)
-  skills/        # Markdown knowledge the agent looks up
-  .env           # model, API key, operator, capability secrets (from .env.example)
-  data/          # persistent state across runs: sessions, chat history, world-state
-  logs/          # the audit log — what each turn did
-  CLAUDE.md      # onboards Claude Code to finish the agent
-  .claude/skills/ # helper skills for Claude Code
+    jo.toml            # one project, three modules: api, runtime, guest
+    Entry.jo           # api module: the runTask the LLM implements + capability interfaces
+    Runtime.jo         # runtime module: implements the interfaces, builds capabilities, supplies them
+    Task.jo            # guest module: the LLM's code, rewritten & recompiled each turn
+    run.sh             # optional: external confinement wrapper (opt-in)
+    # each module's `src` lists its files (or directories) — organize them however you like
+  AGENT.md             # the agent's instructions (persona and rules)
+  skills/              # Markdown knowledge the agent looks up
+  .env                 # model, API key, operator, capability secrets (from .env.example)
+  data/                # persistent state across runs: sessions, chat history, world-state
+  logs/                # the audit log — what each turn did
+  CLAUDE.md            # onboards Claude Code to finish the agent
+  .claude/skills/      # helper skills for Claude Code
 ```
 
 The top-level `jo.toml` *is* the whole agent app — there's no `main` for you to write. It
@@ -61,30 +65,32 @@ loop you pick is what makes the agent conversational, request-driven, or monitor
 
 ```toml
 # jo.toml — a complete simple agent; no source files
-jo   = "1.0"
-name = "my-agent"
+jo = "0.12"
 
-[main]
-target = "python"
+[module.app]
+kind = "app"
+platform = "python"
+enable-ffi = true
+src = []                                       # no source files of your own
 
-[main.dependencies]
-harpe = "1.0"               # the agent loop: the turn cycle and the audit log
+packages = [{ name = "harpe", version = "0.12" }]   # the agent loop: the turn cycle and the audit log
 
-[main.links]
-"jo.main" = "Harpe.cli"     # which loop runs the agent (cli / http / schedule)
+links = [
+  { from = "jo.main", to = "Harpe.cli" },      # which loop runs the agent (cli / http / schedule)
+]
 ```
 
-Under `sandbox/`, the three projects depend on one another in one direction — and that
+Under `sandbox/`, the three modules depend on one another in one direction — and that
 direction *is* the security boundary:
 
-<img src="/img/project-deps.svg" alt="A dependency triangle of the three sandbox projects. api, the contract, sits at the top. guest (untrusted) uses api — it compiles its runTask against the contract and interfaces — and links runtime, which supplies the real entry point and capability implementations. runtime (the trusted host) implements the interfaces api declares." style="display:block;margin:1.5rem auto;width:100%;height:auto" />
+<img src="/img/project-deps.svg" alt="A dependency triangle of the three sandbox modules. api, the contract, sits at the top. guest (untrusted) uses api — it compiles its runTask against the contract and interfaces — and links runtime, which supplies the real entry point and capability implementations. runtime (the trusted host) implements the interfaces api declares." style="display:block;margin:1.5rem auto;width:100%;height:auto" />
 
 - **`api`** — the contract. Declares the entry point the LLM implements
   (`defer def runTask(): Unit receives …`) and the **interfaces** for this agent's
   capabilities. It's the only surface the LLM's code ever sees.
 - **`runtime`** — the trusted host. Implements those interfaces, builds the capability
   objects, and supplies them to `runTask` each turn.
-- **`guest`** — the one **untrusted** project: where the LLM's `runTask` lands, recompiled
+- **`guest`** — the one **untrusted** module: where the LLM's `runTask` lands, recompiled
   fresh against `api` with `runtime` linked in.
 
 The LLM only ever writes `guest`, and `guest` can only call what `api` exposes and
@@ -114,10 +120,10 @@ the single place you say what the LLM's program must look like. You edit its `re
 list; the LLM fills in the body:
 
 ```jo
-// sandbox/api/src/Entry.jo — the contract; you edit the receives list
+// sandbox/Entry.jo (api module) — the contract; you edit the receives list
 defer def runTask(): Unit receives time, stdout
 
-// sandbox/guest/src/Task.jo — the LLM writes this, each step of the loop
+// sandbox/Task.jo (guest module) — the LLM writes this, each step of the loop
 def runTask(): Unit receives time, stdout =
   println("Today is " + time.today().toString)
 ```
@@ -135,8 +141,8 @@ Two things to take from that:
 
 Most sandboxes run at *runtime* — a monitor that watches each call and blocks the forbidden
 ones, something you have to configure correctly and that a clever input can keep probing for
-gaps. Jo's sandbox runs at *compile time* instead: the LLM's code is compiled as
-`sandbox/guest`, and the only names it can resolve are what `api` exposes and `runtime`
+gaps. Jo's sandbox runs at *compile time* instead: the LLM's code is compiled as the
+`guest` module, and the only names it can resolve are what `api` exposes and `runtime`
 supplies — the `receives` clause of `runTask`. Reaching for anything else isn't blocked while
 the program runs; it fails to *compile*, so the program never starts. There is no policy
 engine or runtime gate to get wrong — the type-check is the boundary.

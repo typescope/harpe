@@ -1,0 +1,12 @@
+namespace SandboxAPI
+
+import jo.IO.stdout
+import harpe.caps.FileSystem
+
+// The agent's contract: the entry point the LLM implements each turn, and the
+// capabilities it receives. Grant more by declaring capability params and widening
+// `receives`; the implementations are built in the runtime, the LLM only gets the
+// capability.
+param fs: FileSystem
+
+defer def runTask(): Unit receives stdout, fs

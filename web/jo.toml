@@ -1,15 +1,16 @@
-jo   = "0.11"
-name = "harpe-web"
+jo = "0.12"
 
-[main]
-target = "python"
-compile-options = ["--use-runtime-api", "python"]
+[module.agent]
+kind = "app"
+platform = "python"
+enable-ffi = true
+src = ["src/"]
 
-[main.dependencies]
-harpe = { path = "../agent" }
+modules = [{ id = "harpe", path = ".." }]
 
-[main.links]
-"jo.main" = "harpe.web.main"
+links = [
+  { from = "jo.main", to = "harpe.web.main" },
+]
 
 [commands]
-start = "jo build --spec sandbox/guest/jo.toml && jo run"
+start = "jo build --spec sandbox/jo.toml guest && jo run"

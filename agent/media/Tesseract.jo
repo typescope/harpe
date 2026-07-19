@@ -1,0 +1,29 @@
+//[ Tesseract.jo
+  !
+  ! A concrete `OCR` capability backed by pytesseract (the Tesseract OCR engine). It
+  ! resolves a `Path` against its root and reads the file directly.
+  !
+  ! Needs the `pytesseract` and `pillow` packages, and the `tesseract` **system**
+  ! binary (e.g. `apt install tesseract-ocr`) — not a pip dependency. When the binary
+  ! is absent, `text` answers `Err` rather than crashing. For a pip-only engine, see
+  ! `RapidOcr`.
+//]
+
+namespace harpe.media
+
+import harpe.caps.*
+
+private def tesseractMod: py.Dynamic = py.module("pytesseract")
+private def tesseractPil: py.Dynamic = py.module("PIL.Image")
+
+//[ A Tesseract-backed OCR reader, resolving a `Path` against `root`. //]
+class TesseractOcr(root: String)
+  view OCR
+
+  def text(src: Path): Result[String, String] =
+    orMessage: py.try(recognize(src))
+
+  private def recognize(src: Path): String =
+    val img = tesseractPil.open(resolvePath(root, src))
+    tesseractMod.image_to_string(img).asString
+end

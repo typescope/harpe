@@ -1,0 +1,27 @@
+//[ threading.jo
+  !
+  ! Threads and synchronization primitives, wrapping Python's `threading` module —
+  ! mirroring `os` and `time`. The primitives are returned as `py.Dynamic` handles
+  ! (call `.acquire()`/`.release()`, `.set()`/`.is_set()`/`.wait()`, `.start()`).
+//]
+
+namespace harpe.ffi.threading
+
+private def module: py.Dynamic = py.module("threading")
+
+//[ A counting semaphore permitting `count` concurrent holders. //]
+def semaphore(count: Int): py.Dynamic = module.Semaphore(count)
+
+//[ A mutual-exclusion lock. //]
+def lock(): py.Dynamic = module.Lock()
+
+//[ An event flag (`set`/`clear`/`is_set`/`wait`). //]
+def event(): py.Dynamic = module.Event()
+
+//[ A daemon thread running `target` (dies with the process); call `.start()`.
+  !
+  ! `target` is typed `Any` because a thread body may close over effects (a
+  ! `logger`, say) that Jo tracks but that never cross the thread boundary at
+  ! runtime — the caller discharges them into the closure before spawning.
+//]
+def thread(target: Any): py.Dynamic = module.Thread(target = target, daemon = true)

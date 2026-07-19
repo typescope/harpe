@@ -1,0 +1,64 @@
+//[ Path.jo
+  !
+  ! A path within a sandbox filesystem — a symbolic tree, NOT a real filesystem path.
+  ! It holds no root and does no I/O: the guest builds one with `/`, and only the
+  ! trusted runtime resolves it against the real root (see `FileSystem.resolve`).
+  !
+  ! `Path` is a sealed representation, so the guest supplies data, never behavior — it
+  ! cannot attach a lying `toString`/resolver the way it could to an interface. And
+  ! every `Join` segment is validated on construction, so an invalid path cannot
+  ! exist; resolution can trust the structure.
+//]
+
+namespace harpe.caps
+
+type Path = (Path.root | Path.Join) :+ [Path./, Path.toString, Path.segments]
+
+section Path
+  //[ The filesystem root — abstract, the real root is applied only at resolution.
+    !
+    ! Start building paths from it: `Path.root / "docs" / "report.pdf"`.
+  //]
+  object root
+
+  //[ A child path: `prefix` extended by one validated segment `last`. //]
+  class Join
+    val prefix: Path
+    val last: String
+
+    def Join(prefix: Path, last: String) =
+      if !isSegment(last) then
+        abort "invalid path segment: '\{last}'"
+
+      this.prefix = prefix
+      this.last = last
+  end
+
+  //[ Extend a path by one segment: `dir / "file.pdf"`. //]
+  def (prefix: Path) / (name: String): Path = new Join(prefix, name)
+
+  //[ A symbolic, root-less rendering, for display and logging only (never a real path).
+    !
+    ! `Root` renders as "", so `Root / "a" / "b"` is "/a/b".
+  //]
+  def (path: Path) toString: String =
+    match path
+    case _: root => ""
+    case j: Join => "\{j.prefix.toString}/\{j.last}"
+
+  //[ The segments from the root — `Root / "a" / "b"` → `["a", "b"]`.
+    !
+    ! Used to serialize a path over the broker; the host rebuilds and re-validates
+    ! the segments on the other side.
+  //]
+  def (path: Path) segments: List[String] =
+    match path
+    case _: root => List.empty[String]
+    case j: Join => j.prefix.segments ++ [j.last]
+
+  //[ Whether `name` is a legal single segment: non-empty, not "." or "..", and free
+    ! of path separators. Enforced by the `Join` constructor.
+  //]
+  def isSegment(name: String): Bool =
+    name != "" && name != "." && name != ".." && !name.contains("/") && !name.contains("\\")
+end

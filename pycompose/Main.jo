@@ -1,0 +1,27 @@
+//[ Main.jo — render the compose examples, then run the engine's tests.
+  !
+  ! `pycompose` is the cairo/HarfBuzz backend for the pure `compose` engine, plus
+  ! a gallery and the engine's own test suite. `main` renders every example to
+  ! `out/` — PNG for the raster ones, and the poster additionally to PDF — then
+  ! runs the unit tests (which assert on the positioned tree and on pixels).
+//]
+
+namespace pycompose
+
+import jo.IO.stdout
+import compose.drawing.*
+
+def main(): Unit receives stdout =
+  println "examples:"
+  Gallery.renderAll("out", new CairoGraphics("."))
+
+  println "canvas (unit):"
+  CanvasTest.run()
+
+  println "layout (unit):"
+  LayoutTest.run()
+
+  println "prose (unit):"
+  ProseTest.run()
+
+  println "all compose tests passed"

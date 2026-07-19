@@ -1,0 +1,66 @@
+//[ subprocess.jo
+  !
+  ! Running child processes, wrapping Python's `subprocess` module — mirroring `os`
+  ! and `time`. Provides the wall-clock-capped runner (`runCapped`) the tools use to
+  ! bound a compile/run, plus the minimal environment for untrusted guest code.
+//]
+
+namespace harpe.ffi.subprocess
+
+import harpe.ffi.os
+import harpe.ffi.signal
+
+private def module: py.Dynamic = py.module("subprocess")
+
+//[ The outcome of `runCapped`: process exit code, captured stdout/stderr, and
+  ! whether the wall-clock timeout fired (in which case `returnCode` is -1 and the
+  ! captured streams are empty).
+//]
+class Capped(returnCode: Int, out: String, err: String, timedOut: Bool)
+
+//[ The minimal environment for running untrusted guest code: `PATH` only, so the
+  ! interpreter (and any `run.sh` confinement tool) can still be found. EVERY other
+  ! variable is dropped — the provider keys and every other host secret — rather
+  ! than guessing which are sensitive. A `sandbox/run.sh` wrapper adds back whatever
+  ! the guest legitimately needs.
+//]
+def guestEnv(): py.Dict =
+  val env = py.dict()
+  val path = os.environ.get("PATH", py.none)
+
+  if !py.isNone(path) then env.set("PATH", path)
+
+  env
+
+//[ Run a subprocess with a wall-clock timeout.
+  !
+  ! The child is started in its own session, so on expiry the whole process group
+  ! is SIGKILLed — a spinning or forking guest cannot outlive the timeout. This is
+  ! the host-side backstop a stuck guest cannot disable; OS-level confinement lives
+  ! OUTSIDE the process in an optional `sandbox/run.sh` wrapper (see
+  ! `docs/concepts/sandbox.md`).
+  !
+  ! `env` sets the child's environment: the default `py.none` inherits the parent's
+  ! — used for the trusted build step, which needs the toolchain env. Pass
+  ! `guestEnv()` when running untrusted guest code, so it inherits none of the
+  ! host's secrets.
+//]
+def runCapped(args: py.List, timeoutSecs: Float, env: Any = py.none): Capped =
+  val proc = module.Popen(
+    args,
+    stdout = module.PIPE,
+    stderr = module.PIPE,
+    text = true,
+    start_new_session = true,
+    env = env
+  )
+
+  match py.try(proc.communicate(timeout = timeoutSecs))
+    case Ok(pair) =>
+      new Capped(proc.returncode.asInt, pair[0].asString, pair[1].asString, false)
+
+    case Err(_) =>
+      // Timed out: kill the whole process group, then reap so no zombie lingers.
+      val _ = py.try: os.killpg(os.getpgid(proc.pid.asInt), signal.SIGKILL)
+      val _ = py.try: proc.communicate()
+      new Capped(-1, "", "", true)

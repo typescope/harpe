@@ -15,7 +15,7 @@ The usual case needs no code — the shipped model is selected by environment
 variables (put them in your agent's `.env`):
 
 - **`PROVIDER`** — `anthropic` (default) or `openai`.
-- **`MODEL`** — the model id. Defaults to `claude-opus-4-6` (Anthropic) or `gpt-4o`
+- **`MODEL`** — the model id. Defaults to `claude-opus-4-6` (Anthropic) or `gpt-5.6`
   (OpenAI).
 - **`ANTHROPIC_API_KEY`** / **`OPENAI_API_KEY`** — the key for the chosen provider.
   Missing it fails fast at startup with a clear message.

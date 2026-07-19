@@ -4,7 +4,7 @@ weight = 5
 +++
 When the registry doesn't have what you need — an internal API, a private database, your
 billing system — you write the capability yourself. For most agents this is **inline**: an
-`interface` in `sandbox/api` and an implementation in `sandbox/runtime`. No separate
+`interface` in the `api` module and an implementation in the `runtime` module. No separate
 project, no `capabilities/` directory. Authoring one is the only time you write Jo to build
 an agent.
 
@@ -13,11 +13,11 @@ see [Concepts](@/tutorial/concepts.md).
 
 ## Step 1 — The interface (this *is* the grant)
 
-Write the narrowest interface that does the job, in `sandbox/api`. Every method here is
+Write the narrowest interface that does the job, in the `api` module. Every method here is
 something the agent can do; anything you leave out, it cannot.
 
 ```jo
-// sandbox/api/src/Email.jo
+// sandbox/Email.jo (api module)
 namespace EmailAPI
 
 class Message(to: String, subject: String, body: String)
@@ -33,7 +33,7 @@ param email: Email          // how a turn receives the capability
 Then add it to the entry point so the model may receive it:
 
 ```jo
-// sandbox/api/src/Entry.jo
+// sandbox/Entry.jo (api module)
 defer def runTask(): Unit receives stdout, email
 ```
 
@@ -48,11 +48,11 @@ malicious turn cannot reach past what the interface allows.
 
 ## Step 2 — The implementation
 
-Implement the interface in `sandbox/runtime` — the trusted code. A class provides the
+Implement the interface in the `runtime` module — the trusted code. A class provides the
 interface via `view`; secrets come from `.env`, never a build file.
 
 ```jo
-// sandbox/runtime/src/EmailImpl.jo
+// sandbox/EmailImpl.jo (runtime module)
 namespace EmailRuntime
 
 import EmailAPI.*
@@ -114,8 +114,8 @@ The interface and implementation are in `api` and `runtime`; type-check the agen
 end to confirm the capability resolves and the model can call it:
 
 ```sh
-jo check --spec sandbox/api/jo.toml           # the interface + entry point compile
-jo build --spec sandbox/guest/jo.toml     # the whole agent, including runtime, links
+jo check --spec sandbox/jo.toml api       # the interface + entry point compile
+jo build --spec sandbox/jo.toml guest     # the whole agent, including runtime, links
 ```
 
 Then run the agent (`jo run`). A turn that calls `email.send(...)` compiles; a turn that
@@ -136,16 +136,19 @@ capabilities/
 
 The `api` project is a pure [check library](https://jo-lang.org/usage/concepts/packages); the `runtime`
 project is a [link library](https://jo-lang.org/usage/concepts/packages) that depends on it. An agent then
-*grants* the capability by depending on both — its interface from `sandbox/api`, its
-implementation from `sandbox/runtime`:
+*grants* the capability by depending on both — its interface in the `api` module, its
+implementation in the `runtime` module:
 
 ```toml
-# sandbox/api/jo.toml          # sandbox/runtime/jo.toml gets email-runtime (link = true)
-[main.dependencies]
-email = { path = "../../capabilities/email/api" }   # or "1.0" once published
+# sandbox/jo.toml
+[module.api]      # the runtime module also depends on email-runtime with link = true
+modules = [{ id = "email", path = "../capabilities/email/api" }]   # a local path while developing
+# once published, depend on the package instead:
+#   packages = [{ name = "email", version = "1.0" }]
 ```
 
-Publish it and the path becomes a version — nothing else changes:
+Publish it and the source dependency becomes a registry package — the reference moves from
+`modules` to `packages`, nothing else:
 
 ```sh
 jo package --spec capabilities/email/api/jo.toml

@@ -1,0 +1,76 @@
+//[ FileSystemProvider.jo
+  !
+  ! The shipped `MediaProvider`: granted files under a root directory, addressed by a
+  ! key that `keyToPath` turns into a path relative to `root`. Resolution is confined
+  ! to `root` — a `..` escape or an absolute path landing outside resolves to `None`,
+  ! never a file elsewhere on the host.
+  !
+  ! `keyToPath` is the access-control seam:
+  !
+  !   - **Trusted / CLI** — the identity mapping (`FileSystemProvider.byPath`): the
+  !     key IS the path.
+  !   - **Multi-tenant** — a lookup mapping opaque, unguessable handles to paths, so a
+  !     model reaches only files it was granted; it cannot construct or enumerate
+  !     paths. Confinement to `root` still applies underneath, as defense in depth.
+//]
+
+namespace harpe.media
+
+import harpe.caps.*
+
+import harpe.ffi.os
+import harpe.ffi.mimetypes
+
+private def shutilMod: py.Dynamic = py.module("shutil")
+
+//[ A directory-rooted host media source, confined to `root`, keyed via `keyToPath`.
+  !
+  ! Its `resolve`/`copyTo` are the pair a `MediaService` needs — real paths, host-side.
+//]
+class FileSystemProvider(root: String, keyToPath: String => String)
+  def resolve(id: String): Option[Media] =
+    match FileSystemProvider.confinedFile(root, keyToPath(id))
+    case Some(absPath) => Some(FileSystemProvider.describe(absPath))
+    case None          => None
+
+  def copyTo(id: String, dest: String): Bool =
+    match FileSystemProvider.confinedFile(root, keyToPath(id))
+    case Some(absPath) =>
+      shutilMod.copyfile(absPath, dest)
+      true
+
+    case None =>
+      false
+end
+
+section FileSystemProvider
+  //[ Address files by their path relative to `root` — the identity mapping. //]
+  def byPath(root: String): FileSystemProvider = new FileSystemProvider(root, id => id)
+
+  //[ The confined absolute path for `path` under `root`, or `None` if it escapes or is
+    ! not a regular file.
+    !
+    ! `realpath` resolves symlinks so a link cannot point out; the trailing separator
+    ! in the boundary check stops a sibling like `/root-evil` from passing as beneath
+    ! `/root`.
+  //]
+  private[media] def confinedFile(root: String, path: String): Option[String] =
+    val base   = os.path.realpath(root)
+    val target = os.path.realpath(os.path.join(root, path))
+
+    if (target == base || target.startsWith(base + "/")) && os.path.isfile(target) then
+      Some(target)
+
+    else
+      None
+
+  //[ Describe a confined file — MIME, basename, byte size — without reading it.
+    !
+    ! The host path is deliberately NOT stamped into `meta`: `Media` crosses to the
+    ! guest and must stay host-path-free.
+  //]
+  private[media] def describe(absPath: String): Media =
+    val mime = mimetypes.guessType(absPath) rescue None => "application/octet-stream"
+    val meta: Map[String, Meta] = Map("sizeBytes" ~ os.path.getsize(absPath))
+    new Media(mime, os.path.basename(absPath), meta)
+end

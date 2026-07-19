@@ -1,0 +1,132 @@
+//[ ProseTest.jo
+  !
+  ! The prose vocabulary, asserted on measurements rather than pixels.
+  !
+  ! The rule worth testing is the one that is easy to get backwards: a styled
+  ! constructor **binds** its style, so the stylesheet wins over any ambient
+  ! `Style` around the call site, and restyling means rebinding `styles`.
+//]
+
+namespace pycompose.ProseTest
+
+import pycompose.*
+import jo.IO.stdout
+import compose.drawing.*
+import compose.layout.*
+import compose.prose.*
+
+private def check(label: String, cond: Bool): Unit receives stdout =
+  assert: cond, "\{label} failed"
+  println "  ok \{label}"
+
+private def near(a: Float, b: Float): Bool =
+  val d = a - b
+  (if d < 0.0 then 0.0 - d else d) < 0.01
+
+private def room: Constraints = Constraints.upTo(400.0, 400.0)
+
+def run(): Unit receives stdout =
+  val dir = "out/test"
+
+  with graphics = new CairoGraphics(dir) in
+    precedence()
+    restyling()
+    blocks()
+    tweaks()
+
+// --- the rule that is easy to get backwards ----------------------------
+
+private def precedence(): Unit receives stdout, graphics =
+  val plain = Prose.body("hello").measure(room)
+
+  // an ambient font around the call must NOT leak into a styled constructor
+  val wrapped =
+    with Style.font = Font.sans(40.0), Style.textPaint = Paint.of(Color.white) in
+      Prose.body("hello").measure(room)
+
+  check("the stylesheet wins over ambient Style",
+    near(plain.height, wrapped.height))
+
+  // ... whereas core-level construction still reads ambient state
+  val core =
+    with Style.font = Font.sans(40.0) in
+      Element.text("hello").measure(room)
+
+  check("core Element.text still honours ambient Style", core.height > plain.height)
+
+// --- restyling ----------------------------------------------------------
+
+private def restyling(): Unit receives stdout, graphics =
+  val small = Prose.body("hello").measure(room)
+
+  val big =
+    with styles = enlarged() in
+      Prose.body("hello").measure(room)
+
+  check("rebinding styles restyles the content", big.height > small.height)
+
+  val dark = StyleSheet.default.onDark
+  check("onDark leaves metrics alone",
+    near(dark.body.font.size, StyleSheet.default.body.font.size))
+  // a dark sheet paints light-on-dark, so every slot gets brighter
+  check("onDark recolours every slot",
+    brightness(dark.body.paint) > brightness(StyleSheet.default.body.paint)
+      && brightness(dark.title.paint) > brightness(StyleSheet.default.title.paint))
+
+//[ How light a paint is, for comparing two sheets. Paint has no equality, and
+  ! a brightness check says what the test actually means anyway.
+//]
+private def brightness(paint: Paint): Float =
+  match paint
+  case s: Solid => s.color.r + s.color.g + s.color.b
+  case _        => 0.0
+
+private def enlarged(): StyleSheet =
+  val d = StyleSheet.default
+  new StyleSheet(d.title, d.heading, d.subheading, d.body.sized(30.0),
+                 d.caption, d.label, d.blockGap, d.bulletIndent, d.bulletMark)
+
+// --- blocks -------------------------------------------------------------
+
+private def blocks(): Unit receives stdout, graphics =
+  val one = Prose.body("one").measure(room)
+
+  val stacked =
+    Prose.column(Prose.body("one"), Prose.body("two")).measure(room)
+
+  check("column stacks blocks with the sheet's gap",
+    near(stacked.height, one.height * 2.0 + StyleSheet.default.blockGap))
+
+  val list = Element.place(
+    Prose.bullets(["alpha", "beta", "gamma"]),
+    new Rect(0.0, 0.0, 300.0, 300.0))
+
+  check("bullets makes one row per item", list.children.size == 3)
+
+  val firstRow = list.children.get(0)
+  check("a bullet row is mark, indent and text", firstRow.children.size == 3)
+  check("the mark shares a baseline with its item",
+    near(firstRow.children.get(0).baselineY, firstRow.children.get(2).baselineY))
+  check("the item takes the remaining width",
+    firstRow.children.get(2).bounds.width > firstRow.children.get(0).bounds.width)
+
+  // heading and body are distinguishable, which is the whole point of slots
+  check("a heading is bigger than body text",
+    Prose.heading("x").measure(room).height > Prose.body("x").measure(room).height)
+
+// --- TextStyle tweaks ---------------------------------------------------
+
+private def tweaks(): Unit receives stdout, graphics =
+  val base = StyleSheet.default.body
+
+  check("sized changes only the size",
+    near(base.sized(20.0).font.size, 20.0)
+      && base.sized(20.0).font.family == base.font.family)
+  check("sized keeps the leading", near(base.sized(20.0).leading, base.leading))
+  check("aligned changes only the alignment",
+    near(base.aligned(Align.center).font.size, base.font.size))
+
+  val custom = base.sized(9.0)
+  check("styled honours an explicit style",
+    Prose.styled(custom, "x").measure(room).height
+      < Prose.body("x").measure(room).height)

@@ -12,8 +12,8 @@
 //]
 
 namespace harpe.telegram
+import harpe.ffi.json
 
-import harpe.ffi.*
 
 //[ Telegram caps a message at 4096 characters; keep a margin so multi-byte
   ! escapes never push a chunk over the limit.
@@ -39,13 +39,13 @@ private class TelegramClient(token: String)
     ! failure is swallowed into `{ok: false}` so callers never see a raw error.
   //]
   private def apiCall(method: String, params: py.Dict, timeout: Float): py.Dict =
-    val data = py.dynamic(jsonMod.dumps(params).asString).encode()
+    val data = py.dynamic(json.dumps(params)).encode()
     val headers = py.dict("Content-Type" ~ "application/json")
     val req = urllibReq.Request(base + "/" + method, data = data, headers = headers, method = "POST")
 
     match py.try(urllibReq.urlopen(req, timeout = timeout))
     case Ok(resp) =>
-      jsonMod.loads(resp.read().decode().asString).cast[py.Dict]
+      json.loads(resp.read().decode().asString).cast[py.Dict]
 
     case Err(e) =>
       py.dict("ok" ~ false, "error" ~ e.message)

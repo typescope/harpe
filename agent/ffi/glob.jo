@@ -1,0 +1,12 @@
+//[ glob.jo
+  !
+  ! Filename globbing, wrapping Python's `glob` module — mirroring `os` and `time`.
+  ! Referenced as `glob.glob(...)`.
+//]
+
+namespace harpe.ffi.glob
+
+private def module: py.Dynamic = py.module("glob")
+
+//[ The paths matching a shell-style `spec`. //]
+def glob(spec: String): py.List = module.glob(spec).cast[py.List]

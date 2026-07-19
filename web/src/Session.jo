@@ -13,10 +13,12 @@
 //]
 
 namespace harpe.web
+import harpe.ffi.os
+import harpe.ffi.time
+import harpe.ffi.json
+import harpe.ffi.threading
+import harpe.ffi.file
 
-import harpe.ffi.jsonMod
-import harpe.ffi.readFile
-import harpe.ffi.threadingMod
 import harpe.Agent
 import harpe.Memory
 import harpe.SessionLog
@@ -36,13 +38,13 @@ import harpe.turns.Failed
   ! under concurrent requests.
 //]
 class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
-  val lock = threadingMod.Lock()
+  val lock = threading.lock()
 
   //[ Set (via `POST /api/stop`) to request cancellation of the running turn;
     ! the engine notices between model calls and tool executions. Cleared when
     ! the next turn begins.
   //]
-  val stop = threadingMod.Event()
+  val stop = threading.event()
 
   var lastActive: Float = time.now()
 
@@ -137,10 +139,10 @@ section Session
     var startTime = 0.0
     var sawFirst = false
 
-    for line in readFile(path).lines do
+    for line in file.read(path).lines do
       val s = line.trim
       if s != "" then
-        val d = jsonMod.loads(s).cast[py.Dict]
+        val d = json.loads(s).cast[py.Dict]
         if !sawFirst then
           startTime = d.get("time", 0.0).asFloat
           sawFirst = true

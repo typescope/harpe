@@ -1,0 +1,197 @@
+//[ Fonts.jo
+  !
+  ! System font discovery for the cairo backend. A vector backend ships no fonts,
+  ! and there is no fontconfig on macOS/Windows — so discover the machine's fonts
+  ! uniformly: walk the platform's standard font directories, index the files by
+  ! basename, and resolve the logical families (sans/serif/mono) to known
+  ! filenames (DejaVu → Liberation → Noto → the native Windows/macOS names).
+  !
+  ! A `FontFinder` caches its index for its lifetime; build one per backend.
+//]
+
+namespace pycompose
+
+
+//[ Resolves a (family, style) to a font-file path, from registered fonts first
+  ! and the platform's installed fonts otherwise.
+//]
+class FontFinder()
+  var registered: Map[String, String] = Map.empty[String, String]
+  var indexRef: Option[Map[String, String]] = None
+
+  //[ Register a real font-file `path` under `family` — it then wins over any
+    ! discovered font of the same family.
+  //]
+  def register(family: String, path: String): Unit =
+    registered = registered.add(family, path)
+
+  //[ Resolve (`family`, `style`) to a font-file path: a registered family wins,
+    ! else the best match among the platform's installed fonts; `None` if the
+    ! machine has none of the candidates.
+  //]
+  def resolve(family: String, style: String): Option[String] =
+    match registered.getOpt(family)
+    case Some(path) => Some(path)
+    case None       => firstPresent(candidates(family, style), index())
+
+  //[ The font-file index, built once (lazily) and cached. //]
+  private def index(): Map[String, String] =
+    match indexRef
+    case Some(idx) => idx
+    case None =>
+      val idx = buildIndex()
+      indexRef = Some(idx)
+      idx
+
+  //[ Walk the font directories, mapping each font file's lowercased basename to
+    ! its full path (first occurrence wins, directories in preference order).
+  //]
+  private def buildIndex(): Map[String, String] =
+    var idx = Map.empty[String, String]
+    val dirs = fontDirs()
+    var d = 0
+
+    while d < dirs.size do
+      val dir = dirs.get(d)
+
+      if Native.isdir(dir) then
+        val walkIter = Native.walk(dir)
+        var entry: py.Dynamic = Native.next(walkIter, py.none)
+
+        while !py.isNone(entry) do
+          val e: WalkEntry = entry.cast[WalkEntry]
+          val dirpath = e.dirpath
+          val names = e.filenames
+          var i = 0
+
+          while i < names.size do
+            val name = names.get(i).asString
+            val key = name.toLower
+
+            if isFontFile(key) then
+              match idx.getOpt(key)
+              case Some(_) => pass
+              case None    => idx = idx.add(key, Native.join(dirpath, name))
+
+            i = i + 1
+
+          entry = Native.next(walkIter, py.none)
+
+      d = d + 1
+
+    idx
+
+  //[ The standard font directories for the running platform. //]
+  private def fontDirs(): List[String] =
+    val homeDir = Native.env("HOME").getOrElse(() => "")
+    val plat = Native.platform
+
+    if plat == "darwin" then
+      ["/System/Library/Fonts", "/System/Library/Fonts/Supplemental",
+       "/Library/Fonts", "\{homeDir}/Library/Fonts"]
+    else if plat.startsWith("win") then
+      val winDir = Native.env("WINDIR").getOrElse(() => "C:\\Windows")
+      ["\{winDir}\\Fonts"]
+    else
+      ["/usr/share/fonts", "/usr/local/share/fonts",
+       "\{homeDir}/.fonts", "\{homeDir}/.local/share/fonts"]
+
+  private def isFontFile(name: String): Bool =
+    name.endsWith(".ttf") || name.endsWith(".otf") || name.endsWith(".ttc")
+
+  //[ Candidate font-file basenames (lowercased) for (`family`, `style`), most
+    ! preferred first — DejaVu, then Liberation, Noto, and the native names.
+  //]
+  private def candidates(family: String, style: String): List[String] =
+    match family
+    case "serif" =>
+      [dejavuName("DejaVuSerif", style, false),
+       dashName("LiberationSerif", style),
+       dashName("NotoSerif", style),
+       winName("times", style),
+       spaceName("Times New Roman", style)]
+
+    case "mono" =>
+      [dejavuName("DejaVuSansMono", style, true),
+       dashName("LiberationMono", style),
+       dashName("NotoSansMono", style),
+       winName("cour", style),
+       spaceName("Courier New", style)]
+
+    case "sans" =>
+      [dejavuName("DejaVuSans", style, true),
+       dashName("LiberationSans", style),
+       dashName("NotoSans", style),
+       winName("arial", style),
+       spaceName("Arial", style)]
+
+    case "cjk" =>
+      val weight = if style == "B" || style == "BI" then "Bold" else "Regular"
+      ["NotoSansCJK-\{weight}.ttc".toLower,
+       "NotoSansCJKsc-\{weight}.otf".toLower,
+       "NotoSansSC-\{weight}.otf".toLower,
+       "NotoSansSC-\{weight}.ttf".toLower,
+       "NotoSerifCJK-\{weight}.ttc".toLower]
+
+    case named =>
+      // an explicitly named family: best effort by filename
+      [spaceName(named, style), "\{named}.ttf".toLower]
+
+  //[ DejaVu naming: sans uses `-Oblique` for italic, serif uses `-Italic`. //]
+  private def dejavuName(base: String, style: String, sans: Bool): String =
+    val suffix =
+      match style
+      case "B"  => "-Bold"
+      case "I"  => if sans then "-Oblique" else "-Italic"
+      case "BI" => if sans then "-BoldOblique" else "-BoldItalic"
+      case _    => ""
+
+    "\{base}\{suffix}.ttf".toLower
+
+  //[ Liberation / Noto naming: `-Regular` / `-Bold` / `-Italic` / `-BoldItalic`. //]
+  private def dashName(base: String, style: String): String =
+    val suffix =
+      match style
+      case "B"  => "-Bold"
+      case "I"  => "-Italic"
+      case "BI" => "-BoldItalic"
+      case _    => "-Regular"
+
+    "\{base}\{suffix}.ttf".toLower
+
+  //[ Windows naming: `arial` / `arialbd` / `ariali` / `arialbi`. //]
+  private def winName(base: String, style: String): String =
+    val suffix =
+      match style
+      case "B"  => "bd"
+      case "I"  => "i"
+      case "BI" => "bi"
+      case _    => ""
+
+    "\{base}\{suffix}.ttf".toLower
+
+  //[ macOS Supplemental naming: "Arial", "Arial Bold", "Arial Italic", … //]
+  private def spaceName(base: String, style: String): String =
+    val suffix =
+      match style
+      case "B"  => " Bold"
+      case "I"  => " Italic"
+      case "BI" => " Bold Italic"
+      case _    => ""
+
+    "\{base}\{suffix}.ttf".toLower
+
+  //[ The first candidate present in the index. //]
+  private def firstPresent(cands: List[String], idx: Map[String, String]): Option[String] =
+    var i = 0
+    var found: Option[String] = None
+
+    while i < cands.size && found.isEmpty do
+      match idx.getOpt(cands.get(i))
+      case Some(p) => found = Some(p)
+      case None    => pass
+
+      i = i + 1
+
+    found
+end

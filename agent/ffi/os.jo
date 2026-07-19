@@ -1,0 +1,73 @@
+namespace harpe.ffi.os
+
+private def module: py.Dynamic = py.module("os")
+def path: PathApi = module.path.cast[PathApi]
+
+// The process environment as a mutable string map.
+def environ: py.Dict = module.environ.cast[py.Dict]
+
+// An environment variable's value, or `fallback` if unset.
+def getenv(name: String, fallback: String): String =
+  environ.get(name, fallback).asString
+
+// Read up to `count` bytes from file descriptor `fd` (raw os.read).
+def read(fd: Int, count: Int): py.Dynamic = module.read(fd, count)
+
+// The process-group id of process `pid`.
+def getpgid(pid: Int): Int = module.getpgid(pid).asInt
+
+// Send signal `sig` to every process in group `pgid`.
+def killpg(pgid: Int, sig: Int): Unit = module.killpg(pgid, sig)
+
+interface WalkEntry
+  def dirpath: String = py.dynamic(this)[0].asString
+
+  def filenames: py.List = py.dynamic(this)[2].cast[py.List]
+end
+
+@py.interop
+interface PathApi
+  def exists(path: String): Bool
+
+  def isfile(path: String): Bool
+
+  def isdir(path: String): Bool
+
+  def join(base: String, paths: ..Any): String
+
+  def dirname(path: String): String
+
+  def basename(path: String): String
+
+  def abspath(path: String): String
+
+  def realpath(path: String): String
+
+  def normpath(path: String): String
+
+  def relpath(path: String, start: String): String
+
+  def getsize(path: String): Int
+
+  def getmtime(path: String): Float
+end
+
+// The file extension of `path`, including the dot (e.g. `".pdf"`); "" if none.
+def extname(path: String): String = module.path.splitext(path)[1].asString
+
+def listdir(path: String): py.List = module.listdir(path).cast[py.List]
+
+def fstat(fd: Int): py.Dynamic = module.fstat(fd)
+
+def unlink(path: String): Unit = module.unlink(path)
+
+def makedirs(path: String): Unit = module.makedirs(path, exist_ok = true)
+
+def rename(src: String, dst: String): Unit = module.rename(src, dst)
+
+def symlink(target: String, link: String): Unit = module.symlink(target, link)
+
+// Follows directory symlinks: a link placed inside a walked tree is deliberate
+// (it is how an agent shares reference material into skills/), so the walk
+// descends into it. Cyclic links would loop — do not create them.
+def walk(top: String): py.Dynamic = module.walk(top, followlinks = true)

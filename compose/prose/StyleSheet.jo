@@ -1,0 +1,90 @@
+//[ StyleSheet.jo
+  !
+  ! The design decisions of a piece, in one value.
+  !
+  ! A `TextStyle` is how one kind of text looks. A `StyleSheet` names the kinds —
+  ! title, heading, body, and so on — so content is written once and restyled by
+  ! rebinding a single parameter:
+  !
+  !   with styles = StyleSheet.default.onDark in
+  !     poster()
+  !
+  ! **The stylesheet wins over ambient state.** `Prose.body(…)` binds its own
+  ! font and paint, shadowing any `with Style.font = … in …` around the call.
+  ! That is the correct reading of the CSS lesson: the font and colour of styled
+  ! content are style properties, so the way to change them is to restyle, not to
+  ! wrap the call site. Ambient rebinding stays available for core-level
+  ! construction — `Element.text`, custom painters.
+  !
+  ! There is no `BlockStyle`. Space between blocks is one `blockGap` that
+  ! `Prose.column` inserts, rather than a before/after pair on every style —
+  ! which would need margin-collapsing rules to stop adjacent blocks
+  ! double-spacing, and would buy very little.
+//]
+
+namespace compose.prose
+
+import compose.drawing.*
+
+//[ How one kind of text looks. //]
+class TextStyle(font: Font, paint: Paint, leading: Float, align: Align)
+  //[ This style in a different colour — the common one-off tweak. //]
+  def inked(paint: Paint): TextStyle = new TextStyle(font, paint, leading, align)
+
+  //[ This style at a different alignment. //]
+  def aligned(align: Align): TextStyle = new TextStyle(font, paint, leading, align)
+
+  //[ This style at a different size, keeping everything else. //]
+  def sized(size: Float): TextStyle =
+    new TextStyle(new Font(font.family, font.style, size), paint, leading, align)
+end
+
+//[ The named kinds of text in a piece, plus the two spacing decisions that are
+  ! genuinely global.
+//]
+class StyleSheet(
+    title: TextStyle,
+    heading: TextStyle,
+    subheading: TextStyle,
+    body: TextStyle,
+    caption: TextStyle,
+    label: TextStyle,
+    blockGap: Float,
+    bulletIndent: Float,
+    bulletMark: String)
+
+  //[ The same sheet with every kind recoloured for a dark background. //]
+  def onDark: StyleSheet =
+    val paper = Paint.of(Color.rgb255(245, 246, 255))
+    val dim = Paint.of(Color.rgb255(150, 158, 205))
+
+    new StyleSheet(
+      title.inked(paper),
+      heading.inked(paper),
+      subheading.inked(dim),
+      body.inked(dim),
+      caption.inked(dim),
+      label.inked(dim),
+      blockGap, bulletIndent, bulletMark)
+end
+
+section StyleSheet
+  private def ink: Paint = Paint.of(Color.rgb255(24, 28, 48))
+  private def muted: Paint = Paint.of(Color.rgb255(110, 118, 150))
+
+  //[ A plain, readable sheet for dark text on a light background. //]
+  def default: StyleSheet =
+    new StyleSheet(
+      new TextStyle(Font.bold(34.0), ink, 1.12, Align.left),
+      new TextStyle(Font.bold(20.0), ink, 1.22, Align.left),
+      new TextStyle(Font.bold(14.0), ink, 1.3, Align.left),
+      new TextStyle(Font.sans(13.0), muted, 1.55, Align.left),
+      new TextStyle(Font.sans(11.0), muted, 1.4, Align.left),
+      new TextStyle(Font.bold(10.0), muted, 1.2, Align.left),
+      12.0,
+      14.0,
+      "•")
+end
+
+//[ The ambient stylesheet. Rebind it to restyle a whole piece. //]
+param styles: StyleSheet = StyleSheet.default

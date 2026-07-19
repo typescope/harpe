@@ -1,0 +1,63 @@
+//[ Column.jo
+  !
+  ! Children stacked top to bottom.
+  !
+  ! `Cross.stretch` is the default, which is what makes centred and right-aligned
+  ! text work inside one: the child is handed the full width to align within.
+  ! The column's baseline is its first child's, the usual convention for a block
+  ! that sits on a line.
+  !
+  ! Both methods work from one `Track`, so the size this column reports and the
+  ! places it puts its children are the same computation read twice.
+//]
+
+namespace compose.layout.elements
+
+import compose.layout.*
+import compose.drawing.*
+
+//[ Children stacked top to bottom. //]
+class Column(children: List[Element], gap: Float, cross: Cross)
+  view Element
+
+  def flexWeight: Float = 0.0
+
+  def measure(c: Constraints): Measured receives graphics =
+    val track = resolve(children, gap, c.maxH, c.maxW, false)
+    new Measured(
+      c.clampW(track.widest),
+      c.clampH(track.total(gap)),
+      track.firstBaseline)
+
+  def layout(bounds: Rect): Laid receives graphics =
+    val track = resolve(children, gap, bounds.height, bounds.width, false)
+    var kids = List.empty[Laid]
+    var y = bounds.y
+    var i = 0
+
+    while i < children.size do
+      val h = track.sizes.get(i)
+      val m = track.metrics.get(i)
+
+      val w =
+        match cross
+        case _: Cross.stretch => bounds.width
+        case _                => m.width
+
+      val x =
+        match cross
+        case _: Cross.center => bounds.x + (bounds.width - w) / 2.0
+        case _: Cross.finish => bounds.x + bounds.width - w
+        case _               => bounds.x
+
+      kids = kids ++ [children.get(i).layout(new Rect(x, y, w, h))]
+      y = y + h + gap
+      i = i + 1
+
+    new Laid(this, bounds, track.firstBaseline, kids)
+
+  def draw(cv: Canvas, node: Laid): Unit receives
+      graphics, Style.alpha, Style.transform, Style.clip
+  =
+    Element.paintChildren(cv, node)
+end

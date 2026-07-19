@@ -1,0 +1,98 @@
+//[ Pillow.jo
+  !
+  ! A concrete `Image` capability backed by Pillow: pixel dimensions, metadata, and
+  ! derived images (resize / crop / convert), each written to a `target` the caller
+  ! names. It resolves a `Path` against its root and reads the file directly. Needs
+  ! the `pillow` Python package. Reading text out of an image is the separate `OCR`
+  ! capability (see Tesseract.jo, RapidOcr.jo).
+  !
+  ! Each capability method wraps a total body in `py.try`: a missing file or an
+  ! unreadable image comes back as `Err(message)`, never a crash.
+//]
+
+namespace harpe.media
+
+import harpe.caps.*
+
+import harpe.ffi.os
+import harpe.ffi.builtins
+
+private def pilMod: py.Dynamic = py.module("PIL.Image")
+
+//[ A Pillow-backed image reader and transformer, resolving a `Path` against `root`. //]
+class PillowImage(root: String)
+  view Image
+
+  def dimensions(src: Path): Result[ImageSize, String] =
+    orMessage: py.try(dimensionsOf(src))
+
+  def metadata(src: Path): Result[Map[String, String], String] =
+    orMessage: py.try(metadataOf(src))
+
+  def resize(src: Path, width: Int, height: Int, target: Path): Result[ImageSize, String] =
+    orMessage: py.try(resizeTo(src, width, height, target))
+
+  def crop(src: Path, x: Int, y: Int, width: Int, height: Int, target: Path): Result[ImageSize, String] =
+    orMessage: py.try(cropTo(src, x, y, width, height, target))
+
+  def convert(src: Path, target: Path): Result[ImageSize, String] =
+    orMessage: py.try(convertTo(src, target))
+
+  private def dimensionsOf(src: Path): ImageSize =
+    val img = pilMod.open(resolvePath(root, src))
+    new ImageSize(img.width.asInt, img.height.asInt)
+
+  private def metadataOf(src: Path): Map[String, String] =
+    val img = pilMod.open(resolvePath(root, src))
+
+    var result = Map.empty[String, String]
+    result = result.add("format", img.format.toString)
+    result = result.add("mode", img.mode.toString)
+
+    // Named EXIF entries; tags without a standard name are skipped.
+    val tagNames = py.module("PIL.ExifTags").TAGS
+    val exif = img.getexif()
+    val keys = builtins.list(exif.keys())
+    var i = 0
+    val n = builtins.len(keys)
+
+    while i < n do
+      val tag = keys.get(i)
+      val name = tagNames.get(tag)
+
+      if !py.isNone(name) then
+        result = result.add(name.asString, exif[tag].toString)
+
+      i = i + 1
+
+    result
+
+  private def resizeTo(src: Path, width: Int, height: Int, target: Path): ImageSize =
+    val img = pilMod.open(resolvePath(root, src))
+    img.thumbnail(py.tuple(width, height))
+    save(img, target)
+
+  private def cropTo(src: Path, x: Int, y: Int, width: Int, height: Int, target: Path): ImageSize =
+    val img = pilMod.open(resolvePath(root, src))
+    save:
+      img.crop: py.tuple(x, y, x + width, y + height)
+      target
+
+  private def convertTo(src: Path, target: Path): ImageSize =
+    val img = pilMod.open(resolvePath(root, src))
+    save(img, target)
+
+  //[ Save `img` at `target` (format from the extension), returning its size.
+    !
+    ! A mode the format cannot hold (RGBA → JPEG, say) is retried as RGB.
+  //]
+  private def save(img: py.Dynamic, target: Path): ImageSize =
+    val realTarget = resolvePath(root, target)
+    os.makedirs(os.path.dirname(realTarget))
+
+    match py.try(img.save(realTarget))
+    case Ok(_)  => pass
+    case Err(_) => img.convert("RGB").save(realTarget)
+
+    new ImageSize(img.width.asInt, img.height.asInt)
+end

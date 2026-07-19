@@ -1,0 +1,25 @@
+//[ tempfile.jo
+  !
+  ! Temporary files and directories, wrapping Python's `tempfile` module —
+  ! mirroring `os` and `time`. Referenced as `tempfile.mkdtemp()` /
+  ! `tempfile.writeBytes(...)`.
+//]
+
+namespace harpe.ffi.tempfile
+
+private def module: py.Dynamic = py.module("tempfile")
+
+//[ Create a new temporary directory and return its path. //]
+def mkdtemp(): String = module.mkdtemp().asString
+
+//[ Write `data` to a new temporary file and return its path.
+  !
+  ! The file is not auto-deleted — so another process can read it — so the caller
+  ! removes it (with `os.unlink`) when done. `suffix` sets the file's extension, a
+  ! hint a reader may key off.
+//]
+def writeBytes(data: py.Dynamic, suffix: String): String =
+  val handle = module.NamedTemporaryFile(suffix = suffix, delete = false)
+  handle.write(data)
+  handle.close()
+  handle.name.asString

@@ -1,0 +1,29 @@
+jo = "0.12"
+
+# The api module depends only on the pure `caps` interfaces: the guest (which
+# depends on api) can name the capabilities, never the harpe implementations.
+[module.api]
+kind = "lib"
+src = ["SandboxAPI.jo"]
+platform = "python"
+
+modules = [ { path = "../..", id = "caps" } ]
+
+[module.runtime]
+kind = "lib"
+src = ["SandboxRuntime.jo"]
+platform = "python"
+enable-ffi = true
+modules = ["api", { path = "../../", id = "harpe" } ]
+
+[module.guest]
+kind = "app"
+src = ["Task.jo"]
+platform = "python"
+
+modules = ["api", { id = "runtime", link = true } ]
+
+links = [
+  { from = "jo.main", to = "SandboxRuntime.main" },
+  { from = "SandboxAPI.runTask", to = "UserTask.runTask" },
+]
