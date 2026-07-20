@@ -106,62 +106,114 @@ private class OpenAIResponsesModel(client: py.Dynamic, model: String, effort: St
   view Model
 
   def startTurn(base: Rendered): Turn =
-    new SimpleTurn(base, (rendered, tools) => openaiSend(client, model, effort, rendered, tools))
+    new OpenAIResponsesTurn(client, model, effort, base)
 end
 
-//[ One Responses `create` for the composed `rendered` + tools, parsed into a reply. //]
-private def openaiSend(
-    client: py.Dynamic, model: String, effort: String,
-    rendered: Rendered, tools: List[Tool])
-: ReplyResult receives logger =
-  val toolSpecs = py.list()
-  for t in tools do toolSpecs.append(OpenAIResponses.toolSpec(t))
+//[ A reasoning-preserving turn on the Responses API.
+  !
+  ! The first request sends the whole composed base; every later request sends
+  ! ONLY the new tool results plus `previous_response_id`, so the server retains
+  ! the reasoning items and the model resumes its chain of thought across tool
+  ! calls (rather than re-reasoning from scratch each round). This relies on the
+  ! default server-side `store`; it is the native Responses path for reasoning +
+  ! tools.
+//]
+private class OpenAIResponsesTurn(client: py.Dynamic, model: String, effort: String, base: Rendered)
+  view Turn
 
-  val items = OpenAIResponses.toInput(rendered.messages)
+  // "" until the first successful reply, then the id to chain the next request
+  // from. Committed only on success, so a retry re-sends the same round.
+  private var prevId: String = ""
 
-  // The transient tail (working memory) rides after the transcript as a final
-  // user item, past the cached prefix.
-  if rendered.transient != "" then
-    items.append(py.dict("role" ~ "user", "content" ~ rendered.transient))
+  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
+    val toolSpecs = py.list()
+    for t in tools do toolSpecs.append(OpenAIResponses.toolSpec(t))
 
-  val attempt = openaiCreate(client, model, effort, rendered.system, items, toolSpecs)
+    // First request: the full base conversation (+ the transient tail). Later
+    // requests: an empty list the tool results are appended to — the prior turn
+    // rides along via `previous_response_id`.
+    val input =
+      if prevId == "" then
+        val items = OpenAIResponses.toInput(base.messages)
 
-  match attempt
-  case Ok(response) =>
-    val u = response.usage
-    val inTok = u.input_tokens.asInt
-    val outTok = u.output_tokens.asInt
-    logUsage("openai", model, inTok, outTok)
-    Model.Reply(OpenAIResponses.parseResponse(response), new Usage(inTok, outTok))
+        if base.transient != "" then
+          items.append(py.dict("role" ~ "user", "content" ~ base.transient))
 
-  case Err(err) => classifyError(err)
+        items
 
-//[ One `responses.create` call. `reasoning` is sent unless the effort is "none"
-  ! — omitting it keeps a non-reasoning model (e.g. gpt-4o) working on this same
-  ! endpoint, since those reject a `reasoning` parameter.
+      else
+        py.list()
+
+    for r in results do
+      input.append(py.dict("type" ~ "function_call_output", "call_id" ~ r.id, "output" ~ r.content))
+
+    val attempt = openaiCreate(client, model, effort, base.system, input, toolSpecs, prevId)
+
+    match attempt
+    case Ok(response) =>
+      // Chain the next request from this response — only on success.
+      prevId = response.id.asString
+      val u = response.usage
+      val inTok = u.input_tokens.asInt
+      val outTok = u.output_tokens.asInt
+      logUsage("openai", model, inTok, outTok)
+      Model.Reply(OpenAIResponses.parseResponse(response), new Usage(inTok, outTok))
+
+    case Err(err) => classifyError(err)
+end
+
+//[ One `responses.create` call.
+  !
+  ! `reasoning` is sent unless the effort is "none" — omitting it keeps a
+  ! non-reasoning model (e.g. gpt-4o) working on this endpoint, since those reject
+  ! a `reasoning` parameter. `previous_response_id` is sent only for a continuation
+  ! (`prevId != ""`).
 //]
 private def openaiCreate(
     client: py.Dynamic, model: String, effort: String,
-    system: String, items: py.List, toolSpecs: py.List)
+    system: String, input: py.List, toolSpecs: py.List, prevId: String)
 : Result[py.Dynamic, py.Error] =
   if effort == "none" then
-    py.try:
-      client.responses.create:
-        model = model
-        instructions = system
-        input = items
-        tools = toolSpecs
-        max_output_tokens = 8096
+    if prevId == "" then
+      py.try:
+        client.responses.create:
+          model = model
+          instructions = system
+          input = input
+          tools = toolSpecs
+          max_output_tokens = 8096
+
+    else
+      py.try:
+        client.responses.create:
+          model = model
+          instructions = system
+          input = input
+          tools = toolSpecs
+          max_output_tokens = 8096
+          previous_response_id = prevId
 
   else
-    py.try:
-      client.responses.create:
-        model = model
-        instructions = system
-        input = items
-        tools = toolSpecs
-        reasoning = py.dict("effort" ~ effort)
-        max_output_tokens = 8096
+    if prevId == "" then
+      py.try:
+        client.responses.create:
+          model = model
+          instructions = system
+          input = input
+          tools = toolSpecs
+          reasoning = py.dict("effort" ~ effort)
+          max_output_tokens = 8096
+
+    else
+      py.try:
+        client.responses.create:
+          model = model
+          instructions = system
+          input = input
+          tools = toolSpecs
+          reasoning = py.dict("effort" ~ effort)
+          max_output_tokens = 8096
+          previous_response_id = prevId
 
 //[ Build the OpenAI model (Responses API) from an API key, model id, and base URL.
   !
