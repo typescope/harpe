@@ -2,12 +2,12 @@
 title = "Models"
 weight = 2
 +++
-A model is the agent's brain — the LLM the turn loop asks for each reply. It is a
-thin, provider-agnostic interface: given the prompt, the conversation so far, and
-the offered tools, it returns the assistant's next message (or a typed error). It
-is **stateless** — the loop keeps the history; the model just turns one request
-into one reply. That's why Anthropic, OpenAI, and a keyless
-dummy all sit behind the same `Model`.
+A model is the agent's brain — the LLM that drives each user turn. It is a thin,
+provider-agnostic interface: given the composed prompt and the tools on offer, it
+produces the assistant's next message (or a typed error), round after round, until
+the turn is done. The loop owns the conversation history across turns; a model only
+drives **one turn at a time**. That's why Anthropic, OpenAI, and a keyless dummy all
+sit behind the same `Model`.
 
 ## Configuring the built-in model
 
@@ -64,18 +64,25 @@ The builders are `anthropic(apiKey, model, cache)`, `openai(apiKey, model, baseU
 IO.stdout` because it may print and exit on a missing key — that check belongs at
 startup, not inside a request.
 
-## The reply contract
+## The turn contract
+
+A model drives one turn in two steps: the loop composes the request once with
+`startTurn`, then asks the returned `Turn` for a reply each round.
 
 ```jo
 interface Model
-  def reply(rendered: Rendered, tools: List[Tool]): ReplyResult receives logger
-end
+  def startTurn(base: Rendered): Turn
+
+interface Turn
+  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger
 ```
 
-- **In:** a `Rendered` (`system` prompt, the transcript `messages`, and a
-  `transient` tail — composed by the [Context](@/concepts/context.md)) plus the tools on
-  offer this step.
-- **Out:** a `ReplyResult` —
+- **`startTurn(base)`** — called once, at the turn's start. `base` is a `Rendered`
+  (`system` prompt, the transcript `messages`, and a `transient` tail — composed by
+  the [Context](@/concepts/context.md)). The returned `Turn` drives this turn.
+- **`reply(results, tools)`** — called once per model round: first with no tool
+  results, then with the results of the tools the previous reply requested, plus the
+  tools on offer this round. It returns a `ReplyResult`:
 
   ```jo
   union ReplyResult =
@@ -84,9 +91,11 @@ end
     | Fatal(detail: String)                      // not retryable: auth, bad request
   ```
 
-The model **classifies** a failure; the loop owns the **policy**: `Transient` is
-retried with exponential backoff (up to the configured limit), `Fatal` gives up the
-turn. A model never retries internally.
+`reply` is **idempotent**: results are committed only on a successful `Reply`, so
+the loop safely retries a failed round without duplicating them. The model
+**classifies** a failure; the loop owns the **policy** — `Transient` is retried with
+exponential backoff (up to the configured limit), `Fatal` gives up the turn. A model
+never retries internally.
 
 `Usage(inputTokens, outputTokens)` rides on every `Reply`. The loop logs it as the
 `harpe.model` event (see [logging](@/concepts/logging.md)) and feeds `inputTokens` to the
@@ -94,34 +103,43 @@ Context, so a token-budget strategy sizes on the provider's exact count.
 
 ## Writing your own model
 
-Implement the one method — convert the request to your provider's wire format, call
-it, and convert back:
+Most providers have no state to carry between rounds — they just re-send the
+conversation each time. For those, return the built-in **`SimpleTurn`** from
+`startTurn` and give it a `send` function that converts one request to your wire
+format, calls the API, and converts the reply back:
 
 ```jo
 class MyModel(client: py.Dynamic, model: String)
   view Model
 
-  def reply(rendered: Rendered, tools: List[Tool]): ReplyResult receives logger =
-    match py.try(callProvider(client, rendered, tools))
-    case Ok(response) =>
-      val u = response.usage
-      Reply(parse(response), new Usage(u.input.asInt, u.output.asInt))
-    case Err(err) =>
-      classify(err)   // → Transient or Fatal
-end
+  def startTurn(base: Rendered): Turn =
+    new SimpleTurn(base, (rendered, tools) => send(client, model, rendered, tools))
+
+private def send(
+    client: py.Dynamic, model: String, rendered: Rendered, tools: List[Tool])
+: ReplyResult receives logger =
+  match py.try(callProvider(client, rendered, tools))
+  case Ok(response) =>
+    val u = response.usage
+    Reply(parse(response), new Usage(u.input.asInt, u.output.asInt))
+  case Err(err) =>
+    classify(err)   // → Transient or Fatal
 ```
 
-Four things to get right:
+`SimpleTurn` accumulates the turn's tool results and re-sends the whole conversation
+each round, so `send` only ever handles a single request. If your provider must
+carry state across a turn's rounds — most commonly a **reasoning** model keeping its
+chain of thought through the tool loop (see [Reasoning](@/concepts/reasoning.md)) —
+implement `Turn` directly instead and hold that state in the `Turn` object.
+
+Things to get right:
 
 - **Classify failures** into `Transient` (worth a retry) vs `Fatal` (not), and let
-  the engine handle backoff — don't retry inside `reply`.
+  the engine handle backoff — don't retry inside the model.
 - **Report usage** in the returned `Usage`; call `logUsage(provider, model, in, out)`
   if you want the `harpe.model` log event too.
-- **Stay stateless** — read the whole conversation from `rendered.messages`; keep no
-  history of your own.
 - **Read `logger` live** — `reply` is `receives logger` (not captured at
-  construction), so its logs land in the current turn's context. That's automatic
-  as long as you don't hoist the logging out of `reply`.
+  construction), so its logs land in the current turn's context.
 
-`Echo.jo` is the minimal reference; `Anthropic.jo` and `OpenAI.jo` are the full
-provider implementations to copy from.
+`Echo.jo` is the minimal reference (a `SimpleTurn`); `Anthropic.jo` and `OpenAI.jo`
+implement `Turn` directly to preserve reasoning across the tool loop.
