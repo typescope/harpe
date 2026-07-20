@@ -65,6 +65,14 @@ section Agent
     context.mark()
     context.append(userMsg)
 
+    // Compose what the model sees ONCE, at the turn's start. The Turn then owns
+    // the intra-turn tail; the engine feeds it tool results and never re-renders.
+    val rendered = context.render(interact)
+    val turn = brain.startTurn(rendered)
+
+    // Tool results to hand the model on the next round ([] for the first request).
+    var pending: List[ToolResult] = []
+
     while true do
       // Once the tool budget is spent, offer no tools so the model must reply with
       // a final text answer rather than calling another tool.
@@ -73,11 +81,7 @@ section Agent
       if rounds == maxToolRounds then
         interact.emit: ToolBudgetReached(maxToolRounds)
 
-      // Compose what the model sees for this request — the context's policy,
-      // applied once here, not in each concrete Interact.
-      val rendered = context.render(interact)
-
-      match fetchReply(brain, rendered, offer, maxRetries, interact)
+      match fetchReply(turn, pending, offer, maxRetries, interact)
         case Stopped =>
           result = Interrupted
           context.rollback()
@@ -128,6 +132,7 @@ section Agent
             val results = ToolResults(toolResults)
             context.append(results)
             delta = delta + results
+            pending = toolResults
             rounds = rounds + 1
     end // while
 
@@ -163,7 +168,7 @@ private def backoffSeconds(attempt: Int): Float =
   ! Progress and errors are reported through `interact.emit`.
 //]
 private def fetchReply(
-    model: Model, rendered: Rendered, tools: List[Tool],
+    turn: Turn, results: List[ToolResult], tools: List[Tool],
     maxRetries: Int, interact: Interact)
 : Fetched =
 
@@ -173,7 +178,9 @@ private def fetchReply(
   while true do
     interact.emit: ModelRequestStarted(attempt, maxRetries)
 
-    val res = model.reply(rendered, tools)
+    // `reply` is idempotent — the Turn commits `results` only on success, so
+    // every attempt (including retries) passes the same `results`.
+    val res = turn.reply(results, tools)
 
     interact.emit: ModelRequestEnded
 

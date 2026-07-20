@@ -34,14 +34,19 @@ section Defaults
 
   //[ The chat model, selected by env vars:
     !
-    !   PROVIDER          "anthropic" (default) or "openai"
+    !   The provider is chosen by which API key is set — OPENAI_API_KEY selects
+    !   OpenAI, otherwise ANTHROPIC_API_KEY selects Anthropic (OpenAI wins if both
+    !   are set).
+    !
+    !   OPENAI_API_KEY    selects + authenticates OpenAI
+    !   ANTHROPIC_API_KEY selects + authenticates Anthropic
     !   MODEL             model id — defaults to "claude-opus-4-6" for Anthropic,
     !                     "gpt-5.6" for OpenAI
-    !   ANTHROPIC_API_KEY required when PROVIDER=anthropic
-    !   OPENAI_API_KEY    required when PROVIDER=openai
-    !   OPENAI_BASE_URL   optional base URL for OpenAI-compatible endpoints
-    !                     (Groq, Together AI, local llama.cpp, …); leave unset
-    !                     for the default OpenAI API
+    !   REASONING_EFFORT  OpenAI reasoning effort: "medium" (default), "low",
+    !                     "high", or "none" to disable reasoning (e.g. for gpt-4o)
+    !   OPENAI_BASE_URL   optional; OpenAI uses the Responses API, so set this only
+    !                     for another Responses-API endpoint (Azure, a proxy).
+    !                     Third-party chat/completions endpoints are not supported.
     !   PROMPT_CACHE      Anthropic prompt caching: "5m" (default), "1h", or
     !                     "off". Ignored by OpenAI (it caches long prefixes on
     !                     its own).

@@ -25,15 +25,18 @@ import harpe.logging.logger
   ! is still measured in characters (`truncate` has no per-turn token counts) — a
   ! rough "how much to keep" against the exact "when to act".
   !
-  ! The distillation is one extra call to `distiller` through the turn's
-  ! `interact` (cancellable; surfaced as `ContextCompacted`). The distiller is
-  ! the context's own model — it may be the agent's brain, or a cheaper model
-  ! reserved for summarization. If the call fails or is cancelled, compaction is
-  ! skipped and retried on the next request.
+  ! The distillation is one call to `distill` — a `Rendered => Option[String]`
+  ! summarizer supplied at construction, not the whole `Model` interface. It is
+  ! typically a thin wrapper over the agent's brain, or a cheaper model reserved
+  ! for summarization (`rendered => model.startTurn(rendered).reply([], [])`,
+  ! taking the reply text). `None` — a failed or cancelled call — skips compaction
+  ! and retries on the next request. Decoupling from `Model` keeps the strategy
+  ! agnostic to how a summary is produced (an LLM, a heuristic, a stub).
 //]
 class SummarizingContext(
     baseSystem: String, memory: Memory, initial: List[Message],
-    distiller: Model, highWaterTokens: Int, lowWaterChars: Int)
+    highWaterTokens: Int, lowWaterChars: Int,
+    distill: Rendered => Option[String] receives logger)
   view Context
 
   private var summary: String = ""
@@ -98,9 +101,8 @@ class SummarizingContext(
       val dropped = transcript.take(dropCount)
       val request: Message = distillRequest(summary, dropped)
 
-      val res = distiller.reply(new Rendered(distillSystem(), [request], ""), [])
-      if res is Reply(message, _) then
-        summary = message.text.trim
+      if distill(new Rendered(distillSystem(), [request], "")) is Some(text) then
+        summary = text
         transcript = kept
         interact.emit: turns.ContextCompacted(dropCount)
 end

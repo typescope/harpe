@@ -114,16 +114,18 @@ def run(): Unit receives stdout, logger =
       tools
       maxToolRounds = 50
       maxRetries = 4
-      model = (h, t) => textReply("hi")
+      model = base => (results, tools) => textReply("hi")
       state = live
     expected = "Answered(hi) | start,end"
 
-  // One tool call is run, then the next reply (text) ends the turn.
-  val stepB = py.list(0)
-  val askB: Model = (h, t) =>
-    val n = stepB.get(0).asInt
-    stepB.set(0, n + 1)
-    if n == 0 then toolReply("echo") else textReply("done")
+  // One tool call is run, then the next reply (text) ends the turn. The per-turn
+  // counter lives in `startTurn`, so it is fresh for each turn.
+  val askB: Model = base =>
+    val stepB = py.list(0)
+    (results, tools) =>
+      val n = stepB.get(0).asInt
+      stepB.set(0, n + 1)
+      if n == 0 then toolReply("echo") else textReply("done")
 
   check:
     "B tool-then-text"
@@ -133,8 +135,8 @@ def run(): Unit receives stdout, logger =
   // Tool budget: once spent (maxToolRounds=1) the model is re-asked with no
   // tools and must answer with text. The scripted model returns text only when
   // offered no tools.
-  val askC: Model = (h, t) =>
-    if t.isEmpty then textReply("final") else toolReply("echo")
+  val askC: Model = base => (results, tools) =>
+    if tools.isEmpty then textReply("final") else toolReply("echo")
 
   check:
     "C tool-budget"
@@ -148,7 +150,7 @@ def run(): Unit receives stdout, logger =
       tools
       maxToolRounds = 50
       maxRetries = 4
-      model = (h, t) => Fatal("bad key")
+      model = base => (results, tools) => Fatal("bad key")
       state = live
     expected = "Failed | start,end,failed"
 
@@ -160,17 +162,18 @@ def run(): Unit receives stdout, logger =
       tools
       maxToolRounds = 50
       maxRetries = 0
-      model = (h, t) => Transient("rate limited")
+      model = base => (results, tools) => Transient("rate limited")
       state = live
     expected = "Failed | start,end,exhausted"
 
   // Transient once, then success: exercises the backoff + retry path. With a
   // fake Interrupt, `pause` returns instantly — no real 1s wait.
-  val stepG = py.list(0)
-  val askG: Model = (h, t) =>
-    val n = stepG.get(0).asInt
-    stepG.set(0, n + 1)
-    if n == 0 then new Transient("blip") else textReply("recovered")
+  val askG: Model = base =>
+    val stepG = py.list(0)
+    (results, tools) =>
+      val n = stepG.get(0).asInt
+      stepG.set(0, n + 1)
+      if n == 0 then new Transient("blip") else textReply("recovered")
 
   check:
     "G transient-then-success"
@@ -180,22 +183,23 @@ def run(): Unit receives stdout, logger =
   // Cancellation already requested → the turn bails before running the tool.
   check:
     "H cancelled-before-tool"
-    scenario: tools, 50, 4, (h, t) => toolReply("echo"), State(cancelled = true, pause = true)
+    scenario: tools, 50, 4, base => (results, tools) => toolReply("echo"), State(cancelled = true, pause = true)
     "Interrupted | start,end"
 
   // Cancellation fires during the backoff pause → the retry is abandoned.
   check:
     "I cancelled-during-backoff"
-    scenario: tools, 50, 4, (h, t) => new Transient("blip"), State(cancelled = false, pause = true)
+    scenario: tools, 50, 4, base => (results, tools) => new Transient("blip"), State(cancelled = false, pause = true)
     "Interrupted | start,end,transient"
 
   // A tool that raises does NOT crash the turn: `runSafely` turns the exception
   // into an error result the model sees, and the next (text) reply ends the turn.
-  val stepJ = py.list(0)
-  val askJ: Model = (h, t) =>
-    val n = stepJ.get(0).asInt
-    stepJ.set(0, n + 1)
-    if n == 0 then toolReply("boom") else textReply("recovered")
+  val askJ: Model = base =>
+    val stepJ = py.list(0)
+    (results, tools) =>
+      val n = stepJ.get(0).asInt
+      stepJ.set(0, n + 1)
+      if n == 0 then toolReply("boom") else textReply("recovered")
 
   check:
     "J tool-error-continues"
@@ -204,11 +208,12 @@ def run(): Unit receives stdout, logger =
 
   // The turn's delta carries exactly the engine-produced messages, in order:
   // assistant tool-call, tool results, final assistant text.
-  val stepK = py.list(0)
-  val askK: Model = (h, t) =>
-    val n = stepK.get(0).asInt
-    stepK.set(0, n + 1)
-    if n == 0 then toolReply("echo") else textReply("done")
+  val askK: Model = base =>
+    val stepK = py.list(0)
+    (results, tools) =>
+      val n = stepK.get(0).asInt
+      stepK.set(0, n + 1)
+      if n == 0 then toolReply("echo") else textReply("done")
 
   val ctxK = new WindowedContext("", new Memory, [])
   val agentK = new Agent(askK, tools, ctxK)

@@ -12,6 +12,7 @@ namespace harpe
 import harpe.Model.Message
 import harpe.Model.Rendered
 import harpe.Model.ReplyResult
+import harpe.Model.Turn
 import harpe.Tool
 import harpe.Tool.ToolResult
 import harpe.Tool.ToolCall
@@ -19,21 +20,26 @@ import harpe.logging.logger
 
 //[ Model
   !
-  ! A chat model. `reply` turns the system prompt, the conversation so far, and the
-  ! offered tools into the assistant's next message (or a typed error); stateless,
-  ! the loop keeps the history. `reply` `receives logger` — read at call time, not
-  ! captured when the model was built — so a provider can emit its token usage to
-  ! the turn's logging context (see `harpe.models.logUsage`).
+  ! The agent's brain. `startTurn` begins one user turn, seeded ONCE with the
+  ! `base` context (system prompt + transcript + transient tail) the `Context`
+  ! composed for the user's message. The returned `Turn` drives that turn's tool
+  ! loop; the engine never re-renders `base` for it.
+  !
+  ! Why a per-turn object rather than a stateless `reply`: a reasoning model must
+  ! carry provider-specific state — thinking-block handles, a server-side response
+  ! id — ACROSS the turn's tool round-trips, but that state is opaque, non-portable,
+  ! and load-bearing only within the turn. Keeping it in the `Turn` means `Message`,
+  ! `Context`, and the audit log stay uniform and never learn reasoning exists.
 //]
 interface Model
-  def reply(rendered: Rendered, tools: List[Tool]): ReplyResult receives logger
+  def startTurn(base: Rendered): Turn
 end
 
 section Model
   //[ Message
     !
     ! One entry in the conversation, as the loop sees it — independent of any
-    ! provider's wire format. `Assistant` is also what `Model.reply` returns.
+    ! provider's wire format. `Assistant` is also what a `Turn.reply` returns.
   //]
   union Message =
       UserText(text: String)
@@ -73,4 +79,52 @@ section Model
       Reply(message: Assistant, usage: Usage)
     | Transient(detail: String)
     | Fatal(detail: String)
+
+  //[ Turn
+    !
+    ! One user turn in progress — the model's stateful driver for it. The engine
+    ! calls `reply` once per model round: first with no tool results (the initial
+    ! request), then with the results of the tools the previous reply requested.
+    ! The Turn owns the intra-turn tail (the growing assistant/tool-result
+    ! sequence and any provider reasoning state); the engine feeds it results and
+    ! reads back the reply, but never re-composes the base.
+    !
+    ! `reply` `receives logger` — read at call time — so a provider can emit its
+    ! token usage to the turn's logging context (see `harpe.models.logUsage`).
+    !
+    ! Retry contract: `reply` is IDEMPOTENT. `results` are committed to the tail
+    ! only on a successful `Reply` (atomically with the assistant message), so a
+    ! transport retry passes the SAME `results` again and simply re-sends — a
+    ! failed attempt mutates nothing. The caller never tracks what it committed.
+  //]
+  interface Turn
+    def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger
+
+  //[ SimpleTurn
+    !
+    ! A `Turn` for providers with no intra-turn state to preserve: it accumulates
+    ! the turn's tail as plain `Message`s and re-sends the whole conversation on
+    ! every reply. `send` does the provider's wire encoding and the actual call.
+    ! Providers that carry intra-turn state (e.g. reasoning handles) implement
+    ! `Turn` directly instead.
+  //]
+  class SimpleTurn(base: Rendered, send: (Rendered, List[Tool]) => ReplyResult receives logger)
+    view Turn
+
+    private var messages: List[Message] = base.messages
+
+    def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
+      // Build the request WITHOUT committing, so a failed attempt leaves the tail
+      // untouched and a retry (same results) re-sends identically.
+      val outgoing =
+        if results.isEmpty then messages
+        else messages + ToolResults(results)
+
+      val res = send(new Rendered(base.system, outgoing, base.transient), tools)
+
+      // Commit the results and the reply together — only on success.
+      if res is Reply(msg, _) then
+        messages = outgoing + msg
+
+      res
 end

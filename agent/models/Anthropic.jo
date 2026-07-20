@@ -139,41 +139,55 @@ private def parseReply(response: py.Dynamic): Assistant =
 private class AnthropicModel(client: py.Dynamic, model: String, cache: AnthropicCache)
   view Model
 
-  def reply(rendered: Rendered, tools: List[Tool]): ReplyResult receives logger =
+  def startTurn(base: Rendered): Turn =
+    new AnthropicTurn(client, model, cache, base)
+end
+
+//[ A reasoning-preserving turn on the Messages API.
+  !
+  ! Anthropic is stateless, so the turn accumulates the RAW assistant content
+  ! (thinking blocks with their signatures, plus tool_use blocks) and re-sends it
+  ! verbatim on every request. That is mandatory once `thinking` is enabled: a
+  ! tool_result whose preceding assistant turn is missing its thinking block is
+  ! rejected. `parseReply` still extracts only text + tool calls for the engine —
+  ! the reasoning rides in the wire history, never in the semantic `Message`.
+//]
+private class AnthropicTurn(client: py.Dynamic, model: String, cache: AnthropicCache, base: Rendered)
+  view Turn
+
+  // The wire messages, accumulated across the turn: seeded from the base
+  // transcript (cache-annotated), then grown with raw tool_result and assistant
+  // turns. Reassigned only on success, so a retry re-sends the same round.
+  private var messages: py.List = toMessages(base.messages, cache)
+
+  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
     val toolSpecs = py.list()
     for t in tools do toolSpecs.append(toolSpec(t))
 
-    val messages = toMessages(rendered.messages, cache)
+    // The committed history this round would become on success: prior messages
+    // plus the new tool results (as a user turn). Built without mutating `messages`.
+    val committed = py.list()
+    for m in messages do committed.append(m)
 
-    // The transient tail (working memory) goes AFTER the cached transcript, as a
-    // trailing user message with no breakpoint — so editing memory reprocesses
-    // only the tail, never the cached prefix.
-    if rendered.transient != "" then
-      messages.append(py.dict("role" ~ "user", "content" ~ rendered.transient))
+    if !results.isEmpty then
+      committed.append(toolResultMessage(results))
 
-    // A cache breakpoint on the system block covers the tool list + system
-    // prompt (the stable, session-long prefix); when off, system is a plain
-    // string, byte-identical to an uncached request.
-    val attempt =
-      if cache is !NoCache then
-        py.try:
-          client.messages.create:
-            model = model
-            max_tokens = 8096
-            system = py.list(py.dict("type" ~ "text", "text" ~ rendered.system, "cache_control" ~ cache.toDict))
-            messages = messages
-            tools = toolSpecs
-      else
-        py.try:
-          client.messages.create:
-            model = model
-            max_tokens = 8096
-            system = rendered.system
-            messages = messages
-            tools = toolSpecs
+    // The request adds the transient tail (working memory) after the transcript —
+    // request-only, never committed, so editing memory reprocesses only the tail.
+    val outgoing = py.list()
+    for m in committed do outgoing.append(m)
+
+    if base.transient != "" then
+      outgoing.append(py.dict("role" ~ "user", "content" ~ base.transient))
+
+    val attempt = anthropicCreate(client, model, cache, base.system, outgoing, toolSpecs)
 
     match attempt
     case Ok(response) =>
+      // Commit the raw assistant content (incl. thinking blocks) + the tool
+      // results — only on success.
+      committed.append(py.dict("role" ~ "assistant", "content" ~ response.content))
+      messages = committed
       val u = response.usage
       val inTok = u.input_tokens.asInt
       val outTok = u.output_tokens.asInt
@@ -182,6 +196,46 @@ private class AnthropicModel(client: py.Dynamic, model: String, cache: Anthropic
 
     case Err(err) => classifyError(err)
 end
+
+//[ A user turn carrying tool_result blocks for `results`. //]
+private def toolResultMessage(results: List[ToolResult]): py.Dict =
+  val content = py.list()
+
+  for r in results do
+    content.append(py.dict("type" ~ "tool_result", "tool_use_id" ~ r.id, "content" ~ r.content))
+
+  py.dict("role" ~ "user", "content" ~ content)
+
+//[ One Anthropic `messages.create` with adaptive thinking enabled.
+  !
+  ! `thinking: {type: "adaptive"}` lets the model reason (and interleave reasoning
+  ! between tool calls) on models that support it. A cache breakpoint on the system
+  ! block covers the tool list + system prompt (the stable prefix); when caching is
+  ! off, system is a plain string, byte-identical to an uncached request.
+//]
+private def anthropicCreate(
+    client: py.Dynamic, model: String, cache: AnthropicCache,
+    system: String, messages: py.List, toolSpecs: py.List)
+: Result[py.Dynamic, py.Error] =
+  if cache is NoCache then
+    py.try:
+      client.messages.create:
+        model = model
+        max_tokens = 8096
+        thinking = py.dict("type" ~ "adaptive")
+        system = system
+        messages = messages
+        tools = toolSpecs
+  else
+    py.try:
+      client.messages.create:
+        model = model
+        max_tokens = 8096
+        thinking = py.dict("type" ~ "adaptive")
+        system = py.list(py.dict("type" ~ "text", "text" ~ system, "cache_control" ~ cache.toDict))
+        messages = messages
+        tools = toolSpecs
+
 
 //[ Build an Anthropic-backed model from an API key, model id, and cache policy.
   !

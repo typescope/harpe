@@ -50,12 +50,13 @@ private class CompactInteract
   def pause(seconds: Float): Bool = false
 end
 
-private class Distiller(result: ReplyResult)
-  view Model
-
+// A distiller double: records each request's excerpt text and returns a canned
+// summary (`Some`) or a failure (`None`). Passed as the `distill` function — no
+// `Model` needed.
+private class RecordingDistiller(result: Option[String])
   val prompts = py.list()
 
-  def reply(rendered: Rendered, tools: List[Tool]): ReplyResult =
+  def distill(rendered: Rendered): Option[String] =
     if rendered.messages.get(0) is UserText(t) then prompts.append(t)
     result
 end
@@ -132,14 +133,12 @@ def run(): Unit receives stdout, logger =
 
   // --- SummarizingContext: trigger at 30 reported tokens (fed via observe),
   // keep to a 16-char low-water window (8-char turns → 2 turns) ---
-  val distiller =
-    val reply = Reply(Assistant("DISTILLED", []), new Usage(0, 0))
-    new Distiller(reply)
+  val distiller = new RecordingDistiller(Some("DISTILLED"))
 
   val interact = new CompactInteract
 
   val smem = new Memory
-  val sctx = new SummarizingContext("BASE", smem, [], distiller, 30, 16)
+  val sctx = new SummarizingContext("BASE", smem, [], 30, 16, rendered => distiller.distill(rendered))
 
   for m in turn8("AAAA", "aaaa") ++ turn8("BBBB", "bbbb") ++ turn8("CCCC", "cccc") do
     sctx.append(m)
@@ -191,8 +190,8 @@ def run(): Unit receives stdout, logger =
   // A failed distillation call skips compaction: the oversized window is sent as-is.
   val failing = new CompactInteract
   val fctx =
-    val model = new Distiller(Fatal("boom"))
-    new SummarizingContext("BASE", new Memory, [], model, 30, 16)
+    val model = new RecordingDistiller(None)
+    new SummarizingContext("BASE", new Memory, [], 30, 16, rendered => model.distill(rendered))
 
   for m in turn8("AAAA", "aaaa") ++ turn8("BBBB", "bbbb") ++ turn8("CCCC", "cccc") ++ turn8("DDDD", "dddd") ++ turn8("EEEE", "eeee") do
     fctx.append(m)
@@ -206,8 +205,8 @@ def run(): Unit receives stdout, logger =
   // mark/rollback restores both the window and the summary.
   val interact2 = new CompactInteract
   val rctx =
-    val model = new Distiller(Reply(Assistant("DISTILLED", []), new Usage(0, 0)))
-    new SummarizingContext("BASE", new Memory, [], model, 30, 16)
+    val model = new RecordingDistiller(Some("DISTILLED"))
+    new SummarizingContext("BASE", new Memory, [], 30, 16, rendered => model.distill(rendered))
 
   for m in turn8("AAAA", "aaaa") ++ turn8("BBBB", "bbbb") ++ turn8("CCCC", "cccc") do
     rctx.append(m)
