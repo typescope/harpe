@@ -6,7 +6,7 @@ A model is the agent's brain — the LLM the turn loop asks for each reply. It i
 thin, provider-agnostic interface: given the prompt, the conversation so far, and
 the offered tools, it returns the assistant's next message (or a typed error). It
 is **stateless** — the loop keeps the history; the model just turns one request
-into one reply. That's why Anthropic, OpenAI-compatible endpoints, and a keyless
+into one reply. That's why Anthropic, OpenAI, and a keyless
 dummy all sit behind the same `Model`.
 
 ## Configuring the built-in model
@@ -14,20 +14,22 @@ dummy all sit behind the same `Model`.
 The usual case needs no code — the shipped model is selected by environment
 variables (put them in your agent's `.env`):
 
-- **`PROVIDER`** — `anthropic` (default) or `openai`.
+- **`ANTHROPIC_API_KEY`** / **`OPENAI_API_KEY`** — sets *and* selects the provider:
+  `OPENAI_API_KEY` selects OpenAI, otherwise `ANTHROPIC_API_KEY` selects Anthropic
+  (OpenAI wins if both are set). Setting neither fails fast at startup.
 - **`MODEL`** — the model id. Defaults to `claude-opus-4-6` (Anthropic) or `gpt-5.6`
   (OpenAI).
-- **`ANTHROPIC_API_KEY`** / **`OPENAI_API_KEY`** — the key for the chosen provider.
-  Missing it fails fast at startup with a clear message.
-- **`OPENAI_BASE_URL`** — optional. Point OpenAI at any OpenAI-compatible endpoint
-  (Groq, Together, a local llama.cpp, …); leave unset for the real OpenAI API.
+- **`OPENAI_BASE_URL`** — optional. OpenAI uses the Responses API; set this only to
+  reach another Responses-API endpoint (Azure OpenAI, a proxy). Third-party
+  chat/completions endpoints (Groq, Together, llama.cpp) are not supported.
+- **`REASONING_EFFORT`** — reasoning effort: `medium` (default), `low`, `high`, or
+  `none` to disable reasoning (needed for a non-reasoning model like `gpt-4o`).
 - **`PROMPT_CACHE`** — Anthropic prompt caching: `5m` (default), `1h`, or `off`.
   (OpenAI caches long prefixes on its own; this is ignored there.)
 
 So a `.env` of
 
 ```sh
-PROVIDER=anthropic
 MODEL=claude-opus-4-6
 ANTHROPIC_API_KEY=sk-…
 ```

@@ -86,8 +86,8 @@ and cancelled, how progress is shown) and owns sessions and persistence.
 For the whole picture — the pieces, the turn logic, and how to configure or
 replace them — start with [docs/concepts/agent.md](docs/concepts/agent.md).
 
-The model is a provider-agnostic interface (Anthropic, OpenAI-compatible
-endpoints, or a keyless dummy), selected by env var and overridable in
+The model is a provider-agnostic interface (Anthropic, OpenAI, or a keyless
+dummy), selected by env var and overridable in
 `Config.jo` — see [docs/concepts/models.md](docs/concepts/models.md).
 
 The default toolset is `runCode` (write, compile, and run a Jo program in the
@@ -181,12 +181,12 @@ tools, env-selected model, name extraction). There are no registration hooks: to
 change behavior, change the code.
 
 **Choose the model.** `harpe.Model` is provider-agnostic; `Defaults.model()`
-selects by env:
+selects by whichever API key is set (OpenAI wins if both are):
 
-| `PROVIDER`            | Key                 | `MODEL` default   | Extra                       |
-|-----------------------|---------------------|-------------------|-----------------------------|
-| `anthropic` (default) | `ANTHROPIC_API_KEY` | `claude-opus-4-6` | —                           |
-| `openai`              | `OPENAI_API_KEY`    | `gpt-5.6`         | `OPENAI_BASE_URL` (optional — Groq, llama.cpp, …) |
+| Provider  | Key set             | `MODEL` default   | Extra                       |
+|-----------|---------------------|-------------------|-----------------------------|
+| Anthropic | `ANTHROPIC_API_KEY` | `claude-opus-4-6` | —                           |
+| OpenAI    | `OPENAI_API_KEY`    | `gpt-5.6`         | `REASONING_EFFORT` (optional — low/medium/high/none) |
 
 Or edit `Config.model()` to return any `Model` — `harpe.models.echo()` is a
 keyless dummy for wiring tests. A new provider is one file: a class that

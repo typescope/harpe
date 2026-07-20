@@ -1,16 +1,20 @@
 //[ OpenAI.jo
   !
-  ! An OpenAI-compatible `Model`: renders the Jo tool model into OpenAI function
-  ! specs, converts the provider-agnostic history into OpenAI chat messages
-  ! (system as a leading message, tool results as `role: "tool"` entries), calls
-  ! `chat.completions.create`, and parses the response back into an `Assistant`.
-  ! Accepts a `baseUrl` so any OpenAI-compatible endpoint (Groq, Together, local
-  ! llama.cpp, etc.) can be used — pass `""` for the default OpenAI API.
-  ! All OpenAI-specific shape lives here; the loop never sees it.
+  ! The OpenAI `Model`, on the **Responses API** (`responses.create`) — the only
+  ! path that runs a reasoning model (gpt-5.x, o-series) *with* function tools, a
+  ! combination chat/completions rejects. Reasoning effort is configurable, and
+  ! disabling it (`REASONING_EFFORT=none`) lets a non-reasoning model (gpt-4o)
+  ! use this endpoint too.
+  !
+  ! This targets OpenAI proper; it is not a generic OpenAI-compatible shim — the
+  ! Responses API is OpenAI's own, not spoken by third-party endpoints. All
+  ! OpenAI-specific shape lives here; the loop never sees it.
 //]
 
 namespace harpe.models
 import harpe.ffi.json
+import harpe.ffi.os
+import harpe.ffi.builtins
 
 
 import harpe.Model
@@ -19,8 +23,12 @@ import harpe.Tool
 import harpe.Tool.*
 import harpe.logging.logger
 
-private section OpenAI
-  //[ One tool's OpenAI function spec, derived from the Jo `Tool` model. //]
+//[ Responses-API encodings. //]
+private section OpenAIResponses
+  //[ One tool's Responses-API function spec — flat, unlike the nested
+    ! chat/completions shape. `strict = false` because tools have optional
+    ! parameters, which strict schema validation forbids.
+  //]
   def toolSpec(t: Tool): py.Dict =
     val properties = py.dict()
     val required = py.list()
@@ -30,120 +38,127 @@ private section OpenAI
     end
 
     val parameters = py.dict("type" ~ "object", "properties" ~ properties, "required" ~ required)
-    val fn = py.dict("name" ~ t.name, "description" ~ t.description, "parameters" ~ parameters)
-    py.dict("type" ~ "function", "function" ~ fn)
+    py.dict("type" ~ "function", "name" ~ t.name, "description" ~ t.description,
+            "parameters" ~ parameters, "strict" ~ false)
 
-  //[ The conversation as OpenAI's `messages` array.
+  //[ The conversation as the Responses API `input` array.
     !
-    ! The system prompt becomes a leading `role: "system"` message. Tool results
-    ! each get their own `role: "tool"` message (one per result), which is how
-    ! the OpenAI API expects them — unlike Anthropic's single user-turn content
-    ! block array.
+    ! The system prompt is NOT included here — it rides the request's
+    ! `instructions` field. An assistant's tool calls become standalone
+    ! `function_call` items, and each tool result a `function_call_output` item
+    ! keyed by the same `call_id`.
   //]
-  def toMessages(system: String, history: List[Message]): py.List =
-    val msgs = py.list()
-    msgs.append(py.dict("role" ~ "system", "content" ~ system))
+  def toInput(history: List[Message]): py.List =
+    val items = py.list()
 
     for m in history do
       match m
       case UserText(text) =>
-        msgs.append(py.dict("role" ~ "user", "content" ~ text))
+        items.append(py.dict("role" ~ "user", "content" ~ text))
 
       case Assistant(text, calls) =>
-        val msg = py.dict("role" ~ "assistant", "content" ~ text)
+        if text != "" then
+          items.append(py.dict("role" ~ "assistant", "content" ~ text))
 
-        // OpenAI rejects an empty `tool_calls` array, so attach the key only when
-        // the assistant actually made calls (a text-only reply omits it).
-        if calls.size > 0 then
-          val tcList = py.list()
-          for c in calls do
-            val fn = py.dict("name" ~ c.name, "arguments" ~ json.dumps(c.input.raw))
-            tcList.append(py.dict("id" ~ c.id, "type" ~ "function", "function" ~ fn))
-          end
-
-          msg["tool_calls"] = tcList
-
-        msgs.append(msg)
+        for c in calls do
+          items.append(py.dict(
+            "type" ~ "function_call",
+            "call_id" ~ c.id,
+            "name" ~ c.name,
+            "arguments" ~ json.dumps(c.input.raw)))
+        end
 
       case ToolResults(results) =>
         for r in results do
-          msgs.append(py.dict("role" ~ "tool", "tool_call_id" ~ r.id, "content" ~ r.content))
+          items.append(py.dict("type" ~ "function_call_output", "call_id" ~ r.id, "output" ~ r.content))
       end // match
     end // for
 
-    msgs
+    items
 
-  //[ Parse an OpenAI response into an `Assistant` reply.
+  //[ Parse a Responses API result into an `Assistant` reply.
     !
-    ! `content` may be null when the model only returns tool calls; `tool_calls`
-    ! may be null when the model only returns text. Both are handled with
-    ! `py.try` so null-to-String conversion errors are caught gracefully.
+    ! Text comes from the aggregate `output_text`; `function_call` items in
+    ! `output` become tool calls, keyed by the `call_id` the follow-up echoes
+    ! back. An `incomplete` status means the output hit `max_output_tokens`, so
+    ! keep the text with a marker and drop any partial calls.
   //]
-  def parseReply(response: py.Dynamic): Assistant =
-    val choice = response.choices[0]
-    val msg = choice.message
-    // msg.content or msg.tool_calls can be None
-    val text = if !msg.content.isNone then msg.content.asString else ""
+  def parseResponse(response: py.Dynamic): Assistant =
+    val ot = response.output_text
+    val text = if !ot.isNone then ot.asString else ""
 
+    // `type` is a Jo keyword, so read the item's tag with getattr.
     var calls: List[ToolCall] = []
-    if !msg.tool_calls.isNone then
-      for tc in msg.tool_calls.cast[py.List] do
-        val argsJson = tc.function.arguments.asString
-        val argsDict = json.loads(argsJson).cast[py.Dict]
-        calls = calls + ToolCall(tc.id.asString, tc.function.name.asString, ToolInput(argsDict))
+    for it in response.output.cast[py.List] do
+      if builtins.attr(it, "type").asString == "function_call" then
+        val argsDict = json.loads(it.arguments.asString).cast[py.Dict]
+        calls = calls + ToolCall(it.call_id.asString, it.name.asString, ToolInput(argsDict))
 
-    // A finish_reason of "length" means the reply was cut off — possibly mid
-    // tool call — so keep the text with a visible marker and drop the calls
-    // rather than running a tool on partial arguments.
-    val finish = choice.finish_reason
+    val status = response.status
 
-    if !finish.isNone && finish.asString == "length" then
-      new Assistant((text + "\n\n[Reply truncated: max_tokens reached.]").trim, [])
+    if !status.isNone && status.asString == "incomplete" then
+      new Assistant((text + "\n\n[Reply truncated: max_output_tokens reached.]").trim, [])
     else
       new Assistant(text.trim, calls)
 end
 
-private class OpenAIModel(client: py.Dynamic, model: String)
+private class OpenAIResponsesModel(client: py.Dynamic, model: String, effort: String)
   view Model
 
   def reply(rendered: Rendered, tools: List[Tool]): ReplyResult receives logger =
     val toolSpecs = py.list()
-    for t in tools do toolSpecs.append(OpenAI.toolSpec(t))
+    for t in tools do toolSpecs.append(OpenAIResponses.toolSpec(t))
 
-    val messages = OpenAI.toMessages(rendered.system, rendered.messages)
+    val items = OpenAIResponses.toInput(rendered.messages)
 
     // The transient tail (working memory) rides after the transcript as a final
-    // user message. OpenAI-compatible endpoints cache long prompt prefixes
-    // automatically, so no explicit cache markers are needed here.
+    // user item, past the cached prefix.
     if rendered.transient != "" then
-      messages.append(py.dict("role" ~ "user", "content" ~ rendered.transient))
+      items.append(py.dict("role" ~ "user", "content" ~ rendered.transient))
 
-    // `max_completion_tokens`, not the legacy `max_tokens`: current OpenAI models
-    // require it (reasoning models reject `max_tokens` outright). Compatible
-    // endpoints follow the OpenAI protocol.
-    val attempt = py.try:
-      client.chat.completions.create:
-        model = model
-        max_completion_tokens = 8096
-        messages = messages
-        tools = toolSpecs
+    val attempt = send(rendered.system, items, toolSpecs)
 
     match attempt
     case Ok(response) =>
       val u = response.usage
-      val inTok = u.prompt_tokens.asInt
-      val outTok = u.completion_tokens.asInt
+      val inTok = u.input_tokens.asInt
+      val outTok = u.output_tokens.asInt
       logUsage("openai", model, inTok, outTok)
-      Model.Reply(OpenAI.parseReply(response), new Usage(inTok, outTok))
+      Model.Reply(OpenAIResponses.parseResponse(response), new Usage(inTok, outTok))
 
     case Err(err) => classifyError(err)
+
+  //[ One `responses.create` call. `reasoning` is sent unless the effort is
+    ! "none" — omitting it keeps a non-reasoning model (e.g. gpt-4o) working on
+    ! this same endpoint, since those reject a `reasoning` parameter.
+  //]
+  private def send(system: String, items: py.List, toolSpecs: py.List): Result[py.Dynamic, py.Error] =
+    if effort == "none" then
+      py.try:
+        client.responses.create:
+          model = model
+          instructions = system
+          input = items
+          tools = toolSpecs
+          max_output_tokens = 8096
+
+    else
+      py.try:
+        client.responses.create:
+          model = model
+          instructions = system
+          input = items
+          tools = toolSpecs
+          reasoning = py.dict("effort" ~ effort)
+          max_output_tokens = 8096
 end
 
-//[ Build an OpenAI-compatible model from an API key, model id, and base URL.
+//[ Build the OpenAI model (Responses API) from an API key, model id, and base URL.
   !
-  ! Pass `baseUrl = ""` to use the default OpenAI API endpoint. Any
-  ! OpenAI-compatible provider (Groq, Together AI, local llama.cpp, etc.) can
-  ! be reached by setting `baseUrl` to the provider's `/v1` root.
+  ! `REASONING_EFFORT` sets the reasoning effort (default "medium", "none" to
+  ! disable). `baseUrl` is normally "" for the default endpoint; pass one only for
+  ! an OpenAI Responses-API-speaking gateway (e.g. Azure OpenAI, a proxy) — not for
+  ! third-party chat/completions endpoints, which this no longer targets.
 //]
 def openai(apiKey: String, model: String, baseUrl: String): Model =
   // Explicit request timeout; internal SDK retries disabled — the turn engine
@@ -153,4 +168,5 @@ def openai(apiKey: String, model: String, baseUrl: String): Model =
       py.module("openai").OpenAI(api_key = apiKey, timeout = 600.0, max_retries = 0)
     else
       py.module("openai").OpenAI(api_key = apiKey, base_url = baseUrl, timeout = 600.0, max_retries = 0)
-  new OpenAIModel(client, model)
+
+  new OpenAIResponsesModel(client, model, os.getenv("REASONING_EFFORT", "medium"))
