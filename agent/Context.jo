@@ -3,7 +3,7 @@
   ! `Context` — the pluggable context-engineering surface. A per-session value
   ! that owns the transcript and composes what the model sees for each request:
   ! the engine (`Agent.runTurn`) appends transcript events to it and calls
-  ! `render` once per model request. Implementing this interface is the whole
+  ! `render` once per user turn (at its start). Implementing this interface is the whole
   ! customization surface for context management — there is deliberately no
   ! secondary hook.
   !
@@ -30,13 +30,17 @@ interface Context
   //[ Record a transcript event: user text, an assistant reply, or tool results. //]
   def append(message: Message): Unit
 
-  //[ Compose what the model sees for this request: a `Rendered` bundling the
-    ! system prompt, the transcript window, and a transient tail.
+  //[ Compose what the model sees for a turn: a `Rendered` bundling the system
+    ! prompt, the transcript window, and a transient tail.
     !
-    ! Called once per model request. May be effectful — an impl can use
-    ! `interact` to call the model first (e.g. summarize old turns, whose token
-    ! usage it logs) and mutate its own state, under the turn's cancellation and
-    ! event stream.
+    ! Called once per user turn, at its start — the `Model` seeds a `Turn` from
+    ! it and owns the intra-turn tail thereafter, so the base is NOT recomposed
+    ! per tool round. (A token-budget strategy therefore compacts at a turn
+    ! boundary, on the previous turn's reported usage, not mid-tool-loop — which
+    ! is correct: the growing tail is load-bearing and cannot be pruned here.)
+    ! May be effectful — an impl can use `interact` to call the model first (e.g.
+    ! summarize old turns, whose token usage it logs) and mutate its own state,
+    ! under the turn's cancellation and event stream.
   //]
   def render(interact: Interact): Rendered receives logger
 

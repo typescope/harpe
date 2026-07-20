@@ -139,7 +139,15 @@ private def parseReply(response: py.Dynamic): Assistant =
 private class AnthropicModel(client: py.Dynamic, model: String, cache: AnthropicCache)
   view Model
 
-  def reply(rendered: Rendered, tools: List[Tool]): ReplyResult receives logger =
+  def startTurn(base: Rendered): Turn =
+    new SimpleTurn(base, (rendered, tools) => anthropicSend(client, model, cache, rendered, tools))
+end
+
+//[ One Anthropic `messages.create` call for the composed `rendered` + tools. //]
+private def anthropicSend(
+    client: py.Dynamic, model: String, cache: AnthropicCache,
+    rendered: Rendered, tools: List[Tool])
+: ReplyResult receives logger =
     val toolSpecs = py.list()
     for t in tools do toolSpecs.append(toolSpec(t))
 
@@ -181,7 +189,6 @@ private class AnthropicModel(client: py.Dynamic, model: String, cache: Anthropic
       Reply(parseReply(response), new Usage(inTok, outTok))
 
     case Err(err) => classifyError(err)
-end
 
 //[ Build an Anthropic-backed model from an API key, model id, and cache policy.
   !

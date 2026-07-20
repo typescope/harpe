@@ -105,53 +105,63 @@ end
 private class OpenAIResponsesModel(client: py.Dynamic, model: String, effort: String)
   view Model
 
-  def reply(rendered: Rendered, tools: List[Tool]): ReplyResult receives logger =
-    val toolSpecs = py.list()
-    for t in tools do toolSpecs.append(OpenAIResponses.toolSpec(t))
-
-    val items = OpenAIResponses.toInput(rendered.messages)
-
-    // The transient tail (working memory) rides after the transcript as a final
-    // user item, past the cached prefix.
-    if rendered.transient != "" then
-      items.append(py.dict("role" ~ "user", "content" ~ rendered.transient))
-
-    val attempt = send(rendered.system, items, toolSpecs)
-
-    match attempt
-    case Ok(response) =>
-      val u = response.usage
-      val inTok = u.input_tokens.asInt
-      val outTok = u.output_tokens.asInt
-      logUsage("openai", model, inTok, outTok)
-      Model.Reply(OpenAIResponses.parseResponse(response), new Usage(inTok, outTok))
-
-    case Err(err) => classifyError(err)
-
-  //[ One `responses.create` call. `reasoning` is sent unless the effort is
-    ! "none" — omitting it keeps a non-reasoning model (e.g. gpt-4o) working on
-    ! this same endpoint, since those reject a `reasoning` parameter.
-  //]
-  private def send(system: String, items: py.List, toolSpecs: py.List): Result[py.Dynamic, py.Error] =
-    if effort == "none" then
-      py.try:
-        client.responses.create:
-          model = model
-          instructions = system
-          input = items
-          tools = toolSpecs
-          max_output_tokens = 8096
-
-    else
-      py.try:
-        client.responses.create:
-          model = model
-          instructions = system
-          input = items
-          tools = toolSpecs
-          reasoning = py.dict("effort" ~ effort)
-          max_output_tokens = 8096
+  def startTurn(base: Rendered): Turn =
+    new SimpleTurn(base, (rendered, tools) => openaiSend(client, model, effort, rendered, tools))
 end
+
+//[ One Responses `create` for the composed `rendered` + tools, parsed into a reply. //]
+private def openaiSend(
+    client: py.Dynamic, model: String, effort: String,
+    rendered: Rendered, tools: List[Tool])
+: ReplyResult receives logger =
+  val toolSpecs = py.list()
+  for t in tools do toolSpecs.append(OpenAIResponses.toolSpec(t))
+
+  val items = OpenAIResponses.toInput(rendered.messages)
+
+  // The transient tail (working memory) rides after the transcript as a final
+  // user item, past the cached prefix.
+  if rendered.transient != "" then
+    items.append(py.dict("role" ~ "user", "content" ~ rendered.transient))
+
+  val attempt = openaiCreate(client, model, effort, rendered.system, items, toolSpecs)
+
+  match attempt
+  case Ok(response) =>
+    val u = response.usage
+    val inTok = u.input_tokens.asInt
+    val outTok = u.output_tokens.asInt
+    logUsage("openai", model, inTok, outTok)
+    Model.Reply(OpenAIResponses.parseResponse(response), new Usage(inTok, outTok))
+
+  case Err(err) => classifyError(err)
+
+//[ One `responses.create` call. `reasoning` is sent unless the effort is "none"
+  ! — omitting it keeps a non-reasoning model (e.g. gpt-4o) working on this same
+  ! endpoint, since those reject a `reasoning` parameter.
+//]
+private def openaiCreate(
+    client: py.Dynamic, model: String, effort: String,
+    system: String, items: py.List, toolSpecs: py.List)
+: Result[py.Dynamic, py.Error] =
+  if effort == "none" then
+    py.try:
+      client.responses.create:
+        model = model
+        instructions = system
+        input = items
+        tools = toolSpecs
+        max_output_tokens = 8096
+
+  else
+    py.try:
+      client.responses.create:
+        model = model
+        instructions = system
+        input = items
+        tools = toolSpecs
+        reasoning = py.dict("effort" ~ effort)
+        max_output_tokens = 8096
 
 //[ Build the OpenAI model (Responses API) from an API key, model id, and base URL.
   !
