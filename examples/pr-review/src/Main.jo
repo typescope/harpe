@@ -3,8 +3,9 @@ namespace harpe.examples.prreview
 import jo.IO.stdout
 import jo.IO.args
 import harpe.*
-import harpe.ffi.loadDotenv
-import harpe.ffi.getenv
+import harpe.ffi.os
+import harpe.ffi.time
+import harpe.ffi.dotenv
 import harpe.logging.Logging
 import harpe.logging.JsonlLogger
 import harpe.logging.logger
@@ -24,7 +25,7 @@ def main(): Unit receives args, stdout =
   val dryRun = args[1] == "true"
 
   if Defaults.checkAgentDir() then
-    loadDotenv(".env")
+    dotenv.load(".env")
     val wspace = new Workspace(os.path.abspath("."))
     with workspace = wspace in
       Logging.withLogger(new JsonlLogger(wspace.relative("logs/agent.jsonl")), () => review(pr, dryRun))
@@ -33,10 +34,10 @@ private def review(pr: String, dryRun: Bool): Unit receives stdout, workspace, l
   val memory = new Memory
   val basePrompt = workspace.read("AGENT.md") rescue None => ""
   val tools = [
-    runCodeTool(workspace.guestDir,
-      extraParams = Some([pr, getenv("GITHUB_TOKEN", ""), dryRun.toString])
+    runCodeTool(workspace.sandboxDir,
+      extraParams = Some([pr, os.getenv("GITHUB_TOKEN", ""), dryRun.toString])
     ),
-    apiTool(workspace.apiDir+ "/src")
+    apiTool(workspace.sandboxDir)
   ] ++ skillTools(workspace.skillsDir)
 
   val context = new WindowedContext(basePrompt, memory, [])

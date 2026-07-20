@@ -2,8 +2,28 @@ namespace SandboxRuntime
 
 import jo.IO.stdout
 import jo.IO.args
+import harpe.ffi.os
+import harpe.media.*
+import harpe.caps.*
 import SandboxAPI
-import harpe.sandbox.*
+
+//[ Main entry point //]
+def main(): Unit receives args, stdout =
+  if args.size < 2 then
+    println args
+    println "Error: missing arguments"
+    println "Usage: python3 task.py <prUrl> <githubToken> <dryRun>"
+    abort "Missing arguments"
+
+  val prUrl  = args[0]
+  val token  = args[1]
+  var dryRun =  if args.size >= 3 then args[2] == "true" else false
+
+  val root = os.getenv("HARPE_DATA_DIR", os.getenv("HARPE_SCRATCH_DIR", "."))
+  val fs = FileSystemImpl.local(root)
+  val ghImpl = new GithubImpl(fs, prUrl, dryRun, token)
+  with SandboxAPI.github = ghImpl in
+    SandboxAPI.runTask()
 
 //[ JSON-encode a string value — adds surrounding quotes and escapes special chars //]
 private def jsonStr(s: String): String = jsonMod.dumps(s).asString
@@ -26,7 +46,7 @@ private def parsePrURL(url: String): Option[PR] =
 
 //[ GitHub interface backed by local snapshot files + live GitHub API //]
 class GithubImpl
-  val sd: Sandbox
+  val fs: FileSystem
   val dryRun: Bool
   val prInfo: SandboxAPI.PRInfo
   private var pr: PR
@@ -34,8 +54,8 @@ class GithubImpl
 
   view SandboxAPI.GitHub
 
-  def GithubImpl(sd: Sandbox, prUrl: String, dryRun: Bool, token: String): GithubImpl =
-    this.sd = sd
+  def GithubImpl(fs: FileSystem, prUrl: String, dryRun: Bool, token: String): GithubImpl =
+    this.fs = fs
     this.dryRun = dryRun
     this.pr = new PR("", "", 0)
     match parsePrURL(prUrl)
@@ -73,12 +93,19 @@ class GithubImpl
 
   //[ Read repo file //]
   def readFile(path: String): String =
-    if sd.fileExists(path) then
-      sd.readFile(path)
+    val name = path.replace("/", "-")
+    val p = new Path.Join(Path.root, name)
+    if fs.isFile(p) then
+      match fs.readText(p)
+      case Ok(content) => content
+      case _ => ""
     else
       val files = client.getRepoFiles(pr.owner, pr.repo, List(path))
       val content = files[path]
-      if content != "" then sd.writeFile(path, content)
+      if content != "" then
+        match fs.openTextFile(p)
+        case Ok(textFile) => textFile.write(content)
+        case _ => pass
       content
 
   //[ Write operations — call the real GitHub API (or print in dry-run mode) //]
@@ -122,21 +149,3 @@ class GithubImpl
       println "ACTION_COMPLETED"
 
 end
-
-//[ Main entry point //]
-def main(): Unit receives args, stdout =
-  if args.size < 2 then
-    println args
-    println "Error: missing arguments"
-    println "Usage: python3 task.py <prUrl> <githubToken> <dryRun>"
-    abort "Missing arguments"
-
-  val prUrl  = args[0]
-  val token  = args[1]
-  var dryRun =  if args.size >= 3 then args[2] == "true" else false
-  val tmp = py.module("tempfile").mkdtemp().asString
-  val sandbox: Sandbox = Sandbox.create(tmp)
-
-  val ghImpl = new GithubImpl(sandbox, prUrl, dryRun, token)
-  with SandboxAPI.github = ghImpl in
-    SandboxAPI.runTask()
