@@ -1,6 +1,6 @@
 +++
 title = "Tools"
-weight = 3
+weight = 4
 +++
 A tool is the agent's way to *act*. The model, mid-turn, chooses to call a tool by
 name with arguments; your handler runs host-side and returns text the model reads
