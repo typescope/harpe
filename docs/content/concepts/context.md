@@ -55,13 +55,13 @@ The strategy is per-session, constructed where the driver builds its `Agent`:
 ```jo
 // default: a sliding window (fixed size, no knobs)
 new WindowedContext:
-  baseSystem = workspace.read("AGENT.md").getOrElse(() => "")
+  baseSystem = workspace.read("AGENT.md").getOrElse("")
   memory = memory
   initial = history
 
 // or: summarize instead of dropping
 new SummarizingContext:
-  baseSystem = workspace.read("AGENT.md").getOrElse(() => "")
+  baseSystem = workspace.read("AGENT.md").getOrElse("")
   memory = memory
   initial = history
   highWaterTokens = 120000

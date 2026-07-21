@@ -92,7 +92,7 @@ val agent = new Agent:
   brain = brain                                           // Defaults.model(), shared for the process
   tools = Defaults.tools() ++ memoryTools(memory)          // runCode + skills + memory
   context = new WindowedContext:
-    baseSystem = workspace.read("AGENT.md").getOrElse(() => "")
+    baseSystem = workspace.read("AGENT.md").getOrElse("")
     memory = memory
     initial = history
 

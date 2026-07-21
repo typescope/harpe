@@ -83,14 +83,14 @@ class FontFinder()
 
   //[ The standard font directories for the running platform. //]
   private def fontDirs(): List[String] =
-    val homeDir = Native.env("HOME").getOrElse(() => "")
+    val homeDir = Native.env("HOME").getOrElse("")
     val plat = Native.platform
 
     if plat == "darwin" then
       ["/System/Library/Fonts", "/System/Library/Fonts/Supplemental",
        "/Library/Fonts", "\{homeDir}/Library/Fonts"]
     else if plat.startsWith("win") then
-      val winDir = Native.env("WINDIR").getOrElse(() => "C:\\Windows")
+      val winDir = Native.env("WINDIR").getOrElse("C:\\Windows")
       ["\{winDir}\\Fonts"]
     else
       ["/usr/share/fonts", "/usr/local/share/fonts",
