@@ -63,7 +63,7 @@ Each agent directory contains:
     api/                 # declares runTask — the granted capabilities
     runtime/             # builds Sandbox + capability impls, calls runTask
     guest/               # the model's per-turn program (rewritten by runCode)
-  src/                   # the driver (Cli.jo / Server.jo / Telegram.jo, Config.jo, …)
+  src/                   # the driver (Cli.jo / Web.jo / Server.jo / Telegram.jo, …)
   assets/index.html      # web only: the chat page, served from disk — edit it live
 ```
 
@@ -87,14 +87,14 @@ For the whole picture — the pieces, the turn logic, and how to configure or
 replace them — start with [docs/concepts/agent.md](docs/concepts/agent.md).
 
 The model is a provider-agnostic interface (Anthropic, OpenAI, or a keyless
-dummy), selected by env var and overridable in
-`Config.jo` — see [docs/concepts/models.md](docs/concepts/models.md).
+dummy), selected by env var and overridable in the driver — see
+[docs/concepts/models.md](docs/concepts/models.md).
 
 The default toolset is `runCode` (write, compile, and run a Jo program in the
 sandbox), three read-only skill tools (`skillsList` / `skillsRead` /
 `skillsSearch`) over the agent's `skills/` reference docs
 ([docs/concepts/skills.md](docs/concepts/skills.md)), and three memory tools (below); write your own
-and add them in `Config.jo` — see [docs/concepts/tools.md](docs/concepts/tools.md). Large tool
+and add them where the driver builds its `Agent` — see [docs/concepts/tools.md](docs/concepts/tools.md). Large tool
 outputs are elided
 to a bounded excerpt; the full output is logged to `logs/agent.jsonl` (one JSON
 line per event, filter by `category` with `jq`). The logging layer is a
@@ -162,23 +162,20 @@ def textLength(): Tool =
       new RunOutcome("\{n}", "measured · \{n} chars")
 ```
 
-Offer it by editing the toolset line in your agent's `Config.agent`:
+Offer it by editing the toolset line where your driver constructs its `Agent`:
 
 ```jo
 val tools = Defaults.tools() ++ memoryTools(memory) ++ [textLength()]
 ```
 
-`Config.jo` is the agent's whole configuration surface — plain functions,
-centered on `agent(brain, memory, initial)`: the per-session assembly of the
-base prompt (from `AGENT.md`), the toolset (base tools + the session's memory
-tools), the context strategy, and the turn budget. It is *this* agent's
-configuration, not framework code, so it assumes freely — edit it to change any
-of those (an agent with different assumptions, e.g. a sub-agent, constructs
-`Agent` directly). Around it sit `model()`, the knobs (`maxToolRounds`,
-`maxRetries`), and driver-specific settings (web session idle time, Telegram
-allowlist). The common cases delegate to the shared `harpe.Defaults` (base
-tools, env-selected model, name extraction). There are no registration hooks: to
-change behavior, change the code.
+The shipped drivers assemble the agent inline at session creation: the prompt
+comes from `AGENT.md`, the toolset is `Defaults.tools() ++ memoryTools(memory)`,
+the context is `WindowedContext`, and the turn budget is passed directly to
+`runTurn`. This is *this* agent's code, not framework code, so edit the driver to
+change the prompt source, tools, context strategy, model, budgets, web idle time,
+or Telegram allowlist. The common cases still delegate to `harpe.Defaults` for
+base tools and the env-selected model. There are no registration hooks: to change
+behavior, change the code.
 
 **Choose the model.** `harpe.Model` is provider-agnostic; `Defaults.model()`
 selects by whichever API key is set (OpenAI wins if both are):
@@ -188,8 +185,8 @@ selects by whichever API key is set (OpenAI wins if both are):
 | Anthropic | `ANTHROPIC_API_KEY` | `claude-opus-4-6` | —                           |
 | OpenAI    | `OPENAI_API_KEY`    | `gpt-5.6`         | `REASONING_EFFORT` (optional — low/medium/high/none) |
 
-Or edit `Config.model()` to return any `Model` — `harpe.models.echo()` is a
-keyless dummy for wiring tests. A new provider is one file: a class that
+Or replace the driver's `Defaults.model()` call with any `Model` —
+`harpe.models.echo()` is a keyless dummy for wiring tests. A new provider is one file: a class that
 `view Model` plus a factory.
 
 **Restyle the web page.** `web/assets/index.html` is a plain self-contained

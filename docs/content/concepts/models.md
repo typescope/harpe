@@ -38,13 +38,13 @@ is a complete model configuration.
 
 ## Overriding it in code
 
-The model is chosen once, at startup, in your `Config.jo`:
+The model is chosen once, at startup, in your driver:
 
 ```jo
-def model(): Model receives IO.stdout = Defaults.model()   // env-selected (above)
+val brain = Defaults.model()   // env-selected (above)
 ```
 
-Replace the body with any `Model`. Build one explicitly, or use the keyless
+Replace that with any `Model`. Build one explicitly, or use the keyless
 `echo()` to exercise the loop without an API key:
 
 ```jo
@@ -52,17 +52,16 @@ import harpe.models.echo
 import harpe.models.anthropic
 import harpe.models.FiveMinutes
 
-def model(): Model receives IO.stdout = echo()
+val brain = echo()
 
 // or a fixed provider/model, bypassing the env selection:
-def model(): Model receives IO.stdout =
-  anthropic(getenv("ANTHROPIC_API_KEY", ""), "claude-opus-4-6", FiveMinutes)
+val brain = anthropic(getenv("ANTHROPIC_API_KEY", ""), "claude-opus-4-6", FiveMinutes)
 ```
 
 The builders are `anthropic(apiKey, model, cache)`, `openai(apiKey, model, baseUrl)`
-(pass `""` for the default endpoint), and `echo()`. `model()` is `receives
-IO.stdout` because it may print and exit on a missing key — that check belongs at
-startup, not inside a request.
+(pass `""` for the default endpoint), and `echo()`. `Defaults.model()` is
+`receives IO.stdout` because it may print and exit on a missing key — that check
+belongs at startup, not inside a request.
 
 ## The turn contract
 
