@@ -44,7 +44,7 @@ class LineComment(
 )
 
 //[ The overall verdict of a PR review //]
-union ReviewVerdict = Approve | RequestChanges | CommentOnly
+union ReviewVerdict = Approve | RequestChanges | CommentOnly | Pending
 
 //[ GitHub PR interface — read PR data and perform review actions
   !
@@ -64,7 +64,9 @@ interface GitHub
 
   //[ Submit a PR review — immediately posts to GitHub API
     !
-    ! verdict:  Approve, RequestChanges, or CommentOnly
+    ! verdict:  Approve, RequestChanges, CommentOnly, or Pending
+    !           Pending saves the review as a draft without publishing it
+    !           (equivalent to omitting the event field in the GitHub API)
     ! body:     overall review summary (required)
     ! comments: inline line comments (may be empty)
     !
@@ -72,6 +74,7 @@ interface GitHub
     ! val note = LineComment("src/main.py", 42, "Add a null check here")
     ! github.submitReview(RequestChanges, "Please fix the null check.", [note])
     ! github.submitReview(Approve, "LGTM!", [])
+    ! github.submitReview(Pending, "Draft notes so far.", [note])
   //]
   def submitReview(verdict: ReviewVerdict, body: String, comments: List[LineComment]): Unit receives stdout
 
