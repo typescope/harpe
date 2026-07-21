@@ -1,29 +1,73 @@
 //[ Tesseract.jo
   !
-  ! A concrete `OCR` capability backed by pytesseract (the Tesseract OCR engine). It
-  ! resolves a `Path` against its root and reads the file directly.
+  ! A concrete `OCR` capability backed by the Tesseract system binary. It resolves
+  ! a `Path` against its root and asks `tesseract` to write recognized text to
+  ! stdout.
   !
-  ! Needs the `pytesseract` and `pillow` packages, and the `tesseract` **system**
-  ! binary (e.g. `apt install tesseract-ocr`) — not a pip dependency. When the binary
-  ! is absent, `text` answers `Err` rather than crashing. For a pip-only engine, see
-  ! `RapidOcr`.
+  ! Needs the `tesseract` **system** binary (e.g. `apt install tesseract-ocr`).
+  ! The backend defaults to English, Tesseract's automatic page segmentation, the
+  ! default engine mode, and a 30s timeout. When the binary is absent, `text`
+  ! answers `Err` rather than crashing. For a pip-only engine, see `RapidOcr`.
 //]
 
 namespace harpe.media
 
 import harpe.caps.*
-
-private def tesseractMod: py.Dynamic = py.module("pytesseract")
-private def tesseractPil: py.Dynamic = py.module("PIL.Image")
+import harpe.ffi.subprocess
 
 //[ A Tesseract-backed OCR reader, resolving a `Path` against `root`. //]
-class TesseractOcr(root: String)
+class TesseractOcr
+  val root: String
+  val language: String
+  val pageSegMode: Int
+  val engineMode: Int
+  val timeoutSecs: Float
+
+  def TesseractOcr(root: String, language: String, pageSegMode: Int, engineMode: Int, timeoutSecs: Float) =
+    this.root = root
+    this.language = language
+    this.pageSegMode = pageSegMode
+    this.engineMode = engineMode
+    this.timeoutSecs = timeoutSecs
+
   view OCR
 
   def text(src: Path): Result[String, String] =
-    orMessage: py.try(recognize(src))
+    match py.try(recognize(src))
+    case Ok(result) => result
+    case Err(e)     => Err(e.message)
 
-  private def recognize(src: Path): String =
-    val img = tesseractPil.open(resolvePath(root, src))
-    tesseractMod.image_to_string(img).asString
+  private def recognize(src: Path): Result[String, String] =
+    val out = subprocess.runCapped:
+      py.list:
+        "tesseract"
+        resolvePath(root, src)
+        "stdout"
+        "-l"
+        language
+        "--psm"
+        "\{pageSegMode}"
+        "--oem"
+        "\{engineMode}"
+      timeoutSecs = timeoutSecs
+
+    if out.timedOut then
+      Err("tesseract timed out after \{timeoutSecs}s")
+    else if out.returnCode != 0 then
+      val detail = out.err.trim
+      Err(if detail == "" then "tesseract failed with exit code \{out.returnCode}" else detail)
+    else
+      Ok(out.out.trim)
 end
+
+//[ Default Tesseract OCR backend: English, automatic page segmentation, default
+  ! engine selection, and a 30s timeout.
+//]
+def TesseractOcr(
+    root: String,
+    language: String = "eng",
+    pageSegMode: Int = 3,
+    engineMode: Int = 3,
+    timeoutSecs: Float = 30.0)
+: TesseractOcr =
+  new TesseractOcr(root, language, pageSegMode, engineMode, timeoutSecs)

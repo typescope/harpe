@@ -264,7 +264,7 @@ The shipped implementations and their Python packages (see `requirements.txt`):
 | `PDF` | `PdfiumReader` | pypdfium2 — PDFium, Chrome's PDF engine; renders pages, self-contained wheel |
 | `Word` | `MarkitdownReader` | markitdown |
 | `Image` | `PillowImage` | Pillow |
-| `OCR` | `TesseractOcr` | pytesseract + the `tesseract` system binary (degrades to a message without it) |
+| `OCR` | `TesseractOcr` | `tesseract` system binary (degrades to a message without it) |
 | `OCR` | `RapidOcr` | rapidocr-onnxruntime — pure pip, stronger on photos and rotated text |
 
 Swapping a backend is a new class behind the same interface; the grant, the broker,
