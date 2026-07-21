@@ -1,16 +1,15 @@
 //[ MediaTest.jo
   !
-  ! Unit test for granted-media loading: `FileSystemProvider` as the host
-  ! `MediaProvider`, and the guest reaching it through `FileSystem.resolve` /
-  ! `FileSystem.load` over the broker — a granted resource inspected, then loaded into
-  ! a scratch dir and read back, with no bytes crossing the socket.
+  ! Unit test for granted media under the host-staging model: `FileSystemProvider` is
+  ! the host source (confined `resolve`/`copyTo`), the host stages a granted file into
+  ! the shared dir, and the guest reads it back through `FileSystem` — no broker, no
+  ! bytes over a socket. The guest-side `MediaProvider` view is inert (`None`/`false`).
 //]
 
 namespace harpe.test.MediaTest
 
 import harpe.media.*
 import harpe.caps.*
-import harpe.broker.*
 import harpe.ffi.tempfile
 import harpe.ffi.file
 import harpe.ffi.os
@@ -45,39 +44,25 @@ def run(): Unit receives stdout =
   check("source rejects an escape",        !isSome(source.resolve("../etc/passwd")))
   check("source rejects a miss",           !isSome(source.resolve("nope.txt")))
 
-  // The guest reaches the source through FileSystem, over the broker.
-  val scratch = tempfile.mkdtemp()
-  val sock = os.path.join(tempfile.mkdtemp(), "media.sock")
-  val service = new MediaService(id => source.resolve(id), (id, dest) => source.copyTo(id, dest), scratch)
-  val services = Map.empty[String, Service].add("media", service)
-  val broker = Broker.start(sock, services)
-
-  // One FileSystemImpl serves both views: FileSystem (reads) and MediaProvider (resolve/load).
-  val fs = new FileSystemImpl(scratch, Some(BrokerClient.connect(sock)))
-
   // resolve: a cheap descriptor without materializing, host path never exposed.
-  match fs.resolve("granted.txt")
-  case None    => check("fs.resolve a granted id", false)
+  match source.resolve("granted.txt")
+  case None    => check("source describes a granted id", false)
   case Some(m) =>
-    check("fs.resolve a granted id", true)
-    check("fs.resolve reports name", m.fileName == "granted.txt")
+    check("source describes a granted id", true)
+    check("source reports name", m.fileName == "granted.txt")
     val sizeOk =
       match m.metaInt("sizeBytes")
       case Some(n) => n == 4
       case None    => false
-    check("fs.resolve reports size (from meta)", sizeOk)
+    check("source reports size (from meta)", sizeOk)
 
-  val ungrantedResolve =
-    match fs.resolve("nope.txt")
-    case None    => true
-    case Some(_) => false
-  check("fs.resolve ungranted is None", ungrantedResolve)
+  // Host-staging model: the host copies the granted file into the shared dir, then the
+  // guest reads it back through a plain FileSystem — no broker.
+  val scratch = tempfile.mkdtemp()
+  val dest = os.path.join(scratch, "report.txt")
+  check("host stages a granted id",   source.copyTo("granted.txt", dest))
+  check("host refuses an ungranted",  !source.copyTo("nope.txt", os.path.join(scratch, "x.txt")))
 
-  // load: materialize into the scratch dir, read back locally.
-  val target = fs.root / "report.txt"
-  check("fs.load a granted id",       fs.load("granted.txt", target))
-  check("it appears in scratch",      fs.exists(target))
-  check("content was copied in",      joinLines(fs.openTextFile(target).success) == "BODY")
-  check("fs.load ungranted is false", !fs.load("nope.txt", fs.root / "x.txt"))
-
-  broker.stop()
+  val fs = FileSystemImpl.local(scratch)
+  check("guest sees the staged file", fs.exists(fs.root / "report.txt"))
+  check("guest reads the content",    joinLines(fs.openTextFile(fs.root / "report.txt").success) == "BODY")

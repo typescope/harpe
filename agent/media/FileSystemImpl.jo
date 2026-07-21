@@ -4,10 +4,10 @@
   ! `caps` module): all reads resolve a `Path` against the real root and do **local**
   ! I/O — no broker, no bytes over a socket.
   !
-  ! `FileSystemImpl` implements both `FileSystem` (local reads) and `MediaProvider`
-  ! (granted-media `resolve`/`load` over the broker). A CLI agent, whose files are
-  ! already in place, uses it with no broker — the media methods then answer
-  ! `None`/`false`.
+  ! `FileSystemImpl` also carries the `MediaProvider` view, but granted-media loading
+  ! has been dissolved to host-side staging (the host materializes granted files into
+  ! the shared run dir before the turn; the guest reads them through `FileSystem`), so
+  ! `resolve`/`load` here answer `None`/`false`. See host-guest-boundary.md.
 //]
 
 namespace harpe.media
@@ -16,7 +16,6 @@ import harpe.caps.*
 
 import harpe.ffi.os
 import harpe.ffi.builtins
-import harpe.broker.*
 
 //[ Resolve a `Path` against the real `root` — the single trusted I/O gate.
   !
@@ -38,30 +37,27 @@ private def orMessage[T](result: Result[T, py.Error]): Result[T, String] =
   case Ok(value) => Ok(value)
   case Err(e)    => Err(e.message)
 
-//[ A `FileSystem` (local reads) that is also a `MediaProvider`.
+//[ A `FileSystem` (local reads) that also carries the `MediaProvider` view.
   !
-  ! Granted-media `resolve`/`load` go over `broker`; with no broker they answer
-  ! `None`/`false`.
+  ! Granted-media `resolve`/`load` are inert (`None`/`false`): media loading is now
+  ! host-side staging into the shared run dir, read back through `FileSystem`.
 //]
 class FileSystemImpl
   val realRoot: String
-  val broker: Option[BrokerClient]
 
   //[ Normalize the root and require it to be an existing directory.
     !
     ! Resolves symlinks and `.`/`..`, so every later resolve joins onto a canonical
     ! root.
   //]
-  def FileSystemImpl(root: String, broker: Option[BrokerClient]) =
+  def FileSystemImpl(root: String) =
     val resolved = os.path.realpath(root)
     if !os.path.isdir(resolved) then
       abort "FileSystem root is not a directory: '\{root}'"
 
     this.realRoot = resolved
-    this.broker = broker
 
   view FileSystem
-  view MediaProvider
 
   def exists(path: Path): Bool = os.path.exists(resolvePath(realRoot, path))
 
@@ -114,36 +110,11 @@ class FileSystemImpl
   //[ Whether `name` is in the interface's fixed, runtime-portable encoding set. //]
   private def validEncoding(name: String): Bool =
     name == "utf-8" || name == "windows-1252"
-
-  def resolve(id: String): Option[Media] =
-    match broker
-    case None =>
-      None
-
-    case Some(b) =>
-      val result = b.call("media", "stat", py.dynamic(py.dict("id" ~ id))).result
-      if py.isNone(result) then
-        None
-
-      else
-        Some(mediaFromDict(result.cast[py.Dict]))
-
-  def load(id: String, target: Path): Bool =
-    match broker
-    case None =>
-      false
-
-    case Some(b) =>
-      val segs = py.list()
-      for seg in target.segments do
-        segs.append(py.dynamic(seg))
-
-      b.call("media", "load", py.dynamic(py.dict("id" ~ id, "target" ~ py.dynamic(segs)))).result.asBool
 end
 
 section FileSystemImpl
-  //[ A read-only filesystem over `root`, with no media provider (the CLI case). //]
-  def local(root: String): FileSystemImpl = new FileSystemImpl(root, None)
+  //[ A read-only filesystem over `root` (the local case). //]
+  def local(root: String): FileSystemImpl = new FileSystemImpl(root)
 end
 
 //[ An open text file over a binary handle.
