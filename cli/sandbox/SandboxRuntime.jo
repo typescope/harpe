@@ -19,14 +19,15 @@ import SandboxAPI
 // run sub-agents). OS-level confinement is NOT applied here — it lives outside the
 // process, in an optional `sandbox/run.sh` wrapper (see docs/concepts/sandbox.md).
 def main(): Unit receives stdout =
-  Logging.withLogger(auditLogger(), () => run())
+  Logging.withLogger: auditLogger(), () => run()
 
-// Grant the capabilities, all rooted at the agent's data/ directory (HARPE_DATA_DIR,
-// set by the host when data/ exists; the per-run scratch dir otherwise). One root
-// for every capability, so a `Path` means the same file to all of them. Swap
-// `TesseractOcr` for `RapidOcr` to change the OCR engine.
+// Grant the capabilities, all rooted at the agent's data/ directory — always
+// granted by the driver as HARPE_DATA_DIR. One root for every capability, so a
+// `Path` means the same file to all of them. Swap `TesseractOcr` for `RapidOcr`
+// to change the OCR engine.
 private def run(): Unit receives stdout =
-  val root = os.getenv("HARPE_DATA_DIR", os.getenv("HARPE_SCRATCH_DIR", "."))
+  val root = os.getenv("HARPE_DATA_DIR", "")
+  if root == "" then abort "sandbox: HARPE_DATA_DIR was not granted"
 
   with
     fs = FileSystemImpl.local(root),

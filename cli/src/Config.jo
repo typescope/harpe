@@ -8,7 +8,10 @@
 
 namespace harpe.cli
 
+import harpe.ffi.os
+
 import harpe.Agent
+import harpe.CallContext
 import harpe.workspace
 import harpe.Memory
 import harpe.Defaults
@@ -49,6 +52,17 @@ section Config
     ! for a keyless dummy.
   //]
   def model(): Model receives IO.stdout = Defaults.model()
+
+  //[ The per-turn `CallContext` handed to the tools: this agent's `data/`
+    ! directory as the guest filesystem root (`HARPE_DATA_DIR`), when it exists.
+    ! Application-specific — edit to grant a different directory, add config keys,
+    ! or key it per session. `runCode` copies these pairs into the guest env
+    ! verbatim.
+  //]
+  def callContext(): CallContext receives workspace =
+    val data = workspace.relative("data")
+    if os.path.isdir(data) then Map("HARPE_DATA_DIR" ~ os.path.abspath(data))
+    else CallContext.empty
 
   //[ Cap on tool-call rounds in a single turn. Once spent, the model is asked
     ! once more with NO tools, so it must answer with text — bounding runaway

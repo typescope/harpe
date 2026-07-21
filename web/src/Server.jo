@@ -28,6 +28,7 @@ import harpe.ffi.threading
 import harpe.ffi.file
 
 import harpe.Agent
+import harpe.CallContext
 import harpe.Memory
 import harpe.Workspace
 import harpe.workspace
@@ -149,7 +150,9 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
       memory
       history = []
 
-    val session = new Session(id, Session.forSession(id), agent, memory)
+    // No shared data dir: a multi-session server must not grant one directory to
+    // every session. A session-scoped dir goes here when session media lands.
+    val session = new Session(id, Session.forSession(id), agent, memory, CallContext.empty)
 
     registryLock.acquire()
     registry.set(id, session)
@@ -180,7 +183,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
         memory
         Session.load(id)
 
-      val session = new Session(id, log, agent, memory)
+      val session = new Session(id, log, agent, memory, CallContext.empty)
 
       registryLock.acquire()
       val winner =

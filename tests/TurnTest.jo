@@ -60,12 +60,12 @@ private def joinPy(xs: py.List): String =
 
 // A trivial tool that always succeeds, for exercising the tool-call path.
 private def echoTool(): Tool =
-  Tool("echo", "echo tool", [], input => new RunOutcome("echoed", "echo · ran"))
+  Tool("echo", "echo tool", [], (input, _) => new RunOutcome("echoed", "echo · ran"))
 
 // A tool that raises instead of returning — the engine must contain it via
 // `runSafely` and keep the turn going.
 private def boomTool(): Tool =
-  Tool("boom", "always throws", [], input => abort "kaboom")
+  Tool("boom", "always throws", [], (input, _) => abort "kaboom")
 
 // Interrupt fakes — no threads, no real sleeping, so the engine's cancellation
 // paths are testable deterministically.
@@ -89,7 +89,7 @@ private def scenario(tools: List[Tool], maxToolRounds: Int, maxRetries: Int, mod
   val interact = new TestInteract(state)
   val context = new WindowedContext("", new Memory, [])
   val agent = new Agent(model, tools, context)
-  val res = agent.runTurn(UserText("dummy message"), interact, maxToolRounds, maxRetries)
+  val res = agent.runTurn(UserText("dummy message"), interact, CallContext.empty, maxToolRounds, maxRetries)
   "\{resultTag(res)} | \{joinPy(interact.log)}"
 
 private def msgTag(m: Message): String =
@@ -217,7 +217,7 @@ def run(): Unit receives stdout, logger =
 
   val ctxK = new WindowedContext("", new Memory, [])
   val agentK = new Agent(askK, tools, ctxK)
-  val resK = agentK.runTurn(UserText("dummy text"), new TestInteract(live), 50, 4)
+  val resK = agentK.runTurn(UserText("dummy text"), new TestInteract(live), CallContext.empty, 50, 4)
 
   var deltaShape = ""
 

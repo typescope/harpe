@@ -32,8 +32,8 @@ import harpe.Tool.*
   ! directly.
 //]
 class Agent(brain: Model, tools: List[Tool], context: Context)
-  def runTurn(userMsg: Message, interact: Interact, maxToolRounds: Int, maxRetries: Int): TurnResult receives logger =
-    Agent.runTurn(userMsg, brain, tools, context, interact, maxToolRounds, maxRetries)
+  def runTurn(userMsg: Message, interact: Interact, callContext: CallContext, maxToolRounds: Int, maxRetries: Int): TurnResult receives logger =
+    Agent.runTurn(userMsg, brain, tools, context, interact, callContext, maxToolRounds, maxRetries)
 end
 
 section Agent
@@ -55,7 +55,7 @@ section Agent
   //]
   def runTurn(
       userMsg: Message, brain: Model, tools: List[Tool], context: Context,
-      interact: Interact, maxToolRounds: Int, maxRetries: Int)
+      interact: Interact, callContext: CallContext, maxToolRounds: Int, maxRetries: Int)
   : TurnResult receives logger =
 
     var delta: List[Message] = [userMsg]
@@ -114,7 +114,7 @@ section Agent
 
             val outcome =
               if tools.find(t => t.name == toolName) is Some(t) then
-                runSafely(t, call.input)
+                runSafely(t, call.input, callContext)
               else
                 RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}")
 

@@ -21,6 +21,7 @@ import harpe.ffi.dotenv
 
 import jo.IO.stdout
 import harpe.Agent
+import harpe.CallContext
 import harpe.workspace
 import harpe.Workspace
 import harpe.Memory
@@ -233,7 +234,9 @@ private class TelegramBot(
         memory
         Session.load(chatId)
 
-      val session = new Session(chatId, log, agent, memory)
+      // No shared data dir: each chat is its own session. A session-scoped dir
+      // goes here when session media lands.
+      val session = new Session(chatId, log, agent, memory, CallContext.empty)
       registryLock.acquire()
       registry.set(chatId, session)
       session.queue.put(py.dynamic(text))

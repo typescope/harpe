@@ -18,8 +18,9 @@ private def run(): Unit receives stdout, logger =
   logger.info("harpe.sandbox.runtime", "runtime ready")
   probeBroker()
 
-  // Grant the guest a FileSystem rooted at the scratch (run) dir the host names.
-  val fs = FileSystemImpl.local(os.getenv("HARPE_SCRATCH_DIR", "."))
+  // Grant the guest a FileSystem rooted at its own run dir (its working directory,
+  // where the host runs it — so `.` is that isolated dir, holding out.py).
+  val fs = FileSystemImpl.local(".")
   with SandboxAPI.fs = fs in SandboxAPI.runTask()
 
 // Step-3 broker self-test: if the host injected a broker socket, do one round-trip

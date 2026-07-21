@@ -64,7 +64,7 @@ private def recvLen(sock: socket.Socket): Int =
 
 //[ Send one frame: JSON header, then the raw blob (its length always prefixed). //]
 private def sendFrame(sock: socket.Socket, frame: Frame): Unit =
-  val jdata = py.dynamic(frame.json).callDynamic("encode", "utf-8")
+  val jdata = py.dynamic(frame.json).encode("utf-8")
   val blen = builtins.len(frame.blob)
 
   sock.sendall(structMod.pack(">I", builtins.len(jdata)))
@@ -88,7 +88,7 @@ private def recvFrame(sock: socket.Socket): Option[Frame] =
       else emptyBytes.callDynamic("join", py.list(head, recvExactly(sock, 4 - n0)))
 
     val jlen = structMod.unpack(">I", jhdr)[0].asInt
-    val json = recvExactly(sock, jlen).callDynamic("decode", "utf-8").asString
+    val json = recvExactly(sock, jlen).decode("utf-8").asString
     val blen = recvLen(sock)
     val blob = if blen == 0 then emptyBytes else recvExactly(sock, blen)
     Some(new Frame(json, blob))
