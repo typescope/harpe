@@ -78,35 +78,35 @@ def run(): Unit receives stdout, logger =
 
   // --- FullContext: entire transcript kept verbatim, no windowing ---
   val fmem = new Memory
-  val fctx = new FullContext("SYS", fmem, [])
+  val fullctx = new FullContext("SYS", fmem, [])
 
-  val empty = fctx.render(nix)
+  val empty = fullctx.render(nix)
   check("full: empty transcript renders zero messages", empty.messages.size == 0)
   check("full: system prompt is preserved", empty.system == "SYS")
   check("full: no memory means empty transient", empty.transient == "")
 
-  fctx.append(user("first"))
-  fctx.append(asst("reply"))
-  fctx.append(user("second"))
-  fctx.append(asst("done"))
+  fullctx.append(user("first"))
+  fullctx.append(asst("reply"))
+  fullctx.append(user("second"))
+  fullctx.append(asst("done"))
 
-  val full = fctx.render(nix)
+  val full = fullctx.render(nix)
   check("full: all appended messages are present", full.messages.size == 4)
-  check("full: observe is a no-op (no crash)", { fctx.observe(new Usage(999, 0)); true })
-  check("full: transcript unchanged after observe", fctx.render(nix).messages.size == 4)
+  fullctx.observe(new Usage(999, 0))
+  check("full: transcript unchanged after observe", fullctx.render(nix).messages.size == 4)
 
   fmem.set("k", "v")
-  val withMem = fctx.render(nix)
-  check("full: memory renders in the transient tail", withMem.transient.contains("v"))
-  check("full: memory does not bleed into the system prompt", withMem.system == "SYS")
+  val mrender = fullctx.render(nix)
+  check("full: memory renders in the transient tail", mrender.transient.contains("v"))
+  check("full: memory does not bleed into the system prompt", mrender.system == "SYS")
 
   // mark/rollback
-  fctx.mark()
-  fctx.append(user("oops"))
-  check("full: message appended after mark is visible", fctx.render(nix).messages.size == 5)
-  fctx.rollback()
-  check("full: rollback restores the marked transcript", fctx.render(nix).messages.size == 4)
-  check("full: rollback does not touch memory", fctx.render(nix).transient.contains("v"))
+  fullctx.mark()
+  fullctx.append(user("oops"))
+  check("full: message appended after mark is visible", fullctx.render(nix).messages.size == 5)
+  fullctx.rollback()
+  check("full: rollback restores the marked transcript", fullctx.render(nix).messages.size == 4)
+  check("full: rollback does not touch memory", fullctx.render(nix).transient.contains("v"))
 
   // initial messages are part of the transcript
   val init = [user("seed")]
