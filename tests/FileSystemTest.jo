@@ -2,8 +2,8 @@
   !
   ! Unit test for `harpe.media.FileSystem`: a `FileSystemImpl` rooted at a temp dir —
   ! `exists`/`isFile`/`stat`/`list`, one-shot reads, and open files: `TextFile`
-  ! (whole, head/tail, and lazy line reads) and `BinaryFile` (as `Bytes`), all over
-  ! `Path`.
+  ! (whole, head/tail, lazy line reads, and write) and `BinaryFile` (as `Bytes`,
+  ! including write), all over `Path`.
 //]
 
 namespace harpe.test.FileSystemTest
@@ -106,6 +106,21 @@ def run(): Unit receives stdout =
   check("binary window", bin.read(1, 1).toBase64 == "aQ==")
   check("binary size on handle", bin.size == 2)
   bin.close()
+
+  // Text write: overwrite with shorter content; truncation means no stale bytes.
+  val editable = fs.openTextFile(fs.root / "notes.txt").success
+  editable.write("updated\n")
+  check("text write content", editable.text == "updated\n")
+  check("text write truncates", editable.size == 8)
+  editable.close()
+
+  // Binary write: patch one byte in place, without truncation.
+  val binEdit = fs.openBinaryFile(fs.root / "sub" / "a.txt").success
+  val firstByte = binEdit.read(0, 1)        // "h"
+  binEdit.write(1, firstByte)               // "hi" → "hh"
+  check("binary write", binEdit.bytes.toBase64 == "aGg=")
+  check("binary write size unchanged", binEdit.size == 2)
+  binEdit.close()
 
   // list: typed entries, sorted by name.
   val entries = fs.list(fs.root).success

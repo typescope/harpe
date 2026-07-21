@@ -1,0 +1,1 @@
+../../../cli/skills/jo-syntax.md

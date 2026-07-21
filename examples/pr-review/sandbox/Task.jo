@@ -1,0 +1,18 @@
+namespace UserTask
+import jo.IO.stdout
+import SandboxAPI.*
+
+def runTask(): Unit receives stdout, github =
+    val pr = github.getPR()
+    println("PR #\{pr.number}: \{pr.title}")
+    println("State: \{pr.state}")
+    println("Base: \{pr.baseBranch} <- Head: \{pr.headBranch}")
+    println("")
+    println("--- Body ---")
+    println(pr.body)
+    println("")
+    println("--- Files Changed ---")
+    for diff in pr.diffs do
+        println("\{diff.status} | \{diff.path} (+\{diff.additions} -\{diff.deletions})")
+        println(diff.patch)
+        println("---")

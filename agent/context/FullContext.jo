@@ -1,0 +1,42 @@
+//[ FullContext.jo
+  !
+  ! A no-op `Context` strategy: the entire transcript is kept as-is and sent
+  ! verbatim on every request — no windowing, no compaction, no summarization.
+  ! Suitable for short sessions or when the caller handles context limits itself.
+//]
+
+namespace harpe.context
+
+import harpe.*
+import harpe.Model.*
+
+//[ A context that never drops or compresses any turn.
+  !
+  ! Every message appended since the session started is included in every
+  ! `render` call. No budget is enforced; the caller is responsible for staying
+  ! within the model's context window. `observe` is a no-op: there is nothing to
+  ! size or trigger.
+//]
+class FullContext(baseSystem: String, memory: Memory, initial: List[Message])
+  view Context
+
+  private var transcript: List[Message] = initial
+  private var marked: List[Message] = initial
+
+  def append(message: Message): Unit =
+    transcript = transcript + message
+
+  def render(interact: Interact): Rendered =
+    val mem = memory.snapshot()
+    val transient = if mem.isEmpty then "" else memoryBlock(mem)
+
+    new Rendered(baseSystem, transcript, transient)
+
+  def observe(usage: Usage): Unit = pass
+
+  def mark(): Unit =
+    marked = transcript
+
+  def rollback(): Unit =
+    transcript = marked
+end

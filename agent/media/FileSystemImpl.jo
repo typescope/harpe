@@ -91,7 +91,7 @@ class FileSystemImpl
   def openBinaryFile(path: Path): Result[BinaryFile, String] =
     openHandle(path).map: handle => new BinaryFileImpl(handle)
 
-  //[ Open for reading, in binary mode.
+  //[ Open for reading and writing, in binary mode.
     !
     ! The not-a-file check gives the common miss a clean symbolic message; `py.try`
     ! catches the rest (permissions, races).
@@ -100,7 +100,7 @@ class FileSystemImpl
     val real = resolvePath(realRoot, path)
 
     if !os.path.isfile(real) then Err("no such file: '\{path.toString}'")
-    else orMessage: py.try(py.open(real, "rb"))
+    else orMessage: py.try(py.open(real, "r+b"))
 
   //[ Whether `name` is in the interface's fixed, runtime-portable encoding set. //]
   private def validEncoding(name: String): Bool =
@@ -152,6 +152,11 @@ private class TextFileImpl(handle: py.Dynamic, encoding: String)
     val text = py.dynamic("").encode().join(chunks).decode(encoding, "replace").asString
     lastLines(text, count)
 
+  def write(content: String): Unit =
+    handle.seek(0)
+    handle.write(py.dynamic(content).encode(encoding))
+    handle.truncate()
+
   def size: Int = os.fstat(handle.fileno().asInt).st_size.asInt
 
   def close(): Unit = handle.close()
@@ -184,6 +189,10 @@ private class BinaryFileImpl(handle: py.Dynamic)
   def read(offset: Int, length: Int): Bytes =
     handle.seek(offset)
     handle.read(length).cast[Bytes]
+
+  def write(offset: Int, data: Bytes): Unit =
+    handle.seek(offset)
+    handle.write(py.dynamic(data))
 
   def size: Int = os.fstat(handle.fileno().asInt).st_size.asInt
 

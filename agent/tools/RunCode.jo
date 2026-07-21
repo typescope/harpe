@@ -203,7 +203,8 @@ private def buildAndRun(
     file.write(runAudit, "")
     osMod.chmod(runAudit, 438) // 0o666
 
-  val runCmd = if useRunSh then py.list(runScript, runOut) else py.list("python3", runOut)
+  val runCmd = if useRunSh then py.list(runScript, runOut)
+               else py.list("python3", runOut)
 
   // Untrusted guest code runs with a minimal PATH-only environment (guestEnv),
   // inheriting none of the host's secrets — plus the audit-log path the sandbox

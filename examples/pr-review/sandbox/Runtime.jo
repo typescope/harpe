@@ -1,0 +1,144 @@
+namespace SandboxRuntime
+
+import jo.IO.stdout
+import harpe.ffi.os
+import harpe.media.*
+import harpe.caps.*
+import SandboxAPI
+
+//[ Main entry point //]
+def main(): Unit receives stdout =
+  val prUrl  = os.getenv("PR_URL", "")
+  val token  = os.getenv("GITHUB_TOKEN", "")
+  var dryRun =  os.getenv("DRY_RUN", "") == "true"
+  val root = os.getenv("HARPE_DATA_DIR", ".")
+  val fs = FileSystemImpl.local(root)
+  val ghImpl = new GithubImpl(fs, prUrl, dryRun, token)
+
+  with SandboxAPI.github = ghImpl in
+    SandboxAPI.runTask()
+
+//[ JSON-encode a string value — adds surrounding quotes and escapes special chars //]
+private def jsonStr(s: String): String = jsonMod.dumps(s).asString
+
+//[ Build a JSON array of LineComment objects for the review payload //]
+private def buildCommentsJson(comments: List[SandboxAPI.LineComment]): String =
+  val comment = (c: SandboxAPI.LineComment) =>
+    """
+    {"path":\{jsonStr(c.path)}, "line":\{c.line.toString}, "body":\{jsonStr(c.body)}}
+    """
+  "[" + comments.map(comment).join(",") + "]"
+
+private class PR(owner: String, repo: String, num: Int)
+
+private def parsePrURL(url: String): Option[PR] =
+  if url.trim is `^(https://)?github\.com/(?<owner>[^/]+)/(?<repo>[^/]+)/pull/(?<num>\d+)$` then
+    Some(new PR(owner, repo, num.toInt))
+  else
+    None
+
+//[ GitHub interface backed by local snapshot files + live GitHub API //]
+class GithubImpl
+  val fs: FileSystem
+  val dryRun: Bool
+  val prInfo: SandboxAPI.PRInfo
+  private var pr: PR
+  private val client: GithubClient
+
+  view SandboxAPI.GitHub
+
+  def GithubImpl(fs: FileSystem, prUrl: String, dryRun: Bool, token: String): GithubImpl =
+    this.fs = fs
+    this.dryRun = dryRun
+    this.pr = new PR("", "", 0)
+    match parsePrURL(prUrl)
+    case Some(pr) => this.pr = pr
+    case None => abort ("invalid PR url:" + prUrl)
+
+    this.client = new GithubClient(token)
+    this.prInfo = getPR()
+
+  private def getPR(): SandboxAPI.PRInfo =
+    val pr = client.getPR(pr.owner, pr.repo, pr.num)
+
+    var diffs: List[SandboxAPI.FileDiff] = []
+    for d in pr["diffs"].cast[py.List] do
+      diffs = diffs + new SandboxAPI.FileDiff(
+        d["path"].asString,
+        d["status"].asString,
+        d["additions"].asInt,
+        d["deletions"].asInt,
+        d["patch"].asString
+      )
+
+    new SandboxAPI.PRInfo(
+      pr["number"].asInt,
+      pr["title"].asString,
+      pr["body"].asString,
+      pr["base_br"].asString,
+      pr["head_br"].asString,
+      pr["head_sha"].asString,
+      pr["state"].asString,
+      diffs
+    )
+
+  def getPRInfo(): SandboxAPI.PRInfo = prInfo
+
+  //[ Read repo file //]
+  def readFile(path: String): String =
+    val name = path.replace("/", "-")
+    val p = new Path.Join(Path.root, name)
+    if fs.isFile(p) then
+      match fs.readText(p)
+      case Ok(content) => content
+      case _ => ""
+    else
+      val files = client.getRepoFiles(pr.owner, pr.repo, List(path))
+      val content = files[path]
+      if content != "" then
+        match fs.openTextFile(p)
+        case Ok(textFile) => textFile.write(content)
+        case _ => pass
+      content
+
+  //[ Write operations — call the real GitHub API (or print in dry-run mode) //]
+  def submitReview(verdict: SandboxAPI.ReviewVerdict, body: String, comments: List[SandboxAPI.LineComment]): Unit receives stdout =
+    val PR(owner, repo, num) = pr
+    val verdictStr = match verdict
+      case SandboxAPI.Approve        => "APPROVE"
+      case SandboxAPI.RequestChanges => "REQUEST_CHANGES"
+      case SandboxAPI.CommentOnly    => "COMMENT"
+    end
+    val commentsJson = buildCommentsJson(comments)
+    if dryRun then
+      println ("[DRY RUN] submitReview: " + verdictStr)
+      println ("  body: " + body)
+      println ("  comments: " + commentsJson)
+      println "ACTION_COMPLETED"
+    else
+      client.submitReview(owner, repo, num, prInfo.headSha, verdictStr, body, commentsJson)
+      println "✓ Review submitted"
+      println "ACTION_COMPLETED"
+
+  def addComment(body: String): Unit receives stdout =
+    val PR(owner, repo, num) = pr
+    if dryRun then
+      println "[DRY RUN] addComment:"
+      println ("  " + body)
+      println "ACTION_COMPLETED"
+    else
+      client.addComment(owner, repo, num, body)
+      println "✓ Comment posted"
+      println "ACTION_COMPLETED"
+
+  def merge(commitMessage: String): Unit receives stdout =
+    val PR(owner, repo, num) = pr
+    if dryRun then
+      println "[DRY RUN] merge PR"
+      println "ACTION_COMPLETED"
+    else
+      client.mergePR(owner, repo, num, prInfo.headSha, commitMessage)
+      println "✓ PR merged"
+      println "ACTION_COMPLETED"
+
+end
