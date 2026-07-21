@@ -14,15 +14,15 @@ import harpe.turns.Answered
 import harpe.tools.runCodeTool
 import harpe.tools.apiTool
 import harpe.tools.skillTools
-import harpe.context.WindowedContext
+import harpe.context.FullContext
 
 //[ agent entry point  //]
 def main(): Unit receives args, stdout =
-  if args.size < 2 then
+  if args.size < 1 then
     abort "Missing PR source argument"
 
   val pr     = args[0]
-  val dryRun = args[1] == "true"
+  val dryRun = if args.size > 1 then args[1] == "true" else false
 
   if Defaults.checkAgentDir() then
     dotenv.load(".env")
@@ -40,12 +40,12 @@ private def review(pr: String, dryRun: Bool): Unit receives stdout, workspace, l
     apiTool(workspace.sandboxDir)
   ] ++ skillTools(workspace.skillsDir)
 
-  val context = new WindowedContext(basePrompt, memory, [])
+  val context = new FullContext(basePrompt, memory, [])
   val agent = new Agent(Defaults.model(), tools, context)
   val interact = new PrintInteract(stdout)
   val sessionLog = SessionLog.newLog()
 
-  match agent.runTurn(UserText("please start review the pr"), interact, 20, 4)
+  match agent.runTurn(UserText("please start review the pr"), interact, 30, 4)
   case Answered(delta, text) =>
     sessionLog.append(time.now(), delta)
     println "  · review completed"
