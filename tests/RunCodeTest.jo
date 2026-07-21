@@ -48,7 +48,7 @@ private def tag(o: RunOutcome): String =
 // Self-provides a no-op logger, so it works on the spawned worker threads too
 // (context params don't cross threads). These tests assert on outcomes, not logs.
 private def exec(tool: Tool, code: String): RunOutcome =
-  with logger = Logging.discard in tool.run(ToolInput(py.dict("code" ~ code)), CallContext.empty)
+  with logger = Logging.discard, callContext = CallContext.empty in tool.run(ToolInput(py.dict("code" ~ code)))
 
 // A broker service that echoes its `msg` arg back as JSON. The fixture runtime
 // calls "echo"/"ping" from inside the guest process, so this proves the channel.

@@ -21,7 +21,7 @@ def memoryTools(memory: Memory): List[Tool] =
     "Set (replace) the whole value stored under a memory key. Maintain your working context here (e.g. goal, plan, todos, facts) — what you store persists across turns and is shown back to you each turn. To edit, read the current value, then write the full revised value."
     [Tool.strParam("key", "The memory key to write, e.g. \"plan\" or \"todos\"."),
      Tool.strParam("value", "The full new value for the key; replaces any previous value.")]
-    (input, _) =>
+    input =>
       val key = input.string("key")
       memory.set(key, input.string("value"))
       new Tool.RunOutcome("Updated memory[\{key}].", "memory ← \{key}")
@@ -30,7 +30,7 @@ def memoryTools(memory: Memory): List[Tool] =
     "readMemory"
     "Read the current value stored under a memory key (empty if unset)."
     [Tool.strParam("key", "The memory key to read.")]
-    (input, _) =>
+    input =>
       val key = input.string("key")
       val value = memory.get(key)
       val body = if value == "" then "(memory[\{key}] is empty)" else value
@@ -40,7 +40,7 @@ def memoryTools(memory: Memory): List[Tool] =
     "listMemory"
     "List the keys currently stored in memory."
     []
-    (input, _) =>
+    input =>
       val ks = memory.keys()
       val body = if ks.isEmpty then "(memory is empty)" else ks.join("\n")
       new Tool.RunOutcome(body, "memory keys")

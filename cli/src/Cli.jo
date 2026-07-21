@@ -48,7 +48,7 @@ private def runChat(): Unit receives stdout, workspace, logger =
     history = []
 
   // The per-turn tool context; constant for a CLI run (one local working dir).
-  val callContext = Config.callContext()
+  val callCtx = Config.callContext()
 
   val inputHistory = workspace.relative("logs/inputs.txt")
   val interact = new ConsoleInteract(stdout, inputHistory)
@@ -72,7 +72,8 @@ private def runChat(): Unit receives stdout, workspace, logger =
     val userMsg = UserText(userInput)
 
     val res = interact.turn: () =>
-      agent.runTurn(userMsg, interact, callContext, Config.maxToolRounds, Config.maxRetries)
+      with callContext = callCtx in
+        agent.runTurn(userMsg, interact, Config.maxToolRounds, Config.maxRetries)
 
     if res is Answered(delta, text) then
       sessionLog.append(time.now(), delta)

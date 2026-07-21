@@ -16,6 +16,7 @@ import harpe.ffi.time
 
 import harpe.Agent
 import harpe.CallContext
+import harpe.callContext
 import harpe.Memory
 import harpe.SessionLog
 import harpe.workspace
@@ -37,7 +38,7 @@ import harpe.turns.Failed
   ! ordered and serialized. Only that worker touches the session's state, so no
   ! lock is needed around it.
 //]
-private class Session(id: String, log: SessionLog, agent: Agent, memory: Memory, callContext: CallContext)
+private class Session(id: String, log: SessionLog, agent: Agent, memory: Memory, callCtx: CallContext)
   val queue = py.module("queue").Queue()
 
   //[ Begin a user turn: mark the context's rollback point and append the user's
@@ -47,17 +48,18 @@ private class Session(id: String, log: SessionLog, agent: Agent, memory: Memory,
     val userMsg = UserText(text)
     val interact = new TelegramInteract(client, this.id)
 
-    match agent.runTurn(userMsg, interact, callContext, maxToolRounds, maxRetries)
-    case Answered(delta, answer) =>
-      commit(delta)
-      client.sendMessage(this.id, answer)
+    with callContext = callCtx in
+      match agent.runTurn(userMsg, interact, maxToolRounds, maxRetries)
+      case Answered(delta, answer) =>
+        commit(delta)
+        client.sendMessage(this.id, answer)
 
-    case Interrupted =>
-      rollback()
+      case Interrupted =>
+        rollback()
 
-    case Failed =>
-      rollback()
-      client.sendMessage(this.id, "Sorry — the request failed. Please try again.")
+      case Failed =>
+        rollback()
+        client.sendMessage(this.id, "Sorry — the request failed. Please try again.")
 
 
   //[ Commit a completed turn: append the user message plus the turn's delta (the

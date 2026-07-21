@@ -123,18 +123,18 @@ def skillTools(skillsDir: String): List[Tool] =
     "skillsList"
     "List the names of all available skill files (read-only reference docs). Each name includes its file extension (e.g. .md, .jo)."
     []
-    (input, _) => new Tool.RunOutcome(skillsListText(skillsDir), "listed skills")
+    input => new Tool.RunOutcome(skillsListText(skillsDir), "listed skills")
 
   val readTool = Tool:
     "skillsRead"
     "Read a skill file by its full name including extension. Returns the file contents."
     [Tool.strParam("name", "The full skill file name including extension, as returned by skillsList (e.g. \"jo-cheat-sheet.md\")")]
-    (input, _) => skillsReadOutcome(skillsDir, input.string("name"))
+    input => skillsReadOutcome(skillsDir, input.string("name"))
 
   val searchTool = Tool:
     "skillsSearch"
     "Case-insensitive search across all skill files. Returns matching lines as 'name:lineNumber: text'."
     [Tool.strParam("query", "Substring to search for (case-insensitive)")]
-    (input, _) => new Tool.RunOutcome(skillsSearchText(skillsDir, input.string("query")), "searched · \{input.string("query")}")
+    input => new Tool.RunOutcome(skillsSearchText(skillsDir, input.string("query")), "searched · \{input.string("query")}")
 
   [listTool, readTool, searchTool]

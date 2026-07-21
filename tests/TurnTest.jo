@@ -60,12 +60,12 @@ private def joinPy(xs: py.List): String =
 
 // A trivial tool that always succeeds, for exercising the tool-call path.
 private def echoTool(): Tool =
-  Tool("echo", "echo tool", [], (input, _) => new RunOutcome("echoed", "echo · ran"))
+  Tool("echo", "echo tool", [], input => new RunOutcome("echoed", "echo · ran"))
 
 // A tool that raises instead of returning — the engine must contain it via
 // `runSafely` and keep the turn going.
 private def boomTool(): Tool =
-  Tool("boom", "always throws", [], (input, _) => abort "kaboom")
+  Tool("boom", "always throws", [], input => abort "kaboom")
 
 // Interrupt fakes — no threads, no real sleeping, so the engine's cancellation
 // paths are testable deterministically.
@@ -85,11 +85,11 @@ private class State(cancelled: Bool, pause: Bool)
 
 // Drive one turn and summarize it as "<result> | <events>". The agent's brain is
 // the no-network echo model — the scripted TestInteract.ask never touches it.
-private def scenario(tools: List[Tool], maxToolRounds: Int, maxRetries: Int, model: Model, state: State): String receives logger =
+private def scenario(tools: List[Tool], maxToolRounds: Int, maxRetries: Int, model: Model, state: State): String receives logger, callContext =
   val interact = new TestInteract(state)
   val context = new WindowedContext("", new Memory, [])
   val agent = new Agent(model, tools, context)
-  val res = agent.runTurn(UserText("dummy message"), interact, CallContext.empty, maxToolRounds, maxRetries)
+  val res = agent.runTurn(UserText("dummy message"), interact, maxToolRounds, maxRetries)
   "\{resultTag(res)} | \{joinPy(interact.log)}"
 
 private def msgTag(m: Message): String =
@@ -102,7 +102,7 @@ private def check(label: String, actual: String, expected: String): Unit receive
   assert: actual == expected, "\{label}: expected [\{expected}] but got [\{actual}]"
   println "  ok \{label}"
 
-def run(): Unit receives stdout, logger =
+def run(): Unit receives stdout, logger, callContext =
   val tools = [echoTool()]
 
   val live: State = State(cancelled = false, pause = false)
@@ -217,7 +217,7 @@ def run(): Unit receives stdout, logger =
 
   val ctxK = new WindowedContext("", new Memory, [])
   val agentK = new Agent(askK, tools, ctxK)
-  val resK = agentK.runTurn(UserText("dummy text"), new TestInteract(live), CallContext.empty, 50, 4)
+  val resK = agentK.runTurn(UserText("dummy text"), new TestInteract(live), 50, 4)
 
   var deltaShape = ""
 

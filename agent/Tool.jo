@@ -30,25 +30,30 @@ section CallContext
   def empty: CallContext = Map.empty[String, String]
 end
 
+//[ The ambient per-turn call context — like `logger`, a context parameter the
+  ! driver supplies with `with callContext = ... in ...` and a tool reads through
+  ! `receives callContext`, so the handler sees the CURRENT turn's config rather
+  ! than one frozen when the tool was built.
+//]
+param callContext: CallContext
+
 //[ A tool
   !
   ! One LLM-facing tool: a Jo description (name, prose, typed params) plus the
   ! host-side handler invoked when the model calls it. `run` gets the call's
-  ! typed input plus the driver's `CallContext`, and returns the outcome — result
-  ! text fed back to the model plus a one-line console summary. Agents build these
-  ! to extend the toolset; advanced agents build the whole set (including
-  ! `runCode`).
+  ! typed input and returns the outcome — result text fed back to the model plus a
+  ! one-line console summary. Agents build these to extend the toolset; advanced
+  ! agents build the whole set (including `runCode`).
 //]
 class Tool(
   name: String,
   description: String,
   params: List[ToolParam],
-  // A call's two inputs: `ToolInput` from the model, `CallContext` from the
-  // driver. `receives logger`, not captured: the handler reads the ambient logger
-  // at the call site (the turn loop), so per-turn context (see
-  // `Logging.withContext`) reaches it — rather than freezing the logger the tool
-  // was built with.
-  run: (ToolInput, CallContext) => RunOutcome receives logger
+  // `receives logger, callContext`, not captured: the handler reads the ambient
+  // logger and driver `CallContext` at the call site (the turn loop), so the
+  // current turn's logging context (see `Logging.withContext`) and config reach it
+  // — rather than freezing what the tool was built with.
+  run: ToolInput => RunOutcome receives logger, callContext
 )
 
 section Tool
@@ -118,8 +123,8 @@ section Tool
     ! back to the model as a tool result — so the model can react — rather than
     ! crashing the turn (or the driver).
   //]
-  def runSafely(tool: Tool, input: ToolInput, callContext: CallContext): RunOutcome receives logger =
-    match py.try(tool.run(input, callContext))
+  def runSafely(tool: Tool, input: ToolInput): RunOutcome receives logger, callContext =
+    match py.try(tool.run(input))
     case Ok(outcome) => outcome
 
     case Err(e) =>
