@@ -50,18 +50,26 @@ target.
 
 ## Choosing and configuring
 
-The strategy is per-session, constructed in your `Config.jo`:
+The strategy is per-session, constructed where the driver builds its `Agent`:
 
 ```jo
 // default: a sliding window (fixed size, no knobs)
-val context = new WindowedContext(basePrompt, memory, history)
+new WindowedContext:
+  baseSystem = workspace.read("AGENT.md").getOrElse("")
+  memory = memory
+  initial = history
 
 // or: summarize instead of dropping
-val context = new SummarizingContext(basePrompt, memory, history, distiller,
-                                     highWaterTokens = 120000, lowWaterChars = 160000)
+new SummarizingContext:
+  baseSystem = workspace.read("AGENT.md").getOrElse("")
+  memory = memory
+  initial = history
+  highWaterTokens = 120000
+  lowWaterChars = 160000
+  distill = distiller
 ```
 
-- `basePrompt` is your `AGENT.md`; `history` seeds the window (a resumed session's
+- `baseSystem` is your `AGENT.md`; `history` seeds the window (a resumed session's
   transcript, or `[]` for a fresh one).
 - `distiller` is any `Model` — the agent's brain, or a cheaper model reserved for
   summaries.
@@ -114,5 +122,5 @@ end
 
 `WindowedContext` and `SummarizingContext` are two points in this space; a
 different need — semantic retrieval, a hard token cap, per-tool pruning — is a new
-`Context` you drop into `Config.jo`. Their sources (`agent/context/`) are the
-reference to copy from.
+`Context` you use when constructing the agent. Their sources (`agent/context/`)
+are the reference to copy from.

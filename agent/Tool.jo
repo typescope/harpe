@@ -16,22 +16,44 @@ namespace harpe
 import harpe.Tool.*
 import harpe.logging.logger
 
+//[ A tool call's driver-supplied context: a flat key/value bag the driver
+  ! populates per turn (e.g. a data-directory grant, or backend config). Kept a
+  ! plain string map, not a struct, so a generic tool like `runCode` stays
+  ! application-agnostic — it copies the pairs verbatim into the guest environment
+  ! and interprets none of them. The keys are guest env-var names the driver and
+  ! its own sandbox runtime agree on — an application protocol, not the framework's.
+//]
+type CallContext = Map[String, String]
+
+section CallContext
+  //[ A call context granting nothing — the driver set no config for this turn. //]
+  def empty: CallContext = Map.empty[String, String]
+end
+
+//[ The ambient per-turn call context — like `logger`, a context parameter the
+  ! driver supplies with `with callContext = ... in ...` and a tool reads through
+  ! `receives callContext`, so the handler sees the CURRENT turn's config rather
+  ! than one frozen when the tool was built.
+//]
+param callContext: CallContext
+
 //[ A tool
   !
   ! One LLM-facing tool: a Jo description (name, prose, typed params) plus the
   ! host-side handler invoked when the model calls it. `run` gets the call's
-  ! typed input and returns the outcome — result text fed back to the model
-  ! plus a one-line console summary. Agents build these to extend the toolset;
-  ! advanced agents build the whole set (including `runCode`).
+  ! typed input and returns the outcome — result text fed back to the model plus a
+  ! one-line console summary. Agents build these to extend the toolset; advanced
+  ! agents build the whole set (including `runCode`).
 //]
 class Tool(
   name: String,
   description: String,
   params: List[ToolParam],
-  // `receives logger`, not captured: the handler reads the ambient logger at the
-  // call site (the turn loop), so per-turn context (see `Logging.withContext`)
-  // reaches it — rather than freezing the logger the tool was built with.
-  run: ToolInput => RunOutcome receives logger
+  // `receives logger, callContext`, not captured: the handler reads the ambient
+  // logger and driver `CallContext` at the call site (the turn loop), so the
+  // current turn's logging context (see `Logging.withContext`) and config reach it
+  // — rather than freezing what the tool was built with.
+  run: ToolInput => RunOutcome receives logger, callContext
 )
 
 section Tool
@@ -101,7 +123,7 @@ section Tool
     ! back to the model as a tool result — so the model can react — rather than
     ! crashing the turn (or the driver).
   //]
-  def runSafely(tool: Tool, input: ToolInput): RunOutcome receives logger =
+  def runSafely(tool: Tool, input: ToolInput): RunOutcome receives logger, callContext =
     match py.try(tool.run(input))
     case Ok(outcome) => outcome
 

@@ -6,7 +6,7 @@ A tool is the agent's way to *act*. The model, mid-turn, chooses to call a tool 
 name with arguments; your handler runs host-side and returns text the model reads
 on the next step. Every agent ships with `runCode` (write a Jo program, compile it
 against the sandbox, run it) — you extend the toolset by writing your own tools and
-adding them in `Config.jo`.
+adding them where the driver constructs its `Agent`.
 
 ## What a tool is
 
@@ -108,10 +108,11 @@ crashes. Return a clear message for expected failures; let unexpected ones raise
 
 ## Adding your tool
 
-Tools are assembled per session in your `Config.jo` — append yours to the defaults:
+Tools are assembled per session where your driver constructs its `Agent` — append
+yours to the defaults:
 
 ```jo
-val tools = Defaults.tools() ++ memoryTools(memory) ++ [weatherTool()]
+Defaults.tools() ++ memoryTools(memory) ++ [weatherTool()]
 ```
 
 That is the whole wiring: the model now sees `weather` in its toolset and can call

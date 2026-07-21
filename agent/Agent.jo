@@ -32,7 +32,7 @@ import harpe.Tool.*
   ! directly.
 //]
 class Agent(brain: Model, tools: List[Tool], context: Context)
-  def runTurn(userMsg: Message, interact: Interact, maxToolRounds: Int, maxRetries: Int): TurnResult receives logger =
+  def runTurn(userMsg: Message, interact: Interact, maxToolRounds: Int, maxRetries: Int): TurnResult receives logger, callContext =
     Agent.runTurn(userMsg, brain, tools, context, interact, maxToolRounds, maxRetries)
 end
 
@@ -56,7 +56,7 @@ section Agent
   def runTurn(
       userMsg: Message, brain: Model, tools: List[Tool], context: Context,
       interact: Interact, maxToolRounds: Int, maxRetries: Int)
-  : TurnResult receives logger =
+  : TurnResult receives logger, callContext =
 
     var delta: List[Message] = [userMsg]
     var rounds = 0

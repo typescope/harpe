@@ -25,7 +25,8 @@ import harpe.logging.Logging
 import harpe.logging.JsonlLogger
 import harpe.logging.logger
 import harpe.Model.UserText
-import harpe.Model.Message
+import harpe.tools.memoryTools
+import harpe.context.WindowedContext
 import harpe.turns.Answered
 import harpe.turns.Interrupted
 
@@ -38,14 +39,21 @@ def main(): Unit receives stdout =
       Logging.withLogger(new JsonlLogger(wspace.relative("logs/agent.jsonl")), () => runChat())
 
 private def runChat(): Unit receives stdout, workspace, logger =
-  // The agent for this run — assembled by the agent's own Config. Its working
-  // memory is in-process for the run (the CLI has no session resume), and the
-  // context starts on an empty transcript.
+  // The agent's working memory is in-process for the run (the CLI has no
+  // session resume), and the context starts on an empty transcript.
   val memory = new Memory
-  val agent = Config.agent:
-    Config.model
-    memory
-    history = []
+  val agent = new Agent:
+    brain = Defaults.model()
+    tools = Defaults.tools() ++ memoryTools(memory)
+    context = new WindowedContext:
+      baseSystem = workspace.read("AGENT.md").getOrElse("")
+      memory = memory
+      initial = []
+
+  // The per-turn tool context; constant for a CLI run (one local working dir).
+  val data = workspace.relative("data")
+  if !os.path.isdir(data) then os.makedirs(data)
+  val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(data))
 
   val inputHistory = workspace.relative("logs/inputs.txt")
   val interact = new ConsoleInteract(stdout, inputHistory)
@@ -69,7 +77,8 @@ private def runChat(): Unit receives stdout, workspace, logger =
     val userMsg = UserText(userInput)
 
     val res = interact.turn: () =>
-      agent.runTurn(userMsg, interact, Config.maxToolRounds, Config.maxRetries)
+      with callContext = callCtx in
+        agent.runTurn(userMsg, interact, maxToolRounds = 50, maxRetries = 4)
 
     if res is Answered(delta, text) then
       sessionLog.append(time.now(), delta)

@@ -67,7 +67,7 @@ and the final text. Memory is **not** rolled back on `Interrupted`/`Failed` — 
 
 A driver (cli, web, or telegram) wraps the engine with everything it leaves out:
 
-- **assembles** the agent for each session (its `Config.agent`);
+- **assembles** the agent for each session;
 - **runs** the loop — read input, call `runTurn`, show the reply;
 - **implements `Interact`** — how a turn reports progress (`emit`), whether it's
   cancelled, and how it waits during backoff;
@@ -83,26 +83,26 @@ For the common case you write no engine code. A working agent is:
 - **`AGENT.md`** — the system prompt (role, instructions, pointers to skills/memory);
 - **`skills/`** — reference docs;
 - **`.env`** — the provider key (see [models](@/concepts/models.md));
-- **`Config.jo`** — where the pieces are assembled, meant to be edited.
+- **`src/` driver code** — where the pieces are assembled, meant to be edited.
 
-The shipped `Config.jo` wires the defaults:
+The shipped drivers wire the defaults inline:
 
 ```jo
-def agent(brain: Model, memory: Memory, history: List[Message]): Agent receives workspace =
-  val basePrompt = workspace.read("AGENT.md") rescue None => ""
-  val tools   = Defaults.tools() ++ memoryTools(memory)      // runCode + skills + memory
-  val context = new WindowedContext(basePrompt, memory, history)
-  new Agent(brain, tools, context)
+val agent = new Agent:
+  brain = brain                                           // Defaults.model(), shared for the process
+  tools = Defaults.tools() ++ memoryTools(memory)          // runCode + skills + memory
+  context = new WindowedContext:
+    baseSystem = workspace.read("AGENT.md").getOrElse("")
+    memory = memory
+    initial = history
 
-def model(): Model receives IO.stdout = Defaults.model()      // env-selected provider
-def maxToolRounds(): Int = 50                                 // tool rounds per turn
-def maxRetries(): Int = 4                                     // retries on a transient error
+agent.runTurn(userMsg, interact, maxToolRounds = 50, maxRetries = 4)
 ```
 
-Customize by editing these: add a tool (`Defaults.tools() ++ [myTool]`), swap the
-context strategy (a `SummarizingContext`), pin a specific model, or change the
-budgets. This is plain code, not configuration — it assumes freely and you diverge
-by writing Jo.
+Customize by editing the driver: add a tool (`Defaults.tools() ++ [myTool]`),
+swap the context strategy (a `SummarizingContext`), pin a specific model, or
+change the budgets. This is plain code, not configuration — it assumes freely and
+you diverge by writing Jo.
 
 ## Building your own
 

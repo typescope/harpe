@@ -20,6 +20,8 @@ import harpe.ffi.threading
 import harpe.ffi.file
 
 import harpe.Agent
+import harpe.CallContext
+import harpe.callContext
 import harpe.Memory
 import harpe.SessionLog
 import harpe.workspace
@@ -37,7 +39,7 @@ import harpe.turns.Failed
   ! A lock serializes turns within the session so its state stays consistent
   ! under concurrent requests.
 //]
-class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
+class Session(id: String, log: SessionLog, agent: Agent, memory: Memory, callCtx: CallContext)
   val lock = threading.lock()
 
   //[ Set (via `POST /api/stop`) to request cancellation of the running turn;
@@ -61,18 +63,19 @@ class Session(id: String, log: SessionLog, agent: Agent, memory: Memory)
 
     val interact = new WebInteract(sink, this.stop)
 
-    match agent.runTurn(userMsg, interact, maxToolRounds, maxRetries)
-    case Answered(delta, answer) =>
-      this.commit(delta)
-      sink(py.dict("type" ~ "answer", "text" ~ answer))
+    with callContext = callCtx in
+      match agent.runTurn(userMsg, interact, maxToolRounds, maxRetries)
+      case Answered(delta, answer) =>
+        this.commit(delta)
+        sink(py.dict("type" ~ "answer", "text" ~ answer))
 
-    case Interrupted =>
-      this.rollback()
-      sink(py.dict("type" ~ "interrupted"))
+      case Interrupted =>
+        this.rollback()
+        sink(py.dict("type" ~ "interrupted"))
 
-    case Failed =>
-      this.rollback()
-      sink(py.dict("type" ~ "failed"))
+      case Failed =>
+        this.rollback()
+        sink(py.dict("type" ~ "failed"))
 
     this.lock.release()
 

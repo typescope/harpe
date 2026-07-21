@@ -21,11 +21,14 @@ import harpe.ffi.dotenv
 
 import jo.IO.stdout
 import harpe.Agent
+import harpe.CallContext
 import harpe.workspace
 import harpe.Workspace
 import harpe.Memory
 import harpe.Defaults
 import harpe.Model
+import harpe.tools.memoryTools
+import harpe.context.WindowedContext
 import harpe.logging.Logging
 import harpe.logging.JsonlLogger
 import harpe.logging.Logger
@@ -40,9 +43,20 @@ def main(): Unit receives stdout =
       Logging.withLogger(new JsonlLogger(wspace.relative("logs/agent.jsonl")), () => serve())
 
 private def serve(): Unit receives stdout, workspace, logger =
-  val token = Config.botToken()
-  val brain = Config.model()
-  val allowed = Config.allowedSenders()
+  val token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+  if token == "" then
+    println "Error: TELEGRAM_BOT_TOKEN is not set (get one from @BotFather, put it in .env)."
+    sys.exit(1)
+
+  val brain = Defaults.model()
+  val rawAllowed = os.getenv("TELEGRAM_ALLOWED_SENDERS", "")
+  var allowed: List[String] = []
+
+  if rawAllowed.trim != "" then
+    for partDyn in py.dynamic(rawAllowed).split(",").cast[py.List] do
+      val part = partDyn.asString.trim
+      if part != "" then allowed = allowed + part
+
   val client = new TelegramClient(token)
 
   // Startup identity check: confirm the token works and show which bot is live,
@@ -61,7 +75,7 @@ private def serve(): Unit receives stdout, workspace, logger =
   // don't inherit it, so the bot re-installs it around each turn (see workerLoop).
   val bot = new TelegramBot(brain, client, allowed, username, botId, logger)
 
-  println "Harpe ▸ \{Config.agentName()} is live on Telegram as @\{username} (Ctrl-C to stop)"
+  println "Harpe ▸ Hello Agent is live on Telegram as @\{username} (Ctrl-C to stop)"
 
   if allowed.isEmpty then
     println "  ⚠ TELEGRAM_ALLOWED_SENDERS is empty — all messages are rejected until you add sender ids."
@@ -95,7 +109,7 @@ private class TelegramBot(
     var offset = 0
 
     while true do
-      match client.getUpdates(offset, Config.pollSeconds())
+      match client.getUpdates(offset, pollSeconds = 50)
       case Polled(updates) =>
         for updateDyn in updates do
           val update = updateDyn.cast[py.Dict]
@@ -227,13 +241,18 @@ private class TelegramBot(
       val log = Session.forSession(chatId)
       val memory = Memory.load(log.memoryPath)
       // `Session.load` caps the replayed transcript (a RAM backstop); the full
-      // transcript stays on disk. The session's agent is assembled by Config.
-      val agent = Config.agent:
-        brain
-        memory
-        Session.load(chatId)
+      // transcript stays on disk.
+      val agent = new Agent:
+        brain = brain
+        tools = Defaults.tools() ++ memoryTools(memory)
+        context = new WindowedContext:
+          baseSystem = workspace.read("AGENT.md").getOrElse("")
+          memory = memory
+          initial = Session.load(chatId)
 
-      val session = new Session(chatId, log, agent, memory)
+      // No shared data dir: each chat is its own session. A session-scoped dir
+      // goes here when session media lands.
+      val session = new Session(chatId, log, agent, memory, CallContext.empty)
       registryLock.acquire()
       registry.set(chatId, session)
       session.queue.put(py.dynamic(text))
@@ -245,7 +264,7 @@ private class TelegramBot(
     ! chat, not the poll loop or other chats. A crashing turn is contained — the
     ! chat is told, and the worker keeps serving — rather than killing the thread.
     !
-    ! When no message arrives for `idleSeconds`, the worker reaps itself: under
+    ! When no message arrives for 15 minutes, the worker reaps itself: under
     ! `registryLock` it re-checks the queue is still empty (guarding against a
     ! message enqueued in the race window), removes the session, and exits. The
     ! next message from this chat recreates the session from disk.
@@ -253,7 +272,7 @@ private class TelegramBot(
   private def workerLoop(chatId: String, session: Session): Unit =
     var running = true
     while running do
-      match py.try(session.queue.get(timeout = Config.idleSeconds()))
+      match py.try(session.queue.get(timeout = 900.0))
       case Ok(item) =>
         match py.try(runTurnLogged(chatId, session, item.asString))
         case Ok(_)  => pass
@@ -276,7 +295,7 @@ private class TelegramBot(
   //]
   private def runTurnLogged(chatId: String, session: Session, text: String): Unit =
     val turn: () => Unit receives logger =
-      () => session.runTurn(text, client, Config.maxToolRounds, Config.maxRetries)
+      () => session.runTurn(text, client, maxToolRounds = 50, maxRetries = 4)
     with logger = baseLogger in Logging.withContext("context", Map("chat" ~ chatId), turn)
 
   //[ Start a chat's dedicated worker on a daemon thread (dies with the process). //]

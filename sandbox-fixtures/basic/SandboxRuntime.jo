@@ -3,35 +3,23 @@ namespace SandboxRuntime
 import jo.IO.stdout
 import harpe.logging.*
 import harpe.ffi.os
-import harpe.broker.*
 import harpe.media.*
 import harpe.caps.*
 import SandboxAPI
 
 // Runtime for the runCode integration tests: install the audit channel (a JSONL
-// file the host names via HARPE_AUDIT_LOG and reads back), probe the broker channel
-// (host↔guest), emit one record, then run the guest.
+// file the host names via HARPE_AUDIT_LOG and reads back), emit one record, then
+// run the guest.
 def main(): Unit receives stdout =
   Logging.withLogger(auditLogger(), () => run())
 
 private def run(): Unit receives stdout, logger =
   logger.info("harpe.sandbox.runtime", "runtime ready")
-  probeBroker()
 
-  // Grant the guest a FileSystem rooted at the scratch (run) dir the host names.
-  val fs = FileSystemImpl.local(os.getenv("HARPE_SCRATCH_DIR", "."))
+  // Grant the guest a FileSystem rooted at its own run dir (its working directory,
+  // where the host runs it — so `.` is that isolated dir, holding out.py).
+  val fs = FileSystemImpl.local(".")
   with SandboxAPI.fs = fs in SandboxAPI.runTask()
-
-// Step-3 broker self-test: if the host injected a broker socket, do one round-trip
-// through it from inside the guest process and print the result. Proves the channel
-// (host `Broker` ↔ guest `BrokerClient`) without a guest-facing capability yet.
-private def probeBroker(): Unit receives stdout =
-  val path = os.getenv("HARPE_BROKER_SOCK", "")
-  if path != "" then
-    val client = BrokerClient.connect(path)
-    val reply = client.call("echo", "ping", py.dynamic(py.dict("msg" ~ "sandbox")))
-    println "broker: \{reply.result.cast[py.Dict].get("msg").asString}"
-    client.close()
 
 private def auditLogger(): Logger =
   val path = os.getenv("HARPE_AUDIT_LOG", "")

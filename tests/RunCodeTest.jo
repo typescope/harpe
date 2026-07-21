@@ -21,7 +21,6 @@ import harpe.ffi.tempfile
 
 import jo.IO.stdout
 import harpe.*
-import harpe.broker.*
 import harpe.tools.runCodeTool
 import harpe.logging.Logging
 import harpe.logging.logger
@@ -48,16 +47,7 @@ private def tag(o: RunOutcome): String =
 // Self-provides a no-op logger, so it works on the spawned worker threads too
 // (context params don't cross threads). These tests assert on outcomes, not logs.
 private def exec(tool: Tool, code: String): RunOutcome =
-  with logger = Logging.discard in tool.run(ToolInput(py.dict("code" ~ code)))
-
-// A broker service that echoes its `msg` arg back as JSON. The fixture runtime
-// calls "echo"/"ping" from inside the guest process, so this proves the channel.
-private class EchoService
-  view Service
-
-  def handle(op: String, args: py.Dynamic): Reply =
-    Reply.of(py.dynamic(py.dict("msg" ~ args.cast[py.Dict].get("msg"))))
-end
+  with logger = Logging.discard, callContext = CallContext.empty in tool.run(ToolInput(py.dict("code" ~ code)))
 
 // Wrap a runTask body in a minimal guest program.
 private def guest(body: String): String =
@@ -121,15 +111,6 @@ def run(): Unit receives stdout =
 
   // A well-formed program runs and produces output.
   check("normal", tag(exec(fast, guest("  println 42\n"))), "ran")
-
-  // The broker channel reaches the guest process: with an "echo" service granted,
-  // the sandbox runtime does a round-trip through the per-run socket from inside the
-  // guest and prints the result. No service granted → no broker → nothing printed.
-  val brokerServices = Map.empty[String, Service].add("echo", new EchoService())
-  val brokerTool = runCodeTool(sandboxDir, 120.0, 5.0, 4, 4000, brokerServices)
-  val brokerOut = exec(brokerTool, guest("  println 7\n")).result
-  assert: brokerOut.contains("broker: sandbox"), "broker channel: guest did not reach the host service — got [\{brokerOut}]"
-  println "  ok broker-channel"
 
   // The FileSystem capability reaches the guest: it reads its own run dir (which holds
   // the compiled out.py) through the granted `fs`.

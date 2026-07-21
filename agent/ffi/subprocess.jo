@@ -45,14 +45,15 @@ def guestEnv(): py.Dict =
   ! `guestEnv()` when running untrusted guest code, so it inherits none of the
   ! host's secrets.
 //]
-def runCapped(args: py.List, timeoutSecs: Float, env: Any = py.none): Capped =
+def runCapped(args: py.List, timeoutSecs: Float, env: Any = py.none, cwd: Any = py.none): Capped =
   val proc = module.Popen(
     args,
     stdout = module.PIPE,
     stderr = module.PIPE,
     text = true,
     start_new_session = true,
-    env = env
+    env = env,
+    cwd = cwd
   )
 
   match py.try(proc.communicate(timeout = timeoutSecs))

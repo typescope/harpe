@@ -83,7 +83,7 @@ private def lookUp(city: String): RunOutcome receives logger =
   new RunOutcome("Sunny in \{city}", "weather · \{city}")
 ```
 
-Add it in your `Config.jo`:
+Add it where your driver builds the toolset:
 
 ```jo
 val tools = Defaults.tools() ++ [weatherTool()]

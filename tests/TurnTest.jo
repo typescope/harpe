@@ -85,7 +85,7 @@ private class State(cancelled: Bool, pause: Bool)
 
 // Drive one turn and summarize it as "<result> | <events>". The agent's brain is
 // the no-network echo model — the scripted TestInteract.ask never touches it.
-private def scenario(tools: List[Tool], maxToolRounds: Int, maxRetries: Int, model: Model, state: State): String receives logger =
+private def scenario(tools: List[Tool], maxToolRounds: Int, maxRetries: Int, model: Model, state: State): String receives logger, callContext =
   val interact = new TestInteract(state)
   val context = new WindowedContext("", new Memory, [])
   val agent = new Agent(model, tools, context)
@@ -102,7 +102,7 @@ private def check(label: String, actual: String, expected: String): Unit receive
   assert: actual == expected, "\{label}: expected [\{expected}] but got [\{actual}]"
   println "  ok \{label}"
 
-def run(): Unit receives stdout, logger =
+def run(): Unit receives stdout, logger, callContext =
   val tools = [echoTool()]
 
   val live: State = State(cancelled = false, pause = false)
