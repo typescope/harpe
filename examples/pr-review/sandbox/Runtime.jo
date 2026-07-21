@@ -10,7 +10,7 @@ import SandboxAPI
 def main(): Unit receives stdout =
   val prUrl  = os.getenv("PR_URL", "")
   val token  = os.getenv("GITHUB_TOKEN", "")
-  var dryRun =  if os.getenv("DRY_RUN", "") == "true" else false
+  var dryRun =  os.getenv("DRY_RUN", "") == "true"
   val root = os.getenv("HARPE_DATA_DIR", ".")
   val fs = FileSystemImpl.local(root)
   val ghImpl = new GithubImpl(fs, prUrl, dryRun, token)

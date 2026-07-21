@@ -36,20 +36,12 @@ EOF
 ## Running
 
 ```sh
-# Review a PR (dry-run — prints what would be submitted, does not post)
-jo run -- https://github.com/owner/repo/pull/123 true
-
 # Review a PR and post the review to GitHub
-jo run -- https://github.com/owner/repo/pull/123
+jo review -- https://github.com/owner/repo/pull/123
+
+# dry-run — prints what would be submitted, does not post
+jo review -- https://github.com/owner/repo/pull/123 --dry-run
 ```
-
-The first argument is the PR identifier in `owner/repo#number` format.
-The optional second argument `true` enables dry-run mode.
-
-## Output
-
-- Logs are written to `logs/agent.jsonl` in structured JSON.
-- Review verdict and comments are printed to stdout and (outside dry-run) posted to GitHub.
 
 ## Customising the agent
 

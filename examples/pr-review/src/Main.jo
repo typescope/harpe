@@ -12,7 +12,6 @@ import harpe.logging.logger
 import harpe.Model.UserText
 import harpe.turns.Answered
 import harpe.tools.runCodeTool
-import harpe.tools.apiTool
 import harpe.tools.skillTools
 import harpe.context.FullContext
 
@@ -22,8 +21,9 @@ def main(): Unit receives args, stdout =
     abort "Missing PR source argument"
 
   val pr     = args[0]
-  val dryRun = if args.size > 1 then args[1] == "true" else false
+  val dryRun = if args.size > 1 then args[1] == "--dry-run" else false
 
+  println args
   if Defaults.checkAgentDir() then
     dotenv.load(".env")
     val wspace = new Workspace(os.path.abspath("."))
@@ -33,10 +33,7 @@ def main(): Unit receives args, stdout =
 private def review(pr: String, dryRun: Bool): Unit receives stdout, workspace, logger =
   val memory = new Memory
   val basePrompt = workspace.read("AGENT.md") rescue None => ""
-  val tools = [
-    runCodeTool(workspace.sandboxDir),
-    apiTool(workspace.sandboxDir)
-  ] ++ skillTools(workspace.skillsDir)
+  val tools = [runCodeTool(workspace.sandboxDir)] ++ skillTools(workspace.skillsDir)
 
   val context = new FullContext(basePrompt, memory, [])
   val agent = new Agent(Defaults.model(), tools, context)

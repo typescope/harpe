@@ -32,7 +32,7 @@ An example program should look like the following:
 ```
 
 for detailed Jo syntax, call `skillsRead` with `jo-syntax.md` param.
-to get detailed GithubAPI interface info, call `getAPI` tool with `API` param.
+to get detailed GithubAPI interface info, call `skillsRead`  with `api.jo` param.
 
 write Jo → `runCode` → if it fails to compile, read the error and fix
 it → once it runs, use the output to answer. Keep answers concise.
