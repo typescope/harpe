@@ -34,9 +34,7 @@ private def review(pr: String, dryRun: Bool): Unit receives stdout, workspace, l
   val memory = new Memory
   val basePrompt = workspace.read("AGENT.md") rescue None => ""
   val tools = [
-    runCodeTool(workspace.sandboxDir,
-      extraParams = Some([pr, os.getenv("GITHUB_TOKEN", ""), dryRun.toString])
-    ),
+    runCodeTool(workspace.sandboxDir),
     apiTool(workspace.sandboxDir)
   ] ++ skillTools(workspace.skillsDir)
 
@@ -45,7 +43,17 @@ private def review(pr: String, dryRun: Bool): Unit receives stdout, workspace, l
   val interact = new PrintInteract(stdout)
   val sessionLog = SessionLog.newLog()
 
-  match agent.runTurn(UserText("please start review the pr"), interact, 30, 4)
+  // The sandbox runtime context
+  val data = workspace.relative("data")
+  if !os.path.isdir(data) then os.makedirs(data)
+  val callCtx = Map(
+    "HARPE_DATA_DIR" ~ os.path.abspath(data),
+    "PR_URL" ~ pr,
+    "GITHUB_TOKEN" ~ os.getenv("GITHUB_TOKEN", ""),
+    "DRY_RUN" ~ dryRun.toString
+  )
+
+  match with callContext = callCtx in agent.runTurn(UserText("please start review the pr"), interact, 30, 4)
   case Answered(delta, text) =>
     sessionLog.append(time.now(), delta)
     println "  · review completed"

@@ -1,27 +1,20 @@
 namespace SandboxRuntime
 
 import jo.IO.stdout
-import jo.IO.args
 import harpe.ffi.os
 import harpe.media.*
 import harpe.caps.*
 import SandboxAPI
 
 //[ Main entry point //]
-def main(): Unit receives args, stdout =
-  if args.size < 2 then
-    println args
-    println "Error: missing arguments"
-    println "Usage: python3 task.py <prUrl> <githubToken> <dryRun>"
-    abort "Missing arguments"
-
-  val prUrl  = args[0]
-  val token  = args[1]
-  var dryRun =  if args.size >= 3 then args[2] == "true" else false
-
-  val root = os.getenv("HARPE_DATA_DIR", os.getenv("HARPE_SCRATCH_DIR", "."))
+def main(): Unit receives stdout =
+  val prUrl  = os.getenv("PR_URL", "")
+  val token  = os.getenv("GITHUB_TOKEN", "")
+  var dryRun =  if os.getenv("DRY_RUN", "") == "true" else false
+  val root = os.getenv("HARPE_DATA_DIR", ".")
   val fs = FileSystemImpl.local(root)
   val ghImpl = new GithubImpl(fs, prUrl, dryRun, token)
+
   with SandboxAPI.github = ghImpl in
     SandboxAPI.runTask()
 
