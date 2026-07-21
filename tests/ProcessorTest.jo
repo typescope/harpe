@@ -198,7 +198,7 @@ private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, wo
   val window = book.rows("Data", 2, 2).getOrElse(List.empty[List[String]])
   check("Workbook.rows window", window.size == 2 && window.get(0).get(0) == "apple" && window.get(0).get(1) == "3")
   check("Workbook.rows renders floats", window.get(1).get(2) == "2.25")
-  check("Workbook.rows past end reads short", book.rows("Data", 3, 10).getOrElse([]).size == 1)
+  check("Workbook.rows past end reads short", book.rows("Data", 3, 10).getOrElse([] as List[List[String]]).size == 1)
   check("Workbook.rows unknown is None", book.rows("NoSuch", 1, 1) is None)
   book.close()
   book.close()                       // idempotent
