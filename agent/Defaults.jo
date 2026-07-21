@@ -2,8 +2,8 @@
   !
   ! Convenient defaults for wiring an agent, shared by the cli/web/telegram
   ! drivers. These are plain functions, not hooks: an agent customizes itself by
-  ! editing its own `src/Config.jo` (each driver has one), which delegates here
-  ! for the common cases and diverges by simply writing code.
+  ! editing its own driver code, which delegates here for the common cases and
+  ! diverges by simply writing code.
 //]
 
 namespace harpe
@@ -71,18 +71,6 @@ section Defaults
     case "off" => NoCache
     case "1h"  => OneHour
     case _     => FiveMinutes
-
-  //[ The agent's display name, extracted from AGENT.md: its first Markdown H1,
-    ! else a generic default.
-  //]
-  def extractAgentName(): String receives workspace =
-    val text = workspace.read("AGENT.md") rescue None => ""
-
-    for line in text.lines do
-      val t = line.trim
-      if t.startsWith("# ") then return t.substring(2, t.size).trim
-
-    "Harpe Agent"
 
   //[ Preflight: an agent must run from its working directory — the folder holding
     ! its `jo.toml` and a `sandbox/` — so the tools resolve paths against it.
