@@ -11,9 +11,11 @@
   ! invocation in the target's `.done` sidecar: the backend, every `--lib`
   ! (checking libraries) and `--link-lib` (link libraries) pointing at the
   ! dependencies' already-built, read-only `.sast`, the `--link` map, and the
-  ! source/`-o`/`--sast` paths — one argument per line. `runCode` replays that
-  ! invocation with only the source, output, and `--sast` swapped for per-run
-  ! paths, so it compiles the ONE program against immutable prebuilt libraries.
+  ! source/`-o`/`--sast` paths — one argument per line.
+  !
+  ! `runCode` replays that invocation with only the source, output, and `--sast`
+  ! removed for per-run paths, so it compiles the ONE program against immutable
+  ! prebuilt libraries.
   !
   ! Because the libraries are read-only and every run writes its own source,
   ! output, and sast dir, concurrent runs never touch shared state — no warming,
@@ -57,7 +59,7 @@ private def findDoneFile(sandboxDir: String): Option[String] =
   ! output, and the `--sast` output directory. Everything else — the compiler
   ! path, backend, `--lib`/`--link-lib`, `--link` map — is reused verbatim.
 //]
-private def replayArgs(lines: List[String], runSrc: String, runOut: String, runSast: String): py.List =
+private def replayArgs(lines: List[String], runSrc: String, runOut: String): py.List =
   val args = py.list()
 
   val Output = 0 // -o
@@ -71,7 +73,6 @@ private def replayArgs(lines: List[String], runSrc: String, runOut: String, runS
       mode = -1
 
     else if mode == Sast then
-      args.append(py.dynamic(runSast))
       mode = -1
 
     else if line == "-o" then
@@ -79,7 +80,6 @@ private def replayArgs(lines: List[String], runSrc: String, runOut: String, runS
       mode = Output
 
     else if line == "--sast" then
-      args.append(py.dynamic(line))
       mode = Sast
 
     else if line.endsWith(".jo") then
@@ -146,13 +146,11 @@ private def buildAndRun(
 
   val runSrc   = os.path.join(runDir, "Task.jo")
   val runOut   = os.path.join(runDir, "out.py")
-  val runSast  = os.path.join(runDir, "sast")
   val runAudit = os.path.join(runDir, "audit.jsonl")
 
-  os.makedirs(runSast)
   file.write(runSrc, code)
 
-  val args = replayArgs(file.read(donePath).lines, runSrc, runOut, runSast)
+  val args = replayArgs(file.read(donePath).lines, runSrc, runOut)
 
   // 1. Compile — the security checkpoint — timed, bounded, and error-captured.
   val t0 = time.now()
