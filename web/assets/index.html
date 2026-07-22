@@ -222,6 +222,41 @@
     .file-card .file-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px; }
     .file-card .file-size { font-size: 11px; color: var(--muted); }
 
+    /* runCode trace — the programs the agent ran, folded under its reply */
+    .trace { margin-top: 8px; }
+    .trace > summary {
+      list-style: none; cursor: pointer; user-select: none;
+      display: inline-flex; align-items: center; gap: 6px;
+      color: var(--muted); font-size: 12.5px; padding: 3px 8px; border-radius: 8px;
+    }
+    .trace > summary::-webkit-details-marker { display: none; }
+    .trace > summary:hover { background: var(--agent); color: var(--ink); }
+    .trace > summary svg { width: 14px; height: 14px; flex: none; }
+    .trace > summary .chev { transition: transform .15s; }
+    .trace[open] > summary .chev { transform: rotate(90deg); }
+    .trace-step { margin: 8px 0 0; }
+    .trace-step .lbl {
+      font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+      color: var(--muted); margin: 8px 0 3px;
+    }
+    .trace-code { position: relative; }
+    .trace-code pre {
+      margin: 0; background: #0d1117; color: #e6edf3; padding: 10px 12px;
+      border-radius: 8px; overflow-x: auto; white-space: pre;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.5;
+    }
+    .trace-out {
+      margin: 0; background: rgba(20, 30, 50, .05); color: var(--ink);
+      padding: 8px 12px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.5;
+    }
+    .trace-copy {
+      position: absolute; top: 6px; right: 6px; border: none; cursor: pointer;
+      background: rgba(255, 255, 255, .12); color: #e6edf3; font-size: 11px;
+      padding: 2px 8px; border-radius: 6px;
+    }
+    .trace-copy:hover { background: rgba(255, 255, 255, .24); }
+
     /* drag-over hint on the chat area */
     body.dragging .chat { outline: 2px dashed var(--accent); outline-offset: -8px; }
 
@@ -475,6 +510,43 @@
       row.appendChild(wrap);
     }
 
+    // The runCode trace under an agent reply: a collapsed "Ran N programs"
+    // disclosure that expands to each Jo program (copyable) and its output. The
+    // programs and output come straight from the transcript, so it survives reload.
+    function codeTrace(steps) {
+      var d = el('details', 'trace');
+      var sum = el('summary');
+      var chev = svgIcon(['M9 18l6-6-6-6']); chev.setAttribute('class', 'chev');
+      sum.appendChild(chev);
+      sum.appendChild(el('span', null, 'Ran ' + steps.length + (steps.length === 1 ? ' program' : ' programs')));
+      d.appendChild(sum);
+
+      steps.forEach(function (st, i) {
+        var step = el('div', 'trace-step');
+        if (steps.length > 1) step.appendChild(el('div', 'lbl', 'Program ' + (i + 1)));
+
+        var codeWrap = el('div', 'trace-code');
+        var pre = el('pre'); pre.textContent = st.code;
+        var copy = el('button', 'trace-copy', 'Copy');
+        copy.addEventListener('click', function () {
+          if (navigator.clipboard) navigator.clipboard.writeText(st.code);
+          copy.textContent = 'Copied';
+          setTimeout(function () { copy.textContent = 'Copy'; }, 1200);
+        });
+        codeWrap.appendChild(pre);
+        codeWrap.appendChild(copy);
+        step.appendChild(codeWrap);
+
+        if (st.output) {
+          step.appendChild(el('div', 'lbl', 'Output'));
+          var out = el('pre', 'trace-out'); out.textContent = st.output;
+          step.appendChild(out);
+        }
+        d.appendChild(step);
+      });
+      return d;
+    }
+
     // --- pending (staged) files ---
 
     function addFiles(fileList) {
@@ -611,7 +683,7 @@
 
     // --- sessions: URL <-> conversation ---
 
-    function appendMessage(role, text, attachments) {
+    function appendMessage(role, text, attachments, steps) {
       var row = addMessage(role, '');
       var bubble = row.querySelector('.bubble');
       if (role === 'agent') {
@@ -622,6 +694,7 @@
         if (!text) bubble.style.display = 'none';
       }
       appendAttachments(row, attachments, currentSession);
+      if (role === 'agent' && steps && steps.length) row.appendChild(codeTrace(steps));
       return row;
     }
 
@@ -669,21 +742,22 @@
       sendBtn.disabled = on;
     }
 
-    function loadHistory(id) {
+    // `quiet` re-renders in place from the transcript without the loading spinner
+    // or a blank flash — used to fold in a just-finished turn's code trace.
+    function loadHistory(id, quiet) {
       var seq = ++loadSeq;
-      msgs.innerHTML = '';
-      showEmpty(false);
-      setLoading(true);
+      if (!quiet) { msgs.innerHTML = ''; showEmpty(false); setLoading(true); }
 
       return fetch('/api/history?session=' + encodeURIComponent(id))
         .then(function (r) { return r.json(); })
         .then(function (d) {
           if (seq !== loadSeq) return;
           setLoading(false);
+          msgs.innerHTML = '';
           var list = d.messages || [];
           var active = d.state && d.state.active;
           if (list.length === 0 && !active) { showEmpty(true); }
-          else { list.forEach(function (m) { appendMessage(m.role, m.text, m.attachments); }); }
+          else { showEmpty(false); list.forEach(function (m) { appendMessage(m.role, m.text, m.attachments, m.steps); }); }
           // A turn is still running on the server — reconnect and follow it live.
           if (active) reconnect(id, d.state, seq);
           scrollDown();
@@ -691,7 +765,7 @@
         }).catch(function () {
           if (seq !== loadSeq) return;
           setLoading(false);
-          showEmpty(true);
+          if (!quiet) showEmpty(true);
         });
     }
 
@@ -764,9 +838,10 @@
         status.remove();
         clearBusy();
         input.focus();
-        scrollDown();
         loadSessions();
         refreshFiles(false);   // update the list + badge; don't change open state
+        // Re-render this turn from the transcript so its code trace folds in.
+        if (currentSession) loadHistory(currentSession, true); else scrollDown();
       }
 
       uploadAll(files).then(function (uploaded) {
@@ -848,9 +923,9 @@
       function finish() {
         status.remove();
         clearBusy();
-        // Render the committed result (or drop a turn that ended interrupted); if the
-        // user has navigated elsewhere meanwhile, leave their current view alone.
-        if (seq === loadSeq) loadHistory(id);
+        // Render the committed result (with its code trace, or drop a turn that ended
+        // interrupted); if the user navigated elsewhere meanwhile, leave their view.
+        if (seq === loadSeq) loadHistory(id, true);
         loadSessions();
         refreshFiles(false);   // a reconnected turn may have produced files
       }

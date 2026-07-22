@@ -44,6 +44,7 @@ import harpe.Model.Assistant
 import harpe.Model.Message
 import harpe.Model.UserText
 import harpe.Model.Attachment
+import harpe.Model.ToolResults
 import harpe.tools.memoryTools
 import harpe.context.WindowedContext
 
@@ -300,11 +301,14 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
       arr.append(py.dict("id" ~ m.id, "title" ~ m.title, "time" ~ m.time))
     respondJson(startResp, py.dict("sessions" ~ arr))
 
-  //[ One session's user/agent messages, for rendering on load — only the
-    ! visible conversation: each user message and each turn's FINAL reply. An
-    ! assistant message that carries tool calls is intermediate turn traffic
-    ! (commentary before a tool runs), and tool results are internal; both are
-    ! omitted, matching the live view's transient progress.
+  //[ One session's user/agent messages, for rendering on load.
+    !
+    ! Each user message and each turn's FINAL reply are shown as bubbles. The turn's
+    ! intermediate traffic is not hidden but folded into that reply as `steps`: the
+    ! `runCode` programs the agent ran and their output, paired by call id. The whole
+    ! trace comes from the transcript, so it persists and survives a reload; timing
+    ! and success are not there yet (they live only in the run log — see the
+    ! `runCode` summary), so a step carries just its program and output.
   //]
   private def handleHistory(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
     val id = queryParam(environ, "session")
@@ -314,12 +318,27 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     val msgs = Session.load(id)
 
     val arr = py.list()
+    var steps = py.list()       // the current turn's {code, output} runCode steps
+    var pending = py.dict()     // runCode call id -> program, awaiting its result
+
     for m in msgs do
       if m is UserText(t, attachments) then
+        steps = py.list()       // a new turn begins
+        pending = py.dict()
         arr.append: py.dict("role" ~ "user", "text" ~ t, "attachments" ~ attachmentsToJson(attachments))
 
       else if m is Assistant(t, calls) then
-        if calls.isEmpty && t != "" then arr.append: py.dict("role" ~ "agent", "text" ~ t)
+        for c in calls if c.name == "runCode" do
+          pending.set(c.id, c.input.string("code"))
+
+        // The turn's final reply (no tool calls) carries the steps run to produce it.
+        if calls.isEmpty && t != "" then
+          arr.append: py.dict("role" ~ "agent", "text" ~ t, "steps" ~ steps)
+          steps = py.list()
+
+      else if m is ToolResults(results) then
+        for r in results if pending.contains(r.id) do
+          steps.append: py.dict("code" ~ pending.get(r.id).asString, "output" ~ r.content)
 
     // The live turn state alongside the committed history: if a turn is in flight,
     // the client renders its pending input and subscribes to follow it (a reconnect
