@@ -354,14 +354,50 @@
       return s;
     }
 
-    // Generic file glyph, or an image glyph for image/* types.
-    function fileIcon(mime) {
-      if (mime && mime.indexOf('image/') === 0) {
+    // Classify a file into a coarse kind from its MIME type, falling back to the
+    // filename extension (uploads may arrive with an empty or generic MIME).
+    function fileKind(mime, name) {
+      var m = (mime || '').toLowerCase();
+      var ext = (name || '').toLowerCase().split('.').pop();
+      if (m.indexOf('image/') === 0 || /^(png|jpe?g|gif|webp|svg|bmp|heic|tiff?)$/.test(ext)) return 'image';
+      if (m.indexOf('pdf') >= 0 || ext === 'pdf') return 'pdf';
+      if (m.indexOf('word') >= 0 || m.indexOf('wordprocessing') >= 0 || ext === 'doc' || ext === 'docx') return 'word';
+      if (m.indexOf('excel') >= 0 || m.indexOf('spreadsheet') >= 0 || ext === 'xls' || ext === 'xlsx' || ext === 'csv') return 'excel';
+      return 'file';
+    }
+
+    // A document-page glyph (folded corner) with an optional format label baked in
+    // and a type color; `currentColor` drives both the outline and the label.
+    function docGlyph(label, color) {
+      var svg = svgIcon(['M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z', 'M14 2v6h6']);
+      if (label) {
+        var t = document.createElementNS(SVG, 'text');
+        t.setAttribute('x', '12'); t.setAttribute('y', '17');
+        t.setAttribute('text-anchor', 'middle');
+        t.setAttribute('font-size', '6'); t.setAttribute('font-weight', '700');
+        t.setAttribute('fill', 'currentColor'); t.setAttribute('stroke', 'none');
+        t.textContent = label;
+        svg.appendChild(t);
+      }
+      if (color) svg.style.color = color;
+      return svg;
+    }
+
+    // A per-format icon: a distinct picture glyph for images; a colored, labeled
+    // page for PDF/Word/Excel; a plain page for anything else.
+    var FILE_COLORS = { pdf: '#e5484d', word: '#2b6cb0', excel: '#2f855a' };
+    var FILE_LABELS = { pdf: 'PDF', word: 'DOC', excel: 'XLS' };
+
+    function fileIcon(mime, name) {
+      var kind = fileKind(mime, name);
+      if (kind === 'image') {
         var circle = document.createElementNS(SVG, 'circle');
         circle.setAttribute('cx', '9'); circle.setAttribute('cy', '9'); circle.setAttribute('r', '2');
-        return svgIcon(['M21 15l-5-5L5 21'], [rect('3', '3', '18', '18', '2'), circle]);
+        var img = svgIcon(['M21 15l-5-5L5 21'], [rect('3', '3', '18', '18', '2'), circle]);
+        img.style.color = '#8257e6';
+        return img;
       }
-      return svgIcon(['M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z', 'M14 2v6h6']);
+      return docGlyph(FILE_LABELS[kind] || null, FILE_COLORS[kind] || null);
     }
 
     function rect(x, y, w, h, r) {
@@ -387,7 +423,7 @@
         card.target = '_blank';
         card.rel = 'noopener';
       }
-      card.appendChild(fileIcon(att.mime));
+      card.appendChild(fileIcon(att.mime, att.name));
       var meta = el('div');
       meta.appendChild(el('div', 'file-name', att.name));
       var sz = humanSize(att.size);
@@ -494,7 +530,7 @@
             a.href = '/api/file?session=' + encodeURIComponent(currentSession) + '&name=' + encodeURIComponent(f.name);
             a.target = '_blank';
             a.rel = 'noopener';
-            a.appendChild(fileIcon(f.mime));
+            a.appendChild(fileIcon(f.mime, f.name));
             a.appendChild(el('span', 'file-name', f.name));
             a.appendChild(el('span', 'file-size', humanSize(f.size)));
             filesList.appendChild(a);
