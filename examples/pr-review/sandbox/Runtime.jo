@@ -4,16 +4,17 @@ import jo.IO.stdout
 import harpe.ffi.os
 import harpe.media.*
 import harpe.caps.*
-import sandbox.api
+import SandboxAPI
 
 //[ Main entry point //]
 def main(): Unit receives stdout =
-  val prUrl  = os.getenv("PR_URL", "")
-  val token  = os.getenv("GITHUB_TOKEN", "")
-  var dryRun =  os.getenv("DRY_RUN", "") == "true"
-  val root = os.getenv("HARPE_DATA_DIR", ".")
+  val prUrl   = os.getenv("PR_URL", "")
+  val token   = os.getenv("GITHUB_TOKEN", "")
+  var dryRun  = os.getenv("DRY_RUN", "") == "true"
+  val root    = os.getenv("HARPE_DATA_DIR", ".")
+  val repoDir = os.getenv("HARPE_REPO_DIR", root + "/repo")
   val fs = FileSystemImpl.local(root)
-  val ghImpl = new GithubImpl(fs, prUrl, dryRun, token)
+  val ghImpl = new GithubImpl(fs, prUrl, dryRun, token, repoDir)
 
   with sandbox.api.github = ghImpl in
     sandbox.api.runTask()
@@ -44,12 +45,18 @@ class GithubImpl
   val prInfo: sandbox.api.PRInfo
   private var pr: PR
   private val client: GithubClient
+  private val repoDir: String
+  private var repoPrefix: String
+  private val builtins: PyBuiltinOpen
 
   view sandbox.api.GitHub
 
-  def GithubImpl(fs: FileSystem, prUrl: String, dryRun: Bool, token: String): GithubImpl =
+  def GithubImpl(fs: FileSystem, prUrl: String, dryRun: Bool, token: String, repoDir: String): GithubImpl =
     this.fs = fs
     this.dryRun = dryRun
+    this.repoDir = repoDir
+    this.repoPrefix = ""
+    this.builtins = py.module("builtins").cast[PyBuiltinOpen]
     this.pr = new PR("", "", 0)
     match parsePrURL(prUrl)
     case Some(pr) => this.pr = pr
@@ -58,7 +65,7 @@ class GithubImpl
     this.client = new GithubClient(token)
     this.prInfo = getPR()
 
-  private def getPR(): sandbox.api.PRInfo =
+  private def getPR(): SandboxAPI.PRInfo =
     val pr = client.getPR(pr.owner, pr.repo, pr.num)
 
     var diffs: List[sandbox.api.FileDiff] = []
@@ -84,26 +91,74 @@ class GithubImpl
 
   def getPRInfo(): sandbox.api.PRInfo = prInfo
 
-  //[ Read repo file //]
-  def readFile(path: String, start: Int = 0, end: Int = -1): String =
-    val name = path.replace("/", "-")
-    val p = new Path.Join(Path.root, name)
-    val content =
-      if fs.isFile(p) then
-        match fs.readText(p)
-        case Ok(content) => content
-        case _ => ""
-      else
-        val files = client.getRepoFiles(pr.owner, pr.repo, List(path))
-        val content = files[path]
-        if content != "" then
-          match fs.openTextFile(p)
-          case Ok(textFile) => textFile.write(content)
-          case _ => pass
-        content
+  //[ Read repo file — tries local snapshot first, falls back to GitHub API. //]
+  def readFile(path: String, start: Int = 0, ends: Int = -1): String =
+    val localPath = repoDir + "/" + repoPrefix + "/" + path
+    val content = fs.readText(localPath)
     val lines = content.split("\n")
-    val sliced = if end == -1 then lines.drop(start) else lines.drop(start).take(end - start)
+    val sliced = if ends == -1 then lines.drop(start) else lines.drop(start).take(ends - start)
     sliced.join("\n")
+
+  //[ Keywords that introduce a definition in common languages //]
+  private val defKeywords = [
+    "def ", "class ", "interface ", "function ", "func ", "fn ",
+    "type ", "struct ", "enum ", "const "
+  ]
+
+  //[ Characters that may immediately follow an identifier at a definition site //]
+  private val defTerminators = ["(", " ", "<", "[", ":", "=", "{", ",", ")"]
+
+  //[ Extensions of files we know are binary — skip these during definition search //]
+  private val binaryExts = [
+    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".bmp", ".webp",
+    ".pdf", ".zip", ".tar", ".gz", ".7z", ".rar",
+    ".exe", ".dll", ".so", ".bin", ".wasm",
+    ".pyc", ".class", ".jar",
+    ".ttf", ".woff", ".woff2", ".eot",
+    ".mp4", ".mp3", ".wav", ".ogg"
+  ]
+
+  private def isBinaryPath(path: String): Bool =
+    var result = false
+    for ext in binaryExts do
+      if path.endsWith(ext) then result = true
+    result
+
+  //[ Return true if `trimmed` contains `keyword + identifier` at a word boundary //]
+  private def matchesDef(trimmed: String, keyword: String, identifier: String): Bool =
+    val prefix = keyword + identifier
+    if trimmed.startsWith(prefix) == false then
+      false
+    else if trimmed == prefix then
+      true  // identifier is the last token on the line
+    else
+      var matched = false
+      for term in defTerminators do
+        if trimmed.startsWith(prefix + term) then matched = true
+      matched
+
+  def findDefinition(identifier: String): List[SandboxAPI.DefinitionMatch] =
+    val rootDir    = repoDir + "/" + repoPrefix
+    val stripLen   = rootDir.length + 1  // length of "rootDir/" prefix to strip
+    val globMod    = py.module("glob").cast[GlobMod]
+    val absPaths   = globMod.glob(rootDir + "/**/*", recursive = true).cast[py.List]
+    var results: List[SandboxAPI.DefinitionMatch] = []
+
+    for absPathDyn in absPaths do
+      val absPath = absPathDyn.asString
+      if !isBinaryPath(absPath) then
+        val content = fs.readText(absPath)
+        if content != "" then
+          val relPath = absPath.substring(stripLen, absPath.length)
+          val lines   = content.split("\n")
+          var lineNum = 1
+          for line in lines do
+            val trimmed = line.trim
+            for keyword in defKeywords do
+              if matchesDef(trimmed, keyword, identifier) then
+                results = results + (new SandboxAPI.DefinitionMatch(relPath, lineNum, trimmed))
+            lineNum = lineNum + 1
+    results
 
   //[ Write operations — call the real GitHub API (or print in dry-run mode) //]
   def submitReview(verdict: sandbox.api.ReviewVerdict, body: String, comments: List[sandbox.api.LineComment]): Unit receives stdout =

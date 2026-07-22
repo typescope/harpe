@@ -26,10 +26,36 @@ end
 
 private def module: GitHub = py.module("github").cast[GitHub]
 
+private interface ZipFileObj
+  def namelist(): py.Dynamic
+  def extractall(path: String): Unit
+  def close(): Unit
+end
+
+private interface ZipFileMod
+  def ZipFile(f: py.Dynamic): ZipFileObj
+end
+
+private interface IoMod
+  def BytesIO(data: py.Dynamic): py.Dynamic
+end
+
+private interface UrllibRequestMod
+  def Request(url: String, headers: py.Dynamic @py.keyword): py.Dynamic
+  def urlopen(req: py.Dynamic): py.Dynamic
+end
+
+private interface HttpResponse
+  def read(): py.Dynamic
+  def close(): Unit
+end
+
 private class GithubClient
   val client: py.Dynamic
+  private val token: String
 
   def GithubClient(token: String): GithubClient =
+    this.token = token
     this.client = module.Github(token, user_agent = "harpe-pr-review/1.0")
 
   private def getPull(owner: String, repo: String, num: Int): py.Dynamic =
@@ -103,19 +129,32 @@ private class GithubClient
       sha = headSha,
       commit_message = commitMessage)
 
-  def getRepoFiles(
-    owner: String,
-    repo: String,
-    paths: List[String],
-    ref: String = "HEAD"
-  ): Map[String, String] =
-    val r = client.get_repo(owner + "/" + repo)
-    var files = Map[String, String]()
-    for path in paths do
-        match py.try(r.get_contents(path, ref=ref))
-        case Ok(content) =>
-          val file = content.decoded_content.decode("utf-8", errors="replace").asString
-          files = files.add(path, file)
-        case Err(msg) => pass // TODO
-    end
-    files
+  //[ Download a repository snapshot as a zip archive and extract to destDir.
+    !
+    ! Uses GitHub's zipball API — one HTTP request regardless of repo size.
+    ! Returns the top-level prefix directory name extracted from the zip
+    ! (e.g. "owner-repo-sha7chars") so callers can resolve relative paths.
+  //]
+  def downloadRepo(owner: String, repo: String, ref: String, destDir: String): String =
+    val url = "https://api.github.com/repos/" + owner + "/" + repo + "/zipball/" + ref
+    val headers = py.dict(
+      "Authorization" ~ ("token " + token),
+      "User-Agent"    ~ "harpe-pr-review/1.0"
+    )
+    val urllibreq = py.module("urllib.request").cast[UrllibRequestMod]
+    val req  = urllibreq.Request(url, headers = py.dynamic(headers))
+    val resp = urllibreq.urlopen(req).cast[HttpResponse]
+    val data = resp.read()
+    resp.close()
+
+    val ioMod  = py.module("io").cast[IoMod]
+    val zipMod = py.module("zipfile").cast[ZipFileMod]
+    val zf     = zipMod.ZipFile(ioMod.BytesIO(data))
+    zf.extractall(destDir)
+    var prefix = ""
+    for name in zf.namelist().cast[py.List] do
+      if prefix == "" then
+        val n = name.asString
+        prefix = if n.endsWith("/") then n.substring(0, n.length - 1) else n
+    zf.close()
+    prefix

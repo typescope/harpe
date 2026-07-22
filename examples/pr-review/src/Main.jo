@@ -23,7 +23,6 @@ def main(): Unit receives args, stdout =
   val pr     = args[0]
   val dryRun = if args.size > 1 then args[1] == "--dry-run" else false
 
-  println args
   if Defaults.checkAgentDir() then
     dotenv.load(".env")
     val wspace = new Workspace(os.path.abspath("."))
@@ -47,7 +46,8 @@ private def review(pr: String, dryRun: Bool): Unit receives stdout, workspace, l
     "HARPE_DATA_DIR" ~ os.path.abspath(data),
     "PR_URL" ~ pr,
     "GITHUB_TOKEN" ~ os.getenv("GITHUB_TOKEN", ""),
-    "DRY_RUN" ~ dryRun.toString
+    "DRY_RUN" ~ dryRun.toString,
+    "HARPE_REPO_DIR" ~ os.path.abspath(data + "/repo")
   )
 
   match with callContext = callCtx in agent.runTurn(UserText("please start review the pr", []), interact, 30, 4)
