@@ -176,6 +176,7 @@
 
     /* composer icon buttons (attach, files) */
     .cbtn {
+      position: relative;
       flex: none; width: 34px; height: 34px; padding: 0; display: grid; place-items: center;
       border: none; background: transparent; color: var(--muted);
       border-radius: 50%; cursor: pointer; transition: background .15s, color .15s;
@@ -183,6 +184,13 @@
     .cbtn:hover { background: var(--agent); color: var(--ink); }
     .cbtn.on { color: var(--accent); }
     .cbtn svg { width: 20px; height: 20px; display: block; }
+    .cbtn .badge {
+      position: absolute; top: -1px; right: -1px;
+      min-width: 15px; height: 15px; padding: 0 3px; box-sizing: border-box;
+      background: var(--accent); color: #fff; font-size: 10px; font-weight: 700;
+      line-height: 15px; text-align: center; border-radius: 8px;
+      border: 1.5px solid var(--panel);
+    }
 
     /* pending attachments (before send) */
     .pending { max-width: 760px; margin: 0 auto 8px; display: flex; flex-wrap: wrap; gap: 6px; }
@@ -212,26 +220,40 @@
     /* drag-over hint on the chat area */
     body.dragging .chat { outline: 2px dashed var(--accent); outline-offset: -8px; }
 
-    /* session files drawer (above the composer, default hidden) */
-    .files-drawer {
-      max-width: 760px; margin: 0 auto 8px; display: none;
-      background: var(--panel); border: 1px solid var(--line);
-      border-radius: 12px; padding: 10px 12px; max-height: 240px; overflow-y: auto;
+    /* session files panel (right rail, default hidden) */
+    #files-panel {
+      width: 300px; flex: none; background: var(--panel);
+      border-left: 1px solid var(--line);
+      display: flex; flex-direction: column;
     }
-    .files-drawer.open { display: block; }
-    .files-drawer h4 {
-      margin: 0 0 8px; font-size: 12px; text-transform: uppercase;
-      letter-spacing: .5px; color: var(--muted);
+    body:not(.files-open) #files-panel { display: none; }
+    #files-panel .panel-head {
+      flex: none; display: flex; align-items: center; gap: 8px;
+      padding: 16px; border-bottom: 1px solid var(--line);
     }
-    .files-drawer .frow {
-      display: flex; align-items: center; gap: 9px; padding: 6px 5px;
+    #files-panel .panel-head .ttl {
+      font-weight: 650; font-size: 15px; min-width: 0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #files-panel .panel-head .icon-btn { margin-left: auto; flex: none; }
+    #files-list { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px; }
+    #files-list .frow {
+      display: flex; align-items: center; gap: 9px; padding: 8px 6px;
       border-radius: 8px; text-decoration: none; color: var(--ink);
     }
-    .files-drawer .frow:hover { background: var(--agent); }
-    .files-drawer .frow svg { width: 20px; height: 20px; flex: none; color: var(--muted); }
-    .files-drawer .frow .file-name { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .files-drawer .frow .file-size { font-size: 11px; color: var(--muted); margin-left: auto; flex: none; }
-    .files-drawer .empty-files { color: var(--muted); font-size: 13px; padding: 4px 5px; }
+    #files-list .frow:hover { background: var(--agent); }
+    #files-list .frow svg { width: 22px; height: 22px; flex: none; color: var(--muted); }
+    #files-list .frow .file-name { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #files-list .frow .file-size { font-size: 11px; color: var(--muted); margin-left: auto; flex: none; }
+    #files-list .empty-files { color: var(--muted); font-size: 13px; padding: 8px 6px; }
+
+    /* narrow viewports: the panel overlays the chat instead of taking a column */
+    @media (max-width: 1000px) {
+      body.files-open #files-panel {
+        position: fixed; top: 0; right: 0; bottom: 0; z-index: 10;
+        box-shadow: -4px 0 20px rgba(20, 30, 50, .14);
+      }
+    }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/markdown-it@14/dist/markdown-it.min.js"></script>
 </head>
@@ -258,10 +280,6 @@
       <div id="messages"></div>
     </main>
     <footer>
-      <div id="files-drawer" class="files-drawer">
-        <h4>Session files</h4>
-        <div id="files-list"></div>
-      </div>
       <div id="pending" class="pending" style="display: none"></div>
       <div class="composer">
         <button id="files-toggle" class="cbtn" aria-label="Session files" title="Session files">
@@ -279,6 +297,15 @@
       <div class="hint">Enter to send, Shift+Enter for a new line. Attach files with the clip, or drag them in.</div>
     </footer>
   </div>
+  <aside id="files-panel">
+    <div class="panel-head">
+      <span class="ttl">Session files</span>
+      <button id="files-close" class="icon-btn" aria-label="Close files" title="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>
+    <div id="files-list"></div>
+  </aside>
 
   <script>
     var msgs = document.getElementById('messages');
@@ -287,7 +314,8 @@
     var fileInput = document.getElementById('file-input');
     var attachBtn = document.getElementById('attach');
     var filesToggle = document.getElementById('files-toggle');
-    var filesDrawer = document.getElementById('files-drawer');
+    var filesClose = document.getElementById('files-close');
+    var filesPanel = document.getElementById('files-panel');
     var filesList = document.getElementById('files-list');
     var pendingBar = document.getElementById('pending');
     var NL = String.fromCharCode(10);
@@ -503,45 +531,67 @@
       return chain.then(function () { return out; });
     }
 
-    // --- session files drawer ---
+    // --- session files panel (right rail) ---
 
-    function toggleFilesDrawer() {
-      var open = filesDrawer.classList.toggle('open');
-      filesToggle.classList.toggle('on', open);
-      if (open) loadFiles();
+    function isWide() { return window.innerWidth > 1000; }
+
+    function setFilesOpen(on) {
+      document.body.classList.toggle('files-open', on);
+      filesToggle.classList.toggle('on', on);
     }
 
-    function loadFiles() {
-      if (!currentSession) {
+    function toggleFilesPanel() {
+      var open = !document.body.classList.contains('files-open');
+      setFilesOpen(open);
+      if (open) refreshFiles(false);
+    }
+
+    // Count badge on the folder toggle, so files are discoverable while the panel
+    // is closed (and it stays empty/absent for a session with no files).
+    function setFilesBadge(n) {
+      var b = filesToggle.querySelector('.badge');
+      if (!n) { if (b) b.remove(); return; }
+      if (!b) { b = el('span', 'badge'); filesToggle.appendChild(b); }
+      b.textContent = n > 99 ? '99+' : String(n);
+    }
+
+    function renderFiles(files) {
+      filesList.innerHTML = '';
+      if (!files.length) {
         filesList.innerHTML = '<div class="empty-files">No files in this session yet.</div>';
+        return;
+      }
+      files.forEach(function (f) {
+        var a = el('a', 'frow');
+        a.href = '/api/file?session=' + encodeURIComponent(currentSession) + '&name=' + encodeURIComponent(f.name);
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.appendChild(fileIcon(f.mime, f.name));
+        a.appendChild(el('span', 'file-name', f.name));
+        a.appendChild(el('span', 'file-size', humanSize(f.size)));
+        filesList.appendChild(a);
+      });
+    }
+
+    // Fetch the session's files, refresh the list + badge, and — when `autoOpen`
+    // (a session load) — open the panel on a wide screen if there are files to show.
+    function refreshFiles(autoOpen) {
+      if (!currentSession) {
+        renderFiles([]);
+        setFilesBadge(0);
+        if (autoOpen) setFilesOpen(false);
         return;
       }
       fetch('/api/files?session=' + encodeURIComponent(currentSession))
         .then(function (r) { return r.json(); })
         .then(function (d) {
           var files = d.files || [];
-          filesList.innerHTML = '';
-          if (!files.length) {
-            filesList.innerHTML = '<div class="empty-files">No files in this session yet.</div>';
-            return;
-          }
-          files.forEach(function (f) {
-            var a = el('a', 'frow');
-            a.href = '/api/file?session=' + encodeURIComponent(currentSession) + '&name=' + encodeURIComponent(f.name);
-            a.target = '_blank';
-            a.rel = 'noopener';
-            a.appendChild(fileIcon(f.mime, f.name));
-            a.appendChild(el('span', 'file-name', f.name));
-            a.appendChild(el('span', 'file-size', humanSize(f.size)));
-            filesList.appendChild(a);
-          });
+          renderFiles(files);
+          setFilesBadge(files.length);
+          if (autoOpen) setFilesOpen(files.length > 0 && isWide());
         }).catch(function () {
           filesList.innerHTML = '<div class="empty-files">Could not load files.</div>';
         });
-    }
-
-    function refreshFilesIfOpen() {
-      if (filesDrawer.classList.contains('open')) loadFiles();
     }
 
     function loadInfo() {
@@ -643,7 +693,7 @@
       history.pushState({}, '', '/c/' + id);
       renderSessions();
       loadHistory(id);
-      refreshFilesIfOpen();
+      refreshFiles(true);
     }
 
     function newChat() {
@@ -655,8 +705,9 @@
       renderSessions();
       pending = [];
       renderPending();
-      filesDrawer.classList.remove('open');
-      filesToggle.classList.remove('on');
+      setFilesOpen(false);
+      setFilesBadge(0);
+      renderFiles([]);
       input.focus();
     }
 
@@ -707,7 +758,7 @@
         input.focus();
         scrollDown();
         loadSessions();
-        refreshFilesIfOpen();
+        refreshFiles(false);   // update the list + badge; don't change open state
       }
 
       uploadAll(files).then(function (uploaded) {
@@ -793,6 +844,7 @@
         // user has navigated elsewhere meanwhile, leave their current view alone.
         if (seq === loadSeq) loadHistory(id);
         loadSessions();
+        refreshFiles(false);   // a reconnected turn may have produced files
       }
 
       fetch('/api/subscribe?session=' + encodeURIComponent(id))
@@ -896,19 +948,20 @@
       if (files.length) { e.preventDefault(); addFiles(files); }
     });
 
-    filesToggle.addEventListener('click', toggleFilesDrawer);
+    filesToggle.addEventListener('click', toggleFilesPanel);
+    filesClose.addEventListener('click', function () { setFilesOpen(false); });
 
     window.addEventListener('popstate', function () {
       currentSession = sessionFromPath();
       renderSessions();
       if (currentSession) loadHistory(currentSession); else clearMessages();
-      refreshFilesIfOpen();
+      refreshFiles(true);
     });
 
     currentSession = sessionFromPath();
     loadInfo();
     loadSessions();
-    if (currentSession) loadHistory(currentSession);
+    if (currentSession) { loadHistory(currentSession); refreshFiles(true); }
     input.focus();
   </script>
 </body>
