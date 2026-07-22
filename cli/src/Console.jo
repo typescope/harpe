@@ -1,6 +1,6 @@
-//[ ConsoleInteract.jo
+//[ Console.jo
   !
-  ! Handle console interaction events during an agent turn.
+  ! Handle console input/output and turn lifecycle for the CLI.
 //]
 
 namespace harpe.cli
@@ -20,15 +20,16 @@ import harpe.Model.Rendered
 import harpe.Tool
 import harpe.turns.*
 
-//[ The CLI's interaction //]
-private class ConsoleInteract(out: String => Unit, historyFile: String)
-  view Interact
+private union WorkerOutcome =
+    WorkerCompleted(result: TurnResult)
+  | WorkerCancelled
+  | WorkerCrashed(message: String)
 
-  private val interrupt = threading.event()
-  private val stopWatch = threading.event()
-
+//[ The CLI's console UI //]
+private class Console(out: String => Unit, historyFile: String)
   // One spinner resource for the whole session.
   private val spinner = new Spinner
+  private val workerLock = threading.lock()
 
   //[ Init console interaction
     !
@@ -96,27 +97,37 @@ private class ConsoleInteract(out: String => Unit, historyFile: String)
     os.makedirs("data")
     val _ = py.try(py.module("readline").write_history_file(historyFile))
 
-  def turn(f: () => TurnResult): TurnResult =
-    // Reset the ESC-watcher state so interruption works on every turn: the
-    // previous turn left `stopWatch` set (stopping its watcher) and may have
-    // left `interrupt` set (if ESC was pressed). Without clearing, the watcher
-    // would exit immediately and a prior ESC would instantly cancel this turn.
-    interrupt.clear()
-    stopWatch.clear()
+  def turn(f: Interact => TurnResult): TurnResult =
+    // Serialize the real worker lifetime, not just the visible CLI turn. After
+    // ESC the worker may still be waiting on a model/tool call and must finish
+    // rolling back before another turn can touch the shared agent context.
+    workerLock.acquire()
 
-    val savedTerm = ConsoleInteract.enterCbreak()
-    ConsoleInteract.startEscWatcher(interrupt, stopWatch)
+    // Cancellation is per-turn. The worker thread may outlive the CLI's visible
+    // turn after ESC; it must keep seeing its own cancelled state, even after the
+    // next prompt starts a fresh turn with a fresh watcher.
+    val interrupt = threading.event()
+    val stopWatch = threading.event()
+    val active = threading.event()
+    active.set()
+    val turnInteract = Console.turnInteract(this, interrupt, active)
+    val savedTerm = Console.enterCbreak()
+    Console.startEscWatcher(interrupt, stopWatch)
 
-    val res = ConsoleInteract.callInterruptible(this, f) rescue None =>
-      spinner.stop()
-      Interrupted
+    val outcome = Console.callInterruptible(turnInteract, () => f(turnInteract), () => workerLock.release())
 
-    ConsoleInteract.restoreTerminal(savedTerm)
+    active.clear()
+    interrupt.set()
+    spinner.stop()
+    Console.restoreTerminal(savedTerm)
     stopWatch.set()
 
-    res
+    match outcome
+    case WorkerCompleted(res) => res
+    case WorkerCancelled      => Interrupted
+    case WorkerCrashed(_)     => Failed
 
-  def emit(event: TurnEvent): Unit = with IO.stdout = out in
+  def display(event: TurnEvent): Unit = with IO.stdout = out in
     match event
     case ModelRequestStarted(attempt, maxAttempts) =>
       val label =
@@ -148,13 +159,25 @@ private class ConsoleInteract(out: String => Unit, historyFile: String)
 
     case ContextCompacted(droppedMessages) =>
       println "  · context compacted (\{droppedMessages} messages summarized)"
-
-  def cancelled: Bool = interrupt.is_set().asBool
-
-  def pause(seconds: Float): Bool = interrupt.wait(seconds).asBool
 end
 
-private section ConsoleInteract
+private section Console
+  def turnInteract(console: Console, interrupt: py.Dynamic, active: py.Dynamic): Interact =
+    new ConsoleTurnInteract(console, interrupt, active)
+
+  private class ConsoleTurnInteract(console: Console, interrupt: py.Dynamic, active: py.Dynamic)
+    view Interact
+
+    def cancelled: Bool =
+      interrupt.is_set().asBool || !active.is_set().asBool
+
+    def pause(seconds: Float): Bool =
+      if !active.is_set().asBool then true else interrupt.wait(seconds).asBool
+
+    def emit(event: TurnEvent): Unit =
+      if !cancelled then console.display(event)
+  end
+
   // Put the terminal in cbreak mode so a single keypress (ESC) is readable
   // without Enter. Returns the saved settings to restore later.
   private[cli] def enterCbreak(): py.Dynamic =
@@ -185,23 +208,29 @@ private section ConsoleInteract
     val thread = threading.thread(watcher)
     thread.start()
 
-  // Run `work` on a background thread; return Some(result), or None if `interrupt`
-  // fires first (the abandoned worker finishes in the background). This is what
-  // lets a long model call be cancelled by ESC — the engine just sees the Option.
-  def callInterruptible[T](interact: Interact, work: () => T): Option[T] =
+  // Run `work` on a background thread; return `WorkerCancelled` if `interrupt`
+  // fires first (the abandoned worker finishes in the background). This lets a
+  // long model call be cancelled by ESC while still letting the worker roll back.
+  def callInterruptible(interact: Interact, work: () => TurnResult, cleanup: () => Unit): WorkerOutcome =
     val box  = py.list(py.none)
+    val err  = py.list("")
     val done = threading.event()
     val worker = () =>
-      box.set(0, work())
+      match py.try(work())
+      case Ok(value) => box.set(0, value)
+      case Err(e)    => err.set(0, e.message)
+      cleanup()
       done.set()
     val thread = threading.thread(worker)
     thread.start()
 
-    var out: Option[T] = None
+    var out: WorkerOutcome = WorkerCancelled
     var waiting = true
     while waiting do
       if done.wait(0.05).asBool then
-        out = Some(box.get(0).cast[T])
+        val message = err.get(0).asString
+        if message != "" then out = WorkerCrashed(message)
+        else out = WorkerCompleted(box.get(0).cast[TurnResult])
         waiting = false
       else if interact.cancelled then
         waiting = false

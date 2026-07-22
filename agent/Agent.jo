@@ -74,6 +74,11 @@ section Agent
     var pending: List[ToolResult] = []
 
     while true do
+      if interact.cancelled then
+        result = Interrupted
+        context.rollback()
+        break
+
       // Once the tool budget is spent, offer no tools so the model must reply with
       // a final text answer rather than calling another tool.
       val offer: List[Tool] = if rounds >= maxToolRounds then [] else tools
@@ -176,6 +181,10 @@ private def fetchReply(
   var outcome: Fetched = GaveUp
 
   while true do
+    if interact.cancelled then
+      outcome = Stopped
+      break
+
     interact.emit: ModelRequestStarted(attempt, maxRetries)
 
     // `reply` is idempotent — the Turn commits `results` only on success, so
@@ -183,6 +192,10 @@ private def fetchReply(
     val res = turn.reply(results, tools)
 
     interact.emit: ModelRequestEnded
+
+    if interact.cancelled then
+      outcome = Stopped
+      break
 
     match res
       case Reply(message, usage) =>
