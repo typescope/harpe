@@ -26,17 +26,20 @@
     #sidebar {
       width: 256px; flex: none; background: var(--panel);
       border-right: 1px solid var(--line);
-      display: flex; flex-direction: column; gap: 14px; padding: 16px;
+      display: flex; flex-direction: column; gap: 14px; padding: 16px 8px;
     }
     body.collapsed #sidebar { display: none; }
-    .brand { display: flex; align-items: center; gap: 8px; }
+    /* Rows (brand, new chat, section labels, sessions) share one 16px content edge
+       (8px sidebar padding + 8px per-row padding); the row padding lets the hover
+       pills sit inset while every item's text/icon lines up in a single column. */
+    .brand { display: flex; align-items: center; gap: 8px; padding: 0 8px; }
     .brand .agent-name {
       font-weight: 650; font-size: 16px; min-width: 0;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .brand .icon-btn { margin-left: auto; flex: none; }
     .powered {
-      flex: none; padding-top: 10px; border-top: 1px solid var(--line);
+      flex: none; padding: 10px 8px 0; border-top: 1px solid var(--line);
       font-size: 11px; color: var(--muted);
     }
     .powered .mark {
@@ -44,18 +47,20 @@
       font-weight: 700; letter-spacing: 1px;
     }
     .panel-section {
-      margin-top: 2px; font-size: 12px; text-transform: uppercase;
+      margin-top: 2px; padding: 0 8px; font-size: 12px; text-transform: uppercase;
       letter-spacing: .5px; color: var(--muted);
     }
     .newchat {
-      border: 1px solid var(--line); background: var(--panel); color: var(--ink);
-      font: inherit; font-weight: 600; padding: 8px 12px; border-radius: 10px;
+      display: flex; align-items: center; gap: 9px;
+      border: none; background: transparent; color: var(--ink);
+      font: inherit; font-weight: 600; padding: 9px 8px; border-radius: 10px;
       cursor: pointer; text-align: left;
     }
     .newchat:hover { background: var(--agent); }
+    .newchat svg { width: 17px; height: 17px; flex: none; color: var(--muted); }
     .sessions { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
     .session-item {
-      padding: 7px 10px; border-radius: 8px; cursor: pointer; color: var(--ink);
+      padding: 7px 8px; border-radius: 8px; cursor: pointer; color: var(--ink);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px;
     }
     .session-item:hover { background: var(--agent); }
@@ -265,7 +270,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
       </button>
     </div>
-    <button id="newchat" class="newchat">+ New chat</button>
+    <button id="newchat" class="newchat">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"></path></svg>
+      New chat
+    </button>
     <div class="panel-section">Recent</div>
     <div id="sessions" class="sessions"></div>
     <div class="powered">Powered by <span class="mark">HARPE</span></div>
