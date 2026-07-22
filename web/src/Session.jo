@@ -36,6 +36,20 @@ import harpe.turns.Interrupted
 import harpe.turns.Failed
 
 
+//[ Whether a session has a turn in flight.
+  !
+  ! `Active` carries the `UserText` that started the turn — the same message value
+  ! the engine runs and later commits — so a tab loading (or reloading) mid-turn can
+  ! render the pending user message immediately, before it is in the transcript, and
+  ! then subscribe to the turn's events.
+//]
+union SessionState = Idle | Active(input: UserText)
+
+//[ One attached event sink (an open streaming response), identified so its owner
+  ! can detach it when its subscription ends.
+//]
+class Subscriber(id: Int, sink: Sink)
+
 //[ One live conversation: its id, its append log, its agent (which owns the
   ! context and therefore the running transcript window), and its working memory.
   ! A lock serializes turns within the session so its state stays consistent
@@ -52,33 +66,86 @@ class Session(id: String, log: SessionLog, agent: Agent, memory: Memory, callCtx
 
   var lastActive: Float = time.now()
 
-  //[ Begin a user turn: clear any stale stop request, mark the context's
-    ! rollback point, and append the user's message. The message is remembered
-    ! so `commit` can archive the whole turn.
+  //[ The live turn state (`Idle`/`Active`), reported to a tab on load so it can
+    ! reconnect to a turn in flight. `idle` is *set* exactly when `state` is `Idle`,
+    ! so a subscriber blocks on it for precisely the turn's remaining duration.
   //]
-  def runTurn(text: String, attachments: List[Attachment], sink: Sink, maxToolRounds: Int, maxRetries: Int): Unit receives logger =
+  var state: SessionState = Idle
+  val idle = threading.event()
+
+  //[ The event sinks attached to the running turn — the initiating request plus
+    ! any tabs that subscribed after loading mid-turn — so one turn fans out to
+    ! every connected view. Guarded by `sinksLock`; `nextSubId` hands out ids.
+  //]
+  private val sinksLock = threading.lock()
+  private var subs: List[Subscriber] = []
+  private var nextSubId: Int = 0
+
+  //[ Attach `sink` to the running turn, returning its id for later detach. //]
+  def addSink(sink: Sink): Int =
+    sinksLock.acquire()
+    val id = nextSubId
+    nextSubId = nextSubId + 1
+    subs = subs + new Subscriber(id, sink)
+    sinksLock.release()
+    id
+
+  //[ Detach the sink with this id (idempotent). //]
+  def removeSink(id: Int): Unit =
+    sinksLock.acquire()
+    subs = subs.select(s => s.id != id)
+    sinksLock.release()
+
+  //[ Emit one event to every attached sink. The snapshot is taken under the lock
+    ! but the writes happen off it, so a slow client cannot stall the turn. A write
+    ! that fails — a tab that closed — is ignored: the sink is released by its owner
+    ! (the turn, or the subscriber handler) when the turn ends, not here.
+  //]
+  def broadcast(obj: py.Dict): Unit =
+    sinksLock.acquire()
+    val current = subs
+    sinksLock.release()
+
+    for s in current do
+      val _ = py.try(s.sink(obj))
+
+  //[ Run one user turn, fanning its events out to every attached sink.
+    !
+    ! `initiatorSink` is the sink of the request that started the turn; it is
+    ! attached once the turn owns the session lock (so it never receives a prior
+    ! turn's events) and detached when the turn ends. While `state` is `Active`,
+    ! other tabs may attach via `addSink`; all of them see the same stream. When the
+    ! turn finishes, `idle` is set, which releases every subscriber.
+  //]
+  def runTurn(input: UserText, initiatorSink: Sink, maxToolRounds: Int, maxRetries: Int): Unit receives logger =
     stop.clear()
     lastActive = time.now()
-    val userMsg = UserText(text, attachments)
 
     this.lock.acquire()
+    state = Active(input)
+    idle.clear()
+    val subId = addSink(initiatorSink)
 
-    val interact = new WebInteract(sink, this.stop)
+    val emit: Sink = obj => this.broadcast(obj)
+    val interact = new WebInteract(emit, this.stop)
 
     with callContext = callCtx in
-      match agent.runTurn(userMsg, interact, maxToolRounds, maxRetries)
+      match agent.runTurn(input, interact, maxToolRounds, maxRetries)
       case Answered(delta, answer) =>
         this.commit(delta)
-        sink(py.dict("type" ~ "answer", "text" ~ answer))
+        broadcast(py.dict("type" ~ "answer", "text" ~ answer))
 
       case Interrupted =>
         this.rollback()
-        sink(py.dict("type" ~ "interrupted"))
+        broadcast(py.dict("type" ~ "interrupted"))
 
       case Failed =>
         this.rollback()
-        sink(py.dict("type" ~ "failed"))
+        broadcast(py.dict("type" ~ "failed"))
 
+    removeSink(subId)
+    state = Idle
+    idle.set()
     this.lock.release()
 
   //[ Commit a completed turn: append the user message plus the turn's delta (the

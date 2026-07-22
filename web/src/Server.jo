@@ -83,6 +83,9 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     else if path == "/api/message" && method == "POST" then
       handleMessage(environ, startResp)
 
+    else if path == "/api/subscribe" then
+      handleSubscribe(environ, startResp)
+
     else if path == "/api/upload" && method == "POST" then
       handleUpload(environ, startResp)
 
@@ -137,11 +140,14 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
 
       if minted then sink(py.dict("type" ~ "session", "id" ~ session.id))
 
-      // Tag every log entry this turn emits with the session it belongs to. The
+      // This request's sink is attached inside `runTurn` (once the turn owns the
+      // session lock), and the turn fans its events out to it and to any tab that
+      // subscribes mid-turn. Tag every log entry with the session it belongs to; the
       // thunk is annotated `receives logger` so it reads the (decorated) logger at
       // call time rather than capturing the current one.
+      val input = UserText(text, attachments)
       val turn: () => Unit receives logger =
-        () => session.runTurn(text, attachments, sink, maxToolRounds = 50, maxRetries = 4)
+        () => session.runTurn(input, sink, maxToolRounds = 50, maxRetries = 4)
       Logging.withContext("context", Map("session" ~ session.id), turn)
 
     py.list()
@@ -159,6 +165,51 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     registryLock.release()
 
     respondJson(startResp, py.dict("ok" ~ true))
+
+  //[ Subscribe to a session's in-flight turn: attach a sink and stream the turn's
+    ! events until it finishes, then close. This is how a tab reconnects to a running
+    ! turn after a page refresh (and how a second tab loaded mid-turn follows along):
+    ! the client, seeing `state.active` on load, opens this and renders the events.
+    !
+    ! Only a *resident, active* session has a live turn to follow — an unknown, idle,
+    ! or already-finished one gets an immediate empty stream, so the client falls
+    ! back to the committed history for the final answer.
+  //]
+  private def handleSubscribe(environ: py.Dynamic, startResp: py.Dynamic): py.List =
+    match residentSession(queryParam(environ, "session"))
+    case Some(session) if session.state is Active(_) =>
+      val headers = py.list(
+        py.tuple("Content-Type", "application/x-ndjson"),
+        py.tuple("Cache-Control", "no-cache"))
+      val write = py.call(startResp, "200 OK", headers)
+
+      val sink: Sink = (obj: py.Dict) =>
+        py.call(write, py.dynamic(json.dumps(obj) + "\n").encode())
+
+      val subId = session.addSink(sink)
+      // Block for exactly the turn's remaining duration; `runTurn` sets `idle` when
+      // it ends, releasing this subscriber.
+      val _ = session.idle.wait()
+      session.removeSink(subId)
+      py.list()
+
+    case _ =>
+      respond(startResp, "200 OK", "application/x-ndjson", "")
+
+  //[ The resident session for `id` (registry only — never loads from disk), or
+    ! None. Used to read live turn state without materializing an idle session.
+  //]
+  private def residentSession(id: String): Option[Session] =
+    registryLock.acquire()
+    val found: Option[Session] = if registry.contains(id) then Some(registry.get(id).cast[Session]) else None
+    registryLock.release()
+    found
+
+  //[ A session's live turn state — `Idle` if it is not resident (nothing running). //]
+  private def residentState(id: String): SessionState =
+    match residentSession(id)
+    case Some(session) => session.state
+    case None          => Idle
 
   //[ A fresh session under a newly-minted, time-sortable id. //]
   private def createSession(): Session receives workspace =
@@ -270,7 +321,19 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
       else if m is Assistant(t, calls) then
         if calls.isEmpty && t != "" then arr.append: py.dict("role" ~ "agent", "text" ~ t)
 
-    respondJson(startResp, py.dict("messages" ~ arr))
+    // The live turn state alongside the committed history: if a turn is in flight,
+    // the client renders its pending input and subscribes to follow it (a reconnect
+    // after refresh). The pending user message is not in the transcript yet — it is
+    // committed only when the turn completes.
+    respondJson: startResp, py.dict("messages" ~ arr, "state" ~ stateToJson(residentState(id)))
+
+  //[ The live turn state as JSON: `{active: false}` when idle, or `{active: true,
+    ! text, attachments}` carrying the in-flight turn's pending user input.
+  //]
+  private def stateToJson(state: SessionState): py.Dict =
+    match state
+    case Idle          => py.dict("active" ~ false)
+    case Active(input) => py.dict("active" ~ true, "text" ~ input.text, "attachments" ~ attachmentsToJson(input.attachments))
 
   private def queryParam(environ: py.Dynamic, key: String): String =
     val qs = environ.get("QUERY_STRING", "").asString

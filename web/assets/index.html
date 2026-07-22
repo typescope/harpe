@@ -623,8 +623,11 @@
           if (seq !== loadSeq) return;
           setLoading(false);
           var list = d.messages || [];
-          if (list.length === 0) { showEmpty(true); }
+          var active = d.state && d.state.active;
+          if (list.length === 0 && !active) { showEmpty(true); }
           else { list.forEach(function (m) { appendMessage(m.role, m.text, m.attachments); }); }
+          // A turn is still running on the server — reconnect and follow it live.
+          if (active) reconnect(id, d.state, seq);
           scrollDown();
           input.focus();
         }).catch(function () {
@@ -723,7 +726,30 @@
       });
     }
 
-    // POST one message and render its NDJSON progress/answer stream into `bubble`.
+    // Drain one NDJSON event stream, dispatching each line through handle() into
+    // `bubble`/`statusText`; calls onDone() when the stream ends. Shared by the
+    // send path (POST /api/message) and the reconnect path (GET /api/subscribe).
+    function readStream(resp, bubble, statusText, onDone) {
+      var reader = resp.body.getReader();
+      var decoder = new TextDecoder();
+      var buf = '';
+      function pump() {
+        return reader.read().then(function (res) {
+          if (res.done) { onDone(); return; }
+          buf += decoder.decode(res.value, { stream: true });
+          var idx;
+          while ((idx = buf.indexOf(NL)) >= 0) {
+            var line = buf.slice(0, idx).trim();
+            buf = buf.slice(idx + 1);
+            if (line) handle(JSON.parse(line), bubble, statusText);
+          }
+          return pump();
+        });
+      }
+      return pump();
+    }
+
+    // POST one message and render its progress/answer stream into `bubble`.
     function streamTurn(text, attachments, bubble, statusText, finish) {
       var body = { text: text, attachments: attachments || [] };
       if (currentSession) body.session = currentSession;
@@ -733,27 +759,45 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       }).then(function (resp) {
-        var reader = resp.body.getReader();
-        var decoder = new TextDecoder();
-        var buf = '';
-        function pump() {
-          return reader.read().then(function (res) {
-            if (res.done) { finish(); return; }
-            buf += decoder.decode(res.value, { stream: true });
-            var idx;
-            while ((idx = buf.indexOf(NL)) >= 0) {
-              var line = buf.slice(0, idx).trim();
-              buf = buf.slice(idx + 1);
-              if (line) handle(JSON.parse(line), bubble, statusText);
-            }
-            return pump();
-          });
-        }
-        return pump();
+        return readStream(resp, bubble, statusText, finish);
       }).catch(function () {
         statusText.textContent = 'connection error';
         clearBusy();
       });
+    }
+
+    // Reconnect to a turn already running on the server (e.g. after a page refresh,
+    // or in a second tab opened mid-turn). The pending user message isn't in the
+    // committed history yet, so it is rendered from the live `state`; then we follow
+    // the turn's events until it ends, and reload the (now-committed) history.
+    function reconnect(id, state, seq) {
+      appendMessage('user', state.text || '', state.attachments);
+
+      busy = true;
+      sendBtn.classList.add('stop');
+      sendBtn.setAttribute('aria-label', 'Stop');
+
+      var row = addMessage('agent', '');
+      var bubble = row.querySelector('.bubble');
+      var status = el('div', 'status');
+      status.appendChild(el('span', 'dot'));
+      var statusText = el('span', null, 'working');
+      status.appendChild(statusText);
+      row.appendChild(status);
+      scrollDown();
+
+      function finish() {
+        status.remove();
+        clearBusy();
+        // Render the committed result (or drop a turn that ended interrupted); if the
+        // user has navigated elsewhere meanwhile, leave their current view alone.
+        if (seq === loadSeq) loadHistory(id);
+        loadSessions();
+      }
+
+      fetch('/api/subscribe?session=' + encodeURIComponent(id))
+        .then(function (resp) { return readStream(resp, bubble, statusText, finish); })
+        .catch(function () { status.remove(); clearBusy(); });
     }
 
     // Progress is transient: while the turn runs, the pulsing dot plus one
