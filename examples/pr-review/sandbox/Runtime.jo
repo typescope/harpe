@@ -96,9 +96,7 @@ class GithubImpl
       val files = client.getRepoFiles(pr.owner, pr.repo, List(path))
       val content = files[path]
       if content != "" then
-        match fs.openTextFile(p)
-        case Ok(textFile) => textFile.write(content)
-        case _ => pass
+        fs.writeTextFile(p, content)
       content
 
   //[ Write operations — call the real GitHub API (or print in dry-run mode) //]

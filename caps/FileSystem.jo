@@ -1,8 +1,8 @@
 //[ FileSystem.jo
   !
-  ! The sandbox filesystem the guest reads: a confined tree it navigates with `Path`.
-  ! Pure interface — the trusted implementation (`FileSystemImpl`, in the harpe
-  ! module) resolves each `Path` against the real root and does local I/O.
+  ! The sandbox filesystem the guest reads and writes: a confined tree it navigates
+  ! with `Path`. Pure interface — the trusted implementation (`FileSystemImpl`, in
+  ! the harpe module) resolves each `Path` against the real root and does local I/O.
 //]
 
 namespace harpe.caps
@@ -22,7 +22,7 @@ class FileInfo(isFile: Bool, sizeBytes: Int, modifiedAt: Int)
 //]
 class DirEntry(path: Path, isDirectory: Bool)
 
-//[ A confined filesystem the guest reads via `Path`.
+//[ A confined filesystem the guest reads and writes via `Path`.
   !
   ! Error convention: a failure the program can plan around comes back in the
   ! type — `Result[T, String]` when there is a reason to give, `Option` when
@@ -107,6 +107,18 @@ interface FileSystem
       val content = file.bytes
       file.close()
       content
+
+  //[ Write `content` to `file` as UTF-8, replacing what is there — creating the
+    ! file (and any missing parent directories) if needed. The write counterpart of
+    ! `readText`: a one-shot for producing a text artifact.
+  //]
+  def writeTextFile(file: Path, content: String): Unit
+
+  //[ Create (or truncate) the file at `path` and return it open for binary writing;
+    ! any missing parent directories are created. Build the bytes with
+    ! `BinaryFile.write`, then `close`. For text output, prefer `writeTextFile`.
+  //]
+  def createBinaryFile(path: Path): BinaryFile
 end
 
 //[ The ambient confined filesystem. //]
