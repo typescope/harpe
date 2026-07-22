@@ -33,7 +33,7 @@ private def splitTurns(ms: List[Message]): List[List[Message]] =
   var current: List[Message] = []
 
   for m in ms do
-    if m is UserText(_) && !current.isEmpty then
+    if m is UserText(_, _) && !current.isEmpty then
       groups = groups + current
       current = [m]
 
@@ -61,7 +61,7 @@ private def groupsChars(groups: List[List[Message]]): Int =
 //]
 private def messageChars(m: Message): Int =
   match m
-  case UserText(t) => t.size
+  case UserText(t, _) => t.size
 
   case Assistant(text, calls) =>
     var n = text.size

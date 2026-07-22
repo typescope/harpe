@@ -58,11 +58,11 @@ private class RecordingDistiller(result: Option[String])
   val prompts = py.list()
 
   def distill(rendered: Rendered): Option[String] =
-    if rendered.messages.get(0) is UserText(t) then prompts.append(t)
+    if rendered.messages.get(0) is UserText(t, _) then prompts.append(t)
     result
 end
 
-private def user(t: String): Message = UserText(t)
+private def user(t: String): Message = UserText(t, [])
 private def asst(t: String): Message = Assistant(t, [])
 
 // A short exchange turn: 8 chars under the `truncate` char measure.
@@ -71,7 +71,7 @@ private def turn8(u: String, a: String): List[Message] = [user(u), asst(a)]
 // A turn that calls a tool: user, assistant tool_use, tool result, assistant text.
 private def toolTurn(u: String, code: String, out: String): List[Message] =
   val call = ToolCall("id", "runCode", ToolInput(py.dict("code" ~ code)))
-  [UserText(u), Assistant("", [call]), ToolResults([ToolResult("id", out)]), Assistant("done", [])]
+  [UserText(u, []), Assistant("", [call]), ToolResults([ToolResult("id", out)]), Assistant("done", [])]
 
 def run(): Unit receives stdout, logger =
   val nix = new NoInteract
@@ -155,20 +155,20 @@ def run(): Unit receives stdout, logger =
   // --- truncate: drops whole oldest turns to fit ---
   val two = truncate(all, 16)
   check("truncate drops the oldest turn", two.size == 4)
-  check("truncate window starts at a user turn", two.get(0) is UserText("BBBB"))
+  check("truncate window starts at a user turn", two.get(0) is UserText("BBBB", _))
 
   val one = truncate(all, 7)
   check("truncate drops down to the last turn", one.size == 2)
-  check("truncate keeps the most recent turn", one.get(0) is UserText("CCCC"))
+  check("truncate keeps the most recent turn", one.get(0) is UserText("CCCC", _))
 
   // --- truncate: always keeps at least the last turn, even if oversized ---
   val big = truncate(all, 1)
-  check("truncate never drops the final turn", big.size == 2 && big.get(0) is UserText("CCCC"))
+  check("truncate never drops the final turn", big.size == 2 && big.get(0) is UserText("CCCC", _))
 
   // --- truncate: never splits a tool_use / tool_result pair ---
   val paired = toolTurn("keep me", "print 1", "1") ++ toolTurn("and me", "print 2", "2")
   val kept = truncate(paired, 30)     // room for ~one turn
-  check("truncate keeps whole turns (starts at user)", kept.get(0) is UserText(_))
+  check("truncate keeps whole turns (starts at user)", kept.get(0) is UserText(_, _))
   check("truncate never orphans a tool result", !(kept.get(0) is ToolResults(_)))
 
   // --- SummarizingContext: trigger at 30 reported tokens (fed via observe),
@@ -198,7 +198,7 @@ def run(): Unit receives stdout, logger =
   sctx.observe(new Usage(40, 0))
   val over = sctx.render(interact)
   check("summarizing: compaction keeps the low-water window", over.messages.size == 4)
-  check("summarizing: window starts at the first kept turn", over.messages.get(0) is UserText("DDDD"))
+  check("summarizing: window starts at the first kept turn", over.messages.get(0) is UserText("DDDD", _))
   check("summarizing: one distillation call", distiller.prompts.size == 1)
   check("summarizing: summary rendered into the system", over.system.contains("Conversation summary") && over.system.contains("DISTILLED"))
   check("summarizing: base stays at the front", over.system.startsWith("BASE"))

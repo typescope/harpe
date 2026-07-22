@@ -41,7 +41,7 @@ def run(): Unit receives stdout =
   // First committed turn: user message + the model's reply and tool result.
   val t0 = time.now()
   sessionLog.append: t0, [
-    UserText("hi"),
+    UserText("hi", []),
     Assistant("on it", [call]),
     ToolResults([ToolResult("c1", "42")])
   ]
@@ -75,7 +75,7 @@ def run(): Unit receives stdout =
   // A second committed turn appends with its own timestamp, leaving the first
   // turn's records (and timestamps) intact.
   val t1 = t0 + 5.0
-  sessionLog.append(t1, [UserText("again"), Assistant("done", [])])
+  sessionLog.append(t1, [UserText("again", []), Assistant("done", [])])
 
   val second = readRecords(path)
   check("appends, not rewrites", second.size == 5)

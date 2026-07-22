@@ -24,8 +24,11 @@ namespace harpe.web
 import harpe.ffi.secrets
 import harpe.ffi.time
 import harpe.ffi.json
+import harpe.ffi.os
 import harpe.ffi.threading
 import harpe.ffi.file
+import harpe.ffi.mimetypes
+import harpe.ffi.builtins
 
 import harpe.Agent
 import harpe.CallContext
@@ -40,6 +43,7 @@ import harpe.Model
 import harpe.Model.Assistant
 import harpe.Model.Message
 import harpe.Model.UserText
+import harpe.Model.Attachment
 import harpe.tools.memoryTools
 import harpe.context.WindowedContext
 
@@ -79,6 +83,15 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     else if path == "/api/message" && method == "POST" then
       handleMessage(environ, startResp)
 
+    else if path == "/api/upload" && method == "POST" then
+      handleUpload(environ, startResp)
+
+    else if path == "/api/files" then
+      handleFiles(environ, startResp)
+
+    else if path == "/api/file" then
+      handleFile(environ, startResp)
+
     else if path == "/api/stop" && method == "POST" then
       handleStop(environ, startResp)
 
@@ -102,6 +115,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     val body = json.loads(readBody(environ)).cast[py.Dict]
     val text = body.get("text", "").asString
     val reqId = body.get("session", "").asString
+    val attachments = parseAttachments(body.get("attachments", py.list()).cast[py.List])
 
     val headers = py.list(
       py.tuple("Content-Type", "application/x-ndjson"),
@@ -111,7 +125,9 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     val sink: Sink = (obj: py.Dict) =>
       py.call(write, py.dynamic(json.dumps(obj) + "\n").encode())
 
-    if text.trim == "" then
+    // A turn needs either text or at least one attachment (an attachments-only
+    // message — "here, look at this file" — is valid).
+    if text.trim == "" && attachments.isEmpty then
       sink(py.dict("type" ~ "error", "detail" ~ "empty message"))
 
     else
@@ -125,7 +141,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
       // thunk is annotated `receives logger` so it reads the (decorated) logger at
       // call time rather than capturing the current one.
       val turn: () => Unit receives logger =
-        () => session.runTurn(text, sink, maxToolRounds = 50, maxRetries = 4)
+        () => session.runTurn(text, attachments, sink, maxToolRounds = 50, maxRetries = 4)
       Logging.withContext("context", Map("session" ~ session.id), turn)
 
     py.list()
@@ -156,9 +172,12 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
         memory = memory
         initial = []
 
-    // No shared data dir: a multi-session server must not grant one directory to
-    // every session. A session-scoped dir goes here when session media lands.
-    val session = new Session(id, Session.forSession(id), agent, memory, CallContext.empty)
+    // Grant this session its own data directory as HARPE_DATA_DIR — a multi-session
+    // server must not hand one shared directory to every session, so `fs` (and the
+    // document readers) are rooted per session. Uploads land there; agent output
+    // surfaces there.
+    val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(Session.dataDir(id)))
+    val session = new Session(id, Session.forSession(id), agent, memory, callCtx)
 
     registryLock.acquire()
     registry.set(id, session)
@@ -192,7 +211,8 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
           memory = memory
           initial = Session.load(id)
 
-      val session = new Session(id, log, agent, memory, CallContext.empty)
+      val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(Session.dataDir(id)))
+      val session = new Session(id, log, agent, memory, callCtx)
 
       registryLock.acquire()
       val winner =
@@ -244,11 +264,11 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
 
     val arr = py.list()
     for m in msgs do
-      if m is UserText(t) then
-        arr.append(py.dict("role" ~ "user", "text" ~ t))
+      if m is UserText(t, attachments) then
+        arr.append: py.dict("role" ~ "user", "text" ~ t, "attachments" ~ attachmentsToJson(attachments))
 
       else if m is Assistant(t, calls) then
-        if calls.isEmpty && t != "" then arr.append(py.dict("role" ~ "agent", "text" ~ t))
+        if calls.isEmpty && t != "" then arr.append: py.dict("role" ~ "agent", "text" ~ t)
 
     respondJson(startResp, py.dict("messages" ~ arr))
 
@@ -270,4 +290,165 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
   private def respond(startResp: py.Dynamic, status: String, ctype: String, body: String): py.List =
     val _ = py.call(startResp, status, py.list(py.tuple("Content-Type", ctype)))
     py.list(py.dynamic(body).encode())
+
+  //[ A complete binary response: the bytes plus a `Content-Disposition` naming the
+    ! file. `inline` lets a browser preview images/PDFs; a download still works.
+  //]
+  private def respondBytes(startResp: py.Dynamic, ctype: String, filename: String, data: py.Dynamic): py.List =
+    val headers = py.list(
+      py.tuple("Content-Type", ctype),
+      py.tuple("Content-Disposition", "inline; filename=\"\{filename}\""))
+    val _ = py.call(startResp, "200 OK", headers)
+    py.list(data)
+
+  //[ ── Files ──────────────────────────────────────────────────────────────────
+    !
+    ! Inbound files live in the session's own data directory (`Session.dataDir`),
+    ! which the sandbox grants as `HARPE_DATA_DIR`. Filenames on these endpoints are
+    ! client-controlled, so every path is built from a sanitized bare basename and
+    ! checked to stay within the session dir — the traversal guard that keeps one
+    ! session from touching another's files, or the host's.
+  //]
+
+  //[ The largest single upload accepted (bytes). A guard against a runaway body,
+    ! not a tuned limit.
+  //]
+  private def maxUploadBytes: Int = 26214400   // 25 MiB
+
+  //[ Reduce a client-supplied name to a safe bare basename: drop any directory
+    ! part (both separators) and reject the traversal names, so a stored or served
+    ! file can never escape the session's data directory. "" if nothing safe remains.
+  //]
+  private def sanitizeName(raw: String): String =
+    val base = os.path.basename(raw.replace("\\", "/"))
+    if base == "" || base == "." || base == ".." then "" else base
+
+  //[ Is `p` contained within `dir`? Compared on realpaths, so a symlink inside the
+    ! session dir cannot smuggle a read outside it either.
+  //]
+  private def within(dir: String, p: String): Bool =
+    val realDir = os.path.realpath(dir)
+    val realP = os.path.realpath(p)
+    realP == realDir || realP.startsWith(realDir + "/")
+
+  //[ The existing data directory for a client-supplied session id, or None. The id
+    ! is reduced to a basename first (so it cannot point outside `data/`), and the
+    ! directory must already exist — listing and serving never create one.
+  //]
+  private def existingDataDir(id: String): Option[String] receives workspace =
+    val safe = sanitizeName(id)
+    if safe == "" then None
+    else
+      val dir = workspace.relative("data/" + safe)
+      if os.path.isdir(dir) then Some(dir) else None
+
+  //[ A name not already taken in `dir`: `report.pdf` → `report-1.pdf` → … so an
+    ! upload never clobbers an existing file.
+  //]
+  private def uniqueName(dir: String, name: String): String =
+    if !os.path.exists(os.path.join(dir, name)) then name
+    else
+      val stem = os.path.basename(name.replace("\\", "/"))
+      val ext = os.extname(stem)
+      val root = if ext == "" then stem else stem.substring(0, stem.size - ext.size)
+      var i = 1
+      var candidate = root + "-" + i.toString + ext
+      while os.path.exists(os.path.join(dir, candidate)) do
+        i = i + 1
+        candidate = root + "-" + i.toString + ext
+      candidate
+
+  //[ Build the turn's attachments from the message body's `attachments` array —
+    ! metadata for files already stored by `/api/upload`. Names are re-sanitized to
+    ! a basename defensively (the transcript and the model manifest must never carry
+    ! a path); the bytes are already on disk in the session dir.
+  //]
+  private def parseAttachments(items: py.List): List[Attachment] =
+    var atts: List[Attachment] = []
+    for aDyn in items do
+      val a = aDyn.cast[py.Dict]
+      val name = sanitizeName(a.get("name", "").asString)
+      if name != "" then
+        val att = Attachment:
+          name
+          a.get("size", 0).asInt
+          a.get("mime", "").asString
+          a.get("inline", false).asBool
+        atts = atts + att
+
+    atts
+
+  //[ Attachments as a JSON array for the browser (history rows). //]
+  private def attachmentsToJson(atts: List[Attachment]): py.List =
+    val arr = py.list()
+    for a in atts do
+      arr.append: py.dict("name" ~ a.name, "size" ~ a.size, "mime" ~ a.mime, "inline" ~ a.inline)
+    arr
+
+  //[ Session files as a JSON array for the file list and drawer. //]
+  private def filesToJson(files: List[SessionFile]): py.List =
+    val arr = py.list()
+    for f in files do
+      arr.append: py.dict("name" ~ f.name, "size" ~ f.size, "mime" ~ f.mime, "modified" ~ f.modified)
+    arr
+
+  //[ Store one uploaded file (base64 in a JSON body) into a session's data
+    ! directory, minting the session if the request carries none — so the message
+    ! that follows resumes the same id and sees the file. Returns the session id and
+    ! the stored file's metadata. The name is sanitized and de-duplicated, so an
+    ! upload can neither escape the session dir nor clobber an existing file.
+  //]
+  private def handleUpload(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace, logger =
+    val body = json.loads(readBody(environ)).cast[py.Dict]
+    val reqId = body.get("session", "").asString
+    val name = sanitizeName(body.get("name", "").asString)
+
+    if name == "" then
+      respondJson: startResp, py.dict("error" ~ "invalid filename")
+
+    else
+      val session = if reqId == "" then createSession() else openSession(reqId)
+      val dir = Session.dataDir(session.id)
+      val data = py.module("base64").b64decode(body.get("data", "").asString)
+      val size = builtins.len(data)
+
+      if size > maxUploadBytes then
+        respondJson: startResp, py.dict("error" ~ "file too large", "session" ~ session.id)
+
+      else
+        val stored = uniqueName(dir, name)
+        file.writeBytes(os.path.join(dir, stored), data)
+        val given = body.get("mime", "").asString
+        val mime = if given != "" then given
+                   else mimetypes.guessType(stored).getOrElse("application/octet-stream")
+        respondJson: startResp, py.dict("session" ~ session.id, "name" ~ stored, "size" ~ size, "mime" ~ mime)
+
+  //[ List a session's data directory — the files currently in its workspace,
+    ! whether uploaded by the user or written by the agent. Newest first.
+  //]
+  private def handleFiles(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
+    val files = match existingDataDir(queryParam(environ, "session"))
+                case None      => []
+                case Some(dir) => Session.listFiles(dir)
+
+    respondJson: startResp, py.dict("files" ~ filesToJson(files))
+
+  //[ Serve one file from a session's data directory for preview or download. The
+    ! session id and name are both sanitized, and the resolved path is verified to
+    ! stay within the session dir — an unknown session, missing file, or any
+    ! traversal attempt is a 404.
+  //]
+  private def handleFile(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
+    val name = sanitizeName(queryParam(environ, "name"))
+
+    match existingDataDir(queryParam(environ, "session"))
+    case None => respond(startResp, "404 Not Found", "text/plain", "not found")
+    case Some(dir) =>
+      val p = os.path.join(dir, name)
+      if name == "" || !os.path.isfile(p) || !within(dir, p) then
+        respond(startResp, "404 Not Found", "text/plain", "not found")
+
+      else
+        val mime = mimetypes.guessType(name).getOrElse("application/octet-stream")
+        respondBytes(startResp, mime, name, file.readBytes(p))
 end

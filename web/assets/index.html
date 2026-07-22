@@ -144,7 +144,7 @@
       max-width: 760px; margin: 0 auto;
       display: flex; align-items: flex-end; gap: 8px;
       background: var(--panel); border: 1px solid var(--line);
-      border-radius: 26px; padding: 7px 7px 7px 18px;
+      border-radius: 26px; padding: 7px;
       box-shadow: 0 1px 3px rgba(20, 30, 50, .06);
       transition: border-color .15s, box-shadow .15s;
     }
@@ -173,6 +173,65 @@
       content: ''; width: 12px; height: 12px; border-radius: 2px; background: #fff;
     }
     .hint { max-width: 760px; margin: 8px auto 0; color: var(--muted); font-size: 12px; text-align: center; }
+
+    /* composer icon buttons (attach, files) */
+    .cbtn {
+      flex: none; width: 34px; height: 34px; padding: 0; display: grid; place-items: center;
+      border: none; background: transparent; color: var(--muted);
+      border-radius: 50%; cursor: pointer; transition: background .15s, color .15s;
+    }
+    .cbtn:hover { background: var(--agent); color: var(--ink); }
+    .cbtn.on { color: var(--accent); }
+    .cbtn svg { width: 20px; height: 20px; display: block; }
+
+    /* pending attachments (before send) */
+    .pending { max-width: 760px; margin: 0 auto 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip {
+      display: flex; align-items: center; gap: 6px; max-width: 220px;
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 10px; padding: 5px 9px; font-size: 13px;
+    }
+    .chip .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chip .x { flex: none; cursor: pointer; color: var(--muted); line-height: 1; font-size: 15px; }
+    .chip .x:hover { color: var(--error); }
+
+    /* attachment cards inside a message bubble */
+    .attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .msg.user .attachments { justify-content: flex-end; }
+    .file-card {
+      display: flex; align-items: center; gap: 9px; max-width: 240px;
+      text-decoration: none; color: var(--ink);
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 10px; padding: 8px 11px;
+    }
+    .file-card:hover { border-color: var(--accent); }
+    .file-card svg { width: 22px; height: 22px; flex: none; color: var(--muted); }
+    .file-card .file-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px; }
+    .file-card .file-size { font-size: 11px; color: var(--muted); }
+
+    /* drag-over hint on the chat area */
+    body.dragging .chat { outline: 2px dashed var(--accent); outline-offset: -8px; }
+
+    /* session files drawer (above the composer, default hidden) */
+    .files-drawer {
+      max-width: 760px; margin: 0 auto 8px; display: none;
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 12px; padding: 10px 12px; max-height: 240px; overflow-y: auto;
+    }
+    .files-drawer.open { display: block; }
+    .files-drawer h4 {
+      margin: 0 0 8px; font-size: 12px; text-transform: uppercase;
+      letter-spacing: .5px; color: var(--muted);
+    }
+    .files-drawer .frow {
+      display: flex; align-items: center; gap: 9px; padding: 6px 5px;
+      border-radius: 8px; text-decoration: none; color: var(--ink);
+    }
+    .files-drawer .frow:hover { background: var(--agent); }
+    .files-drawer .frow svg { width: 20px; height: 20px; flex: none; color: var(--muted); }
+    .files-drawer .frow .file-name { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .files-drawer .frow .file-size { font-size: 11px; color: var(--muted); margin-left: auto; flex: none; }
+    .files-drawer .empty-files { color: var(--muted); font-size: 13px; padding: 4px 5px; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/markdown-it@14/dist/markdown-it.min.js"></script>
 </head>
@@ -199,13 +258,25 @@
       <div id="messages"></div>
     </main>
     <footer>
+      <div id="files-drawer" class="files-drawer">
+        <h4>Session files</h4>
+        <div id="files-list"></div>
+      </div>
+      <div id="pending" class="pending" style="display: none"></div>
       <div class="composer">
+        <button id="files-toggle" class="cbtn" aria-label="Session files" title="Session files">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+        </button>
+        <button id="attach" class="cbtn" aria-label="Attach files" title="Attach files">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3 3 0 0 1 4.24 4.24l-9.2 9.19a1 1 0 0 1-1.41-1.41l8.49-8.49"></path></svg>
+        </button>
+        <input id="file-input" type="file" multiple style="display: none">
         <textarea id="input" rows="1" placeholder="Message the agent..."></textarea>
         <button id="send" aria-label="Send">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
         </button>
       </div>
-      <div class="hint">Enter to send, Shift+Enter for a new line.</div>
+      <div class="hint">Enter to send, Shift+Enter for a new line. Attach files with the clip, or drag them in.</div>
     </footer>
   </div>
 
@@ -213,10 +284,17 @@
     var msgs = document.getElementById('messages');
     var input = document.getElementById('input');
     var sendBtn = document.getElementById('send');
+    var fileInput = document.getElementById('file-input');
+    var attachBtn = document.getElementById('attach');
+    var filesToggle = document.getElementById('files-toggle');
+    var filesDrawer = document.getElementById('files-drawer');
+    var filesList = document.getElementById('files-list');
+    var pendingBar = document.getElementById('pending');
     var NL = String.fromCharCode(10);
     var busy = false;
     var currentSession = null;
     var sessionList = [];
+    var pending = [];   // File objects staged for the next message (not yet uploaded)
 
     function el(tag, cls, text) {
       var e = document.createElement(tag);
@@ -255,6 +333,181 @@
       main.scrollTop = main.scrollHeight;
     }
 
+    // --- attachments ---
+
+    var SVG = 'http://www.w3.org/2000/svg';
+
+    function svgIcon(paths, extra) {
+      var s = document.createElementNS(SVG, 'svg');
+      s.setAttribute('viewBox', '0 0 24 24');
+      s.setAttribute('fill', 'none');
+      s.setAttribute('stroke', 'currentColor');
+      s.setAttribute('stroke-width', '2');
+      s.setAttribute('stroke-linecap', 'round');
+      s.setAttribute('stroke-linejoin', 'round');
+      paths.forEach(function (d) {
+        var p = document.createElementNS(SVG, 'path');
+        p.setAttribute('d', d);
+        s.appendChild(p);
+      });
+      (extra || []).forEach(function (e) { s.appendChild(e); });
+      return s;
+    }
+
+    // Generic file glyph, or an image glyph for image/* types.
+    function fileIcon(mime) {
+      if (mime && mime.indexOf('image/') === 0) {
+        var circle = document.createElementNS(SVG, 'circle');
+        circle.setAttribute('cx', '9'); circle.setAttribute('cy', '9'); circle.setAttribute('r', '2');
+        return svgIcon(['M21 15l-5-5L5 21'], [rect('3', '3', '18', '18', '2'), circle]);
+      }
+      return svgIcon(['M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z', 'M14 2v6h6']);
+    }
+
+    function rect(x, y, w, h, r) {
+      var e = document.createElementNS(SVG, 'rect');
+      e.setAttribute('x', x); e.setAttribute('y', y);
+      e.setAttribute('width', w); e.setAttribute('height', h); e.setAttribute('rx', r);
+      return e;
+    }
+
+    function humanSize(n) {
+      if (!n && n !== 0) return '';
+      if (n < 1024) return n + ' B';
+      if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+      return (n / 1048576).toFixed(1) + ' MB';
+    }
+
+    // A clickable card for one attachment. When a session is known the card links
+    // to the file (inline-served, so images/PDFs preview in a new tab).
+    function fileCard(att, session) {
+      var card = el('a', 'file-card');
+      if (session) {
+        card.href = '/api/file?session=' + encodeURIComponent(session) + '&name=' + encodeURIComponent(att.name);
+        card.target = '_blank';
+        card.rel = 'noopener';
+      }
+      card.appendChild(fileIcon(att.mime));
+      var meta = el('div');
+      meta.appendChild(el('div', 'file-name', att.name));
+      var sz = humanSize(att.size);
+      if (sz) meta.appendChild(el('div', 'file-size', sz));
+      card.appendChild(meta);
+      return card;
+    }
+
+    function appendAttachments(row, atts, session) {
+      if (!atts || !atts.length) return;
+      var wrap = el('div', 'attachments');
+      atts.forEach(function (a) { wrap.appendChild(fileCard(a, session)); });
+      row.appendChild(wrap);
+    }
+
+    // --- pending (staged) files ---
+
+    function addFiles(fileList) {
+      for (var i = 0; i < fileList.length; i++) pending.push(fileList[i]);
+      renderPending();
+    }
+
+    function removePending(idx) {
+      pending.splice(idx, 1);
+      renderPending();
+    }
+
+    function renderPending() {
+      pendingBar.innerHTML = '';
+      pendingBar.style.display = pending.length ? 'flex' : 'none';
+      pending.forEach(function (f, i) {
+        var chip = el('div', 'chip');
+        chip.appendChild(el('span', 'nm', f.name));
+        var x = el('span', 'x', '×');
+        x.title = 'Remove';
+        x.addEventListener('click', function () { removePending(i); });
+        chip.appendChild(x);
+        pendingBar.appendChild(chip);
+      });
+    }
+
+    // Read one File as base64 and POST it to /api/upload. Resolves to the stored
+    // file's metadata {session, name, size, mime}; the first upload of a new chat
+    // mints the session, which the caller adopts for the message that follows.
+    function uploadOne(file) {
+      return new Promise(function (resolve, reject) {
+        var reader = new FileReader();
+        reader.onerror = function () { reject(new Error('read failed')); };
+        reader.onload = function () {
+          var b64 = String(reader.result).split(',')[1] || '';
+          fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session: currentSession || '', name: file.name, mime: file.type, data: b64 })
+          }).then(function (r) { return r.json(); }).then(resolve).catch(reject);
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    // Upload staged files in order, adopting the session id the server returns.
+    function uploadAll(files) {
+      var out = [];
+      var chain = Promise.resolve();
+      files.forEach(function (f) {
+        chain = chain.then(function () {
+          return uploadOne(f).then(function (meta) {
+            if (meta.error) throw new Error(meta.error);
+            if (meta.session && meta.session !== currentSession) {
+              currentSession = meta.session;
+              history.replaceState({}, '', '/c/' + currentSession);
+            }
+            out.push({ name: meta.name, size: meta.size, mime: meta.mime });
+          });
+        });
+      });
+      return chain.then(function () { return out; });
+    }
+
+    // --- session files drawer ---
+
+    function toggleFilesDrawer() {
+      var open = filesDrawer.classList.toggle('open');
+      filesToggle.classList.toggle('on', open);
+      if (open) loadFiles();
+    }
+
+    function loadFiles() {
+      if (!currentSession) {
+        filesList.innerHTML = '<div class="empty-files">No files in this session yet.</div>';
+        return;
+      }
+      fetch('/api/files?session=' + encodeURIComponent(currentSession))
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          var files = d.files || [];
+          filesList.innerHTML = '';
+          if (!files.length) {
+            filesList.innerHTML = '<div class="empty-files">No files in this session yet.</div>';
+            return;
+          }
+          files.forEach(function (f) {
+            var a = el('a', 'frow');
+            a.href = '/api/file?session=' + encodeURIComponent(currentSession) + '&name=' + encodeURIComponent(f.name);
+            a.target = '_blank';
+            a.rel = 'noopener';
+            a.appendChild(fileIcon(f.mime));
+            a.appendChild(el('span', 'file-name', f.name));
+            a.appendChild(el('span', 'file-size', humanSize(f.size)));
+            filesList.appendChild(a);
+          });
+        }).catch(function () {
+          filesList.innerHTML = '<div class="empty-files">Could not load files.</div>';
+        });
+    }
+
+    function refreshFilesIfOpen() {
+      if (filesDrawer.classList.contains('open')) loadFiles();
+    }
+
     function loadInfo() {
       fetch('/api/info').then(function (r) { return r.json(); }).then(function (d) {
         document.getElementById('title').textContent = d.name;
@@ -264,7 +517,7 @@
 
     // --- sessions: URL <-> conversation ---
 
-    function appendMessage(role, text) {
+    function appendMessage(role, text, attachments) {
       var row = addMessage(role, '');
       var bubble = row.querySelector('.bubble');
       if (role === 'agent') {
@@ -272,7 +525,9 @@
         if (html === null) bubble.textContent = text; else bubble.innerHTML = html;
       } else {
         bubble.textContent = text;
+        if (!text) bubble.style.display = 'none';
       }
+      appendAttachments(row, attachments, currentSession);
       return row;
     }
 
@@ -333,7 +588,7 @@
           setLoading(false);
           var list = d.messages || [];
           if (list.length === 0) { showEmpty(true); }
-          else { list.forEach(function (m) { appendMessage(m.role, m.text); }); }
+          else { list.forEach(function (m) { appendMessage(m.role, m.text, m.attachments); }); }
           scrollDown();
           input.focus();
         }).catch(function () {
@@ -349,6 +604,7 @@
       history.pushState({}, '', '/c/' + id);
       renderSessions();
       loadHistory(id);
+      refreshFilesIfOpen();
     }
 
     function newChat() {
@@ -358,6 +614,10 @@
       history.pushState({}, '', '/');
       clearMessages();
       renderSessions();
+      pending = [];
+      renderPending();
+      filesDrawer.classList.remove('open');
+      filesToggle.classList.remove('on');
       input.focus();
     }
 
@@ -366,13 +626,28 @@
       input.style.height = Math.min(input.scrollHeight, 160) + 'px';
     }
 
+    function clearBusy() {
+      busy = false;
+      sendBtn.classList.remove('stop');
+      sendBtn.setAttribute('aria-label', 'Send');
+    }
+
     function send() {
       if (busy || input.disabled) return;
       var text = input.value.trim();
-      if (!text) return;
+      var files = pending.slice();
+      if (!text && !files.length) return;
       input.value = '';
       autoGrow();
-      addMessage('user', text);
+      pending = [];
+      renderPending();
+
+      // The user turn: text bubble (hidden if empty) plus a card per staged file.
+      // Cards get their download link once the session is known (below).
+      var urow = addMessage('user', text);
+      if (!text) urow.querySelector('.bubble').style.display = 'none';
+      var localAtts = files.map(function (f) { return { name: f.name, size: f.size, mime: f.type }; });
+      appendAttachments(urow, localAtts, currentSession);
 
       busy = true;
       sendBtn.classList.add('stop');
@@ -382,28 +657,49 @@
       var bubble = row.querySelector('.bubble');
       var status = el('div', 'status');
       status.appendChild(el('span', 'dot'));
-      var statusText = el('span', null, 'thinking');
+      var statusText = el('span', null, files.length ? 'uploading' : 'thinking');
       status.appendChild(statusText);
       row.appendChild(status);
       scrollDown();
 
-      fetch('/api/message', {
+      function finish() {
+        status.remove();
+        clearBusy();
+        input.focus();
+        scrollDown();
+        loadSessions();
+        refreshFilesIfOpen();
+      }
+
+      uploadAll(files).then(function (uploaded) {
+        // Re-render the user's cards now that the session (and any de-duplicated
+        // server-side names) are known, so each card links to its stored file.
+        if (uploaded.length) {
+          var old = urow.querySelector('.attachments');
+          if (old) old.remove();
+          appendAttachments(urow, uploaded, currentSession);
+        }
+        statusText.textContent = 'thinking';
+        return streamTurn(text, uploaded, bubble, statusText, finish);
+      }).catch(function () {
+        statusText.textContent = 'upload failed';
+        clearBusy();
+      });
+    }
+
+    // POST one message and render its NDJSON progress/answer stream into `bubble`.
+    function streamTurn(text, attachments, bubble, statusText, finish) {
+      var body = { text: text, attachments: attachments || [] };
+      if (currentSession) body.session = currentSession;
+
+      return fetch('/api/message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(currentSession ? { session: currentSession, text: text } : { text: text })
+        body: JSON.stringify(body)
       }).then(function (resp) {
         var reader = resp.body.getReader();
         var decoder = new TextDecoder();
         var buf = '';
-        function finish() {
-          status.remove();
-          busy = false;
-          sendBtn.classList.remove('stop');
-          sendBtn.setAttribute('aria-label', 'Send');
-          input.focus();
-          scrollDown();
-          loadSessions();
-        }
         function pump() {
           return reader.read().then(function (res) {
             if (res.done) { finish(); return; }
@@ -420,9 +716,7 @@
         return pump();
       }).catch(function () {
         statusText.textContent = 'connection error';
-        busy = false;
-        sendBtn.classList.remove('stop');
-        sendBtn.setAttribute('aria-label', 'Send');
+        clearBusy();
       });
     }
 
@@ -481,10 +775,54 @@
       document.body.classList.remove('collapsed');
     });
     document.getElementById('newchat').addEventListener('click', newChat);
+
+    // Attach files: the clip opens the picker; chosen files are staged, not sent.
+    attachBtn.addEventListener('click', function () { fileInput.click(); });
+    fileInput.addEventListener('change', function () {
+      if (fileInput.files && fileInput.files.length) addFiles(fileInput.files);
+      fileInput.value = '';   // let the same file be re-picked later
+    });
+
+    // Drag-and-drop anywhere over the chat pane stages the files.
+    var chat = document.querySelector('.chat');
+    ['dragenter', 'dragover'].forEach(function (ev) {
+      chat.addEventListener(ev, function (e) {
+        if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0) {
+          e.preventDefault();
+          document.body.classList.add('dragging');
+        }
+      });
+    });
+    ['dragleave', 'drop'].forEach(function (ev) {
+      chat.addEventListener(ev, function (e) {
+        if (ev === 'dragleave' && e.relatedTarget && chat.contains(e.relatedTarget)) return;
+        document.body.classList.remove('dragging');
+      });
+    });
+    chat.addEventListener('drop', function (e) {
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+        e.preventDefault();
+        addFiles(e.dataTransfer.files);
+      }
+    });
+
+    // Paste an image (e.g. a screenshot) straight into the composer.
+    input.addEventListener('paste', function (e) {
+      var items = (e.clipboardData || {}).items || [];
+      var files = [];
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].kind === 'file') { var f = items[i].getAsFile(); if (f) files.push(f); }
+      }
+      if (files.length) { e.preventDefault(); addFiles(files); }
+    });
+
+    filesToggle.addEventListener('click', toggleFilesDrawer);
+
     window.addEventListener('popstate', function () {
       currentSession = sessionFromPath();
       renderSessions();
       if (currentSession) loadHistory(currentSession); else clearMessages();
+      refreshFilesIfOpen();
     });
 
     currentSession = sessionFromPath();

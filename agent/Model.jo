@@ -40,11 +40,46 @@ section Model
     !
     ! One entry in the conversation, as the loop sees it — independent of any
     ! provider's wire format. `Assistant` is also what a `Turn.reply` returns.
+    !
+    ! A `UserText` carries `attachments`: files the user shared this turn, which
+    ! live in the agent's data directory. Their bytes are NOT in the transcript —
+    ! only this metadata is; the model reads a file's content through `fs`/`runCode`
+    ! (a provider render folds a manifest line into the user's text so the model
+    ! knows the files are there — see `userContent`). A driver with no file support
+    ! passes the empty list: `UserText(text, [])`.
   //]
   union Message =
-      UserText(text: String)
+      UserText(text: String, attachments: List[Attachment])
     | Assistant(text: String, calls: List[ToolCall])
     | ToolResults(results: List[ToolResult])
+
+  //[ Attachment
+    !
+    ! One file the user shared, referenced by name within the agent's data
+    ! directory (the sandbox roots `fs` there). It rides in the transcript as pure
+    ! metadata — `name` (the basename in the data dir), `size` in bytes, and `mime`
+    ! type — so the UI can show a file card and the model can be told the file
+    ! exists. The bytes stay on disk; the model fetches them with `fs`.
+    !
+    ! `inline` reserves the future option to ALSO present the file to the model
+    ! directly (e.g. an image as a vision content-block) rather than only by
+    ! reference. It is persisted but not yet acted on — the current render is
+    ! reference-only, so an attachment is always a file in the data dir first, with
+    ! inlining an optional presentation layered on top.
+  //]
+  class Attachment(name: String, size: Int, mime: String, inline: Bool)
+
+  //[ The user text a provider sends for one `UserText`, with a manifest of any
+    ! attachments appended so the model knows which files wait in its data
+    ! directory (it reads them with `fs`). No attachments: the text is returned
+    ! unchanged, so an attachment-free turn is byte-for-byte what it was before.
+  //]
+  def userContent(text: String, attachments: List[Attachment]): String =
+    if attachments.isEmpty then text
+    else
+      val names = attachments.map(a => a.name).join(", ")
+      val manifest = "[The user attached these files, available in your data directory — read them with `fs`: \{names}]"
+      if text.trim == "" then manifest else text + "\n\n" + manifest
 
   //[ Rendered
     !

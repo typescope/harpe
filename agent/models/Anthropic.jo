@@ -72,12 +72,13 @@ private def toMessages(history: List[Message], cache: AnthropicCache): py.List =
     val shouldCache = i == lastIdx && cache is !NoCache
 
     match m
-    case UserText(text) =>
+    case UserText(text, attachments) =>
+      val content = Model.userContent(text, attachments)
       if shouldCache then
-        val block = py.dict("type" ~ "text", "text" ~ text, "cache_control" ~ cache.toDict)
+        val block = py.dict("type" ~ "text", "text" ~ content, "cache_control" ~ cache.toDict)
         msgs.append(py.dict("role" ~ "user", "content" ~ py.list(block)))
       else
-        msgs.append(py.dict("role" ~ "user", "content" ~ text))
+        msgs.append(py.dict("role" ~ "user", "content" ~ content))
 
     case Assistant(text, calls) =>
       val content = py.list()

@@ -1,22 +1,15 @@
+//[ Task.jo — the sandbox's default guest task.
+  !
+  ! The entry point the agent's `runCode` tool overwrites each turn. This default
+  ! just proves the sandbox runs.
+//]
+
 namespace UserTask
 
 import SandboxAPI.*
+import harpe.caps.*
 
-def runTask(): Unit receives IO.stdout =
-  var sum = 0
-  var n = 2
-  while n < 1000 do
-    var isPrime = true
-    var i = 2
-    while i * i <= n do
-      if n % i == 0 then
-        isPrime = false
-      end
-      i = i + 1
-    end
-    if isPrime then
-      sum = sum + n
-    end
-    n = n + 1
-  end
-  println sum
+def runTask(): Unit receives IO.stdout, fs, ocr =
+  match ocr.text(fs.root / "poster.png")
+  case Ok(text) => println text
+  case Err(err) =>  println: "failed: " + err

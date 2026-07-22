@@ -18,6 +18,7 @@ import harpe.ffi.time
 import harpe.ffi.json
 import harpe.ffi.threading
 import harpe.ffi.file
+import harpe.ffi.mimetypes
 
 import harpe.Agent
 import harpe.CallContext
@@ -29,6 +30,7 @@ import harpe.logging.logger
 import harpe.Model
 import harpe.Model.Message
 import harpe.Model.UserText
+import harpe.Model.Attachment
 import harpe.turns.Answered
 import harpe.turns.Interrupted
 import harpe.turns.Failed
@@ -54,10 +56,10 @@ class Session(id: String, log: SessionLog, agent: Agent, memory: Memory, callCtx
     ! rollback point, and append the user's message. The message is remembered
     ! so `commit` can archive the whole turn.
   //]
-  def runTurn(text: String, sink: Sink, maxToolRounds: Int, maxRetries: Int): Unit receives logger =
+  def runTurn(text: String, attachments: List[Attachment], sink: Sink, maxToolRounds: Int, maxRetries: Int): Unit receives logger =
     stop.clear()
     lastActive = time.now()
-    val userMsg = UserText(text)
+    val userMsg = UserText(text, attachments)
 
     this.lock.acquire()
 
@@ -104,10 +106,48 @@ end
 //]
 class SessionMeta(id: String, title: String, time: Float)
 
+//[ One file in a session's data directory (an upload or agent output), as the
+  ! file list and drawer show it: its basename, byte size, guessed MIME type, and
+  ! last-modified time.
+//]
+class SessionFile(name: String, size: Int, mime: String, modified: Float)
+
 section Session
   //[ The file backing the session with this id. //]
   def sessionPath(id: String): String receives workspace =
     workspace.relative("logs/sessions/" + id + ".jsonl")
+
+  //[ The per-session data directory — the private root the sandbox grants this
+    ! session as `HARPE_DATA_DIR`, so `fs` (and the document readers) see only this
+    ! session's files. Uploaded attachments land here, and files the agent writes
+    ! surface here too. Created on demand; scoped by id so sessions never share a
+    ! tree (the multi-tenant reason a single shared `data/` will not do).
+  //]
+  def dataDir(id: String): String receives workspace =
+    val dir = workspace.relative("data/" + id)
+    if !os.path.isdir(dir) then os.makedirs(dir)
+    dir
+
+  //[ The files in the data directory `dir`, newest first — uploads and agent
+    ! output alike. The caller passes an already-resolved, contained directory
+    ! (see `ChatServer.existingDataDir`); `[]` if it is missing or empty.
+  //]
+  def listFiles(dir: String): List[SessionFile] =
+    if !os.path.isdir(dir) then []
+    else
+      var files: List[SessionFile] = []
+      for nameDyn in os.listdir(dir) do
+        val name = nameDyn.asString
+        val p = os.path.join(dir, name)
+        if os.path.isfile(p) then
+          val info = SessionFile:
+            name
+            os.path.getsize(p)
+            mimetypes.guessType(name).getOrElse("application/octet-stream")
+            os.path.getmtime(p)
+          files = files + info
+
+      files.sortBy(f => f.modified).reverse
 
   //[ An append log for this id's session (its file is created lazily). //]
   def forSession(id: String): SessionLog receives workspace =
