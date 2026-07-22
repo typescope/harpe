@@ -32,6 +32,7 @@ import harpe.ffi.builtins
 
 import harpe.Agent
 import harpe.CallContext
+import harpe.callContext
 import harpe.Defaults
 import harpe.Memory
 import harpe.Workspace
@@ -46,7 +47,10 @@ import harpe.Model.UserText
 import harpe.Model.Attachment
 import harpe.Model.ToolResults
 import harpe.tools.memoryTools
+import harpe.tools.runCodeTool
 import harpe.context.WindowedContext
+import harpe.Tool
+import harpe.Tool.ToolInput
 
 class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
   // Resident sessions, id -> Session. Persisted sessions not yet touched this
@@ -55,6 +59,11 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
   // turns within one session are serialized by the session's own lock.
   private val registry = py.dict()
   private val registryLock = threading.lock()
+
+  // The `runCode` tool the interactive editor (`/api/run`) executes against — the
+  // same compile+sandbox machinery the agent uses, so an edited script runs exactly
+  // as the agent's would, with the session's data dir as its `fs` root.
+  private val runTool: Tool = runCodeTool(wspace.sandboxDir)
 
   //[ The WSGI application: establish the request context, then route. Each
     ! request runs on its own thread, which does not inherit the process's
@@ -95,6 +104,12 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
 
     else if path == "/api/file" then
       handleFile(environ, startResp)
+
+    else if path == "/api/run" && method == "POST" then
+      handleRun(environ, startResp)
+
+    else if path == "/api/save" && method == "POST" then
+      handleSave(environ, startResp)
 
     else if path == "/api/stop" && method == "POST" then
       handleStop(environ, startResp)
@@ -533,4 +548,43 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
       else
         val mime = mimetypes.guessType(name).getOrElse("application/octet-stream")
         respondBytes(startResp, mime, name, file.readBytes(p))
+
+  //[ Run a Jo program in a session's sandbox — the interactive editor's execute.
+    !
+    ! Compiles and runs `code` through the same `runCode` machinery the agent uses,
+    ! with the session's data dir as `HARPE_DATA_DIR`, so an edited script sees the
+    ! session's files exactly as the agent's programs do. A request with no session
+    ! mints one (so a script written in a fresh chat gets a home), and the client
+    ! adopts the returned id.
+  //]
+  private def handleRun(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace, logger =
+    val body = json.loads(readBody(environ)).cast[py.Dict]
+    val code = body.get("code", "").asString
+    val reqId = body.get("session", "").asString
+    val sessionId = if reqId == "" then createSession().id else sanitizeName(reqId)
+
+    if code.trim == "" || sessionId == "" then
+      respondJson: startResp, py.dict("error" ~ "empty program or session")
+
+    else
+      val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(Session.dataDir(sessionId)))
+      val outcome = with callContext = callCtx in runTool.run(ToolInput(py.dict("code" ~ code)))
+      respondJson: startResp, py.dict("session" ~ sessionId, "result" ~ outcome.result, "summary" ~ outcome.summary)
+
+  //[ Save a script into a session's files (overwriting a same-named one), so it can
+    ! be reopened, edited, and re-run. Mints a session if the request carries none.
+  //]
+  private def handleSave(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
+    val body = json.loads(readBody(environ)).cast[py.Dict]
+    val reqId = body.get("session", "").asString
+    val name = sanitizeName(body.get("name", "").asString)
+    val content = body.get("content", "").asString
+    val sessionId = if reqId == "" then createSession().id else sanitizeName(reqId)
+
+    if name == "" || sessionId == "" then
+      respondJson: startResp, py.dict("error" ~ "missing name or session")
+
+    else
+      file.write(os.path.join(Session.dataDir(sessionId), name), content)
+      respondJson: startResp, py.dict("session" ~ sessionId, "name" ~ name)
 end

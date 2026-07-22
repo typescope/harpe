@@ -34,9 +34,10 @@
        pills sit inset while every item's text/icon lines up in a single column. */
     .brand { display: flex; align-items: center; gap: 8px; padding: 0 8px; }
     .brand .agent-name {
-      font-weight: 650; font-size: 16px; min-width: 0;
+      font-weight: 650; font-size: 16px; min-width: 0; cursor: pointer;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
+    .brand .agent-name:hover { color: var(--accent); }
     .brand .icon-btn { margin-left: auto; flex: none; }
     .powered {
       flex: none; padding: 10px 8px 0; border-top: 1px solid var(--line);
@@ -250,12 +251,13 @@
       padding: 8px 12px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.5;
     }
-    .trace-copy {
-      position: absolute; top: 6px; right: 6px; border: none; cursor: pointer;
+    .trace-btns { position: absolute; top: 6px; right: 6px; display: flex; gap: 6px; }
+    .trace-btn {
+      border: none; cursor: pointer;
       background: rgba(255, 255, 255, .12); color: #e6edf3; font-size: 11px;
       padding: 2px 8px; border-radius: 6px;
     }
-    .trace-copy:hover { background: rgba(255, 255, 255, .24); }
+    .trace-btn:hover { background: rgba(255, 255, 255, .24); }
 
     /* drag-over hint on the chat area */
     body.dragging .chat { outline: 2px dashed var(--accent); outline-offset: -8px; }
@@ -294,13 +296,95 @@
         box-shadow: -4px 0 20px rgba(20, 30, 50, .14);
       }
     }
+
+    /* the "new script" row in the files panel */
+    #files-list .frow-new { cursor: pointer; color: var(--accent); font-weight: 600; }
+    #files-list .frow-new svg { color: var(--accent); }
+
+    /* code editor (edit + run a session script) */
+    .editor-modal {
+      position: fixed; inset: 0; z-index: 50; padding: 24px;
+      background: rgba(20, 30, 50, .42);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .editor-modal.full { padding: 0; }
+    .editor-box {
+      width: 880px; max-width: 100%; height: 82vh;
+      background: var(--panel); border-radius: 14px; overflow: hidden;
+      display: grid; grid-template-rows: auto 1fr;
+      box-shadow: 0 16px 56px rgba(20, 30, 50, .3);
+    }
+    /* with output present: head / code (fills) / drag handle / output (resizable) */
+    .editor-box.has-output {
+      grid-template-rows: auto minmax(120px, 1fr) 6px var(--out-h, 34%);
+    }
+    .editor-modal.full .editor-box { width: 100%; height: 100%; border-radius: 0; }
+    .editor-head {
+      flex: none; display: flex; align-items: center; gap: 8px;
+      padding: 11px 12px; border-bottom: 1px solid var(--line);
+    }
+    .editor-name {
+      flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px;
+      padding: 8px 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px; color: var(--ink); background: var(--bg);
+    }
+    .editor-name:focus { outline: none; border-color: var(--accent); }
+    /* flashed when Save is pressed with no filename */
+    .editor-name.needs-name { border-color: var(--error); box-shadow: 0 0 0 3px rgba(192, 57, 43, .14); }
+    .ed-btn {
+      flex: none; border: none; border-radius: 8px; padding: 8px 16px;
+      font: inherit; font-weight: 600; font-size: 13px; cursor: pointer;
+    }
+    .ed-btn:disabled { opacity: .55; cursor: default; }
+    .ed-run { background: var(--accent); color: #fff; }
+    .ed-run:hover:not(:disabled) { background: #2256d6; }
+    .ed-save { background: var(--agent); color: var(--ink); }
+    .ed-save:hover:not(:disabled) { background: #e2e6ea; }
+    /* full-screen toggle: swap the maximize/restore glyph via the modal's class */
+    #editor .ico-min { display: none; }
+    #editor.full .ico-max { display: none; }
+    #editor.full .ico-min { display: block; }
+    /* The textarea is absolutely positioned to fill the wrapper's used box — a
+       percentage/stretch height does not resolve here because the wrapper's height
+       is grid-stretched (used 493px, computed `auto`). Absolute `inset: 0` fills the
+       used box regardless, so the textarea (and its scrollbar) spans the full area. */
+    .editor-code-wrap { display: flex; min-height: 0; overflow: hidden; background: #0d1117; }
+    .editor-code {
+      flex: 1 1 0; align-self: stretch; min-height: 0; max-height: none; box-sizing: border-box;
+      resize: none; border: none; outline: none;
+      background: #0d1117; color: #e6edf3; padding: 16px; tab-size: 2;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13.5px; line-height: 1.65; white-space: pre; overflow: auto;
+    }
+    /* the drag handle between code and output (shown only when there is output) */
+    .editor-split {
+      display: none; background: var(--line); cursor: row-resize;
+    }
+    .editor-box.has-output .editor-split { display: block; }
+    .editor-split:hover, .editor-split.dragging { background: var(--accent); }
+    /* the code row (grid 1fr) fills; the output row is `var(--out-h)` (default 34%,
+       set in px while dragging the handle), so long output scrolls here on its own */
+    .editor-output {
+      display: none; min-height: 0; overflow: auto; margin: 0;
+      padding: 12px 16px;
+      background: rgba(20, 30, 50, .03); color: var(--ink);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+    }
+    .editor-box.has-output .editor-output { display: block; }
+    .editor-output.err { color: var(--error); }
+    .editor-output .osum {
+      font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+      color: var(--muted); margin-bottom: 6px; position: sticky; top: -12px;
+      background: var(--panel); padding: 4px 0;
+    }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/markdown-it@14/dist/markdown-it.min.js"></script>
 </head>
 <body>
   <aside id="sidebar">
     <div class="brand">
-      <span class="agent-name" id="title">Agent</span>
+      <span class="agent-name" id="title" title="New chat">Agent</span>
       <button id="collapse" class="icon-btn" aria-label="Collapse panel" title="Collapse panel">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
       </button>
@@ -350,6 +434,28 @@
     <div id="files-list"></div>
   </aside>
 
+  <div id="editor" class="editor-modal" style="display: none">
+    <div class="editor-box">
+      <div class="editor-head">
+        <input id="editor-name" class="editor-name" placeholder="filename.jo" spellcheck="false" autocomplete="off">
+        <button id="editor-run" class="ed-btn ed-run">Run</button>
+        <button id="editor-save" class="ed-btn ed-save">Save</button>
+        <button id="editor-full" class="icon-btn" aria-label="Toggle full screen" title="Full screen">
+          <svg class="ico-max" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"></path><path d="M21 8V5a2 2 0 0 0-2-2h-3"></path><path d="M3 16v3a2 2 0 0 0 2 2h3"></path><path d="M16 21h3a2 2 0 0 0 2-2v-3"></path></svg>
+          <svg class="ico-min" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3"></path><path d="M21 8h-3a2 2 0 0 1-2-2V3"></path><path d="M3 16h3a2 2 0 0 1 2 2v3"></path><path d="M16 21v-3a2 2 0 0 1 2-2h3"></path></svg>
+        </button>
+        <button id="editor-close" class="icon-btn" aria-label="Close editor" title="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="editor-code-wrap">
+        <textarea id="editor-code" class="editor-code" spellcheck="false" placeholder="namespace UserTask&#10;&#10;def runTask(): Unit =&#10;  println &quot;hello&quot;"></textarea>
+      </div>
+      <div id="editor-split" class="editor-split" title="Drag to resize"></div>
+      <div id="editor-output" class="editor-output"></div>
+    </div>
+  </div>
+
   <script>
     var msgs = document.getElementById('messages');
     var input = document.getElementById('input');
@@ -361,6 +467,17 @@
     var filesPanel = document.getElementById('files-panel');
     var filesList = document.getElementById('files-list');
     var pendingBar = document.getElementById('pending');
+    var editor = document.getElementById('editor');
+    var editorBox = editor.querySelector('.editor-box');
+    var editorName = document.getElementById('editor-name');
+    var editorCode = document.getElementById('editor-code');
+    var editorOut = document.getElementById('editor-output');
+    var editorSplit = document.getElementById('editor-split');
+    var editorRun = document.getElementById('editor-run');
+    var editorSave = document.getElementById('editor-save');
+    var editorFull = document.getElementById('editor-full');
+    var editorClose = document.getElementById('editor-close');
+    var NEW_SCRIPT = 'namespace UserTask\n\ndef runTask(): Unit =\n  println "hello"\n';
     var NL = String.fromCharCode(10);
     var busy = false;
     var currentSession = null;
@@ -434,6 +551,7 @@
       if (m.indexOf('pdf') >= 0 || ext === 'pdf') return 'pdf';
       if (m.indexOf('word') >= 0 || m.indexOf('wordprocessing') >= 0 || ext === 'doc' || ext === 'docx') return 'word';
       if (m.indexOf('excel') >= 0 || m.indexOf('spreadsheet') >= 0 || ext === 'xls' || ext === 'xlsx' || ext === 'csv') return 'excel';
+      if (ext === 'jo') return 'code';
       return 'file';
     }
 
@@ -467,6 +585,11 @@
         var img = svgIcon(['M21 15l-5-5L5 21'], [rect('3', '3', '18', '18', '2'), circle]);
         img.style.color = '#8257e6';
         return img;
+      }
+      if (kind === 'code') {
+        var g = svgIcon(['M8 9l-3 3 3 3', 'M16 9l3 3-3 3', 'M13.5 7l-3 10']);
+        g.style.color = 'var(--accent)';
+        return g;
       }
       return docGlyph(FILE_LABELS[kind] || null, FILE_COLORS[kind] || null);
     }
@@ -527,14 +650,21 @@
 
         var codeWrap = el('div', 'trace-code');
         var pre = el('pre'); pre.textContent = st.code;
-        var copy = el('button', 'trace-copy', 'Copy');
+
+        var btns = el('div', 'trace-btns');
+        var edit = el('button', 'trace-btn', 'Edit & run');
+        edit.addEventListener('click', function () { openEditor('script.jo', st.code); });
+        var copy = el('button', 'trace-btn', 'Copy');
         copy.addEventListener('click', function () {
           if (navigator.clipboard) navigator.clipboard.writeText(st.code);
           copy.textContent = 'Copied';
           setTimeout(function () { copy.textContent = 'Copy'; }, 1200);
         });
+        btns.appendChild(edit);
+        btns.appendChild(copy);
+
         codeWrap.appendChild(pre);
-        codeWrap.appendChild(copy);
+        codeWrap.appendChild(btns);
         step.appendChild(codeWrap);
 
         if (st.output) {
@@ -635,21 +765,38 @@
       b.textContent = n > 99 ? '99+' : String(n);
     }
 
+    function isScript(name) { return /\.jo$/i.test(name || ''); }
+
     function renderFiles(files) {
       filesList.innerHTML = '';
+
+      // The panel is the session's workspace, so a new script always lives here.
+      var neu = el('div', 'frow frow-new');
+      neu.appendChild(svgIcon(['M12 5v14', 'M5 12h14']));
+      neu.appendChild(el('span', 'file-name', 'New script'));
+      neu.addEventListener('click', function () { openEditor('script.jo', NEW_SCRIPT); });
+      filesList.appendChild(neu);
+
       if (!files.length) {
-        filesList.innerHTML = '<div class="empty-files">No files in this session yet.</div>';
+        filesList.appendChild(el('div', 'empty-files', 'No files in this session yet.'));
         return;
       }
       files.forEach(function (f) {
-        var a = el('a', 'frow');
-        a.href = '/api/file?session=' + encodeURIComponent(currentSession) + '&name=' + encodeURIComponent(f.name);
-        a.target = '_blank';
-        a.rel = 'noopener';
-        a.appendChild(fileIcon(f.mime, f.name));
-        a.appendChild(el('span', 'file-name', f.name));
-        a.appendChild(el('span', 'file-size', humanSize(f.size)));
-        filesList.appendChild(a);
+        // A .jo script opens in the editor (edit + run); other files download.
+        var script = isScript(f.name);
+        var row = el(script ? 'div' : 'a', 'frow');
+        if (script) {
+          row.style.cursor = 'pointer';
+          row.addEventListener('click', function () { openScriptFile(f.name); });
+        } else {
+          row.href = '/api/file?session=' + encodeURIComponent(currentSession) + '&name=' + encodeURIComponent(f.name);
+          row.target = '_blank';
+          row.rel = 'noopener';
+        }
+        row.appendChild(fileIcon(f.mime, f.name));
+        row.appendChild(el('span', 'file-name', f.name));
+        row.appendChild(el('span', 'file-size', humanSize(f.size)));
+        filesList.appendChild(row);
       });
     }
 
@@ -672,6 +819,97 @@
         }).catch(function () {
           filesList.innerHTML = '<div class="empty-files">Could not load files.</div>';
         });
+    }
+
+    // --- code editor (edit + run a session script) ---
+
+    function openEditor(name, code) {
+      editorName.value = name || '';
+      editorName.classList.remove('needs-name');
+      editorName.placeholder = 'filename.jo';
+      editorCode.value = code || '';
+      editorBox.classList.remove('has-output');
+      editorOut.textContent = '';
+      editorOut.classList.remove('err');
+      editorRun.disabled = false; editorRun.textContent = 'Run';
+      editorSave.disabled = false; editorSave.textContent = 'Save';
+      editor.style.display = 'flex';
+      editorCode.focus();
+    }
+
+    function closeEditor() { editor.style.display = 'none'; }
+
+    // Load a saved .jo file from the files panel back into the editor.
+    function openScriptFile(name) {
+      fetch('/api/file?session=' + encodeURIComponent(currentSession) + '&name=' + encodeURIComponent(name))
+        .then(function (r) { return r.text(); })
+        .then(function (txt) { openEditor(name, txt); })
+        .catch(function () {});
+    }
+
+    function showEditorOutput(summary, text, isErr) {
+      editorOut.classList.toggle('err', !!isErr);
+      editorOut.innerHTML = '';
+      if (summary) editorOut.appendChild(el('div', 'osum', summary));
+      editorOut.appendChild(document.createTextNode(text || ''));
+      editorBox.classList.add('has-output');
+      editorOut.scrollTop = 0;
+    }
+
+    // Adopt the session the server minted (a script written in a fresh chat).
+    function adoptSession(id) {
+      if (id && id !== currentSession) {
+        currentSession = id;
+        history.replaceState({}, '', '/c/' + currentSession);
+        loadSessions();
+      }
+    }
+
+    function runEditor() {
+      var code = editorCode.value;
+      if (!code.trim()) return;
+      editorRun.disabled = true; editorRun.textContent = 'Running…';
+      fetch('/api/run', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session: currentSession || '', code: code })
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        editorRun.disabled = false; editorRun.textContent = 'Run';
+        adoptSession(d.session);
+        if (d.error) { showEditorOutput('', d.error, true); return; }
+        var isErr = /crash|did not compile|timed out|no executable/i.test(d.summary || '');
+        showEditorOutput(d.summary || '', d.result || '', isErr);
+        refreshFiles(false);   // a run may have written files
+      }).catch(function () {
+        editorRun.disabled = false; editorRun.textContent = 'Run';
+        showEditorOutput('', 'Could not reach the server.', true);
+      });
+    }
+
+    function saveEditor() {
+      var name = (editorName.value || '').trim();
+      if (!name) {
+        // Make the missing-name obvious instead of silently doing nothing.
+        editorName.classList.add('needs-name');
+        editorName.placeholder = 'name the file first…';
+        editorName.focus();
+        setTimeout(function () { editorName.classList.remove('needs-name'); }, 1500);
+        return;
+      }
+      if (name.indexOf('.') < 0) name += '.jo';
+      editorName.value = name;
+      editorSave.disabled = true;
+      fetch('/api/save', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session: currentSession || '', name: name, content: editorCode.value })
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        editorSave.disabled = false;
+        if (d.error) return;
+        adoptSession(d.session);
+        if (d.name) editorName.value = d.name;
+        refreshFiles(false);
+        editorSave.textContent = 'Saved';
+        setTimeout(function () { editorSave.textContent = 'Save'; }, 1200);
+      }).catch(function () { editorSave.disabled = false; });
     }
 
     function loadInfo() {
@@ -990,6 +1228,7 @@
       document.body.classList.remove('collapsed');
     });
     document.getElementById('newchat').addEventListener('click', newChat);
+    document.getElementById('title').addEventListener('click', newChat);
 
     // Attach files: the clip opens the picker; chosen files are staged, not sent.
     attachBtn.addEventListener('click', function () { fileInput.click(); });
@@ -1033,6 +1272,50 @@
 
     filesToggle.addEventListener('click', toggleFilesPanel);
     filesClose.addEventListener('click', function () { setFilesOpen(false); });
+
+    // code editor
+    editorRun.addEventListener('click', runEditor);
+    editorSave.addEventListener('click', saveEditor);
+    editorFull.addEventListener('click', function () { editor.classList.toggle('full'); editorCode.focus(); });
+    editorClose.addEventListener('click', closeEditor);
+
+    // Drag the handle between code and output to resize the split (sets --out-h,
+    // the output row's height; the code row fills the rest).
+    (function () {
+      var dragging = false;
+      editorSplit.addEventListener('mousedown', function (e) {
+        dragging = true;
+        editorSplit.classList.add('dragging');
+        document.body.style.userSelect = 'none';
+        e.preventDefault();
+      });
+      document.addEventListener('mousemove', function (e) {
+        if (!dragging) return;
+        var r = editorBox.getBoundingClientRect();
+        var h = r.bottom - e.clientY;                 // output height, measured from the bottom
+        h = Math.max(56, Math.min(r.height - 180, h)); // keep room for the code area
+        editorBox.style.setProperty('--out-h', h + 'px');
+      });
+      document.addEventListener('mouseup', function () {
+        if (!dragging) return;
+        dragging = false;
+        editorSplit.classList.remove('dragging');
+        document.body.style.userSelect = '';
+      });
+    })();
+    editor.addEventListener('click', function (e) { if (e.target === editor) closeEditor(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && editor.style.display !== 'none') closeEditor();
+    });
+    editorCode.addEventListener('keydown', function (e) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); runEditor(); }
+      else if (e.key === 'Tab') {
+        e.preventDefault();
+        var s = editorCode.selectionStart, en = editorCode.selectionEnd;
+        editorCode.value = editorCode.value.slice(0, s) + '  ' + editorCode.value.slice(en);
+        editorCode.selectionStart = editorCode.selectionEnd = s + 2;
+      }
+    });
 
     window.addEventListener('popstate', function () {
       currentSession = sessionFromPath();
