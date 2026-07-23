@@ -9,7 +9,7 @@ you cannot touch the host directly.
 
 An example program should look like the following:
 ```Jo
-namespace UserTask
+namespace sandbox.guest
 
 // Simplified prime check using trial division without sqrt
 def isPrime(n: Int): Bool =
@@ -89,8 +89,8 @@ or `.success` to unwrap) and `Option` (match `Some(v)`/`None`). A scanned PDF
 page reads as empty text — render it with `pageImage`, then `ocr.text` the PNG:
 
 ```Jo
-namespace UserTask
-import SandboxAPI.*
+namespace sandbox.guest
+import sandbox.api.*
 
 def runTask(): Unit receives IO.stdout, fs, pdfReader, ocr =
   val doc = fs.openPDF(fs.root / "report.pdf").success

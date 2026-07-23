@@ -138,7 +138,7 @@ To answer, the model wrote and ran a small Jo program — the **only** thing it 
 
 ```jo
 // sandbox/Task.jo (guest module) — written by the model
-namespace UserTask
+namespace sandbox.guest
 import jo.IO.stdout
 import agentapi.*
 

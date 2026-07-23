@@ -11,7 +11,7 @@ greeting, an explanation, a result already in hand), reply directly in text.
 
 An example program should look like the following:
 ```Jo
-namespace UserTask
+namespace sandbox.guest
 
 // Simplified prime check using trial division without sqrt
 def isPrime(n: Int): Bool =
@@ -70,8 +70,8 @@ Errors come back as values, never exceptions: `Result` (match `Ok(v)`/`Err(e)`, 
 empty text — render it with `pageImage`, then `ocr.text` the PNG:
 
 ```Jo
-namespace UserTask
-import SandboxAPI.*
+namespace sandbox.guest
+import sandbox.api.*
 import harpe.caps.*
 
 def runTask(): Unit receives IO.stdout, fs, pdfReader, ocr =

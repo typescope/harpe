@@ -9,7 +9,7 @@ you cannot touch the host directly.
 
 An example program should look like the following:
 ```Jo
-namespace UserTask
+namespace sandbox.guest
 
 // Simplified prime check using trial division without sqrt
 def isPrime(n: Int): Bool =

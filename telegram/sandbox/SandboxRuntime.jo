@@ -1,11 +1,11 @@
-namespace SandboxRuntime
+namespace sandbox.runtime
 
 import jo.IO.stdout
 import harpe.logging.*
 import harpe.ffi.os
-import SandboxAPI
+import sandbox.api
 
-// The agent's per-turn entry. The guest links jo.main = SandboxRuntime.main. It
+// The agent's per-turn entry. The guest links jo.main = sandbox.runtime.main. It
 // installs the audit channel — code inside the sandbox (capability impls) logs
 // through the framework `harpe.logging` channel to a JSONL file the host names via
 // HARPE_AUDIT_LOG; the host (`runCode`) reads that file back and replays the
@@ -17,7 +17,7 @@ import SandboxAPI
 // run sub-agents). OS-level confinement is NOT applied here — it lives outside the
 // process, in an optional `sandbox/run.sh` wrapper (see docs/concepts/sandbox.md).
 def main(): Unit receives stdout =
-  Logging.withLogger(auditLogger(), () => SandboxAPI.runTask())
+  Logging.withLogger(auditLogger(), () => sandbox.api.runTask())
 
 // The audit backend: a JSONL file the host named in HARPE_AUDIT_LOG, or a no-op
 // when unset (the program was launched outside the runCode harness).

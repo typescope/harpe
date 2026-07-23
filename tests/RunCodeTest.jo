@@ -51,11 +51,11 @@ private def exec(tool: Tool, code: String): RunOutcome =
 
 // Wrap a runTask body in a minimal guest program.
 private def guest(body: String): String =
-  "namespace UserTask\nimport SandboxAPI.*\n\ndef runTask(): Unit receives IO.stdout =\n" + body
+  "namespace sandbox.guest\nimport sandbox.api.*\n\ndef runTask(): Unit receives IO.stdout =\n" + body
 
 // A guest program that also receives the `fs` (FileSystem) capability.
 private def guestFs(body: String): String =
-  "namespace UserTask\nimport SandboxAPI.*\n\ndef runTask(): Unit receives IO.stdout, fs =\n" + body
+  "namespace sandbox.guest\nimport sandbox.api.*\n\ndef runTask(): Unit receives IO.stdout, fs =\n" + body
 
 private def check(label: String, actual: String, expected: String): Unit receives stdout =
   assert: actual == expected, "\{label}: expected [\{expected}] but got [\{actual}]"

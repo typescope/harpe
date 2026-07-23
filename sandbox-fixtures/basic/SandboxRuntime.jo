@@ -1,11 +1,11 @@
-namespace SandboxRuntime
+namespace sandbox.runtime
 
 import jo.IO.stdout
 import harpe.logging.*
 import harpe.ffi.os
 import harpe.media.*
 import harpe.caps.*
-import SandboxAPI
+import sandbox.api
 
 // Runtime for the runCode integration tests: install the audit channel (a JSONL
 // file the host names via HARPE_AUDIT_LOG and reads back), emit one record, then
@@ -19,7 +19,7 @@ private def run(): Unit receives stdout, logger =
   // Grant the guest a FileSystem rooted at its own run dir (its working directory,
   // where the host runs it — so `.` is that isolated dir, holding out.py).
   val fs = FileSystemImpl.local(".")
-  with SandboxAPI.fs = fs in SandboxAPI.runTask()
+  with sandbox.api.fs = fs in sandbox.api.runTask()
 
 private def auditLogger(): Logger =
   val path = os.getenv("HARPE_AUDIT_LOG", "")

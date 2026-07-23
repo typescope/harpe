@@ -18,7 +18,7 @@ var editorRun = document.getElementById('editor-run');
 var editorSave = document.getElementById('editor-save');
 var editorFull = document.getElementById('editor-full');
 var editorClose = document.getElementById('editor-close');
-var NEW_SCRIPT = 'namespace UserTask\n\ndef runTask(): Unit =\n  println "hello"\n';
+var NEW_SCRIPT = 'namespace sandbox.guest\n\ndef runTask(): Unit =\n  println "hello"\n';
 var NL = String.fromCharCode(10);
 var busy = false;
 var currentSession = null;

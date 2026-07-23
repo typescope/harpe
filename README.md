@@ -209,12 +209,12 @@ src = ["Task.jo"]
 modules = ["api", { id = "runtime", link = true }]
 
 links = [
-  { from = "jo.main", to = "SandboxRuntime.main" },
-  { from = "SandboxAPI.runTask", to = "UserTask.runTask" },
+  { from = "jo.main", to = "sandbox.runtime.main" },
+  { from = "sandbox.api.runTask", to = "sandbox.guest.runTask" },
 ]
 ```
 
-`SandboxRuntime.main` builds the host-side `Sandbox`, constructs the granted
+`sandbox.runtime.main` builds the host-side `Sandbox`, constructs the granted
 capability impls, and calls `runTask`. On each `runCode` the driver compiles and
 runs the program in an isolated temp directory, under a wall-clock timeout
 (process-group kill) and with the provider keys scrubbed from its environment,
