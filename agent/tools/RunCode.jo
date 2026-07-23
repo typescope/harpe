@@ -114,26 +114,16 @@ private def runCode(
     runScript: String,
     callContext: CallContext)
 : Tool.RunOutcome receives logger =
-  logger.log:
-    "runCode"
-    "code" ~ code
   match findDoneFile(sandboxDir)
   case None =>
-    logger.log:
-      "doneFile"
-      "result" ~ "None"
     new Tool.RunOutcome(
       "The sandbox is not built. Run `jo build` in the sandbox project once before starting the agent.",
       "sandbox not built")
 
   case Some(donePath) =>
     gate.acquire()
-    logger.log:
-      "doneFile"
-      "result" ~ "donePath"
     val runDir = tempfileMod.mkdtemp(prefix = "run-").asString
     val outcome = py.try(buildAndRun(code, donePath, runDir, buildTimeout, runTimeout, runScript, callContext))
-
     val _ = py.try(shutilMod.rmtree(runDir, ignore_errors = true))
     gate.release()
 
@@ -158,7 +148,6 @@ private def buildAndRun(
   // Each run emits one `harpe.tools.runCode` log entry — the program under test
   // plus the fields specific to how it ended — to the injected channel. What
   // becomes of the entry (format, destination) is the Logger backend's policy.
-
   val runSrc   = os.path.join(runDir, "Task.jo")
   val runOut   = os.path.join(runDir, "out.py")
   val runAudit = os.path.join(runDir, "audit.jsonl")
@@ -171,10 +160,6 @@ private def buildAndRun(
   val t0 = time.now()
   val build = subprocess.runCapped(args, buildTimeout)
   val compileSeconds = builtins.round(time.now() - t0, 2)
-
-  logger.log:
-    runCodeCategory
-    "build done" ~ compileSeconds
 
   if build.timedOut then
     logger.log:

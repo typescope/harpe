@@ -12,8 +12,7 @@ def main(): Unit receives stdout =
   val prUrl   = os.getenv("PR_URL", "")
   val token   = os.getenv("GITHUB_TOKEN", "")
   var dryRun  = os.getenv("DRY_RUN", "") == "true"
-  val root    = os.path.abspath("./repo")
-  val ghImpl = new GithubImpl(root, prUrl, dryRun, token)
+  val ghImpl = new GithubImpl(prUrl, dryRun, token)
 
   with sandbox.api.github = ghImpl in
     sandbox.api.runTask()
@@ -39,17 +38,15 @@ private def parsePrURL(url: String): Option[PR] =
 
 //[ GitHub interface backed by local snapshot files + live GitHub API //]
 class GithubImpl
-  private val fs: FileSystem
   private val dryRun: Bool
-  private val prInfo: sandbox.api.PRInfo
   private var pr: PR
+  private val prInfo: sandbox.api.PRInfo
   private val client: GithubClient
   private var repoDir: String
 
   view sandbox.api.GitHub
 
-  def GithubImpl(root: String, prUrl: String, dryRun: Bool, token: String): GithubImpl =
-    this.fs = FileSystemImpl.local(root)
+  def GithubImpl(prUrl: String, dryRun: Bool, token: String): GithubImpl =
     this.dryRun = dryRun
     this.repoDir = ""
     this.pr = new PR("", "", 0)
@@ -62,19 +59,20 @@ class GithubImpl
 
     // Download the full repo snapshot once before the LLM starts reviewing.
     // Subsequent sandbox invocations reuse the extracted files via the sentinel.
-    val sentinel = new Path.Join(Path.root, "/.downloaded")
-    match fs.readText(sentinel)
-    case Ok(prefix) =>
-      this.repoDir = prefix
+    val sentinel = ".downloaded"
+    match py.try(py.open(sentinel, "r"))
+    case Ok(f) =>
+      this.repoDir = f.read().asString
     case Err(_) =>
-      val prefix = match client.downloadRepo(pr.owner, pr.repo, prInfo.headSha, root)
+      val prefix = match client.downloadRepo(pr.owner, pr.repo, prInfo.headSha)
         case Ok(p)    => p
         case Err(msg) => abort("failed to download repo: " + msg)
       end
       this.repoDir = prefix
-      match fs.openTextFile(sentinel)
-      case Ok(tf) => tf.write(prefix)
-      case Err(msg) => println("write sentinel file:"+msg)
+
+      match py.try(py.open(sentinel, "w").write(prefix))
+      case Ok(_) => pass
+      case Err(e) => println("write file: " + e.message)
 
 
   private def getPR(): SandboxAPI.PRInfo =
@@ -108,11 +106,11 @@ class GithubImpl
 
   //[ Read repo file — tries local snapshot first, falls back to GitHub API. //]
   def readFile(path: String, start: Int = 0, ends: Int = -1): String =
-    val localPath = "/" + repoDir + "/" + path
+    val localPath = repoDir + "/" + path
 
-    match fs.readText(new Path.Join(Path.root, localPath))
+    match py.try(py.open(localPath, "r", encoding = "utf-8").read())
     case Ok(content) =>
-      val lines = content.split("\n")
+      val lines = content.asString.split("\n")
       val sliced = if ends == -1 then lines.drop(start) else lines.drop(start).take(ends - start)
       sliced.join("\n")
     case _ => abort("cannot read file:" + localPath)
@@ -162,10 +160,10 @@ class GithubImpl
     for file in files do
       val path = file.asString
       if !isBinaryPath(path) then
-        match fs.readText(new Path.Join(Path.root, path))
+        match py.try(py.open(path, "r", encoding = "utf-8").read())
         case Ok(content) =>
-          val relPath = path.replace(repoDir+"/", "")
-          val lines   = content.split("\n")
+          val relPath = path.replace(repoDir + "/", "")
+          val lines   = content.asString.split("\n")
           var lineNum = 1
           for line in lines do
             val trimmed = line.trim

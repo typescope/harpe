@@ -143,7 +143,7 @@ private class GithubClient
     ! Returns the top-level prefix directory name extracted from the zip
     ! (e.g. "owner-repo-sha7chars") so callers can resolve relative paths.
   //]
-  def downloadRepo(owner: String, repo: String, ref: String, destDir: String): Result[String, String] =
+  def downloadRepo(owner: String, repo: String, ref: String): Result[String, String] =
     val url = "https://api.github.com/repos/" + owner + "/" + repo + "/zipball/" + ref
     val headers = py.dict(
       "Authorization" ~ ("token " + token),
@@ -159,11 +159,11 @@ private class GithubClient
     val ioMod  = py.module("io").cast[IoMod]
     val zipMod = py.module("zipfile").cast[ZipFileMod]
     val zf     = zipMod.ZipFile(ioMod.BytesIO(data))
-    zf.extractall(destDir)
+    zf.extractall("./")
     val namelist = zf.namelist().cast[py.List]
     zf.close()
 
     if namelist.size > 0 then
-      Ok(namelist[0].asString.split("/n")[0])
+      Ok(namelist[0].asString.split("/")[0])
     else
       Err("empty namelist from repo extraction")
