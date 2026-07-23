@@ -2,6 +2,7 @@ namespace sandbox.runtime
 
 import jo.IO.stdout
 import harpe.ffi.os
+import harpe.ffi.glob
 import harpe.media.*
 import harpe.caps.*
 import SandboxAPI
@@ -47,7 +48,6 @@ class GithubImpl
   private val client: GithubClient
   private val repoDir: String
   private var repoPrefix: String
-  private val builtins: PyBuiltinOpen
 
   view sandbox.api.GitHub
 
@@ -56,7 +56,6 @@ class GithubImpl
     this.dryRun = dryRun
     this.repoDir = repoDir
     this.repoPrefix = ""
-    this.builtins = py.module("builtins").cast[PyBuiltinOpen]
     this.pr = new PR("", "", 0)
     match parsePrURL(prUrl)
     case Some(pr) => this.pr = pr
@@ -64,6 +63,21 @@ class GithubImpl
 
     this.client = new GithubClient(token)
     this.prInfo = getPR()
+
+    // Download the full repo snapshot once before the LLM starts reviewing.
+    // Subsequent sandbox invocations reuse the extracted files via the sentinel.
+    if !os.path.isdir(repoDir) then os.makedirs(repoDir)
+    val sentinel = new Path.Join(Path.root, repoDir + "/.downloaded")
+    match fs.readText(sentinel)
+    case Ok(prefix) =>
+      this.repoPrefix = prefix
+    case Err(_) =>
+      val prefix = client.downloadRepo(pr.owner, pr.repo, prInfo.headSha, repoDir)
+      this.repoPrefix = prefix
+      match fs.openTextFile(sentinel)
+      case Ok(tf) => tf.write(prefix)
+      case Err(msg) => println("write sentinel file:"+msg)
+
 
   private def getPR(): SandboxAPI.PRInfo =
     val pr = client.getPR(pr.owner, pr.repo, pr.num)
@@ -94,10 +108,13 @@ class GithubImpl
   //[ Read repo file — tries local snapshot first, falls back to GitHub API. //]
   def readFile(path: String, start: Int = 0, ends: Int = -1): String =
     val localPath = repoDir + "/" + repoPrefix + "/" + path
-    val content = fs.readText(localPath)
-    val lines = content.split("\n")
-    val sliced = if ends == -1 then lines.drop(start) else lines.drop(start).take(ends - start)
-    sliced.join("\n")
+
+    match fs.readText(new Path.Join(Path.root, localPath))
+    case Ok(content) =>
+      val lines = content.split("\n")
+      val sliced = if ends == -1 then lines.drop(start) else lines.drop(start).take(ends - start)
+      sliced.join("\n")
+    case _ => ""
 
   //[ Keywords that introduce a definition in common languages //]
   private val defKeywords = [
@@ -138,18 +155,16 @@ class GithubImpl
       matched
 
   def findDefinition(identifier: String): List[SandboxAPI.DefinitionMatch] =
-    val rootDir    = repoDir + "/" + repoPrefix
-    val stripLen   = rootDir.length + 1  // length of "rootDir/" prefix to strip
-    val globMod    = py.module("glob").cast[GlobMod]
-    val absPaths   = globMod.glob(rootDir + "/**/*", recursive = true).cast[py.List]
+    val repoPath    = repoDir + "/" + repoPrefix
+    val files   = glob.glob(repoPath + "/**/*", recursive = true)
     var results: List[SandboxAPI.DefinitionMatch] = []
 
-    for absPathDyn in absPaths do
-      val absPath = absPathDyn.asString
-      if !isBinaryPath(absPath) then
-        val content = fs.readText(absPath)
-        if content != "" then
-          val relPath = absPath.substring(stripLen, absPath.length)
+    for file in files do
+      val path = file.asString
+      if !isBinaryPath(path) then
+        match fs.readText(new Path.Join(Path.root,path))
+        case Ok(content) =>
+          val relPath = path.replace(repoPath+"/", "")
           val lines   = content.split("\n")
           var lineNum = 1
           for line in lines do
@@ -158,6 +173,7 @@ class GithubImpl
               if matchesDef(trimmed, keyword, identifier) then
                 results = results + (new SandboxAPI.DefinitionMatch(relPath, lineNum, trimmed))
             lineNum = lineNum + 1
+        case _ => pass
     results
 
   //[ Write operations — call the real GitHub API (or print in dry-run mode) //]
