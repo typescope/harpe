@@ -438,27 +438,36 @@ function refreshFiles(autoOpen) {
 // All @codemirror/* are pinned to one version set and cross-linked with `?deps`,
 // so they share a single @codemirror/state instance (mixing versions triggers
 // "multiple instances" errors). If the import fails (offline), we simply keep the
-// textarea. Loaded on first editor open, then reused.
-var cmView = null, cmLoading = false;
+// textarea.
+var cmView = null;
+var cmModules = null;   // cached Promise<[modules] | null>
 var CMV = { st: '6.4.1', vw: '6.26.3', lg: '6.10.2', cm: '6.6.0', lz: '1.2.0' };
 
-function ensureCodeMirror() {
-  if (cmView || cmLoading) return;
-  cmLoading = true;
+// Fetch the CodeMirror module graph (once). Kicked off at page-load idle so the
+// modules are warm in the cache before the user clicks "Edit"; a later call
+// resolves the same cached promise. Resolves to null (not rejects) on failure, so
+// the caller falls back to the textarea.
+function loadCM() {
+  if (cmModules) return cmModules;
   var base = 'https://esm.sh/';
   var dView = '@codemirror/state@' + CMV.st;
   var dLang = '@codemirror/state@' + CMV.st + ',@codemirror/view@' + CMV.vw + ',@lezer/highlight@' + CMV.lz;
   var dCmds = '@codemirror/state@' + CMV.st + ',@codemirror/view@' + CMV.vw + ',@codemirror/language@' + CMV.lg;
-  Promise.all([
+  cmModules = Promise.all([
     import(base + '@codemirror/state@' + CMV.st),
     import(base + '@codemirror/view@' + CMV.vw + '?deps=' + dView),
     import(base + '@codemirror/language@' + CMV.lg + '?deps=' + dLang),
     import(base + '@codemirror/commands@' + CMV.cm + '?deps=' + dCmds),
     import(base + '@lezer/highlight@' + CMV.lz)
-  ]).then(function (m) {
-    buildCodeMirror(m[0], m[1], m[2], m[3], m[4]);
-  }).catch(function () {
-    cmLoading = false;   // keep the textarea fallback
+  ]).catch(function () { return null; });
+  return cmModules;
+}
+
+// Build the editor view once, from the (pre)loaded modules.
+function ensureCodeMirror() {
+  if (cmView) return;
+  loadCM().then(function (m) {
+    if (m && !cmView) buildCodeMirror(m[0], m[1], m[2], m[3], m[4]);
   });
 }
 
@@ -529,7 +538,6 @@ function buildCodeMirror(S, V, L, C, H) {
     ]
   });
   editorCode.style.display = 'none';   // retire the textarea fallback
-  cmLoading = false;
   cmView.focus();
 }
 
@@ -1048,3 +1056,8 @@ loadInfo();
 loadSessions();
 if (currentSession) { loadHistory(currentSession); refreshFiles(true); }
 input.focus();
+
+// Warm CodeMirror in the background so the editor opens instantly on first click.
+// On idle (or a short delay), so it never competes with the initial render.
+if (window.requestIdleCallback) requestIdleCallback(loadCM, { timeout: 3000 });
+else setTimeout(loadCM, 1500);
