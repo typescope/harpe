@@ -557,8 +557,8 @@ function openEditor(name, code) {
   editorBox.classList.remove('has-output');
   editorOut.textContent = '';
   editorOut.classList.remove('err');
-  editorRun.disabled = false; editorRun.textContent = 'Run';
-  editorSave.disabled = false; editorSave.textContent = 'Save';
+  editorRun.disabled = false; editorRun.classList.remove('running');
+  editorSave.disabled = false; editorSave.classList.remove('saved');
   editor.style.display = 'flex';
   ensureCodeMirror();
   editorFocusCode();
@@ -595,19 +595,19 @@ function adoptSession(id) {
 function runEditor() {
   var code = editorGetCode();
   if (!code.trim()) return;
-  editorRun.disabled = true; editorRun.textContent = 'Running…';
+  editorRun.disabled = true; editorRun.classList.add('running');
   fetch('/api/run', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session: currentSession || '', code: code })
   }).then(function (r) { return r.json(); }).then(function (d) {
-    editorRun.disabled = false; editorRun.textContent = 'Run';
+    editorRun.disabled = false; editorRun.classList.remove('running');
     adoptSession(d.session);
     if (d.error) { showEditorOutput('', d.error, true); return; }
     var isErr = /crash|did not compile|timed out|no executable/i.test(d.summary || '');
     showEditorOutput(d.summary || '', d.result || '', isErr);
     refreshFiles(false);   // a run may have written files
   }).catch(function () {
-    editorRun.disabled = false; editorRun.textContent = 'Run';
+    editorRun.disabled = false; editorRun.classList.remove('running');
     showEditorOutput('', 'Could not reach the server.', true);
   });
 }
@@ -634,8 +634,8 @@ function saveEditor() {
     adoptSession(d.session);
     if (d.name) editorName.value = d.name;
     refreshFiles(false);
-    editorSave.textContent = 'Saved';
-    setTimeout(function () { editorSave.textContent = 'Save'; }, 1200);
+    editorSave.classList.add('saved');
+    setTimeout(function () { editorSave.classList.remove('saved'); }, 1200);
   }).catch(function () { editorSave.disabled = false; });
 }
 
