@@ -346,26 +346,39 @@ body:not(.files-open) #files-panel { display: none; }
 }
 .editor-modal.full .editor-box { width: 100%; height: 100%; border-radius: 0; }
 .editor-head {
-  flex: none; display: flex; align-items: center; gap: 8px;
-  padding: 11px 12px; border-bottom: 1px solid var(--line);
+  flex: none; display: flex; align-items: center; gap: 6px;
+  padding: 9px 10px 9px 13px; border-bottom: 1px solid var(--line);
 }
+.editor-file-icon { flex: none; width: 16px; height: 16px; color: var(--accent); }
+/* filename as a borderless title; the box only appears on hover/focus */
 .editor-name {
-  flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius);
-  padding: 8px 11px; font-family: var(--mono);
-  font-size: 13px; color: var(--ink); background: var(--bg);
+  flex: 0 1 auto; width: 230px; min-width: 60px; max-width: 44%;
+  border: none; background: transparent; color: var(--ink);
+  font-family: var(--mono); font-size: 13.5px; font-weight: 600;
+  padding: 5px 7px; border-radius: var(--radius); transition: background .12s;
 }
-.editor-name:focus { outline: none; border-color: var(--accent); }
+.editor-name::placeholder { color: var(--muted); font-weight: 500; }
+.editor-name:hover { background: var(--agent); }
+.editor-name:focus { outline: none; background: var(--agent); box-shadow: inset 0 0 0 1px var(--line); }
 /* flashed when Save is pressed with no filename */
-.editor-name.needs-name { border-color: var(--error); box-shadow: 0 0 0 3px rgba(192, 57, 43, .14); }
+.editor-name.needs-name { background: #fdecea; box-shadow: inset 0 0 0 1px var(--error); }
+.editor-head-sp { flex: 1; }
 .ed-btn {
-  flex: none; border: none; border-radius: var(--radius); padding: 8px 16px;
+  flex: none; display: inline-flex; align-items: center; gap: 6px;
+  border: none; border-radius: var(--radius); padding: 7px 14px;
   font: inherit; font-weight: 600; font-size: 13px; cursor: pointer;
 }
 .ed-btn:disabled { opacity: .55; cursor: default; }
 .ed-run { background: var(--accent); color: #fff; }
 .ed-run:hover:not(:disabled) { background: var(--accent-hover); }
+.ed-run svg { display: block; }
 .ed-save { background: var(--agent); color: var(--ink); }
 .ed-save:hover:not(:disabled) { background: #e2e6ea; }
+/* window controls (full screen, close) set apart from the actions */
+.editor-win {
+  flex: none; display: flex; align-items: center; gap: 2px;
+  margin-left: 4px; padding-left: 6px; border-left: 1px solid var(--line);
+}
 /* full-screen toggle: swap the maximize/restore glyph via the modal's class */
 #editor .ico-min { display: none; }
 #editor.full .ico-max { display: none; }
