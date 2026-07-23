@@ -37,28 +37,16 @@ private def review(pr: String, dryRun: Bool): Unit receives stdout, workspace, l
   val context = new FullContext(basePrompt, memory, [])
   val agent = new Agent(Defaults.model(), tools, context)
   val interact = new PrintInteract(stdout)
-  val sessionLog = SessionLog.newLog()
-
-  // The sandbox runtime context
-  val data = workspace.relative("data")
-  if !os.path.isdir(data) then os.makedirs(data)
   val callCtx = Map(
-    "HARPE_DATA_DIR" ~ os.path.abspath(data),
     "PR_URL" ~ pr,
     "GITHUB_TOKEN" ~ os.getenv("GITHUB_TOKEN", ""),
-    "DRY_RUN" ~ dryRun.toString,
-    "HARPE_REPO_DIR" ~ os.path.abspath(data + "/repo")
+    "DRY_RUN" ~ dryRun.toString
   )
 
   match with callContext = callCtx in agent.runTurn(UserText("please start review the pr", []), interact, 30, 4)
-  case Answered(delta, text) =>
-    sessionLog.append(time.now(), delta)
+  case Answered(_, _) =>
     println "  · review completed"
   case _ =>
     println "  · review failed"
 
-  // Persist memory regardless of outcome (it is not rolled back with a turn).
-  if !memory.isEmpty then Memory.save(sessionLog.memoryPath, memory)
-
-  sessionLog.close()
 end
