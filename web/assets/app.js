@@ -10,6 +10,7 @@ var filesList = document.getElementById('files-list');
 var pendingBar = document.getElementById('pending');
 var editor = document.getElementById('editor');
 var editorBox = editor.querySelector('.editor-box');
+var editorCodeWrap = editor.querySelector('.editor-code-wrap');
 var editorName = document.getElementById('editor-name');
 var editorCode = document.getElementById('editor-code');
 var editorOut = document.getElementById('editor-output');
@@ -78,6 +79,9 @@ var JO_TOKEN = new RegExp([
 ].join('|'), 'g');
 
 var JO_CLASS = { c: 'hl-c', s: 'hl-s', n: 'hl-n', k: 'hl-k', l: 'hl-l', t: 'hl-t', o: 'hl-o' };
+
+// The keyword set (whole-word), shared by the CodeMirror stream tokenizer.
+var JO_KW = /^(?:if|then|else|while|do|for|in|match|case|end|begin|return|break|continue|rescue|annotation|def|val|var|fun|type|class|object|interface|extension|pattern|union|param|section|allow|as|auto|defer|import|namespace|new|private|receives|view|is|with)$/;
 
 function highlightJo(code) {
   var out = '', last = 0, m;
@@ -429,18 +433,127 @@ function refreshFiles(autoOpen) {
 
 // --- code editor (edit + run a session script) ---
 
+// --- CodeMirror 6 (lazy-loaded from a CDN; the plain textarea is the fallback) ---
+//
+// All @codemirror/* are pinned to one version set and cross-linked with `?deps`,
+// so they share a single @codemirror/state instance (mixing versions triggers
+// "multiple instances" errors). If the import fails (offline), we simply keep the
+// textarea. Loaded on first editor open, then reused.
+var cmView = null, cmLoading = false;
+var CMV = { st: '6.4.1', vw: '6.26.3', lg: '6.10.2', cm: '6.6.0', lz: '1.2.0' };
+
+function ensureCodeMirror() {
+  if (cmView || cmLoading) return;
+  cmLoading = true;
+  var base = 'https://esm.sh/';
+  var dView = '@codemirror/state@' + CMV.st;
+  var dLang = '@codemirror/state@' + CMV.st + ',@codemirror/view@' + CMV.vw + ',@lezer/highlight@' + CMV.lz;
+  var dCmds = '@codemirror/state@' + CMV.st + ',@codemirror/view@' + CMV.vw + ',@codemirror/language@' + CMV.lg;
+  Promise.all([
+    import(base + '@codemirror/state@' + CMV.st),
+    import(base + '@codemirror/view@' + CMV.vw + '?deps=' + dView),
+    import(base + '@codemirror/language@' + CMV.lg + '?deps=' + dLang),
+    import(base + '@codemirror/commands@' + CMV.cm + '?deps=' + dCmds),
+    import(base + '@lezer/highlight@' + CMV.lz)
+  ]).then(function (m) {
+    buildCodeMirror(m[0], m[1], m[2], m[3], m[4]);
+  }).catch(function () {
+    cmLoading = false;   // keep the textarea fallback
+  });
+}
+
+function buildCodeMirror(S, V, L, C, H) {
+  var tg = H.tags;
+  // A Jo stream tokenizer, from the same grammar as highlightJo. `st.m` tracks the
+  // one multi-line construct on each side: block comment (//[ … //]) and """ … """.
+  var joLang = L.StreamLanguage.define({
+    startState: function () { return { m: null }; },
+    token: function (s, st) {
+      if (st.m === 'c') { if (s.match(/^.*?\/\/+\]/)) st.m = null; else s.skipToEnd(); return 'comment'; }
+      if (st.m === 't') { if (s.match(/^.*?"""/)) st.m = null; else s.skipToEnd(); return 'string'; }
+      if (s.eatSpace()) return null;
+      if (s.match(/^\/\/+\[/)) { if (!s.match(/^.*?\/\/+\]/)) { st.m = 'c'; s.skipToEnd(); } return 'comment'; }
+      if (s.match(/^\/\/.*/)) return 'comment';
+      if (s.match(/^"""/)) { if (!s.match(/^.*?"""/)) { st.m = 't'; s.skipToEnd(); } return 'string'; }
+      if (s.match(/^"(?:\\.|[^"\\])*"/) || s.match(/^'(?:\\.|[^'\\])'/) || s.match(/^`(?:\\.|[^`\\])*`/)) return 'string';
+      if (s.match(/^0[xX][0-9a-fA-F_]+/) || s.match(/^\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?/)) return 'number';
+      if (s.match(/^[A-Za-z_][A-Za-z0-9_]*/)) {
+        var w = s.current();
+        if (JO_KW.test(w)) return 'keyword';
+        if (w === 'true' || w === 'false' || w === 'this') return 'atom';
+        return /^[A-Z]/.test(w) ? 'typeName' : null;
+      }
+      if (s.match(/^(?:=>|[+\-*/%|&^><=:?!@~]+)/)) return 'operator';
+      s.next(); return null;
+    },
+    tokenTable: {
+      comment: tg.comment, string: tg.string, number: tg.number,
+      keyword: tg.keyword, atom: tg.atom, typeName: tg.typeName, operator: tg.operator
+    }
+  });
+
+  var joHl = L.HighlightStyle.define([
+    { tag: tg.comment, color: '#8b949e', fontStyle: 'italic' },
+    { tag: tg.string, color: '#a5d6ff' },
+    { tag: tg.number, color: '#79c0ff' },
+    { tag: tg.keyword, color: '#ff7b72' },
+    { tag: tg.atom, color: '#79c0ff' },
+    { tag: tg.typeName, color: '#ffa657' },
+    { tag: tg.operator, color: '#d2a8ff' }
+  ]);
+
+  var mono = 'ui-monospace, SFMono-Regular, Menlo, monospace';
+  var joTheme = V.EditorView.theme({
+    '&': { height: '100%', color: '#e6edf3', backgroundColor: '#0d1117' },
+    '&.cm-focused': { outline: 'none' },
+    '.cm-scroller': { fontFamily: mono, fontSize: '13.5px', lineHeight: '1.65' },
+    '.cm-content': { caretColor: '#e6edf3', padding: '10px 0' },
+    '.cm-gutters': { backgroundColor: '#0d1117', color: '#484f58', border: 'none' },
+    '.cm-activeLine': { backgroundColor: 'rgba(255,255,255,.035)' },
+    '.cm-activeLineGutter': { backgroundColor: 'rgba(255,255,255,.035)' },
+    '.cm-cursor': { borderLeftColor: '#e6edf3' }
+  }, { dark: true });
+
+  cmView = new V.EditorView({
+    doc: editorCode.value,   // seed from the textarea (whatever is open now)
+    parent: editorCodeWrap,
+    extensions: [
+      V.lineNumbers(), V.highlightActiveLine(), V.drawSelection(), V.dropCursor(),
+      C.history(), L.bracketMatching(), L.indentOnInput(),
+      joLang, L.syntaxHighlighting(joHl), joTheme,
+      S.EditorState.tabSize.of(2),
+      V.keymap.of([].concat(C.defaultKeymap, C.historyKeymap, [
+        C.indentWithTab,
+        { key: 'Mod-Enter', run: function () { runEditor(); return true; } }
+      ]))
+    ]
+  });
+  editorCode.style.display = 'none';   // retire the textarea fallback
+  cmLoading = false;
+  cmView.focus();
+}
+
+// Read/write/focus the code through CodeMirror when it is up, else the textarea.
+function editorGetCode() { return cmView ? cmView.state.doc.toString() : editorCode.value; }
+function editorSetCode(code) {
+  if (cmView) cmView.dispatch({ changes: { from: 0, to: cmView.state.doc.length, insert: code || '' } });
+  else editorCode.value = code || '';
+}
+function editorFocusCode() { (cmView || editorCode).focus(); }
+
 function openEditor(name, code) {
   editorName.value = name || '';
   editorName.classList.remove('needs-name');
   editorName.placeholder = 'filename.jo';
-  editorCode.value = code || '';
+  editorSetCode(code);
   editorBox.classList.remove('has-output');
   editorOut.textContent = '';
   editorOut.classList.remove('err');
   editorRun.disabled = false; editorRun.textContent = 'Run';
   editorSave.disabled = false; editorSave.textContent = 'Save';
   editor.style.display = 'flex';
-  editorCode.focus();
+  ensureCodeMirror();
+  editorFocusCode();
 }
 
 function closeEditor() { editor.style.display = 'none'; }
@@ -472,7 +585,7 @@ function adoptSession(id) {
 }
 
 function runEditor() {
-  var code = editorCode.value;
+  var code = editorGetCode();
   if (!code.trim()) return;
   editorRun.disabled = true; editorRun.textContent = 'Running…';
   fetch('/api/run', {
@@ -506,7 +619,7 @@ function saveEditor() {
   editorSave.disabled = true;
   fetch('/api/save', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session: currentSession || '', name: name, content: editorCode.value })
+    body: JSON.stringify({ session: currentSession || '', name: name, content: editorGetCode() })
   }).then(function (r) { return r.json(); }).then(function (d) {
     editorSave.disabled = false;
     if (d.error) return;
@@ -882,7 +995,7 @@ filesClose.addEventListener('click', function () { setFilesOpen(false); });
 // code editor
 editorRun.addEventListener('click', runEditor);
 editorSave.addEventListener('click', saveEditor);
-editorFull.addEventListener('click', function () { editor.classList.toggle('full'); editorCode.focus(); });
+editorFull.addEventListener('click', function () { editor.classList.toggle('full'); editorFocusCode(); });
 editorClose.addEventListener('click', closeEditor);
 
 // Drag the handle between code and output to resize the split (sets --out-h,
