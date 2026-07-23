@@ -68,6 +68,12 @@ returns an error if the name does not match a file in your data directory — fi
 name (or write the file) and try again. Files also always appear in the session's
 files panel, but `sendFile` is how you surface one *as part of your answer*.
 
+To link a session file **inside your prose** (a clickable link rather than an
+attachment), use the `chordbox:` scheme with the file's name:
+`[the diagram](chordbox:computer.svg)`. Never write a filesystem path such as
+`sandbox:/mnt/data/computer.svg` or `data/…` — only `chordbox:<name>` resolves to a
+file the user can open.
+
   It also opens documents:
   - `fs.openPDF(p)` → `pageCount`, `pageText(n)` (1-based; read only the pages you
     need), `outline`, `metadata`, `pageImage(n, target)` (render a page to PNG).

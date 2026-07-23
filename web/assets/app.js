@@ -110,6 +110,34 @@ var md = (typeof markdownit !== 'undefined')
     })
   : null;
 
+// A `[text](chordbox:name)` link points at a file in this session's data dir.
+// The agent uses this scheme (see AGENT.md) rather than guessing a filesystem
+// path. We rewrite it to the real `/api/file` download URL at render time — the
+// session is known then, not when the rule is installed — and reduce `name` to a
+// basename so a stray path (e.g. a copied `/mnt/data/...`) still resolves.
+if (md) {
+  var okLink = md.validateLink.bind(md);
+  md.validateLink = function (url) {
+    return /^chordbox:/i.test(url) || okLink(url);
+  };
+  var baseLinkOpen = md.renderer.rules.link_open
+    || function (t, i, o, e, s) { return s.renderToken(t, i, o); };
+  md.renderer.rules.link_open = function (tokens, idx, options, env, self) {
+    var tok = tokens[idx];
+    var hi = tok.attrIndex('href');
+    if (hi >= 0) {
+      var m = /^chordbox:(.*)$/i.exec(tok.attrs[hi][1]);
+      if (m) {
+        var name = m[1].replace(/^.*[\\/]/, '');   // basename
+        tok.attrs[hi][1] = (currentSession && name) ? fileUrl(currentSession, name) : '#';
+        tok.attrSet('target', '_blank');
+        tok.attrSet('rel', 'noopener');
+      }
+    }
+    return baseLinkOpen(tokens, idx, options, env, self);
+  };
+}
+
 function renderMarkdown(src) {
   return md ? md.render(src) : null;
 }
