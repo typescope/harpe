@@ -114,15 +114,23 @@ private def runCode(
     runScript: String,
     callContext: CallContext)
 : Tool.RunOutcome receives logger =
-
+  logger.log:
+    "runCode"
+    "code" ~ code
   match findDoneFile(sandboxDir)
   case None =>
+    logger.log:
+      "doneFile"
+      "result" ~ "None"
     new Tool.RunOutcome(
       "The sandbox is not built. Run `jo build` in the sandbox project once before starting the agent.",
       "sandbox not built")
 
   case Some(donePath) =>
     gate.acquire()
+    logger.log:
+      "doneFile"
+      "result" ~ "donePath"
     val runDir = tempfileMod.mkdtemp(prefix = "run-").asString
     val outcome = py.try(buildAndRun(code, donePath, runDir, buildTimeout, runTimeout, runScript, callContext))
 
