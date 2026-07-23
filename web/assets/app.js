@@ -56,12 +56,54 @@ function collapsible(text, maxLines, bodyClass) {
   return wrap;
 }
 
+// --- Jo syntax highlighting ---
+//
+// A small tokenizer ported from the VS Code TextMate grammar (tools/vscode).
+// One ordered regex scans the source; alternatives are tried left-to-right at
+// each position, so comments/strings win over keywords/operators. Every piece of
+// text is HTML-escaped (the code is untrusted — agent- or user-written), so the
+// returned markup is XSS-safe.
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+var JO_TOKEN = new RegExp([
+  '(?<c>\\/\\/+\\[[\\s\\S]*?\\/\\/+\\]|\\/\\/.*)',                                  // comments (block //[ … //], line //)
+  '(?<s>"""[\\s\\S]*?"""|"(?:\\\\.|[^"\\\\])*"|`(?:\\\\.|[^`\\\\\\n])*`|\'(?:\\\\.|[^\'\\\\])\')', // strings, regex, char
+  '(?<n>\\b0[xX][0-9a-fA-F_]+\\b|\\b\\d[\\d_]*\\.\\d[\\d_]*(?:[eE][+-]?\\d+)?\\b|\\b\\d[\\d_]*\\b)', // numbers
+  '(?<k>\\b(?:if|then|else|while|do|for|in|match|case|end|begin|return|break|continue|rescue|annotation|def|val|var|fun|type|class|object|interface|extension|pattern|union|param|section|allow|as|auto|defer|import|namespace|new|private|receives|view|is|with)\\b)', // keywords
+  '(?<l>\\b(?:true|false|this)\\b)',                                               // literals
+  '(?<t>\\b[A-Z][A-Za-z0-9_]*\\b)',                                                // type names
+  '(?<o>=>|[+\\-*/%|&^><=:?!@~]+)'                                                 // operators
+].join('|'), 'g');
+
+var JO_CLASS = { c: 'hl-c', s: 'hl-s', n: 'hl-n', k: 'hl-k', l: 'hl-l', t: 'hl-t', o: 'hl-o' };
+
+function highlightJo(code) {
+  var out = '', last = 0, m;
+  JO_TOKEN.lastIndex = 0;
+  while ((m = JO_TOKEN.exec(code)) !== null) {
+    if (m[0].length === 0) { JO_TOKEN.lastIndex++; continue; }   // guard against zero-width
+    out += escapeHtml(code.slice(last, m.index));
+    var key = Object.keys(m.groups).filter(function (g) { return m.groups[g] !== undefined; })[0];
+    out += '<span class="' + JO_CLASS[key] + '">' + escapeHtml(m[0]) + '</span>';
+    last = m.index + m[0].length;
+  }
+  return out + escapeHtml(code.slice(last));
+}
+
 // Markdown via markdown-it (loaded from CDN in <head>). Default options
 // keep html:false, so raw HTML in the model's reply is escaped, not run
-// (XSS-safe without a separate sanitizer). Returns null if the library
+// (XSS-safe without a separate sanitizer). A ```Jo fence is syntax-highlighted
+// via `highlightJo` (which returns escaped markup). Returns null if the library
 // failed to load (e.g. offline), so the caller can fall back to plain text.
 var md = (typeof markdownit !== 'undefined')
-  ? markdownit({ linkify: true, breaks: true })
+  ? markdownit({
+      linkify: true, breaks: true,
+      highlight: function (code, lang) {
+        return /^jo$/i.test(lang || '') ? highlightJo(code) : '';
+      }
+    })
   : null;
 
 function renderMarkdown(src) {
@@ -214,7 +256,7 @@ function codeTrace(steps) {
     if (steps.length > 1) step.appendChild(el('div', 'lbl', 'Program ' + (i + 1)));
 
     var codeWrap = el('div', 'trace-code');
-    var pre = el('pre'); pre.textContent = st.code;
+    var pre = el('pre'); pre.innerHTML = highlightJo(st.code);
 
     var btns = el('div', 'trace-btns');
     var edit = el('button', 'trace-btn', 'Edit & run');
