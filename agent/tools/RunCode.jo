@@ -92,6 +92,14 @@ private def replayArgs(lines: List[String], runSrc: String, runOut: String): py.
   args.append(py.dynamic(runSrc))
   args
 
+private def compilerErrorText(outText: String, errText: String): String =
+  val out = text.stripAnsi(outText).trim
+  val err = text.stripAnsi(errText).trim
+
+  if out == "" then err
+  else if err == "" then out
+  else out + "\n" + err
+
 //[ One bounded, isolated run: acquire a build slot, compile+run in a fresh temp
   ! directory, then delete it and release the slot — always, even on failure. If
   ! the guest has not been built, return a clear message instead (no build here).
@@ -170,7 +178,7 @@ private def buildAndRun(
       "build timed out · \{buildTimeout}s")
 
   if build.returnCode != 0 then
-    val compileError = text.stripAnsi(build.err).trim
+    val compileError = compilerErrorText(build.out, build.err)
     logger.log:
       runCodeCategory
       "code"           ~ code
