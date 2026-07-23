@@ -103,7 +103,17 @@ section SessionLog
     val role = d.get("role", "").asString
 
     if role == "user" then
-      UserText(d.get("text", "").asString)
+      var attachments: List[Attachment] = []
+      for aDyn in d.get("attachments", py.list()).cast[py.List] do
+        val a = aDyn.cast[py.Dict]
+        val att = Attachment:
+          a.get("name", "").asString
+          a.get("size", 0).asInt
+          a.get("mime", "").asString
+          a.get("inline", false).asBool
+        attachments = attachments + att
+
+      UserText(d.get("text", "").asString, attachments)
 
     else if role == "assistant" then
       var calls: List[ToolCall] = []
@@ -125,8 +135,11 @@ section SessionLog
   //]
   private[harpe] def messageToDict(time: Float, m: Message): py.Dict =
     match m
-    case UserText(text) =>
-      py.dict("time" ~ time, "role" ~ "user", "text" ~ text)
+    case UserText(text, attachments) =>
+      val attList = py.list()
+      for a in attachments do
+        attList.append: py.dict("name" ~ a.name, "size" ~ a.size, "mime" ~ a.mime, "inline" ~ a.inline)
+      py.dict("time" ~ time, "role" ~ "user", "text" ~ text, "attachments" ~ attList)
 
     case Assistant(text, calls) =>
       val callList = py.list()

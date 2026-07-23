@@ -53,8 +53,8 @@ private section OpenAIResponses
 
     for m in history do
       match m
-      case UserText(text) =>
-        items.append(py.dict("role" ~ "user", "content" ~ text))
+      case UserText(text, attachments) =>
+        items.append(py.dict("role" ~ "user", "content" ~ Model.userContent(text, attachments)))
 
       case Assistant(text, calls) =>
         if text != "" then

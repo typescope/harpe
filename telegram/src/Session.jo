@@ -45,7 +45,7 @@ private class Session(id: String, log: SessionLog, agent: Agent, memory: Memory,
     ! message. The message is remembered so `commit` can archive the whole turn.
   //]
   def runTurn(text: String, client: TelegramClient, maxToolRounds: Int, maxRetries: Int): Unit receives logger =
-    val userMsg = UserText(text)
+    val userMsg = UserText(text, [])
     val interact = new TelegramInteract(client, this.id)
 
     with callContext = callCtx in

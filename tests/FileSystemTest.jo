@@ -1,9 +1,9 @@
 //[ FileSystemTest.jo
   !
   ! Unit test for `harpe.media.FileSystem`: a `FileSystemImpl` rooted at a temp dir —
-  ! `exists`/`isFile`/`stat`/`list`, one-shot reads, and open files: `TextFile`
-  ! (whole, head/tail, lazy line reads, and write) and `BinaryFile` (as `Bytes`,
-  ! including write), all over `Path`.
+  ! `exists`/`isFile`/`stat`/`list`, one-shot reads and writes (`writeTextFile`,
+  ! `createBinaryFile`), and open files: `TextFile` (whole, head/tail, lazy line reads)
+  ! and `BinaryFile` (as `Bytes`, including in-place write), all over `Path`.
 //]
 
 namespace harpe.test.FileSystemTest
@@ -107,12 +107,9 @@ def run(): Unit receives stdout =
   check("binary size on handle", bin.size == 2)
   bin.close()
 
-  // Text write: overwrite with shorter content; truncation means no stale bytes.
-  val editable = fs.openTextFile(fs.root / "notes.txt").success
-  editable.write("updated\n")
-  check("text write content", editable.text == "updated\n")
-  check("text write truncates", editable.size == 8)
-  editable.close()
+  // writeTextFile: overwrite an existing file (UTF-8) in one shot, replacing content.
+  fs.writeTextFile(fs.root / "notes.txt", "updated\n")
+  check("writeTextFile overwrites", fs.readText(fs.root / "notes.txt").success == "updated\n")
 
   // Binary write: patch one byte in place, without truncation.
   val binEdit = fs.openBinaryFile(fs.root / "sub" / "a.txt").success
@@ -127,5 +124,14 @@ def run(): Unit receives stdout =
   check("list entry count", entries.size == 4)
   check("list sorted", entries.get(0).path.toString == "/big.txt" && entries.get(3).path.toString == "/sub")
   check("list entry kinds", !entries.get(0).isDirectory && entries.get(3).isDirectory)
+
+  // writeTextFile / createBinaryFile create the file and any missing parent directory.
+  fs.writeTextFile(fs.root / "gen" / "note.txt", "hello")
+  check("writeTextFile creates a new file + parent", fs.readText(fs.root / "gen" / "note.txt").success == "hello")
+
+  val blob = fs.createBinaryFile(fs.root / "gen" / "out.bin")
+  blob.write(0, fs.readBytes(fs.root / "sub" / "a.txt").success)   // "hh" from the binary-write patch above
+  blob.close()
+  check("createBinaryFile round-trips bytes", fs.readBytes(fs.root / "gen" / "out.bin").success.toBase64 == "aGg=")
 
   check("rejects a nonexistent root", isErr(() => FileSystemImpl.local(os.path.join(dir, "no-such-subdir"))))

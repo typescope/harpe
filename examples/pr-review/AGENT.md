@@ -22,9 +22,9 @@ You interact with the PR ONLY by writing Jo programs, compiling them to Python, 
 
 An example program should look like the following:
 ```jo
-    namespace UserTask
+    namespace sandbox.guest
     import jo.IO.stdout
-    import SandboxAPI.*
+    import sandbox.api.*
 
     def runTask(): Unit receives stdout, github =
         val pr    = github.getPR() // get PR info

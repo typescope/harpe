@@ -1,8 +1,8 @@
 //[ FileSystemImpl.jo
   !
   ! The trusted implementation of the `FileSystem` capability (declared in the pure
-  ! `caps` module): all reads resolve a `Path` against the real root and do **local**
-  ! I/O — no broker, no bytes over a socket.
+  ! `caps` module): every `Path` resolves against the real root and reads/writes do
+  ! **local** I/O — no broker, no bytes over a socket.
 //]
 
 namespace harpe.media
@@ -91,6 +91,19 @@ class FileSystemImpl
   def openBinaryFile(path: Path): Result[BinaryFile, String] =
     openHandle(path).map: handle => new BinaryFileImpl(handle)
 
+  def writeTextFile(file: Path, content: String): Unit =
+    val real = resolvePath(realRoot, file)
+    ensureParent(real)
+
+    val handle = py.open(real, "wb")
+    handle.write(py.dynamic(content).encode())
+    handle.close()
+
+  def createBinaryFile(path: Path): BinaryFile =
+    val real = resolvePath(realRoot, path)
+    ensureParent(real)
+    new BinaryFileImpl(py.open(real, "w+b"))
+
   //[ Open for reading and writing, in binary mode.
     !
     ! The not-a-file check gives the common miss a clean symbolic message; `py.try`
@@ -102,13 +115,20 @@ class FileSystemImpl
     if !os.path.isfile(real) then Err("no such file: '\{path.toString}'")
     else orMessage: py.try(py.open(real, "r+b"))
 
+  //[ Create `real`'s parent directory if it is missing, so a write into a fresh
+    ! subdirectory (`fs.root / "out" / "chart.png"`) just works.
+  //]
+  private def ensureParent(real: String): Unit =
+    val parent = os.path.dirname(real)
+    if parent != "" && !os.path.isdir(parent) then os.makedirs(parent)
+
   //[ Whether `name` is in the interface's fixed, runtime-portable encoding set. //]
   private def validEncoding(name: String): Bool =
     name == "utf-8" || name == "windows-1252"
 end
 
 section FileSystemImpl
-  //[ A read-only filesystem over `root` (the local case). //]
+  //[ A filesystem over `root` (the local case). //]
   def local(root: String): FileSystemImpl = new FileSystemImpl(root)
 end
 
@@ -151,11 +171,6 @@ private class TextFileImpl(handle: py.Dynamic, encoding: String)
     py.dynamic(chunks).reverse()
     val text = py.dynamic("").encode().join(chunks).decode(encoding, "replace").asString
     lastLines(text, count)
-
-  def write(content: String): Unit =
-    handle.seek(0)
-    handle.write(py.dynamic(content).encode(encoding))
-    handle.truncate()
 
   def size: Int = os.fstat(handle.fileno().asInt).st_size.asInt
 

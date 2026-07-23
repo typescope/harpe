@@ -56,7 +56,7 @@ private def runChat(): Unit receives stdout, workspace, logger =
   val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(data))
 
   val inputHistory = workspace.relative("logs/inputs.txt")
-  val interact = new ConsoleInteract(stdout, inputHistory)
+  val interact = new Console(stdout, inputHistory)
 
   interact.init()
 
@@ -74,11 +74,11 @@ private def runChat(): Unit receives stdout, workspace, logger =
 
     if userInput == "" then continue
 
-    val userMsg = UserText(userInput)
+    val userMsg = UserText(userInput, [])
 
-    val res = interact.turn: () =>
+    val res = interact.turn: (turnInteract: Interact) =>
       with callContext = callCtx in
-        agent.runTurn(userMsg, interact, maxToolRounds = 50, maxRetries = 4)
+        agent.runTurn(userMsg, turnInteract, maxToolRounds = 50, maxRetries = 4)
 
     if res is Answered(delta, text) then
       sessionLog.append(time.now(), delta)

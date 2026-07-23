@@ -51,11 +51,11 @@ private def exec(tool: Tool, code: String): RunOutcome =
 
 // Wrap a runTask body in a minimal guest program.
 private def guest(body: String): String =
-  "namespace UserTask\nimport SandboxAPI.*\n\ndef runTask(): Unit receives IO.stdout =\n" + body
+  "namespace sandbox.guest\nimport sandbox.api.*\n\ndef runTask(): Unit receives IO.stdout =\n" + body
 
 // A guest program that also receives the `fs` (FileSystem) capability.
 private def guestFs(body: String): String =
-  "namespace UserTask\nimport SandboxAPI.*\n\ndef runTask(): Unit receives IO.stdout, fs =\n" + body
+  "namespace sandbox.guest\nimport sandbox.api.*\n\ndef runTask(): Unit receives IO.stdout, fs =\n" + body
 
 private def check(label: String, actual: String, expected: String): Unit receives stdout =
   assert: actual == expected, "\{label}: expected [\{expected}] but got [\{actual}]"
@@ -123,7 +123,10 @@ def run(): Unit receives stdout =
   concurrentCheck(runCodeTool(sandboxDir, 120.0, 5.0, 2), 4)
 
   // A program that does not type-check is caught at the compile checkpoint.
-  check("compile-error", tag(exec(fast, guest("  println undefinedThing\n"))), "compile-error")
+  val badCompile = exec(fast, guest("  println undefinedThing\n"))
+  check("compile-error", tag(badCompile), "compile-error")
+  assert: badCompile.result.contains("Undefined term name undefinedThing"), "compile-error-diagnostic: missing compiler stdout diagnostic — got [\{badCompile.result}]"
+  println "  ok compile-error-diagnostic"
 
   // An infinite loop is killed by the host wall-clock timeout.
   check("host-timeout", tag(exec(quick, guest("  var i = 0\n  while i >= 0 do i = i + 1\n"))), "timeout")
