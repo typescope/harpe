@@ -124,7 +124,6 @@ private def runCode(
   case Some(donePath) =>
     gate.acquire()
     val runDir = tempfileMod.mkdtemp(prefix = "run-").asString
-
     val outcome = py.try(buildAndRun(code, donePath, runDir, buildTimeout, runTimeout, runScript, callContext))
 
     val _ = py.try(shutilMod.rmtree(runDir, ignore_errors = true))
@@ -164,6 +163,10 @@ private def buildAndRun(
   val t0 = time.now()
   val build = subprocess.runCapped(args, buildTimeout)
   val compileSeconds = builtins.round(time.now() - t0, 2)
+
+  logger.log:
+    runCodeCategory
+    "build done" ~ compileSeconds
 
   if build.timedOut then
     logger.log:

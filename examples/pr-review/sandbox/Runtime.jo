@@ -12,10 +12,8 @@ def main(): Unit receives stdout =
   val prUrl   = os.getenv("PR_URL", "")
   val token   = os.getenv("GITHUB_TOKEN", "")
   var dryRun  = os.getenv("DRY_RUN", "") == "true"
-  val root    = os.getenv("HARPE_DATA_DIR", ".")
-  val repoDir = os.getenv("HARPE_REPO_DIR", root + "/repo")
-  val fs = FileSystemImpl.local(root)
-  val ghImpl = new GithubImpl(fs, prUrl, dryRun, token, repoDir)
+  val root    = os.path.abspath("./repo")
+  val ghImpl = new GithubImpl(root, prUrl, dryRun, token)
 
   with sandbox.api.github = ghImpl in
     sandbox.api.runTask()
@@ -41,21 +39,19 @@ private def parsePrURL(url: String): Option[PR] =
 
 //[ GitHub interface backed by local snapshot files + live GitHub API //]
 class GithubImpl
-  val fs: FileSystem
-  val dryRun: Bool
-  val prInfo: sandbox.api.PRInfo
+  private val fs: FileSystem
+  private val dryRun: Bool
+  private val prInfo: sandbox.api.PRInfo
   private var pr: PR
   private val client: GithubClient
-  private val repoDir: String
-  private var repoPrefix: String
+  private var repoDir: String
 
   view sandbox.api.GitHub
 
-  def GithubImpl(fs: FileSystem, prUrl: String, dryRun: Bool, token: String, repoDir: String): GithubImpl =
-    this.fs = fs
+  def GithubImpl(root: String, prUrl: String, dryRun: Bool, token: String): GithubImpl =
+    this.fs = FileSystemImpl.local(root)
     this.dryRun = dryRun
-    this.repoDir = repoDir
-    this.repoPrefix = ""
+    this.repoDir = ""
     this.pr = new PR("", "", 0)
     match parsePrURL(prUrl)
     case Some(pr) => this.pr = pr
@@ -66,21 +62,26 @@ class GithubImpl
 
     // Download the full repo snapshot once before the LLM starts reviewing.
     // Subsequent sandbox invocations reuse the extracted files via the sentinel.
-    if !os.path.isdir(repoDir) then os.makedirs(repoDir)
-    val sentinel = new Path.Join(Path.root, repoDir + "/.downloaded")
+    val sentinel = new Path.Join(Path.root, "/.downloaded")
     match fs.readText(sentinel)
     case Ok(prefix) =>
-      this.repoPrefix = prefix
+      this.repoDir = prefix
     case Err(_) =>
-      val prefix = client.downloadRepo(pr.owner, pr.repo, prInfo.headSha, repoDir)
-      this.repoPrefix = prefix
+      val prefix = match client.downloadRepo(pr.owner, pr.repo, prInfo.headSha, root)
+        case Ok(p)    => p
+        case Err(msg) => abort("failed to download repo: " + msg)
+      end
+      this.repoDir = prefix
       match fs.openTextFile(sentinel)
       case Ok(tf) => tf.write(prefix)
       case Err(msg) => println("write sentinel file:"+msg)
 
 
   private def getPR(): SandboxAPI.PRInfo =
-    val pr = client.getPR(pr.owner, pr.repo, pr.num)
+    val pr = match client.getPR(pr.owner, pr.repo, pr.num)
+      case Ok(d)    => d
+      case Err(msg) => abort("failed to fetch PR: " + msg)
+    end
 
     var diffs: List[sandbox.api.FileDiff] = []
     for d in pr["diffs"].cast[py.List] do
@@ -107,14 +108,14 @@ class GithubImpl
 
   //[ Read repo file — tries local snapshot first, falls back to GitHub API. //]
   def readFile(path: String, start: Int = 0, ends: Int = -1): String =
-    val localPath = repoDir + "/" + repoPrefix + "/" + path
+    val localPath = "/" + repoDir + "/" + path
 
     match fs.readText(new Path.Join(Path.root, localPath))
     case Ok(content) =>
       val lines = content.split("\n")
       val sliced = if ends == -1 then lines.drop(start) else lines.drop(start).take(ends - start)
       sliced.join("\n")
-    case _ => ""
+    case _ => abort("cannot read file:" + localPath)
 
   //[ Keywords that introduce a definition in common languages //]
   private val defKeywords = [
@@ -155,16 +156,15 @@ class GithubImpl
       matched
 
   def findDefinition(identifier: String): List[SandboxAPI.DefinitionMatch] =
-    val repoPath    = repoDir + "/" + repoPrefix
-    val files   = glob.glob(repoPath + "/**/*", recursive = true)
+    val files   = glob.glob(repoDir + "/**/*", recursive = true)
     var results: List[SandboxAPI.DefinitionMatch] = []
 
     for file in files do
       val path = file.asString
       if !isBinaryPath(path) then
-        match fs.readText(new Path.Join(Path.root,path))
+        match fs.readText(new Path.Join(Path.root, path))
         case Ok(content) =>
-          val relPath = path.replace(repoPath+"/", "")
+          val relPath = path.replace(repoDir+"/", "")
           val lines   = content.split("\n")
           var lineNum = 1
           for line in lines do
@@ -192,9 +192,11 @@ class GithubImpl
       println ("  comments: " + commentsJson)
       println "ACTION_COMPLETED"
     else
-      client.submitReview(owner, repo, num, prInfo.headSha, verdictStr, body, commentsJson)
-      println "✓ Review submitted"
-      println "ACTION_COMPLETED"
+      match client.submitReview(owner, repo, num, prInfo.headSha, verdictStr, body, commentsJson)
+      case Ok(_)    =>
+        println "✓ Review submitted"
+        println "ACTION_COMPLETED"
+      case Err(msg) => println ("✗ submitReview failed: " + msg)
 
   def addComment(body: String): Unit receives stdout =
     val PR(owner, repo, num) = pr
@@ -203,9 +205,11 @@ class GithubImpl
       println ("  " + body)
       println "ACTION_COMPLETED"
     else
-      client.addComment(owner, repo, num, body)
-      println "✓ Comment posted"
-      println "ACTION_COMPLETED"
+      match client.addComment(owner, repo, num, body)
+      case Ok(_)    =>
+        println "✓ Comment posted"
+        println "ACTION_COMPLETED"
+      case Err(msg) => println ("✗ addComment failed: " + msg)
 
   def merge(commitMessage: String): Unit receives stdout =
     val PR(owner, repo, num) = pr
@@ -213,8 +217,10 @@ class GithubImpl
       println "[DRY RUN] merge PR"
       println "ACTION_COMPLETED"
     else
-      client.mergePR(owner, repo, num, prInfo.headSha, commitMessage)
-      println "✓ PR merged"
-      println "ACTION_COMPLETED"
+      match client.mergePR(owner, repo, num, prInfo.headSha, commitMessage)
+      case Ok(_)    =>
+        println "✓ PR merged"
+        println "ACTION_COMPLETED"
+      case Err(msg) => println ("✗ mergePR failed: " + msg)
 
 end

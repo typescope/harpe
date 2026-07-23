@@ -58,13 +58,11 @@ private class GithubClient
     this.token = token
     this.client = module.Github(token, user_agent = "harpe-pr-review/1.0")
 
-  private def getPull(owner: String, repo: String, num: Int): py.Dynamic =
-    client.get_repo(owner + "/" + repo).get_pull(num)
+  def getPR(owner: String, repo: String, num: Int): Result[py.Dict, String] =
+    val pr = py.try(client.get_repo(owner + "/" + repo).get_pull(num))
+      rescue Err(err) => return Err(err.message)
 
-  def getPR(owner: String, repo: String, number: Int): py.Dict =
-    val pr = getPull(owner, repo, number)
     val diffs: py.List = py.list()
-
     for f in pr.get_files().cast[py.List] do
       diffs.append(py.dict(
           "path"      ~   f.filename,
@@ -75,8 +73,7 @@ private class GithubClient
       ))
     end
 
-
-    py.dict(
+    Ok(py.dict(
         "owner"    ~      owner,
         "repo"     ~      repo,
         "number"   ~      pr.number,
@@ -88,8 +85,7 @@ private class GithubClient
         "head_sha" ~      pr.head.sha,
         "state"    ~      pr.state,
         "diffs"    ~      diffs
-    )
-
+    ))
 
   //[ Submit a PR review via PyGithub.
     !
@@ -99,20 +95,30 @@ private class GithubClient
   def submitReview(
     owner: String,
     repo: String,
-    number: Int,
+    num: Int,
     headSha: String,
     event: String,
     body: String,
     commentsJson: String
-  ): Unit =
-    val pr       = getPull(owner, repo, number).cast[Review]
-    val commit   = client.get_repo(owner + "/" + repo).get_commit(headSha)
+  ): Result[String, String] =
+    val pr = py.try(client.get_repo(owner + "/" + repo).get_pull(num))
+      rescue Err(err)=> return Err(err.message)
+    val commit  = py.try(client.get_repo(owner + "/" + repo).get_commit(headSha))
+      rescue Err(err) => return Err(err.message)
     val comments = jsonMod.loads(commentsJson)
-    pr.create_review(commit, body, event, comments)
+
+    match py.try(pr.create_review(commit, body, event, comments))
+    case Ok(_) => Ok("")
+    case Err(e) => Err(e.message)
 
   //[ Post an issue-level comment on the PR. //]
-  def addComment(owner: String, repo: String, number: Int, body: String): Unit =
-    getPull(owner, repo, number).cast[Review].create_issue_comment(body)
+  def addComment(owner: String, repo: String, num: Int, body: String): Result[String, String] =
+    val pr = py.try(client.get_repo(owner + "/" + repo).get_pull(num))
+      rescue Err(err) => return Err(err.message)
+
+    match py.try(pr.create_issue_comment(body))
+    case Ok(_) => Ok("")
+    case Err(e) => Err(e.message)
 
   //[ Merge the PR using the head SHA as a guard against concurrent updates.
     !
@@ -124,10 +130,12 @@ private class GithubClient
     num: Int,
     headSha: String,
     commitMessage: String
-  ): Unit =
-    getPull(owner, repo, num).cast[Review].merge(
-      sha = headSha,
-      commit_message = commitMessage)
+  ): Result[String, String] =
+    val pr = py.try(client.get_repo(owner + "/" + repo).get_pull(num))
+      rescue Err(err) => return Err(err.message)
+    match py.try(pr.merge(sha = headSha, commit_message = commitMessage))
+    case Ok(_) => Ok("")
+    case Err(e) => Err(e.message)
 
   //[ Download a repository snapshot as a zip archive and extract to destDir.
     !
@@ -135,7 +143,7 @@ private class GithubClient
     ! Returns the top-level prefix directory name extracted from the zip
     ! (e.g. "owner-repo-sha7chars") so callers can resolve relative paths.
   //]
-  def downloadRepo(owner: String, repo: String, ref: String, destDir: String): String =
+  def downloadRepo(owner: String, repo: String, ref: String, destDir: String): Result[String, String] =
     val url = "https://api.github.com/repos/" + owner + "/" + repo + "/zipball/" + ref
     val headers = py.dict(
       "Authorization" ~ ("token " + token),
@@ -143,18 +151,19 @@ private class GithubClient
     )
     val urllibreq = py.module("urllib.request").cast[UrllibRequestMod]
     val req  = urllibreq.Request(url, headers = py.dynamic(headers))
-    val resp = urllibreq.urlopen(req).cast[HttpResponse]
-    val data = resp.read()
+
+    val resp = py.try(urllibreq.urlopen(req).cast[HttpResponse]) rescue Err(err) => return Err(err.message)
+    val data = py.try(resp.read()) rescue Err(err) => return Err(err.message)
     resp.close()
 
     val ioMod  = py.module("io").cast[IoMod]
     val zipMod = py.module("zipfile").cast[ZipFileMod]
     val zf     = zipMod.ZipFile(ioMod.BytesIO(data))
     zf.extractall(destDir)
-    var prefix = ""
-    for name in zf.namelist().cast[py.List] do
-      if prefix == "" then
-        val n = name.asString
-        prefix = if n.endsWith("/") then n.substring(0, n.length - 1) else n
+    val namelist = zf.namelist().cast[py.List]
     zf.close()
-    prefix
+
+    if namelist.size > 0 then
+      Ok(namelist[0].asString.split("/n")[0])
+    else
+      Err("empty namelist from repo extraction")
