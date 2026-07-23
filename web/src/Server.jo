@@ -52,6 +52,38 @@ import harpe.context.WindowedContext
 import harpe.Tool
 import harpe.Tool.ToolInput
 
+//[ The `sendFile` tool — the agent's channel for delivering a file to the user.
+  !
+  ! A file the agent produced already lives in the session's data directory (it
+  ! wrote it with `fs`) and is already served by `/api/file`. This tool moves no
+  ! bytes: it validates the name and records the *intent* to show it. The tool CALL
+  ! is the record — it sits in the model's own transcript (so the agent knows what
+  ! it sent), and `handleHistory` recognizes the call and renders the file as an
+  ! attachment on the reply. One event, two renderings: no fork between what the
+  ! model reasons over and what the user sees. A clean error comes back if the name
+  ! does not resolve, so the model can correct it (write the file first, or fix a
+  ! typo) rather than silently failing.
+//]
+def sendFileTool(): Tool = new Tool:
+  name = "sendFile"
+  description = "Deliver a file to the user — it appears as an attachment in your reply. Write the file to the data directory first (e.g. with `fs`)."
+  params = [Tool.strParam("fileName", "The name of the file in your data directory to send to the user")]
+  run = input =>
+    val fileName = input.string("fileName")
+    val dir = callContext.getOrElse("HARPE_DATA_DIR", "")
+    val name = os.path.basename(fileName.replace("\\", "/"))
+
+    if dir == "" then
+      new Tool.RunOutcome("No data directory is available to send from.", "sendFile · no data dir")
+
+    else if name == "" || name == "." || name == ".." || !os.path.isfile(os.path.join(dir, name)) then
+      new Tool.RunOutcome(
+        "No such file: '\{fileName}'. Write it to your data directory first, then send it.",
+        "sendFile · no such file")
+
+    else
+      new Tool.RunOutcome("Sent '\{name}' to the user.", "sendFile · \{name}")
+
 class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
   // Resident sessions, id -> Session. Persisted sessions not yet touched this
   // run are loaded from disk on first access. The server is threaded (each
@@ -254,7 +286,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     val memory = new Memory
     val agent = new Agent:
       brain = brain
-      tools = Defaults.tools() ++ memoryTools(memory)
+      tools = Defaults.tools() ++ memoryTools(memory) ++ [sendFileTool()]
       context = new WindowedContext:
         baseSystem = workspace.read("AGENT.md").getOrElse("")
         memory = memory
@@ -293,7 +325,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
       // transcript stays on disk.
       val agent = new Agent:
         brain = brain
-        tools = Defaults.tools() ++ memoryTools(memory)
+        tools = Defaults.tools() ++ memoryTools(memory) ++ [sendFileTool()]
         context = new WindowedContext:
           baseSystem = workspace.read("AGENT.md").getOrElse("")
           memory = memory
@@ -340,11 +372,11 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
   //[ One session's user/agent messages, for rendering on load.
     !
     ! Each user message and each turn's FINAL reply are shown as bubbles. The turn's
-    ! intermediate traffic is not hidden but folded into that reply as `steps`: the
-    ! `runCode` programs the agent ran and their output, paired by call id. The whole
-    ! trace comes from the transcript, so it persists and survives a reload; timing
-    ! and success are not there yet (they live only in the run log — see the
-    ! `runCode` summary), so a step carries just its program and output.
+    ! intermediate traffic is not hidden but folded into that reply: the `runCode`
+    ! programs the agent ran (as `steps`, code paired with output by call id) and the
+    ! files it delivered via `sendFile` (as `files`, resolved against the session
+    ! dir). Both come from the transcript — the tool calls the model itself made — so
+    ! they persist across reloads and never fork from what the model reasons over.
   //]
   private def handleHistory(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
     val id = queryParam(environ, "session")
@@ -352,25 +384,36 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     // `Session.load`; showing less than the full history is an accepted constraint),
     // current since `commit` appends after each turn.
     val msgs = Session.load(id)
+    val dataDir = existingDataDir(id)
 
     val arr = py.list()
     var steps = py.list()       // the current turn's {code, output} runCode steps
     var pending = py.dict()     // runCode call id -> program, awaiting its result
+    var sent = py.list()        // the current turn's sendFile deliveries
 
     for m in msgs do
       if m is UserText(t, attachments) then
         steps = py.list()       // a new turn begins
         pending = py.dict()
+        sent = py.list()
         arr.append: py.dict("role" ~ "user", "text" ~ t, "attachments" ~ attachmentsToJson(attachments))
 
       else if m is Assistant(t, calls) then
         for c in calls if c.name == "runCode" do
           pending.set(c.id, c.input.string("code"))
 
-        // The turn's final reply (no tool calls) carries the steps run to produce it.
+        // Each `sendFile` the agent made becomes an attachment on the reply. A file
+        // that no longer resolves (bad name, or since removed) is still shown — as a
+        // `missing` card — because the delivery happened and is part of the dialog.
+        for c in calls if c.name == "sendFile" do
+          sent.append: sentFileJson(dataDir, c.input.string("fileName"))
+
+        // The turn's final reply (no tool calls) carries the steps run and the files
+        // delivered to produce it.
         if calls.isEmpty && t != "" then
-          arr.append: py.dict("role" ~ "agent", "text" ~ t, "steps" ~ steps)
+          arr.append: py.dict("role" ~ "agent", "text" ~ t, "steps" ~ steps, "files" ~ sent)
           steps = py.list()
+          sent = py.list()
 
       else if m is ToolResults(results) then
         for r in results if pending.contains(r.id) do
@@ -509,6 +552,31 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     for f in files do
       arr.append: py.dict("name" ~ f.name, "size" ~ f.size, "mime" ~ f.mime, "modified" ~ f.modified)
     arr
+
+  //[ The card metadata for one `sendFile`d file. If the name (reduced to a basename)
+    ! still resolves to a real file in `dir`, returns `{name, size, mime}`; otherwise
+    ! `{name, missing: true}` — a delivered-then-vanished file is still part of the
+    ! dialog, so it is shown as a missing card rather than dropped.
+  //]
+  private def sentFileJson(dir: Option[String], fileName: String): py.Dict =
+    val name = sanitizeName(fileName)
+    val found: Option[String] =
+      match dir
+      case Some(d) =>
+        val p = os.path.join(d, name)
+        if name != "" && os.path.isfile(p) then Some(p) else None
+
+      case None => None
+
+    match found
+    case Some(p) =>
+      py.dict(
+        "name" ~ name,
+        "size" ~ os.path.getsize(p),
+        "mime" ~ mimetypes.guessType(name).getOrElse("application/octet-stream"))
+
+    case None =>
+      py.dict("name" ~ (if name != "" then name else fileName), "missing" ~ true)
 
   //[ Store one uploaded file (base64 in a JSON body) into a session's data
     ! directory, minting the session if the request carries none — so the message

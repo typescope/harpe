@@ -244,6 +244,44 @@ function appendAttachments(row, atts, session) {
   row.appendChild(wrap);
 }
 
+function fileUrl(session, name) {
+  return '/api/file?session=' + encodeURIComponent(session) + '&name=' + encodeURIComponent(name);
+}
+
+// A file the agent delivered that no longer resolves on disk: still shown, since
+// the delivery is part of the dialog, but as a muted, non-clickable card.
+function missingCard(f) {
+  var card = el('div', 'file-card file-missing');
+  card.appendChild(fileIcon(f.mime, f.name));
+  var meta = el('div');
+  meta.appendChild(el('div', 'file-name', f.name));
+  meta.appendChild(el('div', 'file-size', 'no longer available'));
+  card.appendChild(meta);
+  return card;
+}
+
+// One file the agent delivered via sendFile: an inline preview for images, a
+// download card otherwise (or a missing card if it is gone).
+function outFile(f, session) {
+  if (f.missing) return missingCard(f);
+  if (fileKind(f.mime, f.name) === 'image') {
+    var a = el('a', 'out-image');
+    a.href = fileUrl(session, f.name); a.target = '_blank'; a.rel = 'noopener'; a.title = f.name;
+    var img = el('img'); img.src = fileUrl(session, f.name); img.alt = f.name; img.loading = 'lazy';
+    a.appendChild(img);
+    return a;
+  }
+  return fileCard(f, session);
+}
+
+// The files the agent delivered (sendFile), shown on its reply.
+function appendSentFiles(row, files, session) {
+  if (!files || !files.length) return;
+  var wrap = el('div', 'attachments');
+  files.forEach(function (f) { wrap.appendChild(outFile(f, session)); });
+  row.appendChild(wrap);
+}
+
 // The runCode trace under an agent reply: a collapsed "Ran N programs"
 // disclosure that expands to each Jo program (copyable) and its output. The
 // programs and output come straight from the transcript, so it survives reload.
@@ -648,7 +686,7 @@ function loadInfo() {
 
 // --- sessions: URL <-> conversation ---
 
-function appendMessage(role, text, attachments, steps) {
+function appendMessage(role, text, attachments, steps, files) {
   var row = addMessage(role, '');
   var bubble = row.querySelector('.bubble');
   if (role === 'agent') {
@@ -659,7 +697,10 @@ function appendMessage(role, text, attachments, steps) {
     if (!text) bubble.style.display = 'none';
   }
   appendAttachments(row, attachments, currentSession);
-  if (role === 'agent' && steps && steps.length) row.appendChild(codeTrace(steps));
+  if (role === 'agent') {
+    appendSentFiles(row, files, currentSession);
+    if (steps && steps.length) row.appendChild(codeTrace(steps));
+  }
   return row;
 }
 
@@ -722,7 +763,7 @@ function loadHistory(id, quiet) {
       var list = d.messages || [];
       var active = d.state && d.state.active;
       if (list.length === 0 && !active) { showEmpty(true); }
-      else { showEmpty(false); list.forEach(function (m) { appendMessage(m.role, m.text, m.attachments, m.steps); }); }
+      else { showEmpty(false); list.forEach(function (m) { appendMessage(m.role, m.text, m.attachments, m.steps, m.files); }); }
       // A turn is still running on the server — reconnect and follow it live.
       if (active) reconnect(id, d.state, seq);
       scrollDown();

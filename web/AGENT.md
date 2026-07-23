@@ -55,6 +55,19 @@ def runTask(): Unit receives IO.stdout, fs, pdfReader, excelReader, wordReader, 
     `close()` for binary output. Both create parent directories as needed, and a
     file you write lands in the session, where the user sees and can download it.
 
+## Delivering a file to the user
+
+To hand the user a file *in the conversation* (an image shows inline, other files
+as a download), first write it to your data directory with `fs`, then call the
+**`sendFile`** tool with its name:
+
+- `sendFile("chart.png")` — attaches `chart.png` to your reply.
+
+`sendFile` only signals the UI; it does not write the file, so create it first. It
+returns an error if the name does not match a file in your data directory — fix the
+name (or write the file) and try again. Files also always appear in the session's
+files panel, but `sendFile` is how you surface one *as part of your answer*.
+
   It also opens documents:
   - `fs.openPDF(p)` → `pageCount`, `pageText(n)` (1-based; read only the pages you
     need), `outline`, `metadata`, `pageImage(n, target)` (render a page to PNG).
