@@ -81,6 +81,9 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     if method == "GET" && (path == "/" || path.startsWith("/c/")) then
       respond(startResp, "200 OK", "text/html; charset=utf-8", file.read(indexPath()))
 
+    else if method == "GET" && (path == "/app.css" || path == "/app.js") then
+      handleStatic(path, startResp)
+
     else if path == "/api/info" then
       respondJson(startResp, py.dict("name" ~ name))
 
@@ -123,6 +126,24 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
   //]
   private def indexPath(): String receives workspace =
     workspace.relative("assets/index.html")
+
+  //[ Serve the page's split stylesheet/script (`/app.css`, `/app.js`) from the
+    ! agent's `assets/` directory — read from disk per request, like the page, so
+    ! editing them needs no rebuild. The name is reduced to a basename, so the path
+    ! can never escape `assets/`; a missing file is a 404.
+  //]
+  private def handleStatic(path: String, startResp: py.Dynamic): py.List receives workspace =
+    val name = sanitizeName(path)   // basename → strips the leading "/" and any traversal
+    val p = workspace.relative("assets/" + name)
+
+    if name == "" || !os.path.isfile(p) then
+      respond(startResp, "404 Not Found", "text/plain", "not found")
+
+    else
+      val ctype = if name.endsWith(".css") then "text/css"
+                  else if name.endsWith(".js") then "application/javascript"
+                  else "text/plain"
+      respond(startResp, "200 OK", ctype + "; charset=utf-8", file.read(p))
 
   //[ Run one turn, streaming its progress and final answer as NDJSON.
     !

@@ -1,0 +1,397 @@
+:root {
+  /* color */
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --ink: #1c2024;
+  --muted: #8a9099;
+  --line: #e6e8eb;
+  --user: #2f6df6;
+  --agent: #f1f3f5;
+  --accent: #2f6df6;
+  --accent-hover: #2256d6;
+  --error: #c0392b;
+
+  /* typography */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* radius scale */
+  --radius: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font: 15px/1.5 var(--font);
+  color: var(--ink); background: var(--bg);
+  display: flex; flex-direction: row; height: 100vh;
+}
+#sidebar {
+  width: 256px; flex: none; background: var(--panel);
+  border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 14px; padding: 16px 8px;
+}
+body.collapsed #sidebar { display: none; }
+/* Rows (brand, new chat, section labels, sessions) share one 16px content edge
+   (8px sidebar padding + 8px per-row padding); the row padding lets the hover
+   pills sit inset while every item's text/icon lines up in a single column. */
+.brand { display: flex; align-items: center; gap: 8px; padding: 0 8px; }
+.brand .agent-name {
+  font-weight: 650; font-size: 16px; min-width: 0; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.brand .agent-name:hover { color: var(--accent); }
+.brand .icon-btn { margin-left: auto; flex: none; }
+.powered {
+  flex: none; padding: 10px 8px 0; border-top: 1px solid var(--line);
+  font-size: 11px; color: var(--muted);
+}
+.powered .mark {
+  font-family: var(--mono);
+  font-weight: 700; letter-spacing: 1px;
+}
+.panel-section {
+  margin-top: 2px; padding: 0 8px; font-size: 12px; text-transform: uppercase;
+  letter-spacing: .5px; color: var(--muted);
+}
+.newchat {
+  display: flex; align-items: center; gap: 9px;
+  border: none; background: transparent; color: var(--ink);
+  font: inherit; font-weight: 600; padding: 9px 8px; border-radius: var(--radius-md);
+  cursor: pointer; text-align: left;
+}
+.newchat:hover { background: var(--agent); }
+.newchat svg { width: 17px; height: 17px; flex: none; color: var(--muted); }
+.sessions { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.session-item {
+  padding: 7px 8px; border-radius: var(--radius); cursor: pointer; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px;
+}
+.session-item:hover { background: var(--agent); }
+.session-item.active { background: var(--agent); font-weight: 600; }
+.icon-btn {
+  width: 32px; height: 32px; display: grid; place-items: center; padding: 0;
+  border: none; background: transparent; color: var(--muted);
+  border-radius: var(--radius); cursor: pointer;
+}
+.icon-btn:hover { background: var(--agent); color: var(--ink); }
+.icon-btn svg { width: 18px; height: 18px; display: block; }
+.opener {
+  position: fixed; top: 12px; left: 12px; z-index: 5; display: none;
+  background: var(--panel); border: 1px solid var(--line);
+}
+body.collapsed .opener { display: grid; }
+.chat { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100vh; }
+main {
+  flex: 1; overflow-y: auto; padding: 24px 0;
+}
+#messages { max-width: 760px; margin: 0 auto; padding: 0 20px; }
+.msg { display: flex; margin: 14px 0; }
+.msg.user { justify-content: flex-end; }
+.row { max-width: 80%; }
+.bubble {
+  padding: 10px 14px; border-radius: var(--radius-lg); word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+.msg.user .bubble {
+  background: var(--user); color: #fff; border-bottom-right-radius: 4px;
+  white-space: pre-wrap;
+}
+.msg.agent .bubble { background: var(--agent); color: var(--ink); border-bottom-left-radius: 4px; }
+.bubble.error { background: #fdecea; color: var(--error); white-space: pre-wrap; }
+/* rendered markdown inside agent bubbles */
+.bubble > :first-child { margin-top: 0; }
+.bubble > :last-child { margin-bottom: 0; }
+.bubble p { margin: 0 0 8px; }
+.bubble h1, .bubble h2, .bubble h3, .bubble h4 { margin: 12px 0 6px; line-height: 1.3; }
+.bubble h1 { font-size: 1.3em; }
+.bubble h2 { font-size: 1.18em; }
+.bubble h3 { font-size: 1.05em; }
+.bubble ul, .bubble ol { margin: 6px 0; padding-left: 22px; }
+.bubble li { margin: 2px 0; }
+.bubble blockquote {
+  margin: 8px 0; padding-left: 12px;
+  border-left: 3px solid var(--line); color: var(--muted);
+}
+.bubble a { color: var(--accent); }
+.bubble code {
+  font-family: var(--mono); font-size: 13px;
+  background: rgba(20, 30, 50, .07); padding: 1px 5px; border-radius: 5px;
+}
+.bubble pre {
+  background: #0d1117; color: #e6edf3; padding: 12px 14px;
+  border-radius: var(--radius); overflow-x: auto; margin: 8px 0;
+}
+.bubble pre code {
+  background: none; color: inherit; padding: 0; white-space: pre;
+}
+.bubble table { border-collapse: collapse; margin: 8px 0; font-size: 14px; }
+.bubble th, .bubble td { border: 1px solid var(--line); padding: 5px 10px; text-align: left; }
+.bubble th { background: rgba(20, 30, 50, .04); font-weight: 600; }
+.status {
+  font-size: 12px; color: var(--muted); margin: 6px 2px 0;
+  display: flex; align-items: center; gap: 6px;
+}
+.status .dot, .loading .dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+  animation: pulse 1s infinite ease-in-out;
+}
+.loading {
+  max-width: 760px; margin: 16vh auto 0;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  color: var(--muted);
+}
+textarea:disabled { opacity: .5; }
+@keyframes pulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+.bubble.notice { color: var(--muted); font-style: italic; }
+.empty {
+  max-width: 760px; margin: 16vh auto 0; padding: 0 20px;
+  text-align: center; color: var(--muted);
+}
+footer { background: var(--bg); padding: 12px 20px 18px; }
+.composer {
+  max-width: 760px; margin: 0 auto;
+  display: flex; align-items: flex-end; gap: 8px;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 26px; padding: 7px;
+  box-shadow: 0 1px 3px rgba(20, 30, 50, .06);
+  transition: border-color .15s, box-shadow .15s;
+}
+.composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(47, 109, 246, .14);
+}
+textarea {
+  flex: 1; resize: none; border: none; outline: none; background: transparent;
+  font: inherit; line-height: 1.5; padding: 8px 0; max-height: 180px;
+  color: var(--ink);
+}
+#send {
+  flex: none; width: 38px; height: 38px; padding: 0;
+  display: grid; place-items: center;
+  border: none; border-radius: 50%; background: var(--accent);
+  color: #fff; cursor: pointer; transition: background .15s, opacity .15s;
+}
+#send:hover:not(:disabled) { background: var(--accent-hover); }
+#send:disabled { opacity: .35; cursor: default; }
+#send svg { width: 19px; height: 19px; display: block; }
+#send.stop { background: var(--error); }
+#send.stop:hover { background: #a93226; }
+#send.stop svg { display: none; }
+#send.stop::before {
+  content: ''; width: 12px; height: 12px; border-radius: 2px; background: #fff;
+}
+.hint { max-width: 760px; margin: 8px auto 0; color: var(--muted); font-size: 12px; text-align: center; }
+
+/* composer icon buttons (attach, files) */
+.cbtn {
+  position: relative;
+  flex: none; width: 34px; height: 34px; padding: 0; display: grid; place-items: center;
+  border: none; background: transparent; color: var(--muted);
+  border-radius: 50%; cursor: pointer; transition: background .15s, color .15s;
+}
+.cbtn:hover { background: var(--agent); color: var(--ink); }
+.cbtn.on { color: var(--accent); }
+.cbtn svg { width: 20px; height: 20px; display: block; }
+.cbtn .badge {
+  position: absolute; top: -1px; right: -1px;
+  min-width: 15px; height: 15px; padding: 0 3px; box-sizing: border-box;
+  background: var(--accent); color: #fff; font-size: 10px; font-weight: 700;
+  line-height: 15px; text-align: center; border-radius: var(--radius);
+  border: 1.5px solid var(--panel);
+}
+
+/* pending attachments (before send) */
+.pending { max-width: 760px; margin: 0 auto 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  display: flex; align-items: center; gap: 6px; max-width: 220px;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius-md); padding: 5px 9px; font-size: 13px;
+}
+.chip .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip .x { flex: none; cursor: pointer; color: var(--muted); line-height: 1; font-size: 15px; }
+.chip .x:hover { color: var(--error); }
+
+/* attachment cards inside a message bubble */
+.attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.msg.user .attachments { justify-content: flex-end; }
+.file-card {
+  display: flex; align-items: center; gap: 9px; max-width: 240px;
+  text-decoration: none; color: var(--ink);
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius-md); padding: 8px 11px;
+}
+.file-card:hover { border-color: var(--accent); }
+.file-card svg { width: 22px; height: 22px; flex: none; color: var(--muted); }
+.file-card .file-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px; }
+.file-card .file-size { font-size: 11px; color: var(--muted); }
+
+/* runCode trace — the programs the agent ran, folded under its reply */
+.trace { margin-top: 8px; }
+.trace > summary {
+  list-style: none; cursor: pointer; user-select: none;
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--muted); font-size: 12.5px; padding: 3px 8px; border-radius: var(--radius);
+}
+.trace > summary::-webkit-details-marker { display: none; }
+.trace > summary:hover { background: var(--agent); color: var(--ink); }
+.trace > summary svg { width: 14px; height: 14px; flex: none; }
+.trace > summary .chev { transition: transform .15s; }
+.trace[open] > summary .chev { transform: rotate(90deg); }
+.trace-step { margin: 8px 0 0; }
+.trace-step .lbl {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--muted); margin: 8px 0 3px;
+}
+.trace-code { position: relative; }
+.trace-code pre {
+  margin: 0; background: #0d1117; color: #e6edf3; padding: 10px 12px;
+  border-radius: var(--radius); overflow-x: auto; white-space: pre;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
+}
+.trace-out {
+  margin: 0; background: rgba(20, 30, 50, .05); color: var(--ink);
+  padding: 8px 12px; border-radius: var(--radius); overflow-x: auto; white-space: pre-wrap;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
+}
+.trace-btns { position: absolute; top: 6px; right: 6px; display: flex; gap: 6px; }
+.trace-btn {
+  border: none; cursor: pointer;
+  background: rgba(255, 255, 255, .12); color: #e6edf3; font-size: 11px;
+  padding: 2px 8px; border-radius: 6px;
+}
+.trace-btn:hover { background: rgba(255, 255, 255, .24); }
+
+/* reusable "show more": clamp a block to N lines with a toggle */
+.collapsible.clamped:not(.expanded) .collapsible-body {
+  max-height: calc(var(--max-lines, 3) * 1.5em + 16px);
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 62%, transparent);
+  mask-image: linear-gradient(to bottom, #000 62%, transparent);
+}
+.show-more {
+  margin-top: 4px; border: none; background: none; cursor: pointer;
+  color: var(--accent); font: inherit; font-size: 12px; padding: 2px 0;
+}
+.show-more:hover { text-decoration: underline; }
+
+/* drag-over hint on the chat area */
+body.dragging .chat { outline: 2px dashed var(--accent); outline-offset: -8px; }
+
+/* session files panel (right rail, default hidden) */
+#files-panel {
+  width: 300px; flex: none; background: var(--panel);
+  border-left: 1px solid var(--line);
+  display: flex; flex-direction: column;
+}
+body:not(.files-open) #files-panel { display: none; }
+#files-panel .panel-head {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 16px; border-bottom: 1px solid var(--line);
+}
+#files-panel .panel-head .ttl {
+  font-weight: 650; font-size: 15px; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#files-panel .panel-head .icon-btn { margin-left: auto; flex: none; }
+#files-list { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px; }
+#files-list .frow {
+  display: flex; align-items: center; gap: 9px; padding: 8px 6px;
+  border-radius: var(--radius); text-decoration: none; color: var(--ink);
+}
+#files-list .frow:hover { background: var(--agent); }
+#files-list .frow svg { width: 22px; height: 22px; flex: none; color: var(--muted); }
+#files-list .frow .file-name { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#files-list .frow .file-size { font-size: 11px; color: var(--muted); margin-left: auto; flex: none; }
+#files-list .empty-files { color: var(--muted); font-size: 13px; padding: 8px 6px; }
+
+/* narrow viewports: the panel overlays the chat instead of taking a column */
+@media (max-width: 1000px) {
+  body.files-open #files-panel {
+    position: fixed; top: 0; right: 0; bottom: 0; z-index: 10;
+    box-shadow: -4px 0 20px rgba(20, 30, 50, .14);
+  }
+}
+
+/* the "new script" row in the files panel */
+#files-list .frow-new { cursor: pointer; color: var(--accent); font-weight: 600; }
+#files-list .frow-new svg { color: var(--accent); }
+
+/* code editor (edit + run a session script) */
+.editor-modal {
+  position: fixed; inset: 0; z-index: 50; padding: 24px;
+  background: rgba(20, 30, 50, .42);
+  display: flex; align-items: center; justify-content: center;
+}
+.editor-modal.full { padding: 0; }
+.editor-box {
+  width: 880px; max-width: 100%; height: 82vh;
+  background: var(--panel); border-radius: var(--radius-lg); overflow: hidden;
+  display: grid; grid-template-rows: auto 1fr;
+  box-shadow: 0 16px 56px rgba(20, 30, 50, .3);
+}
+/* with output present: head / code (fills) / drag handle / output (resizable) */
+.editor-box.has-output {
+  grid-template-rows: auto minmax(120px, 1fr) 6px var(--out-h, 34%);
+}
+.editor-modal.full .editor-box { width: 100%; height: 100%; border-radius: 0; }
+.editor-head {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 11px 12px; border-bottom: 1px solid var(--line);
+}
+.editor-name {
+  flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 8px 11px; font-family: var(--mono);
+  font-size: 13px; color: var(--ink); background: var(--bg);
+}
+.editor-name:focus { outline: none; border-color: var(--accent); }
+/* flashed when Save is pressed with no filename */
+.editor-name.needs-name { border-color: var(--error); box-shadow: 0 0 0 3px rgba(192, 57, 43, .14); }
+.ed-btn {
+  flex: none; border: none; border-radius: var(--radius); padding: 8px 16px;
+  font: inherit; font-weight: 600; font-size: 13px; cursor: pointer;
+}
+.ed-btn:disabled { opacity: .55; cursor: default; }
+.ed-run { background: var(--accent); color: #fff; }
+.ed-run:hover:not(:disabled) { background: var(--accent-hover); }
+.ed-save { background: var(--agent); color: var(--ink); }
+.ed-save:hover:not(:disabled) { background: #e2e6ea; }
+/* full-screen toggle: swap the maximize/restore glyph via the modal's class */
+#editor .ico-min { display: none; }
+#editor.full .ico-max { display: none; }
+#editor.full .ico-min { display: block; }
+/* The textarea is absolutely positioned to fill the wrapper's used box — a
+   percentage/stretch height does not resolve here because the wrapper's height
+   is grid-stretched (used 493px, computed `auto`). Absolute `inset: 0` fills the
+   used box regardless, so the textarea (and its scrollbar) spans the full area. */
+.editor-code-wrap { display: flex; min-height: 0; overflow: hidden; background: #0d1117; }
+.editor-code {
+  flex: 1 1 0; align-self: stretch; min-height: 0; max-height: none; box-sizing: border-box;
+  resize: none; border: none; outline: none;
+  background: #0d1117; color: #e6edf3; padding: 16px; tab-size: 2;
+  font-family: var(--mono);
+  font-size: 13.5px; line-height: 1.65; white-space: pre; overflow: auto;
+}
+/* the drag handle between code and output (shown only when there is output) */
+.editor-split {
+  display: none; background: var(--line); cursor: row-resize;
+}
+.editor-box.has-output .editor-split { display: block; }
+.editor-split:hover, .editor-split.dragging { background: var(--accent); }
+/* the code row (grid 1fr) fills; the output row is `var(--out-h)` (default 34%,
+   set in px while dragging the handle), so long output scrolls here on its own */
+.editor-output {
+  display: none; min-height: 0; overflow: auto; margin: 0;
+  padding: 12px 16px;
+  background: rgba(20, 30, 50, .03); color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+}
+.editor-box.has-output .editor-output { display: block; }
+.editor-output.err { color: var(--error); }
+.editor-output .osum {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--muted); margin-bottom: 6px; position: sticky; top: -12px;
+  background: var(--panel); padding: 4px 0;
+}
