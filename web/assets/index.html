@@ -259,6 +259,19 @@
     }
     .trace-btn:hover { background: rgba(255, 255, 255, .24); }
 
+    /* reusable "show more": clamp a block to N lines with a toggle */
+    .collapsible.clamped:not(.expanded) .collapsible-body {
+      max-height: calc(var(--max-lines, 3) * 1.5em + 16px);
+      overflow: hidden;
+      -webkit-mask-image: linear-gradient(to bottom, #000 62%, transparent);
+      mask-image: linear-gradient(to bottom, #000 62%, transparent);
+    }
+    .show-more {
+      margin-top: 4px; border: none; background: none; cursor: pointer;
+      color: var(--accent); font: inherit; font-size: 12px; padding: 2px 0;
+    }
+    .show-more:hover { text-decoration: underline; }
+
     /* drag-over hint on the chat area */
     body.dragging .chat { outline: 2px dashed var(--accent); outline-offset: -8px; }
 
@@ -491,6 +504,30 @@
       return e;
     }
 
+    // A reusable "show more": renders `text` in a body (styled by `bodyClass`),
+    // clamped to `maxLines` with a toggle when it is longer. Returns the wrapper.
+    function collapsible(text, maxLines, bodyClass) {
+      maxLines = maxLines || 3;
+      var lineCount = String(text).split(NL).length;
+      var wrap = el('div', 'collapsible');
+      var body = el('div', 'collapsible-body' + (bodyClass ? ' ' + bodyClass : ''));
+      body.textContent = text;
+      wrap.appendChild(body);
+
+      if (lineCount > maxLines) {
+        wrap.classList.add('clamped');
+        wrap.style.setProperty('--max-lines', maxLines);
+        var hidden = lineCount - maxLines;
+        var moreLabel = 'Show ' + hidden + ' more line' + (hidden === 1 ? '' : 's');
+        var toggle = el('button', 'show-more', moreLabel);
+        toggle.addEventListener('click', function () {
+          toggle.textContent = wrap.classList.toggle('expanded') ? 'Show less' : moreLabel;
+        });
+        wrap.appendChild(toggle);
+      }
+      return wrap;
+    }
+
     // Markdown via markdown-it (loaded from CDN in <head>). Default options
     // keep html:false, so raw HTML in the model's reply is escaped, not run
     // (XSS-safe without a separate sanitizer). Returns null if the library
@@ -669,8 +706,7 @@
 
         if (st.output) {
           step.appendChild(el('div', 'lbl', 'Output'));
-          var out = el('pre', 'trace-out'); out.textContent = st.output;
-          step.appendChild(out);
+          step.appendChild(collapsible(st.output, 3, 'trace-out'));
         }
         d.appendChild(step);
       });
