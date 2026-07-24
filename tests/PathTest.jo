@@ -32,3 +32,10 @@ def run(): Unit receives stdout =
   check("rejects separator",     rejected(() => root / "a/b"))
   check("rejects empty",         rejected(() => root / ""))
   check("rejects deep escape",   rejected(() => root / "ok" / ".."))
+
+  // Path.join: variadic constructor — equivalent to folding / over root.
+  check("join empty",      Path.join().toString == "")
+  check("join single",     Path.join("doc").toString == "/doc")
+  check("join multi",      Path.join("a", "b", "c").toString == "/a/b/c")
+  check("join matches /",  Path.join("a", "b").toString == (root / "a" / "b").toString)
+  check("join rejects ..", rejected(() => Path.join("ok", "..")))
