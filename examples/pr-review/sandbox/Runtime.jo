@@ -47,28 +47,23 @@ class GithubImpl
 
   def GithubImpl(prUrl: String, token: String): GithubImpl =
     this.fs = FileSystemImpl.local("./")
-    this.pr = new PR("", "", 0)
-    this.repoDir = ""
-    match parsePrURL(prUrl)
-    case Some(pr) => this.pr = pr
-    case None => abort("invalid PR url:" + prUrl)
+    this.pr = match parsePrURL(prUrl)
+      case Some(pr) => pr
+      case None => abort("invalid PR url:" + prUrl)
 
     this.client = new GithubClient(token)
     this.prInfo = getPR()
-
     // Download the full repo snapshot once before the LLM starts reviewing.
     // Subsequent sandbox invocations reuse the extracted files via the sentinel.
     val sentinel = Path.join(".downloaded_" + pr.repo + pr.num)
-    match fs.readText(sentinel)
-    case Ok(text) => this.repoDir = text
-    case Err(_) =>
-      val prefix = match client.downloadRepo(pr.owner, pr.repo, prInfo.headSha)
-        case Ok(p)    => p
-        case Err(msg) => abort("failed to download repo: " + msg)
-      end
-      this.repoDir = prefix
-      fs.writeTextFile(sentinel, prefix)
-
+    this.repoDir = match fs.readText(sentinel)
+      case Ok(text) => text
+      case Err(_) =>
+        val prefix = match client.downloadRepo(pr.owner, pr.repo, prInfo.headSha)
+          case Ok(p)    => p
+          case Err(msg) => abort("failed to download repo: " + msg)
+        fs.writeTextFile(sentinel, prefix)
+        prefix
 
   private def getPR(): sandbox.api.PRInfo =
     val pr = match client.getPR(pr.owner, pr.repo, pr.num)
