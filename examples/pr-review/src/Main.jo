@@ -20,17 +20,15 @@ def main(): Unit receives args, stdout =
   if args.size < 1 then
     abort "Missing PR source argument"
 
-  val pr     = args[0]
-  val dryRun = if args.size > 1 then args[1] == "--dry-run" else false
+  val pr = args[0]
 
-  println args
   if Defaults.checkAgentDir() then
     dotenv.load(".env")
     val wspace = new Workspace(os.path.abspath("."))
     with workspace = wspace in
-      Logging.withLogger(new JsonlLogger(wspace.relative("logs/agent.jsonl")), () => review(pr, dryRun))
+      Logging.withLogger(new JsonlLogger(wspace.relative("logs/agent.jsonl")), () => review(pr))
 
-private def review(pr: String, dryRun: Bool): Unit receives stdout, workspace, logger =
+private def review(pr: String): Unit receives stdout, workspace, logger =
   val memory = new Memory
   val basePrompt = workspace.read("AGENT.md") rescue None => ""
   val tools = [runCodeTool(workspace.sandboxDir)] ++ skillTools(workspace.skillsDir)
@@ -38,27 +36,15 @@ private def review(pr: String, dryRun: Bool): Unit receives stdout, workspace, l
   val context = new FullContext(basePrompt, memory, [])
   val agent = new Agent(Defaults.model(), tools, context)
   val interact = new PrintInteract(stdout)
-  val sessionLog = SessionLog.newLog()
-
-  // The sandbox runtime context
-  val data = workspace.relative("data")
-  if !os.path.isdir(data) then os.makedirs(data)
   val callCtx = Map(
-    "HARPE_DATA_DIR" ~ os.path.abspath(data),
     "PR_URL" ~ pr,
-    "GITHUB_TOKEN" ~ os.getenv("GITHUB_TOKEN", ""),
-    "DRY_RUN" ~ dryRun.toString
+    "GITHUB_TOKEN" ~ os.getenv("GITHUB_TOKEN", "")
   )
 
   match with callContext = callCtx in agent.runTurn(UserText("please start review the pr", []), interact, 30, 4)
-  case Answered(delta, text) =>
-    sessionLog.append(time.now(), delta)
-    println "  · review completed"
+  case Answered(_, text) =>
+    println ("  · review completed: " + text)
   case _ =>
     println "  · review failed"
 
-  // Persist memory regardless of outcome (it is not rolled back with a turn).
-  if !memory.isEmpty then Memory.save(sessionLog.memoryPath, memory)
-
-  sessionLog.close()
 end

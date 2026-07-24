@@ -114,7 +114,6 @@ private def runCode(
     runScript: String,
     callContext: CallContext)
 : Tool.RunOutcome receives logger =
-
   match findDoneFile(sandboxDir)
   case None =>
     new Tool.RunOutcome(
@@ -124,9 +123,7 @@ private def runCode(
   case Some(donePath) =>
     gate.acquire()
     val runDir = tempfileMod.mkdtemp(prefix = "run-").asString
-
     val outcome = py.try(buildAndRun(code, donePath, runDir, buildTimeout, runTimeout, runScript, callContext))
-
     val _ = py.try(shutilMod.rmtree(runDir, ignore_errors = true))
     gate.release()
 
@@ -151,7 +148,6 @@ private def buildAndRun(
   // Each run emits one `harpe.tools.runCode` log entry — the program under test
   // plus the fields specific to how it ended — to the injected channel. What
   // becomes of the entry (format, destination) is the Logger backend's policy.
-
   val runSrc   = os.path.join(runDir, "Task.jo")
   val runOut   = os.path.join(runDir, "out.py")
   val runAudit = os.path.join(runDir, "audit.jsonl")

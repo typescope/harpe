@@ -36,12 +36,8 @@ EOF
 ## Running
 
 ```sh
-# Review a PR and post the review to GitHub
+# Review a PR and post the review (pending by default) to GitHub
 jo review -- https://github.com/owner/repo/pull/123
-
-# dry-run — prints what would be submitted, does not post
-jo review -- https://github.com/owner/repo/pull/123 --dry-run
-```
 
 ## Customising the agent
 

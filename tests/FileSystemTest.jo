@@ -135,3 +135,7 @@ def run(): Unit receives stdout =
   check("createBinaryFile round-trips bytes", fs.readBytes(fs.root / "gen" / "out.bin").success.toBase64 == "aGg=")
 
   check("rejects a nonexistent root", isErr(() => FileSystemImpl.local(os.path.join(dir, "no-such-subdir"))))
+
+  // writeTextFile: non-ASCII text round-trips correctly in text mode.
+  fs.writeTextFile(fs.root / "unicode.txt", "caf\u{E9}\n")
+  check("writeTextFile round-trips unicode", fs.readText(fs.root / "unicode.txt").success == "caf\u{E9}\n")
