@@ -13,18 +13,23 @@ def main(): Unit receives stdout =
   val token   = os.getenv("GITHUB_TOKEN", "")
   val ghImpl = new GithubImpl(prUrl, token)
 
-  with sandbox.api.github = ghImpl in
-    sandbox.api.runTask()
+  with api.github = ghImpl in
+    api.runTask()
 
 //[ JSON-encode a string value — adds surrounding quotes and escapes special chars //]
-private def jsonStr(s: String): String = jsonMod.dumps(s).asString
+private def jsonStr(s: String): String = json.dumps(s).asString
 
 //[ Build a JSON array of LineComment objects for the review payload //]
-private def buildCommentsJson(comments: List[sandbox.api.LineComment]): String =
-  val comment = (c: sandbox.api.LineComment) =>
+private def buildCommentsJson(comments: List[api.LineComment]): String =
+  val comment = (c: api.LineComment) =>
     """
-    {"path":\{jsonStr(c.path)}, "line":\{c.line.toString}, "body":\{jsonStr(c.body)}}
+    {
+      "path":\{jsonStr(c.path)},
+      "line":\{c.line.toString},
+      "body":\{jsonStr(c.body)}
+    }
     """
+
   "[" + comments.map(comment).join(",") + "]"
 
 private class PR(owner: String, repo: String, num: Int)
@@ -37,13 +42,13 @@ private def parsePrURL(url: String): Option[PR] =
 
 //[ GitHub interface backed by local snapshot files + live GitHub API //]
 class GithubImpl
-  private var pr: PR
-  private val prInfo: sandbox.api.PRInfo
+  private val pr: PR
+  private val prInfo: api.PRInfo
   private val client: GithubClient
-  private var repoDir: String
+  private val repoDir: String
   private val fs: FileSystem
 
-  view sandbox.api.GitHub
+  view api.GitHub
 
   def GithubImpl(prUrl: String, token: String): GithubImpl =
     this.fs = FileSystemImpl.local("./")
@@ -56,24 +61,21 @@ class GithubImpl
     // Download the full repo snapshot once before the LLM starts reviewing.
     // Subsequent sandbox invocations reuse the extracted files via the sentinel.
     val sentinel = Path.join(".downloaded_" + pr.repo + pr.num)
-    this.repoDir = match fs.readText(sentinel)
-      case Ok(text) => text
-      case Err(_) =>
-        val prefix = match client.downloadRepo(pr.owner, pr.repo, prInfo.headSha)
-          case Ok(p)    => p
-          case Err(msg) => abort("failed to download repo: " + msg)
-        fs.writeTextFile(sentinel, prefix)
-        prefix
+    this.repoDir = fs.readText(sentinel) rescue Err(_) =>
+      val prefix =
+        client.downloadRepo(pr.owner, pr.repo, prInfo.headSha) rescue Err(msg) =>
+          abort("failed to download repo: " + msg)
 
-  private def getPR(): sandbox.api.PRInfo =
-    val pr = match client.getPR(pr.owner, pr.repo, pr.num)
-      case Ok(d)    => d
-      case Err(msg) => abort("failed to fetch PR: " + msg)
-    end
+      fs.writeTextFile(sentinel, prefix)
+      prefix
 
-    var diffs: List[sandbox.api.FileDiff] = []
+  private def getPR(): api.PRInfo =
+    val pr = client.getPR(pr.owner, pr.repo, pr.num) rescue Err(msg) =>
+      abort("failed to fetch PR: " + msg)
+
+    var diffs: List[api.FileDiff] = []
     for d in pr["diffs"].cast[py.List] do
-      diffs = diffs + new sandbox.api.FileDiff(
+      diffs = diffs + new api.FileDiff(
         d["path"].asString,
         d["status"].asString,
         d["additions"].asInt,
@@ -81,7 +83,7 @@ class GithubImpl
         d["patch"].asString
       )
 
-    new sandbox.api.PRInfo(
+    new api.PRInfo(
       pr["number"].asInt,
       pr["title"].asString,
       pr["body"].asString,
@@ -92,16 +94,19 @@ class GithubImpl
       diffs
     )
 
-  def getPRInfo(): sandbox.api.PRInfo = prInfo
+  def getPRInfo(): api.PRInfo = prInfo
 
   //[ Read repo file — tries local snapshot first, falls back to GitHub API. //]
   def readFile(path: String, start: Int = 0, ends: Int = -1): String =
+    // Use raw python file read
     match fs.readText(Path.join(repoDir, ..path.split("/")))
     case Ok(content) =>
+      // TODO: optimize for large files
       val lines = content.split("\n")
       val sliced = if ends == -1 then lines.drop(start) else lines.drop(start).take(ends - start)
       sliced.join("\n")
-    case Err(e) => "cannot read file: " + e
+
+    case Err(e) => abort: "cannot read file: " + e
 
   //[ Keywords that introduce a definition in common languages //]
   private val defKeywords = [
@@ -122,61 +127,61 @@ class GithubImpl
     ".mp4", ".mp3", ".wav", ".ogg"
   ]
 
-  private def isBinaryPath(path: String): Bool =
-    var result = false
-    for ext in binaryExts do
-      if path.endsWith(ext) then result = true
-    result
+  private def isBinaryPath(path: String): Bool = binaryExts.exists: ext => path.endsWith(ext)
 
   //[ Return true if `trimmed` contains `keyword + identifier` at a word boundary //]
   private def matchesDef(trimmed: String, keyword: String, identifier: String): Bool =
     val prefix = keyword + identifier
-    if trimmed.startsWith(prefix) == false then
-      false
-    else if trimmed == prefix then
-      true  // identifier is the last token on the line
-    else
-      var matched = false
-      for term in defTerminators do
-        if trimmed.startsWith(prefix + term) then matched = true
-      matched
+    if !trimmed.startsWith(prefix)  then return false
 
-  def findDefinition(identifier: String): List[sandbox.api.DefinitionMatch] =
-    val files   = glob.glob(repoDir + "/**/*", recursive = true)
-    var results: List[sandbox.api.DefinitionMatch] = []
+    // identifier is the last token on the line
+    if trimmed == prefix then return true
+
+    var matched = false
+    for term in defTerminators do
+      if trimmed.startsWith(prefix + term) then matched = true
+    matched
+
+  def findDefinition(identifier: String): List[api.DefinitionMatch] =
+    val files = glob.glob(repoDir + "/**/*", recursive = true)
+    var results: List[api.DefinitionMatch] = []
 
     for file in files do
       val path = file.asString
-      if !isBinaryPath(path) then
-        match fs.readText(Path.join(..path.split("/")))
-        case Ok(content) =>
-          val relPath = path.replace(repoDir + "/", "")
-          val lines   = content.split("\n")
-          var lineNum = 1
-          for line in lines do
-            val trimmed = line.trim
-            for keyword in defKeywords do
-              if matchesDef(trimmed, keyword, identifier) then
-                results = results + (new sandbox.api.DefinitionMatch(relPath, lineNum, trimmed))
-            lineNum = lineNum + 1
-        case _ => pass
+      if isBinaryPath(path) then continue
+
+      val content = fs.readText(Path.join(..path.split("/"))) rescue Err(_) => continue
+
+      val relPath = path.replace(repoDir + "/", "")
+      val lines   = content.split("\n")
+      var lineNum = 1
+      for line in lines do
+        val trimmed = line.trim
+        for keyword in defKeywords do
+          if matchesDef(trimmed, keyword, identifier) then
+            results = results + (new api.DefinitionMatch(relPath, lineNum, trimmed))
+        lineNum = lineNum + 1
+      end
+    end
     results
 
   //[ Write operations — call the real GitHub API //]
-  def submitReview(verdict: sandbox.api.ReviewVerdict, body: String, comments: List[sandbox.api.LineComment]): Unit receives stdout =
+  def submitReview(verdict: api.ReviewVerdict, body: String, comments: List[api.LineComment]): Unit receives stdout =
     val PR(owner, repo, num) = pr
     val event: Option[String] = match verdict
-      case sandbox.api.Approve        => Some("APPROVE")
-      case sandbox.api.RequestChanges => Some("REQUEST_CHANGES")
-      case sandbox.api.CommentOnly    => Some("COMMENT")
-      case sandbox.api.Pending        => None
-    end
+      case api.Approve        => Some("APPROVE")
+      case api.RequestChanges => Some("REQUEST_CHANGES")
+      case api.CommentOnly    => Some("COMMENT")
+      case api.Pending        => None
+
     val commentsJson = buildCommentsJson(comments)
     match client.submitReview(owner, repo, num, prInfo.headSha, event, body, commentsJson)
     case Ok(_)    =>
       println "✓ Review submitted"
       println "ACTION_COMPLETED"
-    case Err(msg) => println ("✗ submit review failed: " + msg)
+
+    case Err(msg) =>
+      println ("✗ submit review failed: " + msg)
 
   def addComment(body: String): Unit receives stdout =
     val PR(owner, repo, num) = pr
@@ -184,14 +189,19 @@ class GithubImpl
     case Ok(_)    =>
       println "✓ Comment posted"
       println "ACTION_COMPLETED"
-    case Err(msg) => println ("✗ addComment failed: " + msg)
+
+    case Err(msg) =>
+      println ("✗ addComment failed: " + msg)
 
   def merge(commitMessage: String): Unit receives stdout =
     val PR(owner, repo, num) = pr
+
     match client.mergePR(owner, repo, num, prInfo.headSha, commitMessage)
     case Ok(_)    =>
       println "✓ PR merged"
       println "ACTION_COMPLETED"
-    case Err(msg) => println ("✗ merge PR failed: " + msg)
+
+    case Err(msg) =>
+      println ("✗ merge PR failed: " + msg)
 
 end

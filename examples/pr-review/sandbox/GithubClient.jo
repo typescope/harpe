@@ -5,7 +5,7 @@
 
 namespace sandbox.runtime
 
-def jsonMod: py.Dynamic = py.module("json")
+def json: py.Dynamic = py.module("json")
 
 //[ Typed interface for the `github` module — lets us call Github(...) with keyword args //]
 @py.interop
@@ -19,7 +19,7 @@ private interface Review
   def create_review(
     commit: py.Dynamic @py.keyword,
     body: String @py.keyword,
-    event: Option[String] @py.keyword,
+    event: String @py.keyword, // can be py.none
     comments: py.Dynamic @py.keyword
   ): py.Dynamic
   def create_issue_comment(body: String): py.Dynamic
@@ -108,22 +108,30 @@ private class GithubClient
     body: String,
     commentsJson: String
   ): Result[String, String] =
-    val pr = py.try(client.get_repo(owner + "/" + repo).get_pull(num))
+    val pr =
+      py.try(client.get_repo(owner + "/" + repo).get_pull(num))
       rescue Err(err)=> return Err(err.message)
-    val commit  = py.try(client.get_repo(owner + "/" + repo).get_commit(headSha))
-      rescue Err(err) => return Err(err.message)
-    val comments = jsonMod.loads(commentsJson)
 
-    match py.try(pr.create_review(commit, body, event, comments))
+    val commit =
+      py.try(client.get_repo(owner + "/" + repo).get_commit(headSha))
+      rescue Err(err) => return Err(err.message)
+
+    val comments = json.loads(commentsJson)
+
+    // TODO: cast[String] can be removed once FFI changes py.none to Bottom
+    val eventOrNone = event rescue None => py.dynamic(py.none).cast[String]
+
+    match py.try(pr.create_review(commit, body, eventOrNone, comments))
     case Ok(_) => Ok("")
     case Err(e) => Err(e.message)
 
   //[ Post an issue-level comment on the PR. //]
   def addComment(owner: String, repo: String, num: Int, body: String): Result[String, String] =
-    val pr = py.try(client.get_repo(owner + "/" + repo).get_pull(num))
+    val pr =
+      py.try(client.get_repo(owner + "/" + repo).get_pull(num))
       rescue Err(err) => return Err(err.message)
 
-    match py.try(pr.create_issue_comment(body))
+    match py.try: pr.create_issue_comment(body)
     case Ok(_) => Ok("")
     case Err(e) => Err(e.message)
 
@@ -138,8 +146,11 @@ private class GithubClient
     headSha: String,
     commitMessage: String
   ): Result[String, String] =
-    val pr = py.try(client.get_repo(owner + "/" + repo).get_pull(num))
+
+    val pr =
+      py.try(client.get_repo(owner + "/" + repo).get_pull(num))
       rescue Err(err) => return Err(err.message)
+
     match py.try(pr.merge(sha = headSha, commit_message = commitMessage))
     case Ok(_) => Ok("")
     case Err(e) => Err(e.message)

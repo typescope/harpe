@@ -34,7 +34,9 @@ section Path
       this.last = seg
   end
 
-  def join(segs: ..String): Path = segs.fold(root, (p, s) => new Join(p, s))
+  //[ Create path from path segments //]
+  def join(segs: ..String): Path = segs.fold: root, (p, s) => new Join(p, s)
+
   //[ Extend a path by one segment: `dir / "file.pdf"`. //]
   def (prefix: Path) / (name: String): Path = new Join(prefix, name)
 
