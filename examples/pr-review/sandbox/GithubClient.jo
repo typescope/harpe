@@ -8,16 +8,18 @@ namespace sandbox.runtime
 def jsonMod: py.Dynamic = py.module("json")
 
 //[ Typed interface for the `github` module — lets us call Github(...) with keyword args //]
+@py.interop
 private interface GitHub
   def Github(token: String, user_agent: String @py.keyword): py.Dynamic
 end
 
 //[ Typed interface for PyGithub's PR actions //]
+@py.interop
 private interface Review
   def create_review(
     commit: py.Dynamic @py.keyword,
     body: String @py.keyword,
-    event: String @py.keyword,
+    event: Option[String] @py.keyword,
     comments: py.Dynamic @py.keyword
   ): py.Dynamic
   def create_issue_comment(body: String): py.Dynamic
@@ -26,25 +28,30 @@ end
 
 private def module: GitHub = py.module("github").cast[GitHub]
 
+@py.interop
 private interface ZipFileObj
   def namelist(): py.Dynamic
   def extractall(path: String): Unit
   def close(): Unit
 end
 
+@py.interop
 private interface ZipFileMod
   def ZipFile(f: py.Dynamic): ZipFileObj
 end
 
+@py.interop
 private interface IoMod
   def BytesIO(data: py.Dynamic): py.Dynamic
 end
 
+@py.interop
 private interface UrllibRequestMod
   def Request(url: String, headers: py.Dynamic @py.keyword): py.Dynamic
   def urlopen(req: py.Dynamic): py.Dynamic
 end
 
+@py.interop
 private interface HttpResponse
   def read(): py.Dynamic
   def close(): Unit
@@ -97,7 +104,7 @@ private class GithubClient
     repo: String,
     num: Int,
     headSha: String,
-    event: String,
+    event: Option[String],
     body: String,
     commentsJson: String
   ): Result[String, String] =

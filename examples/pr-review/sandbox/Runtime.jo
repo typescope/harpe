@@ -11,8 +11,7 @@ import SandboxAPI
 def main(): Unit receives stdout =
   val prUrl   = os.getenv("PR_URL", "")
   val token   = os.getenv("GITHUB_TOKEN", "")
-  var dryRun  = os.getenv("DRY_RUN", "") == "true"
-  val ghImpl = new GithubImpl(prUrl, dryRun, token)
+  val ghImpl = new GithubImpl(prUrl, token)
 
   with sandbox.api.github = ghImpl in
     sandbox.api.runTask()
@@ -38,7 +37,6 @@ private def parsePrURL(url: String): Option[PR] =
 
 //[ GitHub interface backed by local snapshot files + live GitHub API //]
 class GithubImpl
-  private val dryRun: Bool
   private var pr: PR
   private val prInfo: sandbox.api.PRInfo
   private val client: GithubClient
@@ -46,8 +44,7 @@ class GithubImpl
 
   view sandbox.api.GitHub
 
-  def GithubImpl(prUrl: String, dryRun: Bool, token: String): GithubImpl =
-    this.dryRun = dryRun
+  def GithubImpl(prUrl: String, token: String): GithubImpl =
     this.repoDir = ""
     this.pr = new PR("", "", 0)
     match parsePrURL(prUrl)
@@ -59,7 +56,7 @@ class GithubImpl
 
     // Download the full repo snapshot once before the LLM starts reviewing.
     // Subsequent sandbox invocations reuse the extracted files via the sentinel.
-    val sentinel = ".downloaded"
+    val sentinel = ".downloaded_" + pr.repo + pr.number
     match py.try(py.open(sentinel, "r"))
     case Ok(f) =>
       this.repoDir = f.read().asString
@@ -113,7 +110,7 @@ class GithubImpl
       val lines = content.asString.split("\n")
       val sliced = if ends == -1 then lines.drop(start) else lines.drop(start).take(ends - start)
       sliced.join("\n")
-    case _ => abort("cannot read file:" + localPath)
+    case Err(e) => "cannot read file: " + e.message
 
   //[ Keywords that introduce a definition in common languages //]
   private val defKeywords = [
@@ -174,51 +171,36 @@ class GithubImpl
         case _ => pass
     results
 
-  //[ Write operations — call the real GitHub API (or print in dry-run mode) //]
+  //[ Write operations — call the real GitHub API //]
   def submitReview(verdict: sandbox.api.ReviewVerdict, body: String, comments: List[sandbox.api.LineComment]): Unit receives stdout =
     val PR(owner, repo, num) = pr
-    val verdictStr = match verdict
-      case sandbox.api.Approve        => "APPROVE"
-      case sandbox.api.RequestChanges => "REQUEST_CHANGES"
-      case sandbox.api.CommentOnly    => "COMMENT"
-      case sandbox.api.Pending        => ""
+    val verdict = match verdict
+      case sandbox.api.Approve        => Some("APPROVE")
+      case sandbox.api.RequestChanges => Some("REQUEST_CHANGES")
+      case sandbox.api.CommentOnly    => Some()"COMMENT")
+      case sandbox.api.Pending        => None
     end
     val commentsJson = buildCommentsJson(comments)
-    if dryRun then
-      println ("[DRY RUN] submitReview: " + verdictStr)
-      println ("  body: " + body)
-      println ("  comments: " + commentsJson)
+    match client.submitReview(owner, repo, num, prInfo.headSha, verdict, body, commentsJson)
+    case Ok(_)    =>
+      println "✓ Review submitted"
       println "ACTION_COMPLETED"
-    else
-      match client.submitReview(owner, repo, num, prInfo.headSha, verdictStr, body, commentsJson)
-      case Ok(_)    =>
-        println "✓ Review submitted"
-        println "ACTION_COMPLETED"
-      case Err(msg) => println ("✗ submitReview failed: " + msg)
+    case Err(msg) => println ("✗ submit review failed: " + msg)
 
   def addComment(body: String): Unit receives stdout =
     val PR(owner, repo, num) = pr
-    if dryRun then
-      println "[DRY RUN] addComment:"
-      println ("  " + body)
+    match client.addComment(owner, repo, num, body)
+    case Ok(_)    =>
+      println "✓ Comment posted"
       println "ACTION_COMPLETED"
-    else
-      match client.addComment(owner, repo, num, body)
-      case Ok(_)    =>
-        println "✓ Comment posted"
-        println "ACTION_COMPLETED"
-      case Err(msg) => println ("✗ addComment failed: " + msg)
+    case Err(msg) => println ("✗ addComment failed: " + msg)
 
   def merge(commitMessage: String): Unit receives stdout =
     val PR(owner, repo, num) = pr
-    if dryRun then
-      println "[DRY RUN] merge PR"
+    match client.mergePR(owner, repo, num, prInfo.headSha, commitMessage)
+    case Ok(_)    =>
+      println "✓ PR merged"
       println "ACTION_COMPLETED"
-    else
-      match client.mergePR(owner, repo, num, prInfo.headSha, commitMessage)
-      case Ok(_)    =>
-        println "✓ PR merged"
-        println "ACTION_COMPLETED"
-      case Err(msg) => println ("✗ mergePR failed: " + msg)
+    case Err(msg) => println ("✗ merge PR failed: " + msg)
 
 end

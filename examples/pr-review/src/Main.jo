@@ -20,16 +20,15 @@ def main(): Unit receives args, stdout =
   if args.size < 1 then
     abort "Missing PR source argument"
 
-  val pr     = args[0]
-  val dryRun = if args.size > 1 then args[1] == "--dry-run" else false
+  val pr = args[0]
 
   if Defaults.checkAgentDir() then
     dotenv.load(".env")
     val wspace = new Workspace(os.path.abspath("."))
     with workspace = wspace in
-      Logging.withLogger(new JsonlLogger(wspace.relative("logs/agent.jsonl")), () => review(pr, dryRun))
+      Logging.withLogger(new JsonlLogger(wspace.relative("logs/agent.jsonl")), () => review(pr))
 
-private def review(pr: String, dryRun: Bool): Unit receives stdout, workspace, logger =
+private def review(pr: String): Unit receives stdout, workspace, logger =
   val memory = new Memory
   val basePrompt = workspace.read("AGENT.md") rescue None => ""
   val tools = [runCodeTool(workspace.sandboxDir)] ++ skillTools(workspace.skillsDir)
@@ -39,13 +38,12 @@ private def review(pr: String, dryRun: Bool): Unit receives stdout, workspace, l
   val interact = new PrintInteract(stdout)
   val callCtx = Map(
     "PR_URL" ~ pr,
-    "GITHUB_TOKEN" ~ os.getenv("GITHUB_TOKEN", ""),
-    "DRY_RUN" ~ dryRun.toString
+    "GITHUB_TOKEN" ~ os.getenv("GITHUB_TOKEN", "")
   )
 
   match with callContext = callCtx in agent.runTurn(UserText("please start review the pr", []), interact, 30, 4)
-  case Answered(_, _) =>
-    println "  · review completed"
+  case Answered(_, text) =>
+    println ("  · review completed: " + text)
   case _ =>
     println "  · review failed"
 
