@@ -13,6 +13,10 @@
 
 namespace harpe.telegram
 import harpe.ffi.time
+import harpe.ffi.os
+import harpe.ffi.file
+import harpe.ffi.mimetypes
+import harpe.ffi.builtins
 
 import harpe.Agent
 import harpe.CallContext
@@ -24,9 +28,26 @@ import harpe.logging.logger
 import harpe.Model
 import harpe.Model.Message
 import harpe.Model.UserText
+import harpe.Model.Assistant
+import harpe.Model.Attachment
 import harpe.turns.Answered
 import harpe.turns.Interrupted
 import harpe.turns.Failed
+
+
+//[ One file the user attached to a Telegram message, as the poll loop hands it to
+  ! the chat's worker: Telegram's `file_id` (resolved to bytes only when the turn
+  ! runs, off the poll thread), a suggested basename, and the mime type Telegram
+  ! reported (`""` if none — guessed from the name at download time).
+//]
+class FileSpec(fileId: String, name: String, mime: String)
+
+//[ One queued message for a chat's worker: the text (a plain message, or a media
+  ! caption) and any files that rode with it. This is the unit the poll loop
+  ! enqueues and the worker drains — replacing the bare text string, so a message
+  ! can now carry attachments.
+//]
+class Incoming(text: String, files: List[FileSpec])
 
 
 //[ One live conversation: its chat id, its append log, its agent (which owns
@@ -41,18 +62,22 @@ import harpe.turns.Failed
 private class Session(id: String, log: SessionLog, agent: Agent, memory: Memory, callCtx: CallContext)
   val queue = py.module("queue").Queue()
 
-  //[ Begin a user turn: mark the context's rollback point and append the user's
-    ! message. The message is remembered so `commit` can archive the whole turn.
+  //[ Begin a user turn: download any attached files into the session's data
+    ! directory (so the agent can read them with `fs`), run the turn, then deliver
+    ! its answer — the text reply plus any files the agent `sendFile`d back.
   //]
-  def runTurn(text: String, client: TelegramClient, maxToolRounds: Int, maxRetries: Int): Unit receives logger =
-    val userMsg = UserText(text, [])
+  def runTurn(incoming: Incoming, client: TelegramClient, maxToolRounds: Int, maxRetries: Int): Unit receives logger =
+    val attachments = materialize(incoming, client)
+    val userMsg = UserText(incoming.text, attachments)
     val interact = new TelegramInteract(client, this.id)
 
     with callContext = callCtx in
       match agent.runTurn(userMsg, interact, maxToolRounds, maxRetries)
       case Answered(delta, answer) =>
         commit(delta)
-        client.sendMessage(this.id, answer)
+        if answer.trim != "" then client.sendMessage(this.id, answer)
+        val sent = deliverFiles(delta, client)
+        if answer.trim == "" && sent == 0 then client.sendMessage(this.id, answer)
 
       case Interrupted =>
         rollback()
@@ -61,6 +86,58 @@ private class Session(id: String, log: SessionLog, agent: Agent, memory: Memory,
         rollback()
         client.sendMessage(this.id, "Sorry — the request failed. Please try again.")
 
+  //[ Download this turn's attached files into the session's data directory,
+    ! returning them as `Attachment` metadata for the `UserText`. The bytes land on
+    ! disk (so the agent reads them with `fs`); only the metadata rides in the
+    ! transcript. A file that fails to resolve or download is skipped rather than
+    ! failing the turn — the model still sees the ones that arrived. Runs on the
+    ! chat's worker thread, so the network I/O never blocks the poll loop.
+  //]
+  private def materialize(incoming: Incoming, client: TelegramClient): List[Attachment] =
+    val dir = callCtx.getOrElse("HARPE_DATA_DIR", "")
+
+    if dir == "" || incoming.files.isEmpty then []
+    else
+      var atts: List[Attachment] = []
+      for spec in incoming.files do
+        match client.getFile(spec.fileId)
+        case None => pass
+
+        case Some(remotePath) =>
+          match client.downloadFile(remotePath)
+          case None => pass
+
+          case Some(data) =>
+            val name = uniqueName(dir, sanitizeName(spec.name))
+            if name != "" then
+              file.writeBytes(os.path.join(dir, name), data)
+              val mime = if spec.mime != "" then spec.mime
+                         else mimetypes.guessType(name).getOrElse("application/octet-stream")
+              atts = atts + Attachment(name, builtins.len(data), mime, false)
+
+      atts
+
+  //[ Send each file the agent delivered this turn to the chat, as a document.
+    ! Returns how many were sent. The intent lives in the transcript as `sendFile`
+    ! tool calls (like the web driver); Telegram is push, not pull, so here we
+    ! actually upload the bytes. A name that no longer resolves is skipped.
+  //]
+  private def deliverFiles(delta: List[Message], client: TelegramClient): Int =
+    val dir = callCtx.getOrElse("HARPE_DATA_DIR", "")
+
+    if dir == "" then 0
+    else
+      var sent = 0
+      for m in delta do
+        if m is Assistant(_, calls) then
+          for c in calls if c.name == "sendFile" do
+            val name = sanitizeName(c.input.string("fileName"))
+            val p = os.path.join(dir, name)
+            if name != "" && os.path.isfile(p) then
+              client.sendDocument(this.id, p, "")
+              sent = sent + 1
+
+      sent
 
   //[ Commit a completed turn: append the user message plus the turn's delta (the
     ! engine-produced messages) to the transcript archive, and persist memory.
@@ -84,10 +161,44 @@ private class Session(id: String, log: SessionLog, agent: Agent, memory: Memory,
     if !memory.isEmpty then Memory.save(log.memoryPath, memory)
 end
 
+//[ Reduce a client-supplied name to a safe bare basename: drop any directory part
+  ! (both separators) and reject the traversal names, so a stored or sent file can
+  ! never escape the session's data directory. "" if nothing safe remains.
+//]
+private def sanitizeName(raw: String): String =
+  val base = os.path.basename(raw.replace("\\", "/"))
+  if base == "" || base == "." || base == ".." then "" else base
+
+//[ A name not already taken in `dir`: `photo.jpg` → `photo-1.jpg` → … so a
+  ! download never clobbers an existing file.
+//]
+private def uniqueName(dir: String, name: String): String =
+  if name == "" || !os.path.exists(os.path.join(dir, name)) then name
+  else
+    val ext = os.extname(name)
+    val root = if ext == "" then name else name.substring(0, name.size - ext.size)
+    var i = 1
+    var candidate = root + "-" + i.toString + ext
+    while os.path.exists(os.path.join(dir, candidate)) do
+      i = i + 1
+      candidate = root + "-" + i.toString + ext
+    candidate
+
 section Session
   //[ The file backing this chat's session. //]
   def sessionPath(chatId: String): String receives workspace =
     workspace.relative("logs/sessions/" + chatId + ".jsonl")
+
+  //[ The per-chat data directory — the private root the sandbox grants this
+    ! session as `HARPE_DATA_DIR`, so `fs` (and the document readers) see only this
+    ! chat's files. Downloaded attachments land here, and files the agent writes
+    ! surface here too. Created on demand; scoped by chat id so chats never share a
+    ! tree.
+  //]
+  def dataDir(chatId: String): String receives workspace =
+    val dir = workspace.relative("data/" + chatId)
+    if !os.path.isdir(dir) then os.makedirs(dir)
+    dir
 
   //[ An append log for this chat's session (its file is created lazily). //]
   def forSession(chatId: String): SessionLog receives workspace =

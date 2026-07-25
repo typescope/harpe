@@ -2,8 +2,11 @@
   !
   ! The Telegram agent loop (the Harpe "conversational" trigger, over a Telegram
   ! bot) and its entry point. `jo run` with `jo.main = harpe.telegram.main` starts
-  ! an outbound long-poll against the Bot API: each incoming text message is one
-  ! turn of the shared engine, driven by `TelegramInteract`.
+  ! an outbound long-poll against the Bot API: each incoming message — text, or a
+  ! file with an optional caption — is one turn of the shared engine, driven by
+  ! `TelegramInteract`. Files the user sends are downloaded into the chat's data
+  ! directory (read with `fs`); files the agent produces are sent back with the
+  ! `sendFile` tool.
   !
   ! Unlike the web driver there is no HTTP server — Telegram lets the bot pull
   ! updates, so nothing needs to be publicly reachable. The poll thread only
@@ -21,12 +24,13 @@ import harpe.ffi.dotenv
 
 import jo.IO.stdout
 import harpe.Agent
-import harpe.CallContext
+import harpe.callContext
 import harpe.workspace
 import harpe.Workspace
 import harpe.Memory
 import harpe.Defaults
 import harpe.Model
+import harpe.Tool
 import harpe.tools.memoryTools
 import harpe.context.WindowedContext
 import harpe.logging.Logging
@@ -85,6 +89,35 @@ private def serve(): Unit receives stdout, workspace, logger =
 
   bot.run()
 
+//[ The `sendFile` tool — the agent's channel for delivering a file to the user.
+  !
+  ! A file the agent produced already lives in the chat's data directory (it wrote
+  ! it with `fs`). This tool moves no bytes: it validates the name and records the
+  ! *intent* to send it, as a tool call in the transcript. The driver acts on that
+  ! record after the turn — `Session.deliverFiles` uploads each named file to the
+  ! chat with `sendDocument`. A clean error comes back if the name does not resolve,
+  ! so the model can correct it rather than silently failing.
+//]
+def sendFileTool(): Tool = new Tool:
+  name = "sendFile"
+  description = "Deliver a file to the user — it is sent to the chat as a document. Write the file to the data directory first (e.g. with `fs`)."
+  params = [Tool.strParam("fileName", "The name of the file in your data directory to send to the user")]
+  run = input =>
+    val fileName = input.string("fileName")
+    val dir = callContext.getOrElse("HARPE_DATA_DIR", "")
+    val name = os.path.basename(fileName.replace("\\", "/"))
+
+    if dir == "" then
+      new Tool.RunOutcome("No data directory is available to send from.", "sendFile · no data dir")
+
+    else if name == "" || name == "." || name == ".." || !os.path.isfile(os.path.join(dir, name)) then
+      new Tool.RunOutcome(
+        "No such file: '\{fileName}'. Write it to your data directory first, then send it.",
+        "sendFile · no such file")
+
+    else
+      new Tool.RunOutcome("Sent '\{name}' to the user.", "sendFile · \{name}")
+
 //[ The bot: holds the model, prompt, toolset, the network client, and the
   ! sender allowlist, plus a registry of resident sessions keyed by chat id. It
   ! polls for updates and drives one turn per incoming message. `allowed` is the
@@ -124,10 +157,11 @@ private class TelegramBot(
         py.module("time").sleep(3.0)
     end
 
-  //[ Handle one update: ignore anything that is not a plain text message with an
-    ! identifiable sender (edits, joins, callbacks, photos, anonymous-admin and
-    ! channel posts with no `from`, …); enforce the sender allowlist; then run a
-    ! turn.
+  //[ Handle one update: act on a message with an identifiable sender that carries
+    ! text or files (documents, photos, audio, video, voice) — a media message's
+    ! caption is its text — and ignore everything else (edits, joins, callbacks,
+    ! stickers, anonymous-admin and channel posts with no `from`, …); enforce the
+    ! sender allowlist; then run a turn.
     !
     ! Authorization is by sender id. An unlisted sender is told their id only in a
     ! private chat — in a group the bot may see many strangers' messages, so it
@@ -138,14 +172,21 @@ private class TelegramBot(
     if !update.contains("message") then return
 
     val message = update.get("message").cast[py.Dict]
-    if !message.contains("text") then return
     if !message.contains("from") then return
+
+    // A message is actionable if it has text, or files (with an optional caption
+    // standing in as its text), or both. A message with neither — a sticker, a
+    // service message — is ignored.
+    val files = extractFiles(message)
+    val text = if message.contains("text") then message.get("text").asString
+               else message.get("caption", "").asString
+
+    if !message.contains("text") && files.isEmpty then return
 
     val chat = message.get("chat").cast[py.Dict]
     val chatId = "\{chat.get("id").asInt}"
     val chatType = chat.get("type", "private").asString
     val senderId = "\{message.get("from").cast[py.Dict].get("id").asInt}"
-    val text = message.get("text").asString
 
     // In a group, only take a turn when the bot is addressed — an @mention, a
     // /command, or a reply to the bot — with that prefix stripped. Non-addressed
@@ -159,7 +200,9 @@ private class TelegramBot(
       case Some(t) => effectiveText = t
       case None    => return
 
-    if effectiveText.trim == "" then return
+    // A turn needs text or at least one file — an attachment-only message ("here,
+    // look at this") is valid.
+    if effectiveText.trim == "" && files.isEmpty then return
 
     if !isAllowed(senderId) then
       if chatType == "private" then
@@ -171,7 +214,40 @@ private class TelegramBot(
 
     // Hand the message to the chat's own worker queue and return immediately, so
     // the poll loop keeps fetching updates while the turn runs.
-    dispatch(chatId, effectiveText)
+    dispatch(chatId, new Incoming(effectiveText, files))
+
+  //[ The files attached to a message, as `FileSpec`s (resolved to bytes later, on
+    ! the worker thread). Covers the media kinds the Bot API delivers: a `document`,
+    ! a `photo` (largest size), `voice`, `audio`, and `video`. A kind with no
+    ! filename of its own gets a sensible default; the mime type is Telegram's if it
+    ! gave one, else guessed from the name at download time.
+  //]
+  private def extractFiles(message: py.Dict): List[FileSpec] =
+    var specs: List[FileSpec] = []
+
+    if message.contains("document") then
+      val d = message.get("document").cast[py.Dict]
+      specs = specs + new FileSpec(d.get("file_id").asString, d.get("file_name", "file").asString, d.get("mime_type", "").asString)
+
+    if message.contains("photo") then
+      val photos = message.get("photo").cast[py.List]
+      if photos.size > 0 then
+        val largest = photos.get(photos.size - 1).cast[py.Dict]
+        specs = specs + new FileSpec(largest.get("file_id").asString, "photo.jpg", "image/jpeg")
+
+    if message.contains("voice") then
+      val v = message.get("voice").cast[py.Dict]
+      specs = specs + new FileSpec(v.get("file_id").asString, "voice.ogg", v.get("mime_type", "audio/ogg").asString)
+
+    if message.contains("audio") then
+      val a = message.get("audio").cast[py.Dict]
+      specs = specs + new FileSpec(a.get("file_id").asString, a.get("file_name", "audio").asString, a.get("mime_type", "").asString)
+
+    if message.contains("video") then
+      val vd = message.get("video").cast[py.Dict]
+      specs = specs + new FileSpec(vd.get("file_id").asString, vd.get("file_name", "video.mp4").asString, vd.get("mime_type", "").asString)
+
+    specs
 
   //[ For a group message, the text to act on if the bot is addressed — a reply to
     ! the bot, an @mention, or a /command (not aimed at another bot) — with that
@@ -230,11 +306,11 @@ private class TelegramBot(
     ! dead queue. Session load (disk) happens outside the lock; only the poll
     ! thread creates, so the check-then-create needs no extra guard.
   //]
-  private def dispatch(chatId: String, text: String): Unit receives workspace =
+  private def dispatch(chatId: String, incoming: Incoming): Unit receives workspace =
     registryLock.acquire()
     val live = registry.contains(chatId)
     if live then
-      registry.get(chatId).cast[Session].queue.put(py.dynamic(text))
+      registry.get(chatId).cast[Session].queue.put(incoming)
     registryLock.release()
 
     if !live then
@@ -244,18 +320,20 @@ private class TelegramBot(
       // transcript stays on disk.
       val agent = new Agent:
         brain = brain
-        tools = Defaults.tools() ++ memoryTools(memory)
+        tools = Defaults.tools() ++ memoryTools(memory) ++ [sendFileTool()]
         context = new WindowedContext:
           baseSystem = workspace.read("AGENT.md").getOrElse("")
           memory = memory
           initial = Session.load(chatId)
 
-      // No shared data dir: each chat is its own session. A session-scoped dir
-      // goes here when session media lands.
-      val session = new Session(chatId, log, agent, memory, CallContext.empty)
+      // Each chat is its own session, rooted at its own data directory (granted to
+      // the sandbox as HARPE_DATA_DIR): downloaded files land there, and files the
+      // agent writes and sends back surface there too.
+      val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(Session.dataDir(chatId)))
+      val session = new Session(chatId, log, agent, memory, callCtx)
       registryLock.acquire()
       registry.set(chatId, session)
-      session.queue.put(py.dynamic(text))
+      session.queue.put(incoming)
       registryLock.release()
       startWorker(chatId, session)
 
@@ -274,7 +352,7 @@ private class TelegramBot(
     while running do
       match py.try(session.queue.get(timeout = 900.0))
       case Ok(item) =>
-        match py.try(runTurnLogged(chatId, session, item.asString))
+        match py.try(runTurnLogged(chatId, session, item.cast[Incoming]))
         case Ok(_)  => pass
         case Err(_) =>
           val _ = py.try(client.sendMessage(session.id, "Sorry — an internal error occurred."))
@@ -293,9 +371,9 @@ private class TelegramBot(
     ! every entry with the chat. The turn thunk is annotated `receives logger` so
     ! it reads the decorated logger at call time (and `withContext` discharges it).
   //]
-  private def runTurnLogged(chatId: String, session: Session, text: String): Unit =
+  private def runTurnLogged(chatId: String, session: Session, incoming: Incoming): Unit =
     val turn: () => Unit receives logger =
-      () => session.runTurn(text, client, maxToolRounds = 50, maxRetries = 4)
+      () => session.runTurn(incoming, client, maxToolRounds = 50, maxRetries = 4)
     with logger = baseLogger in Logging.withContext("context", Map("chat" ~ chatId), turn)
 
   //[ Start a chat's dedicated worker on a daemon thread (dies with the process). //]
