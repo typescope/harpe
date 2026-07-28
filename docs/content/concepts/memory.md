@@ -1,6 +1,6 @@
 +++
 title = "Memory"
-weight = 6
+weight = 7
 +++
 Memory is the agent's **working scratchpad** — a small key→value store the model
 maintains itself, shown back to it every turn and saved across sessions. It is the
