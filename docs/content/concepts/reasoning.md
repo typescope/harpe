@@ -14,7 +14,7 @@ most cases you write no code — pick a reasoning-capable model and it just work
 ## It is on by default
 
 When the agent's model is OpenAI or Anthropic, reasoning is enabled out of the
-box (see [Models](@/concepts/models.md) for how the model is selected). You do not
+box (see [Models](/concepts/models/) for how the model is selected). You do not
 call a special API or set a flag to get it. A single user turn — the model
 thinking, calling tools, reading results, and thinking again until it answers —
 carries the model's train of thought the whole way through.
@@ -24,7 +24,7 @@ carries the model's train of thought the whole way through.
 You get the model's **final answer** and its **tool calls** — the same shape as a
 non-reasoning reply. You do **not** get the reasoning itself: providers do not
 return the raw chain of thought, so there is no "thinking" text in the transcript
-or the [log](@/concepts/logging.md). Treat reasoning as something the model does,
+or the [log](/concepts/logging/). Treat reasoning as something the model does,
 not something your code reads.
 
 ## Configuring it

@@ -10,7 +10,7 @@ capabilities you grant — and it's just a Jo project, run with `jo`. The fastes
 what that means is to build one. In a few minutes you'll have a chat agent running in your
 terminal, and you'll have met every core idea along the way.
 
-Want the reference instead of the walkthrough? Jump to [Concepts](@/tutorial/concepts.md).
+Want the reference instead of the walkthrough? Jump to [Concepts](/tutorial/concepts/).
 
 ## Install
 
@@ -44,7 +44,7 @@ hello/
 ```
 
 The scaffold has a few more files — `skills/`, `data/`, `logs/`, the Claude setup — but none of
-them matter for this walkthrough. [Concepts](@/tutorial/concepts.md#what-s-in-an-agent-project) tours
+them matter for this walkthrough. [Concepts](/tutorial/concepts/#what-s-in-an-agent-project) tours
 the full shape and explains the sandbox's three modules.
 
 ## 2. Add your model key
@@ -77,7 +77,7 @@ bot ▸ Hi! I'm a small Jo agent. Ask me anything.
 
 That's a working agent — with **no capabilities granted yet**, just conversation. Each
 message you send is a **turn**: Harpe hands your message to the LLM, the LLM writes a tiny Jo
-program to reply, and `jo` compiles and runs it. ([How a turn works](@/tutorial/concepts.md#how-a-turn-works).)
+program to reply, and `jo` compiles and runs it. ([How a turn works](/tutorial/concepts/#how-a-turn-works).)
 
 ## 4. Teach it
 
@@ -151,8 +151,8 @@ It **could not** have done anything else, because `clock` and `stdout` are the o
 capabilities `api` exposes — and a program that names one you didn't grant doesn't compile.
 That `receives` list *is* the agent's authority, checked every turn. Add a `Payment` and it
 can charge; leave it out, and no prompt — however clever — can make it. That's the whole
-[compile-time sandbox](@/tutorial/concepts.md#the-compile-time-sandbox); the
-[entry point and the rest of the turn](@/tutorial/concepts.md#how-a-turn-works) are in
+[compile-time sandbox](/tutorial/concepts/#the-compile-time-sandbox); the
+[entry point and the rest of the turn](/tutorial/concepts/#how-a-turn-works) are in
 Concepts.
 
 ## In a hurry? Let Claude finish it
@@ -180,11 +180,11 @@ jo run
 
 ## Next steps
 
-- [Concepts](@/tutorial/concepts.md) — the full model: the sandbox's three modules, the turn loop, and
+- [Concepts](/tutorial/concepts/) — the full model: the sandbox's three modules, the turn loop, and
   the security guarantee.
-- [Conversational agent](@/tutorial/conversational-agent.md) — a real flight booker with paid actions
+- [Conversational agent](/tutorial/conversational-agent/) — a real flight booker with paid actions
   and confirmation.
-- [Request-driven](@/tutorial/request-driven-agent.md) · [Monitoring](@/tutorial/monitoring-agent.md) — the other
+- [Request-driven](/tutorial/request-driven-agent/) · [Monitoring](/tutorial/monitoring-agent/) — the other
   two tutorial paths.
-- [Create a custom capability](@/tutorial/create-custom-capabilities.md) — when the registry doesn't
+- [Create a custom capability](/tutorial/create-custom-capabilities/) — when the registry doesn't
   have what you need.

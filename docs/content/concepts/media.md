@@ -242,7 +242,7 @@ Layers, from the type outward:
 
 - **The interface is the grant.** The capabilities are read-only over the granted
   tree, and one a turn was not granted does not compile, so it never runs — the
-  [compile-time gate](@/concepts/sandbox.md). The interfaces come from the pure
+  [compile-time gate](/concepts/sandbox/). The interfaces come from the pure
   `caps` module, so implementations are not even in the guest's dependency graph.
 - **Identifiers and handles are opaque.** The model holds granted ids and `Path`
   values it cannot forge: no path construction, no enumeration, no cross-session
@@ -251,7 +251,7 @@ Layers, from the type outward:
   broke the type gate could only ask the broker for this session's grants — the
   blast radius is media the model was meant to read.
 - **OS layers confine the parsing.** Processors run guest-side, so
-  [`run.sh`](@/concepts/sandbox.md)'s quotas, severed network, and filesystem
+  [`run.sh`](/concepts/sandbox/)'s quotas, severed network, and filesystem
   allowlist contain a parser exploit — the reason parsing was pushed into the guest
   to begin with.
 

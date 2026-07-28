@@ -2,7 +2,7 @@
 title = "Concepts"
 weight = 1
 +++
-Once you've built the [hello-world agent](@/tutorial/_index.md), this page is the working model you need
+Once you've built the [hello-world agent](/tutorial/), this page is the working model you need
 to build your own: what an agent is made of, how a turn runs, and how the capabilities you
 grant keep it safe.
 
@@ -25,9 +25,9 @@ model, but starts from a different use case:
 
 | Kind | Template | Good for | Example | Guide |
 |---|---|---|---|---|
-| **Conversational** | `--template conversational` | agents a person talks to | flight-booking assistant (CLI / WhatsApp) | [conversational-agent.md](@/tutorial/conversational-agent.md) |
-| **Request-driven** | `--template request-driven` | webhooks, inbound email, one-shot events | GitHub PR reviewer (webhook) | [request-driven-agent.md](@/tutorial/request-driven-agent.md) |
-| **Monitoring** | `--template monitoring` | scheduled monitors, policy watchers, recurring checks | inventory monitor | [monitoring-agent.md](@/tutorial/monitoring-agent.md) |
+| **Conversational** | `--template conversational` | agents a person talks to | flight-booking assistant (CLI / WhatsApp) | [conversational-agent.md](/tutorial/conversational-agent/) |
+| **Request-driven** | `--template request-driven` | webhooks, inbound email, one-shot events | GitHub PR reviewer (webhook) | [request-driven-agent.md](/tutorial/request-driven-agent/) |
+| **Monitoring** | `--template monitoring` | scheduled monitors, policy watchers, recurring checks | inventory monitor | [monitoring-agent.md](/tutorial/monitoring-agent/) |
 
 Then follow that kind's guide for the specifics. What they all share is the **typed sandbox**
 the rest of this page describes — how the LLM's code is confined to the capabilities you
@@ -97,7 +97,7 @@ The LLM only ever writes `guest`, and `guest` can only call what `api` exposes a
 `runtime` supplies. **Most agents need nothing else:** you add a capability by putting its
 interface in `api` and its implementation in `runtime` — no separate `capabilities/`
 directory. (Reusable capabilities *can* live in their own package; see
-[Create a Custom Capability](@/tutorial/create-custom-capabilities.md).)
+[Create a Custom Capability](/tutorial/create-custom-capabilities/).)
 
 ## How a turn works
 

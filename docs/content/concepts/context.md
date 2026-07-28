@@ -90,7 +90,7 @@ next one compacts.
 
 The `transient` tail is the agent's **working memory** — a small key/value store
 it maintains itself through the memory tools, persisted across turns (see
-[memory](@/concepts/memory.md)). It is orthogonal to the strategy: whatever windows or
+[memory](/concepts/memory/)). It is orthogonal to the strategy: whatever windows or
 summarizes the transcript, memory is how the agent *deliberately* carries facts
 forward. Rendering it after the transcript keeps it cheap to edit — the right place
 for volatile state.

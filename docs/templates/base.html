@@ -4,21 +4,23 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#080a0c">
   <title>{% block title %}{{ config.title }}{% endblock title %}</title>
   <meta name="description" content="{% block description %}{{ config.description }}{% endblock description %}">
-  <link rel="stylesheet" href="{{ get_url(path='style.css', trailing_slash=false) | safe }}">
-  <link rel="icon" href="{{ get_url(path='favicon.svg', trailing_slash=false) | safe }}">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="/favicon.svg">
 </head>
 <body class="{% block body_class %}{% endblock body_class %}">
 
 <header class="nav">
   <div class="wrap nav-in">
-    <a class="brand" href="{{ get_url(path='@/_index.md') | safe }}" aria-label="Harpe home">
+    <a class="brand" href="/" aria-label="Harpe home">
       {{ macros_svg::mark(size=26) }}
       <b>harpe</b>
     </a>
     <nav class="nav-links">
-      <a href="{{ get_url(path='@/tutorial/_index.md') | safe }}">Docs</a>
+      <a href="/tutorial/">Docs</a>
       <a class="nav-cta" href="{{ config.extra.github }}">GitHub ↗</a>
     </nav>
   </div>
@@ -30,7 +32,7 @@
   <div class="wrap">
     <div class="foot-in">
       <div class="foot-brand">
-        <a class="brand" href="{{ get_url(path='@/_index.md') | safe }}" aria-label="Harpe home">
+        <a class="brand" href="/" aria-label="Harpe home">
           {{ macros_svg::mark(size=24) }}
           <b>harpe</b>
         </a>
@@ -39,8 +41,8 @@
       <div class="foot-cols">
         <div class="foot-col">
           <h4>Learn</h4>
-          <a href="{{ get_url(path='@/tutorial/_index.md') | safe }}">Tutorial</a>
-          <a href="{{ get_url(path='@/concepts/_index.md') | safe }}">Concepts</a>
+          <a href="/tutorial/">Tutorial</a>
+          <a href="/concepts/">Concepts</a>
         </div>
         <div class="foot-col">
           <h4>Build</h4>
@@ -65,6 +67,13 @@
 
 <script>
   (function () {
+    // The documentation tree stays visible on desktop and becomes a compact,
+    // native disclosure on narrow screens.
+    var sideDisclosure = document.querySelector('.side-disclosure');
+    if (sideDisclosure && window.matchMedia('(max-width: 900px)').matches) {
+      sideDisclosure.removeAttribute('open');
+    }
+
     // home page: reveal the header only after the user scrolls off the hero
     var body = document.body;
     if (body.classList.contains('home')) {
