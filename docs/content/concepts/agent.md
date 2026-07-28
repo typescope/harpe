@@ -94,6 +94,8 @@ The agent composes the framework's parts; each has its own guide:
 
 - **[Model](/concepts/models/)** — the LLM. Ask it for a reply; provider-agnostic.
 - **[Tools](/concepts/tools/)** — how the agent acts: `runCode` plus any you add.
+- **[Structured output](/concepts/structured-output/)** — why typed Jo programs usually
+  replace schema-formatted final answers.
 - **[Skills](/concepts/skills/)** — read-only reference the agent consults on demand.
 - **[Memory](/concepts/memory/)** — the durable key/value scratchpad the agent curates.
 - **[Context](/concepts/context/)** — what the model sees: prompt + transcript window + memory.

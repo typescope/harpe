@@ -1,6 +1,6 @@
 +++
 title = "Logging"
-weight = 9
+weight = 10
 +++
 Your agent keeps a **structured log**: one typed event per thing that happens —
 every `runCode` execution and every model call out of the box, plus anything you

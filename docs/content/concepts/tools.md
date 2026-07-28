@@ -24,6 +24,10 @@ class Tool(name, description, params, run)
 You describe all of this in Jo; each provider renders its own wire spec from it, so
 you never hand-write JSON schema.
 
+See [Structured output](/concepts/structured-output/) for why Harpe usually keeps
+machine-consumed data in the typed Jo program instead of formatting it as the
+agent's final answer.
+
 ## What ships
 
 `Defaults.tools()` gives every agent:
