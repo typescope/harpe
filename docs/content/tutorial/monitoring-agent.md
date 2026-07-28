@@ -20,8 +20,8 @@ of a message or a request, and it remembers what it saw last time. Like the requ
 agent, **no human is in the loop**, so security is the capabilities you grant and oversight
 is the audit log. The one twist: a couple of its actions spend real money.
 
-> New to Harpe? Build the [hello-world agent](/tutorial/) first, and keep
-> [Concepts](/tutorial/concepts/) handy for the why.
+> New to Harpe? Build the [hello-world agent](/tutorial/build-your-first-agent/) first, and keep
+> [Concepts](/concepts/agent/) handy for the why.
 
 ## Why this needs an agent (not a cron script)
 
@@ -244,10 +244,10 @@ two things this monitoring workflow needs: it **runs itself** on a schedule, and
 the loop: the agent's authority is exactly the capabilities you granted, proven by the
 compiler. `inventory` can only read; `reorder` can only auto-spend within a typed ceiling
 and queues the rest. Everything else is caught in the audit log.
-See [how a turn works](/tutorial/concepts/#how-a-turn-works) for the full picture.
+See [how a turn works](/concepts/agent/#a-turn-step-by-step) for the full picture.
 
 ## Next steps
 
 - [Create a custom capability](/tutorial/create-custom-capabilities/) — build the `inventory` and `reorder` runtimes.
 - [Conversational](/tutorial/conversational-agent/) · [Request-driven](/tutorial/request-driven-agent/) — the other two kinds.
-- [Concepts](/tutorial/concepts/) — the model underneath all three.
+- [Concepts](/concepts/agent/) — the model underneath all three.

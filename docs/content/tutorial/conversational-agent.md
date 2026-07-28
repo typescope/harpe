@@ -17,8 +17,8 @@ you ── "SFO→JFK July 10, nonstop, under $600" ──▶ agent
    "That's $548 on your Visa ••1234 — confirm?" ◀── the charge waits for your yes
 ```
 
-> New to Harpe? Build the [hello-world agent](/tutorial/) first, and keep
-> [Concepts](/tutorial/concepts/) handy for the why.
+> New to Harpe? Build the [hello-world agent](/tutorial/build-your-first-agent/) first, and keep
+> [Concepts](/concepts/agent/) handy for the why.
 
 ## The whole thing
 
@@ -97,7 +97,7 @@ We'll switch this to `Harpe.whatsapp` in Step 7. Nothing else will change.
 ## Step 3 — Grant capabilities
 
 Granting capabilities *is* the security decision (see the
-[compile-time sandbox](/tutorial/concepts/#the-compile-time-sandbox)) — each one in the entry point's `receives`
+[compile-time sandbox](/concepts/agent/#the-compile-time-sandbox)) — each one in the entry point's `receives`
 list is something the agent may use; anything not listed, it *cannot*. This agent needs
 three:
 
@@ -292,7 +292,7 @@ conversation is bounded, but nothing in your `runTask`.
 
 **Sessions.** Each traveler is one session, keyed by their number. The runtime persists each
 one under `data/` — the conversation history and any world-state — and loads it as the turn's
-context (the *gather context* step of [a turn](/tutorial/concepts/#how-a-turn-works)) before running
+context (the *gather context* step of [a turn](/concepts/agent/#a-turn-step-by-step)) before running
 `runTask`, saving it after. That persistence is what makes a conversation resumable: someone can reply
 hours later, or after a restart, and the agent picks up where it left off. Your `runTask`
 stays **stateless** — the runtime owns the session, not the model.
@@ -317,11 +317,11 @@ charge is a typed program `jo` compiles and runs. Its authority is the capabilit
 granted — `flights` can only read, `payment` can only charge up to $2,000 and only after
 you confirm — and that bound is proven by the compiler, not by trusting the model. Even a
 maliciously crafted message can't make the agent exceed it. Everything it does lands in
-the audit log under `logs/`. See [how a turn works](/tutorial/concepts/#how-a-turn-works) for the full picture.
+the audit log under `logs/`. See [how a turn works](/concepts/agent/#a-turn-step-by-step) for the full picture.
 
 ## Next steps
 
 - [Request-driven agent](/tutorial/request-driven-agent/) — same project, triggered by an HTTP request.
 - [Monitoring agent](/tutorial/monitoring-agent/) — same project, applied to a scheduled monitor.
 - [Create a custom capability](/tutorial/create-custom-capabilities/) — when the registry doesn't have what you need.
-- [Concepts](/tutorial/concepts/) — the model underneath all three.
+- [Concepts](/concepts/agent/) — the model underneath all three.

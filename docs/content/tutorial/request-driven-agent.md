@@ -19,8 +19,8 @@ build here), but it can be any one-shot event a loop delivers, such as an inboun
 **No human is in the loop**: a webhook fires it, possibly hundreds of times a day. So security is entirely the **capabilities you grant
 at build time**, and oversight is the **audit log** — there's no one to pause and ask.
 
-> New to Harpe? Build the [hello-world agent](/tutorial/) first, and keep
-> [Concepts](/tutorial/concepts/) handy for the why.
+> New to Harpe? Build the [hello-world agent](/tutorial/build-your-first-agent/) first, and keep
+> [Concepts](/concepts/agent/) handy for the why.
 
 ## The whole thing
 
@@ -218,11 +218,11 @@ for every one of the thousands of requests with no one watching. The HTTP reques
 what *triggers* the turn; there's no session to carry forward — one request in, one result
 out. Because no human is in the loop, the rule is simple: **grant only capabilities narrow
 enough to be safe unattended, and read the audit log.** See
-[how a turn works](/tutorial/concepts/#how-a-turn-works) for the full picture.
+[how a turn works](/concepts/agent/#a-turn-step-by-step) for the full picture.
 
 ## Next steps
 
 - [Monitoring agent](/tutorial/monitoring-agent/) — same project, applied to a scheduled monitor.
 - [Conversational agent](/tutorial/conversational-agent/) — if you skipped it, it's the gentlest intro.
 - [Create a custom capability](/tutorial/create-custom-capabilities/) — wrap your own internal API as a capability.
-- [Concepts](/tutorial/concepts/) — the model underneath all three.
+- [Concepts](/concepts/agent/) — the model underneath all three.
