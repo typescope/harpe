@@ -3,6 +3,8 @@ namespace sandbox.runtime
 import jo.IO.stdout
 import harpe.logging.*
 import harpe.ffi.os
+import harpe.media.*
+import harpe.caps.*
 import sandbox.api
 
 // The agent's per-turn entry. The guest links jo.main = sandbox.runtime.main. It
@@ -17,7 +19,27 @@ import sandbox.api
 // run sub-agents). OS-level confinement is NOT applied here — it lives outside the
 // process, in an optional `sandbox/run.sh` wrapper (see docs/concepts/sandbox.md).
 def main(): Unit receives stdout =
-  Logging.withLogger(auditLogger(), () => sandbox.api.runTask())
+  Logging.withLogger: auditLogger(), () => run()
+
+// Grant the capabilities, all rooted at the chat's data directory — always granted
+// by the driver as HARPE_DATA_DIR. One root for every capability, so a `Path` means
+// the same file to all of them: `fs` is how the agent reads files the user sent and
+// writes files to send back, and the document backends let it parse rich uploads
+// (a PDF, a spreadsheet, a scanned image) rather than only read their bytes. Their
+// Python backends are imported lazily, on first use. RapidOcr is the pure-pip OCR
+// engine (no system binary); swap in `TesseractOcr(root)` to use Tesseract instead.
+private def run(): Unit receives stdout =
+  val root = os.getenv("HARPE_DATA_DIR", "")
+  if root == "" then abort "sandbox: HARPE_DATA_DIR was not granted"
+
+  with
+    fs = FileSystemImpl.local(root),
+    pdfReader = new PdfiumReader(root),
+    excelReader = new OpenpyxlExcel(root),
+    wordReader = new DocxReader(root),
+    image = new PillowImage(root),
+    ocr = new RapidOcr(root)
+  in sandbox.api.runTask()
 
 // The audit backend: a JSONL file the host named in HARPE_AUDIT_LOG, or a no-op
 // when unset (the program was launched outside the runCode harness).

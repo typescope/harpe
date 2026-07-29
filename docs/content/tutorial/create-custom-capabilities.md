@@ -9,7 +9,7 @@ project, no `capabilities/` directory. Authoring one is the only time you write 
 an agent.
 
 This guide builds an **`email`** capability end to end. For where capabilities fit overall,
-see [Concepts](@/tutorial/concepts.md).
+see [Concepts](/concepts/agent/).
 
 ## Step 1 — The interface (this *is* the grant)
 
@@ -82,7 +82,7 @@ EMAIL_KEY=...
 If a capability must scope to *who* the turn is for — a user or tenant id — it reads that
 **sandbox runtime context** the same way, from the per-turn environment the runtime sets,
 never from an argument the guest passes (which the model could forge). See
-[the compile-time sandbox](@/tutorial/concepts.md#the-compile-time-sandbox).
+[the compile-time sandbox](/concepts/agent/#the-compile-time-sandbox).
 
 ## Step 3 — Irreversible actions: ask first
 
@@ -169,7 +169,7 @@ a second agent needs the same capability.
 
 ## Next steps
 
-- [Concepts](@/tutorial/concepts.md) — how a turn works and why the capability grant is the whole
+- [Concepts](/concepts/agent/) — how a turn works and why the capability grant is the whole
   security boundary.
-- [Monitoring agent](@/tutorial/monitoring-agent.md) — writes two inline capabilities (`inventory`,
+- [Monitoring agent](/tutorial/monitoring-agent/) — writes two inline capabilities (`inventory`,
   `reorder`) in a working agent.

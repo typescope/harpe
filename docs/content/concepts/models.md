@@ -1,6 +1,6 @@
 +++
 title = "Models"
-weight = 2
+weight = 3
 +++
 A model is the agent's brain — the LLM that drives each user turn. It is a thin,
 provider-agnostic interface: given the composed prompt and the tools on offer, it
@@ -78,7 +78,7 @@ interface Turn
 
 - **`startTurn(base)`** — called once, at the turn's start. `base` is a `Rendered`
   (`system` prompt, the transcript `messages`, and a `transient` tail — composed by
-  the [Context](@/concepts/context.md)). The returned `Turn` drives this turn.
+  the [Context](/concepts/context/)). The returned `Turn` drives this turn.
 - **`reply(results, tools)`** — called once per model round: first with no tool
   results, then with the results of the tools the previous reply requested, plus the
   tools on offer this round. It returns a `ReplyResult`:
@@ -97,7 +97,7 @@ exponential backoff (up to the configured limit), `Fatal` gives up the turn. A m
 never retries internally.
 
 `Usage(inputTokens, outputTokens)` rides on every `Reply`. The loop logs it as the
-`harpe.model` event (see [logging](@/concepts/logging.md)) and feeds `inputTokens` to the
+`harpe.model` event (see [logging](/concepts/logging/)) and feeds `inputTokens` to the
 Context, so a token-budget strategy sizes on the provider's exact count.
 
 ## Writing your own model
@@ -128,7 +128,7 @@ private def send(
 `SimpleTurn` accumulates the turn's tool results and re-sends the whole conversation
 each round, so `send` only ever handles a single request. If your provider must
 carry state across a turn's rounds — most commonly a **reasoning** model keeping its
-chain of thought through the tool loop (see [Reasoning](@/concepts/reasoning.md)) —
+chain of thought through the tool loop (see [Reasoning](/concepts/reasoning/)) —
 implement `Turn` directly instead and hold that state in the `Turn` object.
 
 Things to get right:

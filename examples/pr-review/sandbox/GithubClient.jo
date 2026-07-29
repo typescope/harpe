@@ -104,7 +104,7 @@ private class GithubClient
     repo: String,
     num: Int,
     headSha: String,
-    event: Option[String],
+    eventOpt: Option[String],
     body: String,
     commentsJson: String
   ): Result[String, String] =
@@ -118,10 +118,9 @@ private class GithubClient
 
     val comments = json.loads(commentsJson)
 
-    // TODO: cast[String] can be removed once FFI changes py.none to Bottom
-    val eventOrNone = event rescue None => py.dynamic(py.none).cast[String]
+    val event = eventOpt rescue None => py.none
 
-    match py.try(pr.create_review(commit, body, eventOrNone, comments))
+    match py.try(pr.create_review(commit, body, event, comments))
     case Ok(_) => Ok("")
     case Err(e) => Err(e.message)
 

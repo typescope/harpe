@@ -1,12 +1,39 @@
 +++
-title = "Sandboxing"
-weight = 8
+title = "Compile-time sandboxing"
+weight = 2
 +++
 A Harpe agent is an LLM that acts **only** by writing Jo programs that are
-compiled and run each turn. Its security rests on a foundation the framework
-enforces for you, plus three OS-level restrictions you add for defense in depth.
+compiled and run each turn. Its primary security boundary is enforced by the Jo
+compiler before generated code can execute.
 
-## Runner Interface
+## The capability gate
+
+The model's program (the `guest` module) is compiled *without*
+the runtime API: its module declares no `enable-ffi`, so guest Jo cannot name
+`py.*`, `os`, or any capability the agent did not grant. Granting an ability and
+proving it safe are the same act — you declare a capability interface, widen
+`runTask`'s `receives` in the `api` module, and construct its impl in the
+`runtime` module. A program that names an ungranted capability *fails to
+compile, so it never runs* — the compile step is the security checkpoint.
+
+The framework's own capability interfaces ([media](/concepts/media/):
+`FileSystem`, `MediaProvider`, the format processors) ship in the pure **`caps`
+module** — interfaces and value types only, no FFI, no implementations. An `api`
+module depends on `caps` rather than on the framework, so the trusted
+implementations are not in the guest's dependency graph at all.
+
+This is strong against a program that plays by the rules, but it is a single
+wall: a compiler soundness bug, or a bug in a capability implementation (which
+runs with full power inside the guest process), would breach it — which is
+exactly what the OS-level restrictions below defend against.
+
+## Defense in depth
+
+The compiler-enforced gate is the foundation. Harpe also applies two runner
+protections automatically, and lets operators add three independent OS-level
+restrictions around the guest process.
+
+### Built-in runner protections
 
 The runner compiles and runs each guest program in an isolated temp directory,
 applying two protections around every build/run that the guest cannot disable:
@@ -19,28 +46,7 @@ applying two protections around every build/run that the guest cannot disable:
   agent's secrets. (The trusted compile step keeps the full toolchain env; only
   untrusted runs are scrubbed.)
 
-## Compile-time sandboxing — the capability gate
-
-The foundation. The model's program (the `guest` module) is compiled *without*
-the runtime API: its module declares no `enable-ffi`, so guest Jo cannot name
-`py.*`, `os`, or any capability the agent did not grant. Granting an ability and
-proving it safe are the same act — you declare a capability interface, widen
-`runTask`'s `receives` in the `api` module, and construct its impl in the
-`runtime` module. A program that names an ungranted capability *fails to
-compile, so it never runs* — the compile step is the security checkpoint.
-
-The framework's own capability interfaces ([media](@/concepts/media.md):
-`FileSystem`, `MediaProvider`, the format processors) ship in the pure **`caps`
-module** — interfaces and value types only, no FFI, no implementations. An `api`
-module depends on `caps` rather than on the framework, so the trusted
-implementations are not in the guest's dependency graph at all.
-
-This is strong against a program that plays by the rules, but it is a single
-wall: a compiler soundness bug, or a bug in a capability implementation (which
-runs with full power inside the guest process), would breach it — which is
-exactly what the OS-level restrictions below defend against.
-
-## The three OS-level restrictions (opt-in, external)
+### Three optional OS-level restrictions
 
 For defense in depth beneath the type gate, there are three things worth
 restricting — what the guest may **consume**, **read/write**, and **reach**:
@@ -74,7 +80,7 @@ equally the place to hand the guest to a heavier isolation stack you already run
 a container (Docker, Podman) or a microVM / sandboxed runtime (Firecracker, Kata,
 gVisor). Whatever you `exec` into, the guest and its children are confined by it.
 
-### Layer 1 · Resource quotas
+#### Layer 1 · Resource quotas
 
 Cap memory, CPU, and process count so a runaway program cannot exhaust the host.
 The built-in wall-clock timeout catches *hangs*; these catch *consumption*. One
@@ -91,7 +97,7 @@ For hierarchical, accounted limits use cgroups —
 `systemd-run --scope -p MemoryMax=1G -p CPUQuota=100% python3 "$@"`, or a
 container's `--memory`/`--cpus`.
 
-### Layer 2 · Filesystem restriction
+#### Layer 2 · Filesystem restriction
 
 Keep the guest from reading your secrets (`.env`, `~/.ssh`, other sessions' logs)
 and from writing outside a scratch directory.
@@ -117,7 +123,7 @@ does not own your files; with `.env`/`~/.ssh` at `600`/`700`, the kernel denies
 the guest access with zero extra config. Coarser than an allowlist (world-readable
 files stay readable), but fully external.
 
-### Layer 3 · Network filtering
+#### Layer 3 · Network filtering
 
 Two distinct needs: cut the network entirely, or allow only specific
 destinations.

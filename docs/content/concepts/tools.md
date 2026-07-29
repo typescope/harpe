@@ -1,6 +1,6 @@
 +++
 title = "Tools"
-weight = 4
+weight = 5
 +++
 A tool is the agent's way to *act*. The model, mid-turn, chooses to call a tool by
 name with arguments; your handler runs host-side and returns text the model reads
@@ -23,6 +23,10 @@ class Tool(name, description, params, run)
 
 You describe all of this in Jo; each provider renders its own wire spec from it, so
 you never hand-write JSON schema.
+
+See [Structured output](/concepts/structured-output/) for why Harpe usually keeps
+machine-consumed data in the typed Jo program instead of formatting it as the
+agent's final answer.
 
 ## What ships
 
@@ -93,7 +97,7 @@ class RunOutcome(result, summary)
 The rule is **reference, don't inline**: return a bounded excerpt to the model and
 log the full artifact, so nothing is lost (this is what `runCode` does — the elided
 result to the model, the whole output to `logs/agent.jsonl`; see
-[logging.md](@/concepts/logging.md)).
+[logging.md](/concepts/logging/)).
 
 ```jo
 new RunOutcome(elide(output, 4000), "ran · 3.1s")
@@ -131,4 +135,4 @@ private def lookUp(city: String): RunOutcome receives logger =
 ```
 
 The event is stamped with the session automatically — ready for auditing or usage
-reports. See [logging.md](@/concepts/logging.md).
+reports. See [logging.md](/concepts/logging/).
