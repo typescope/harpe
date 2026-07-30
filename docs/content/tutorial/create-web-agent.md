@@ -34,17 +34,18 @@ can resume after the process restarts.
 
 ## Make the first change
 
-Give the application a visible identity:
+Change the agent name shown in the left sidebar. In `src/Web.jo`, find:
 
-1. Edit `AGENT.md` to describe the agent you are building.
-2. In `assets/app.css`, change the `--accent` and `--user` colors under
-   `:root`.
-3. Restart `jo start` and reload the page.
+```jo
+val server = new ChatServer(brain, "Chord", workspace, logger)
+```
 
-Send a message, copy the resulting `/c/...` URL, restart the application, and
-open that URL again. The conversation should still be present. This verifies
-both kinds of customization the template exposes: agent behavior in
-`AGENT.md`, and application behavior and presentation in source and assets.
+Replace `"Chord"` with your agent's name. Edit `AGENT.md` to give it a matching
+role, then restart `jo start` and reload the page. The new name should appear in
+the sidebar, and replies should follow the new instructions.
+
+Send a message and copy the resulting `/c/...` URL. Restart the application and
+open that URL again. The conversation should still be present.
 
 ## What to customize
 
