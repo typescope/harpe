@@ -67,13 +67,19 @@ private def anthropicMediaBlocks(attachments: List[Attachment], dataDir: String)
     if isInlineImage(a.mime) then
       match readInlineBase64(dataDir, a.name)
       case Some(data) =>
-        blocks.append: py.dict("type" ~ "image", "source" ~ py.dict("type" ~ "base64", "media_type" ~ a.mime, "data" ~ data))
+        blocks.append:
+          py.dict:
+            "type" ~ "image"
+            "source" ~ py.dict("type" ~ "base64", "media_type" ~ a.mime, "data" ~ data)
       case None => pass
 
     else if isInlinePdf(a.mime) then
       match readInlineBase64(dataDir, a.name)
       case Some(data) =>
-        blocks.append: py.dict("type" ~ "document", "source" ~ py.dict("type" ~ "base64", "media_type" ~ a.mime, "data" ~ data))
+        blocks.append:
+          py.dict:
+            "type" ~ "document"
+            "source" ~ py.dict("type" ~ "base64", "media_type" ~ a.mime, "data" ~ data)
       case None => pass
 
   blocks
@@ -249,12 +255,14 @@ private def toolResultMessage(results: List[ToolResult], dataDir: String): py.Di
     val media = anthropicMediaBlocks(r.media, dataDir)
 
     if media.size == 0 then
-      content.append(py.dict("type" ~ "tool_result", "tool_use_id" ~ r.id, "content" ~ r.content))
+      content.append:
+        py.dict("type" ~ "tool_result", "tool_use_id" ~ r.id, "content" ~ r.content)
     else
       val blocks = py.list()
       if r.content != "" then blocks.append(py.dict("type" ~ "text", "text" ~ r.content))
       for b in media do blocks.append(b)
-      content.append(py.dict("type" ~ "tool_result", "tool_use_id" ~ r.id, "content" ~ blocks))
+      content.append:
+        py.dict("type" ~ "tool_result", "tool_use_id" ~ r.id, "content" ~ blocks)
 
   py.dict("role" ~ "user", "content" ~ content)
 

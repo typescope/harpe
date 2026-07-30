@@ -89,10 +89,12 @@ private section OpenAIResponses
         val media = if i == lastIdx then openaiMediaBlocks(attachments, dataDir) else py.list()
 
         if media.size == 0 then
-          items.append(py.dict("role" ~ "user", "content" ~ Model.userContent(text, attachments)))
+          items.append:
+            py.dict("role" ~ "user", "content" ~ Model.userContent(text, attachments))
         else
           val blocks = py.list()
-          blocks.append(py.dict("type" ~ "input_text", "text" ~ Model.userContent(text, attachments)))
+          blocks.append:
+            py.dict("type" ~ "input_text", "text" ~ Model.userContent(text, attachments))
           for b in media do blocks.append(b)
           items.append(py.dict("role" ~ "user", "content" ~ blocks))
 
