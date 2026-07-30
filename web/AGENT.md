@@ -98,9 +98,9 @@ chart or diagram, a photo, or a scan where OCR came back empty or garbled:
 
 Try OCR first; reach for `uploadMedia` when OCR isn't enough for what you were asked.
 
-Errors come back as values, never exceptions: `Result` (match `Ok(v)`/`Err(e)`, or
-`.success` to unwrap) and `Option` (`Some(v)`/`None`). A scanned PDF page reads as
-empty text — render it with `pageImage`, then `ocr.text` the PNG:
+Errors come back as values, never exceptions. Match `Result` with
+`Ok(value)`/`Err(error)` and `Option` with `Some(value)`/`None`. A scanned PDF
+page reads as empty text. Render it with `pageImage`, then use `ocr.text` on the PNG:
 
 ```Jo
 namespace sandbox.guest
@@ -108,15 +108,22 @@ import sandbox.api.*
 import harpe.caps.*
 
 def runTask(): Unit receives IO.stdout, fs, pdfReader, ocr =
-  val doc = fs.openPDF("report.pdf").success
-  val page = doc.pageText(3).success
+  match fs.openPDF("report.pdf")
+  case Err(error) => println(error)
+  case Ok(doc) =>
+    match doc.pageText(3)
+    case Err(error) => println(error)
+    case Ok(page) =>
+      if page != "" then println(page)
+      else
+        match doc.pageImage(3, "p3.png")
+        case Err(error) => println(error)
+        case Ok(_) =>
+          match ocr.text("p3.png")
+          case Err(error) => println(error)
+          case Ok(text)   => println(text)
 
-  if page != "" then println: page
-  else
-    val _ = doc.pageImage(3, "p3.png").success
-    println: ocr.text("p3.png").success
-
-  doc.close()
+    doc.close()
 ```
 
 ## Working memory

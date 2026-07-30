@@ -52,7 +52,9 @@ segments, backslashes, drive paths, and NUL. It returns `None` for a valid path 
 `Some(message)` for an invalid path. An empty string names the root:
 
 ```jo
-val entries = fs.list("").success
+match fs.list("")
+case Err(error)    => println: error
+case Ok(entries)   => println: "\{entries.size} entries"
 ```
 
 For a small file, the one-shots `readText` / `readBytes` open, read whole, and
@@ -96,9 +98,9 @@ speculative — they guess paths, pages, formats — so failure is *expected*, n
 exceptional. Every capability therefore answers environment errors in its type:
 `Result[T, String]` when there is a reason to give (a missing file, a corrupt
 document, an out-of-range page), `Option` when absence says it all (`resolve`,
-`stat`). The model branches with a `match`, or unwraps the happy path with
-`.success`. Reads on an already-open file are total. Misuse, such as reading a closed
-file, a negative offset — aborts the run.
+`stat`). The model handles both branches with a `match`. Reads on an already-open
+file are total. Misuse, such as reading a closed file or a negative offset, aborts
+the run.
 
 `resolve` is cheap — a stat, no read — returning a `Media` descriptor (`mimeType`,
 `fileName`, and an open bag of typed metadata: `sizeBytes`, `pages`, …), so the
@@ -160,16 +162,22 @@ and fall back to OCR when it turns out to be scanned:
 ```jo
 def runTask(): Unit receives stdout, fs, media, ocr =
   media.load(reportId, "report.pdf")
-  val doc = fs.openPDF("report.pdf").success
-  val txt = doc.pageText(40).success
+  match fs.openPDF("report.pdf")
+  case Err(error) => println: error
+  case Ok(doc) =>
+    match doc.pageText(40)
+    case Err(error) => println: error
+    case Ok(text) =>
+      if text != "" then println: text
+      else
+        match doc.pageImage(40, "p40.png")
+        case Err(error) => println: error
+        case Ok(_) =>
+          match ocr.text("p40.png")
+          case Err(error) => println: error
+          case Ok(text)   => println: text
 
-  if txt != "" then println: txt
-  else
-    // a scanned page: render it, then read the pixels
-    val _ = doc.pageImage(40, "p40.png").success
-    println: ocr.text("p40.png").success
-
-  doc.close()
+    doc.close()
 ```
 
 Every step is a typed call the model composes itself — no host round-trip per file,
