@@ -108,15 +108,15 @@ def sendFileTool(): Tool = new Tool:
     val name = os.path.basename(fileName.replace("\\", "/"))
 
     if dir == "" then
-      new Tool.RunOutcome("No data directory is available to send from.", "sendFile · no data dir")
+      new Tool.RunOutcome("No data directory is available to send from.", "sendFile · no data dir", [])
 
     else if name == "" || name == "." || name == ".." || !os.path.isfile(os.path.join(dir, name)) then
       new Tool.RunOutcome(
         "No such file: '\{fileName}'. Write it to your data directory first, then send it.",
-        "sendFile · no such file")
+        "sendFile · no such file", [])
 
     else
-      new Tool.RunOutcome("Sent '\{name}' to the user.", "sendFile · \{name}")
+      new Tool.RunOutcome("Sent '\{name}' to the user.", "sendFile · \{name}", [])
 
 //[ The bot: holds the model, prompt, toolset, the network client, and the
   ! sender allowlist, plus a registry of resident sessions keyed by chat id. It
