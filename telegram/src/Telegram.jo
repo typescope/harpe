@@ -21,9 +21,14 @@ import harpe.ffi.sys
 import harpe.ffi.threading
 import harpe.ffi.signal
 import harpe.ffi.dotenv
+import harpe.ffi.time
 
 import jo.IO.stdout
 import harpe.Agent
+import harpe.ApprovalRequest
+import harpe.ApprovalDecision
+import harpe.ApprovalTimedOut
+import harpe.ApprovalCancelled
 import harpe.callContext
 import harpe.workspace
 import harpe.Workspace
@@ -135,6 +140,15 @@ def sendFileTool(): Tool = new Tool:
   ! polls for updates and drives one turn per incoming message. `allowed` is the
   ! set of permitted sender (user) ids — authorization is by who sends, not where.
 //]
+private class PendingTelegramApproval(
+    id: String,
+    chatId: String,
+    senderId: String)
+  val ready = threading.event()
+  var decision = ""
+  var messageId = -1
+end
+
 private class TelegramBot(
     brain: Model, client: TelegramClient, allowed: List[String],
     botUsername: String, botId: Int, baseLogger: Logger)
@@ -145,6 +159,8 @@ private class TelegramBot(
   // versus a worker reaping its idle session (see `dispatch`/`workerLoop`).
   private val registry = py.dict()
   private val registryLock = threading.lock()
+  private val approvalLock = threading.lock()
+  private val pendingApprovals = py.dict()
 
   //[ The long-poll loop: fetch updates, advance the offset past each one, and
     ! dispatch text messages. `getUpdates` blocks until messages arrive or the
@@ -181,6 +197,10 @@ private class TelegramBot(
     ! rejection into the group.
   //]
   private def handleUpdate(update: py.Dict): Unit receives stdout, workspace =
+    if update.contains("callback_query") then
+      handleApprovalCallback(update.get("callback_query").cast[py.Dict])
+      return
+
     if !update.contains("message") then return
 
     val message = update.get("message").cast[py.Dict]
@@ -226,7 +246,82 @@ private class TelegramBot(
 
     // Hand the message to the chat's own worker queue and return immediately, so
     // the poll loop keeps fetching updates while the turn runs.
-    dispatch(chatId, new Incoming(effectiveText, files))
+    dispatch(chatId, new Incoming(effectiveText, files, senderId))
+
+  //[ Resolve an inline approval button without enqueuing a new agent turn. //]
+  private def handleApprovalCallback(callback: py.Dict): Unit =
+    val callbackId = callback.get("id", "").asString
+    val data = callback.get("data", "").asString
+    if !callback.contains("from") || !callback.contains("message") then
+      client.answerCallback(callbackId, "This approval is no longer available.")
+      return
+
+    val senderId = "\{callback.get("from").cast[py.Dict].get("id").asInt}"
+    val message = callback.get("message").cast[py.Dict]
+    val chatId = "\{message.get("chat").cast[py.Dict].get("id").asInt}"
+    val decision =
+      if data.startsWith("approve:") then "approved"
+      else if data.startsWith("reject:") then "rejected"
+      else ""
+    val id =
+      if data.startsWith("approve:") then data.substring(8, data.size)
+      else if data.startsWith("reject:") then data.substring(7, data.size)
+      else ""
+
+    approvalLock.acquire()
+    val accepted =
+      if pendingApprovals.contains(id) then
+        val pending = pendingApprovals.get(id).cast[PendingTelegramApproval]
+        if pending.chatId == chatId && pending.senderId == senderId && pending.decision == "" then
+          pending.decision = decision
+          pending.ready.set()
+          true
+        else false
+      else false
+    approvalLock.release()
+
+    client.answerCallback(
+      callbackId,
+      if accepted then (if decision == "approved" then "Approved" else "Rejected")
+      else "This approval is no longer available."
+    )
+
+  //[ Send an approval card and wait for the same Telegram user to decide. //]
+  private def requestApproval(
+      chatId: String,
+      senderId: String,
+      id: String,
+      request: ApprovalRequest)
+  : ApprovalDecision =
+    val pending = new PendingTelegramApproval(id, chatId, senderId)
+    approvalLock.acquire()
+    pendingApprovals.set(id, pending)
+    approvalLock.release()
+
+    match client.sendApproval(chatId, id, request.title, request.detail)
+    case Some(messageId) => pending.messageId = messageId
+    case None =>
+      approvalLock.acquire()
+      pendingApprovals.pop(id)
+      approvalLock.release()
+      return ApprovalCancelled
+
+    val deadline = time.now() + 600.0
+    var decision: ApprovalDecision = ApprovalTimedOut
+    var waiting = true
+    while waiting do
+      if time.now() >= deadline then
+        decision = ApprovalTimedOut
+        waiting = false
+      else if pending.ready.wait(0.1).asBool then
+        decision = ApprovalDecision.fromWire(pending.decision)
+        waiting = false
+
+    approvalLock.acquire()
+    pendingApprovals.pop(id)
+    approvalLock.release()
+    if pending.messageId >= 0 then client.clearApprovalButtons(chatId, pending.messageId)
+    decision
 
   //[ The files attached to a message, as `FileSpec`s (resolved to bytes later, on
     ! the worker thread). Covers the media kinds the Bot API delivers: a `document`,
@@ -385,7 +480,13 @@ private class TelegramBot(
   //]
   private def runTurnLogged(chatId: String, session: Session, incoming: Incoming): Unit =
     val turn: () => Unit receives logger =
-      () => session.runTurn(incoming, client, maxToolRounds = 50, maxRetries = 4)
+      () => session.runTurn(
+        incoming,
+        client,
+        (id, request) => requestApproval(chatId, incoming.senderId, id, request),
+        maxToolRounds = 50,
+        maxRetries = 4
+      )
     with logger = baseLogger in Logging.withContext("context", Map("chat" ~ chatId), turn)
 
   //[ Start a chat's dedicated worker on a daemon thread (dies with the process). //]
