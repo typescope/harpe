@@ -76,8 +76,9 @@ def runTask(): Unit receives time, stdout =
 
 Nothing runs until the generated program type-checks. If it names a capability
 that is not declared and supplied, compilation fails before the program starts.
-The [sandbox reference](/concepts/sandbox/) covers the capability gate and the
-optional OS-level restrictions in detail.
+The [sandbox concept](/concepts/sandbox/) covers the capability gate in detail.
+The [defense-in-depth tutorial](/tutorial/defense-in-depth/) covers optional
+OS-level restrictions.
 
 ![The compiled guest is sealed behind a type-checked boundary. Its only paths to the trusted runtime and outside world are the typed capabilities explicitly granted to it.](/img/typed-sandbox.svg)
 

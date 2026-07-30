@@ -103,8 +103,9 @@ build-time placeholder that proves the sandbox links. For each real tool call,
 modifying your project file.
 
 This API/runtime/guest dependency boundary is Harpe's core security mechanism.
-The [sandbox concept guide](/concepts/sandbox/) explains the guarantee and the
-optional OS-level confinement around it.
+The [sandbox concept guide](/concepts/sandbox/) explains the compiler guarantee.
+The [defense-in-depth tutorial](/tutorial/defense-in-depth/) adds OS-level
+confinement.
 
 ## Change its behavior
 

@@ -291,7 +291,7 @@ Layers, from the type outward:
   broke the type gate could only ask the broker for this session's grants — the
   blast radius is media the model was meant to read.
 - **OS layers confine the parsing.** Processors run guest-side, so
-  [`run.sh`](/concepts/sandbox/)'s quotas, severed network, and filesystem
+  [`run.sh`](/tutorial/defense-in-depth/)'s quotas, severed network, and filesystem
   allowlist contain a parser exploit — the reason parsing was pushed into the guest
   to begin with.
 
