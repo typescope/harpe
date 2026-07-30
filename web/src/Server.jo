@@ -31,6 +31,8 @@ import harpe.ffi.mimetypes
 import harpe.ffi.builtins
 
 import harpe.Agent
+import harpe.Interact
+import harpe.currentInteract
 import harpe.CallContext
 import harpe.callContext
 import harpe.Defaults
@@ -149,6 +151,9 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     else if path == "/api/stop" && method == "POST" then
       handleStop(environ, startResp)
 
+    else if path == "/api/approval" && method == "POST" then
+      handleApproval(environ, startResp)
+
     else
       respond(startResp, "404 Not Found", "text/plain", "not found")
 
@@ -234,6 +239,20 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     registryLock.release()
 
     respondJson(startResp, py.dict("ok" ~ true))
+
+  //[ Resolve an instant approval for the session's active turn. //]
+  private def handleApproval(environ: py.Dynamic, startResp: py.Dynamic): py.List =
+    val body = json.loads(readBody(environ)).cast[py.Dict]
+    val sessionId = sanitizeName(body.get("session", "").asString)
+    val approvalId = body.get("id", "").asString
+    val decision = body.get("decision", "").asString
+
+    val accepted =
+      match residentSession(sessionId)
+      case Some(session) => session.decideApproval(approvalId, decision)
+      case None          => false
+
+    respondJson(startResp, py.dict("ok" ~ accepted))
 
   //[ Subscribe to a session's in-flight turn: attach a sink and stream the turn's
     ! events until it finishes, then close. This is how a tab reconnects to a running
@@ -657,7 +676,9 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
 
     else
       val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(Session.dataDir(sessionId)))
-      val outcome = with callContext = callCtx in runTool.run(ToolInput(py.dict("code" ~ code)))
+      val outcome =
+        with callContext = callCtx, currentInteract = Interact.unattended in
+          runTool.run(ToolInput(py.dict("code" ~ code)))
       respondJson: startResp, py.dict("session" ~ sessionId, "result" ~ outcome.result, "summary" ~ outcome.summary)
 
   //[ Save a script into a session's files (overwriting a same-named one), so it can

@@ -25,6 +25,7 @@ var busy = false;
 var currentSession = null;
 var sessionList = [];
 var pending = [];   // File objects staged for the next message (not yet uploaded)
+var approvalCards = {};
 
 function el(tag, cls, text) {
   var e = document.createElement(tag);
@@ -981,6 +982,10 @@ function handle(ev, bubble, statusText) {
     statusText.textContent = ev.label;
   } else if (ev.type === 'tool') {
     statusText.textContent = ev.summary;
+  } else if (ev.type === 'approval') {
+    showApproval(ev, bubble, statusText);
+  } else if (ev.type === 'approval-ended') {
+    finishApproval(ev.id, ev.decision);
   } else if (ev.type === 'answer') {
     var html = renderMarkdown(ev.text);
     if (html === null) bubble.textContent = ev.text;
@@ -996,6 +1001,76 @@ function handle(ev, bubble, statusText) {
     bubble.textContent = 'request failed';
   }
   scrollDown();
+}
+
+function showApproval(ev, bubble, statusText) {
+  if (approvalCards[ev.id]) return;
+
+  statusText.textContent = 'waiting for your approval';
+  bubble.innerHTML = '';
+  bubble.classList.add('approval-bubble');
+
+  var card = el('div', 'approval-card');
+  card.appendChild(el('div', 'approval-label', 'Approval required'));
+  card.appendChild(el('div', 'approval-title', ev.title));
+
+  if (ev.detail) {
+    var detail = el('div', 'approval-detail');
+    var html = renderMarkdown(ev.detail);
+    if (html === null) detail.textContent = ev.detail;
+    else detail.innerHTML = html;
+    card.appendChild(detail);
+  }
+
+  var actions = el('div', 'approval-actions');
+  var reject = el('button', 'approval-btn reject', 'Reject');
+  var approve = el('button', 'approval-btn approve', 'Approve');
+  actions.appendChild(reject);
+  actions.appendChild(approve);
+  card.appendChild(actions);
+  bubble.appendChild(card);
+
+  approvalCards[ev.id] = { card: card, approve: approve, reject: reject };
+
+  function decide(decision) {
+    approve.disabled = true;
+    reject.disabled = true;
+    fetch('/api/approval', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session: currentSession,
+        id: ev.id,
+        decision: decision
+      })
+    }).then(function (resp) { return resp.json(); })
+      .then(function (result) {
+        if (!result.ok) finishApproval(ev.id, 'cancelled');
+      })
+      .catch(function () {
+        approve.disabled = false;
+        reject.disabled = false;
+      });
+  }
+
+  approve.addEventListener('click', function () { decide('approved'); });
+  reject.addEventListener('click', function () { decide('rejected'); });
+}
+
+function finishApproval(id, decision) {
+  var current = approvalCards[id];
+  if (!current) return;
+
+  current.approve.disabled = true;
+  current.reject.disabled = true;
+  var labels = {
+    approved: 'Approved',
+    rejected: 'Rejected',
+    timed_out: 'Approval timed out',
+    cancelled: 'Approval cancelled'
+  };
+  current.card.appendChild(el('div', 'approval-result', labels[decision] || 'Approval ended'));
+  delete approvalCards[id];
 }
 
 // While a turn runs, the send button becomes a stop button: it asks the
