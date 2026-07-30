@@ -12,7 +12,22 @@ section Markdown
     val tokens = parser.parse(py.dynamic(md)).cast[py.List]
     val rendered = renderBlocks(tokens)
     val re = py.module("re")
-    re.sub("\n{3,}", "\n\n", py.dynamic(rendered)).asString.trim
+    val compact = re.sub("\n{3,}", "\n\n", py.dynamic(rendered))
+    val clean = re.sub("^[ \\r\\n]+|[ \\r\\n]+$", "", compact).asString
+
+    if startsWithMultilineCode(tokens) then "\n" + clean else clean
+
+  private def startsWithMultilineCode(tokens: py.List): Bool =
+    if tokens.size == 0 then false
+    else
+      val first = tokens.get(0)
+      val kind = builtins.attr(first, "type").asString
+      val block = kind == "fence" || kind == "code_block"
+      block && lineCount(first.content.asString) > 1
+
+  private def lineCount(text: String): Int =
+    val count = text.lines.size
+    if text.endsWith("\n") then count - 1 else count
 
   private def bullet(): Int = 0 - 1
 
@@ -148,19 +163,20 @@ section Markdown
     out
 
   private def prefixLines(text: String, prefix: String): String =
-    val lines = py.dynamic(text).split("\n").cast[py.List]
     var out = ""
     var i = 0
-    for lineDyn in lines do
+    for line in text.lines do
       if i > 0 then out = out + "\n"
-      out = out + prefix + lineDyn.asString
+      out = out + prefix + line
       i = i + 1
     out
 
   private def codeLines(code: String): String =
-    val lines = py.dynamic(code).splitlines().cast[py.List]
+    var lines = code.lines
+    if code.endsWith("\n") then lines = lines.take(lines.size - 1)
+
     var out = ""
-    for lineDyn in lines do
-      out = out + Style.muted("│ ") + Style.code(lineDyn.asString) + "\n"
+    for line in lines do
+      out = out + Style.muted("│ ") + Style.code(line) + "\n"
     out
 end
