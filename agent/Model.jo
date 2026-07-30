@@ -30,9 +30,12 @@ import harpe.logging.logger
   ! id — ACROSS the turn's tool round-trips, but that state is opaque, non-portable,
   ! and load-bearing only within the turn. Keeping it in the `Turn` means `Message`,
   ! `Context`, and the audit log stay uniform and never learn reasoning exists.
+  !
+  ! `receives callContext`: a provider render needs the session's data directory
+  ! (`HARPE_DATA_DIR`) to resolve an inline attachment's bytes (see `Attachment`).
 //]
 interface Model
-  def startTurn(base: Rendered): Turn
+  def startTurn(base: Rendered): Turn receives callContext
 end
 
 section Model
@@ -61,11 +64,16 @@ section Model
     ! type — so the UI can show a file card and the model can be told the file
     ! exists. The bytes stay on disk; the model fetches them with `fs`.
     !
-    ! `inline` reserves the future option to ALSO present the file to the model
-    ! directly (e.g. an image as a vision content-block) rather than only by
-    ! reference. It is persisted but not yet acted on — the current render is
-    ! reference-only, so an attachment is always a file in the data dir first, with
-    ! inlining an optional presentation layered on top.
+    ! `inline` marks that this attachment should ALSO be shown to the model
+    ! directly, as a real image/document content block, rather than only by
+    ! reference. It is honored only when the carrying message is the newest one in
+    ! the rendered window (see `agent/models/Anthropic.jo`, `OpenAI.jo`) — an older
+    ! message's `inline` is inert, so a past image is never silently re-sent (and
+    ! re-billed) on a later turn. `Tool.ToolResult.media` uses the same type and is
+    ! always fresh (a tool result exists only for the turn it was produced in), so
+    ! it inlines unconditionally within that turn. Never persisted differently:
+    ! `inline` is stored as given, the render layer alone decides whether to act on
+    ! it.
   //]
   class Attachment(name: String, size: Int, mime: String, inline: Bool)
 
@@ -126,6 +134,8 @@ section Model
     !
     ! `reply` `receives logger` — read at call time — so a provider can emit its
     ! token usage to the turn's logging context (see `harpe.models.logUsage`).
+    ! `receives callContext` for the same reason `Model.startTurn` does — resolving
+    ! an inline attachment's bytes.
     !
     ! Retry contract: `reply` is IDEMPOTENT. `results` are committed to the tail
     ! only on a successful `Reply` (atomically with the assistant message), so a
@@ -133,7 +143,7 @@ section Model
     ! failed attempt mutates nothing. The caller never tracks what it committed.
   //]
   interface Turn
-    def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger
+    def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger, callContext
 
   //[ SimpleTurn
     !
@@ -143,12 +153,12 @@ section Model
     ! Providers that carry intra-turn state (e.g. reasoning handles) implement
     ! `Turn` directly instead.
   //]
-  class SimpleTurn(base: Rendered, send: (Rendered, List[Tool]) => ReplyResult receives logger)
+  class SimpleTurn(base: Rendered, send: (Rendered, List[Tool]) => ReplyResult receives logger, callContext)
     view Turn
 
     private var messages: List[Message] = base.messages
 
-    def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
+    def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger, callContext =
       // Build the request WITHOUT committing, so a failed attempt leaves the tail
       // untouched and a retry (same results) re-sends identically.
       val outgoing =

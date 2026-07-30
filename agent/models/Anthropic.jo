@@ -15,6 +15,7 @@ import harpe.Model.*
 import harpe.Tool
 import harpe.Tool.*
 import harpe.logging.logger
+import harpe.callContext
 
 
 //[ Cache
@@ -53,6 +54,30 @@ private def toolSpec(t: Tool): py.Dict =
     "input_schema" ~ py.dict("type" ~ "object", "properties" ~ properties, "required" ~ required)
   )
 
+//[ Inline content blocks (`image`/`document`) for `attachments` marked `inline`,
+  ! reading each one's bytes from `dataDir`. An attachment whose mime type is
+  ! neither an inline image nor a PDF, or whose bytes cannot be read, is silently
+  ! skipped — it still rides in the text manifest (`Model.userContent`), just not
+  ! as a direct content block.
+//]
+private def anthropicMediaBlocks(attachments: List[Attachment], dataDir: String): py.List =
+  val blocks = py.list()
+
+  for a in attachments if a.inline do
+    if isInlineImage(a.mime) then
+      match readInlineBase64(dataDir, a.name)
+      case Some(data) =>
+        blocks.append: py.dict("type" ~ "image", "source" ~ py.dict("type" ~ "base64", "media_type" ~ a.mime, "data" ~ data))
+      case None => pass
+
+    else if isInlinePdf(a.mime) then
+      match readInlineBase64(dataDir, a.name)
+      case Some(data) =>
+        blocks.append: py.dict("type" ~ "document", "source" ~ py.dict("type" ~ "base64", "media_type" ~ a.mime, "data" ~ data))
+      case None => pass
+
+  blocks
+
 //[ The conversation as Anthropic's `messages` array (content-block format).
   !
   ! When `cache` is not `NoCache`, a cache breakpoint is placed on the last
@@ -62,8 +87,14 @@ private def toolSpec(t: Tool): py.Dict =
   !
   ! A `UserText` is promoted to a one-element text-block list so it can carry
   ! the marker (Anthropic accepts either form).
+  !
+  ! An inline attachment only becomes a real image/document block when its
+  ! `UserText` is the NEWEST message in `history` (`i == lastIdx`) — an older
+  ! one's `inline` is inert here, so a past image is never resent (and re-billed)
+  ! once a later turn rebuilds this same history from scratch. `dataDir` is the
+  ! session's data directory (`""` if none), resolved once by the caller.
 //]
-private def toMessages(history: List[Message], cache: AnthropicCache): py.List =
+private def toMessages(history: List[Message], cache: AnthropicCache, dataDir: String): py.List =
   val msgs = py.list()
   val lastIdx = history.size - 1
   var i = 0
@@ -74,11 +105,16 @@ private def toMessages(history: List[Message], cache: AnthropicCache): py.List =
     match m
     case UserText(text, attachments) =>
       val content = Model.userContent(text, attachments)
-      if shouldCache then
-        val block = py.dict("type" ~ "text", "text" ~ content, "cache_control" ~ cache.toDict)
-        msgs.append(py.dict("role" ~ "user", "content" ~ py.list(block)))
-      else
+      val media = if i == lastIdx then anthropicMediaBlocks(attachments, dataDir) else py.list()
+
+      if media.size == 0 && !shouldCache then
         msgs.append(py.dict("role" ~ "user", "content" ~ content))
+      else
+        val blocks = py.list()
+        blocks.append(py.dict("type" ~ "text", "text" ~ content))
+        for b in media do blocks.append(b)
+        if shouldCache then blocks[blocks.size - 1]["cache_control"] = cache.toDict
+        msgs.append(py.dict("role" ~ "user", "content" ~ blocks))
 
     case Assistant(text, calls) =>
       val content = py.list()
@@ -140,8 +176,8 @@ private def parseReply(response: py.Dynamic): Assistant =
 private class AnthropicModel(client: py.Dynamic, model: String, cache: AnthropicCache)
   view Model
 
-  def startTurn(base: Rendered): Turn =
-    new AnthropicTurn(client, model, cache, base)
+  def startTurn(base: Rendered): Turn receives callContext =
+    new AnthropicTurn(client, model, cache, base, callContext.getOrElse("HARPE_DATA_DIR", ""))
 end
 
 //[ A reasoning-preserving turn on the Messages API.
@@ -153,15 +189,15 @@ end
   ! rejected. `parseReply` still extracts only text + tool calls for the engine —
   ! the reasoning rides in the wire history, never in the semantic `Message`.
 //]
-private class AnthropicTurn(client: py.Dynamic, model: String, cache: AnthropicCache, base: Rendered)
+private class AnthropicTurn(client: py.Dynamic, model: String, cache: AnthropicCache, base: Rendered, dataDir: String)
   view Turn
 
   // The wire messages, accumulated across the turn: seeded from the base
   // transcript (cache-annotated), then grown with raw tool_result and assistant
   // turns. Reassigned only on success, so a retry re-sends the same round.
-  private var messages: py.List = toMessages(base.messages, cache)
+  private var messages: py.List = toMessages(base.messages, cache, dataDir)
 
-  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
+  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger, callContext =
     val toolSpecs = py.list()
     for t in tools do toolSpecs.append(toolSpec(t))
 
@@ -171,7 +207,7 @@ private class AnthropicTurn(client: py.Dynamic, model: String, cache: AnthropicC
     for m in messages do committed.append(m)
 
     if !results.isEmpty then
-      committed.append(toolResultMessage(results))
+      committed.append(toolResultMessage(results, dataDir))
 
     // The request adds the transient tail (working memory) after the transcript —
     // request-only, never committed, so editing memory reprocesses only the tail.
@@ -198,12 +234,27 @@ private class AnthropicTurn(client: py.Dynamic, model: String, cache: AnthropicC
     case Err(err) => classifyError(err)
 end
 
-//[ A user turn carrying tool_result blocks for `results`. //]
-private def toolResultMessage(results: List[ToolResult]): py.Dict =
+//[ A user turn carrying tool_result blocks for `results`.
+  !
+  ! `r.media` inlines unconditionally here — unlike a `UserText`'s attachments,
+  ! a tool result exists only for the round it was produced in: `toMessages`
+  ! (rendering a PAST, already-committed turn) never re-derives a `tool_result`
+  ! block from a `ToolResults` message's `media`, so a past tool-delivered image
+  ! is never resent once this turn ends — no positional guard needed here.
+//]
+private def toolResultMessage(results: List[ToolResult], dataDir: String): py.Dict =
   val content = py.list()
 
   for r in results do
-    content.append(py.dict("type" ~ "tool_result", "tool_use_id" ~ r.id, "content" ~ r.content))
+    val media = anthropicMediaBlocks(r.media, dataDir)
+
+    if media.size == 0 then
+      content.append(py.dict("type" ~ "tool_result", "tool_use_id" ~ r.id, "content" ~ r.content))
+    else
+      val blocks = py.list()
+      if r.content != "" then blocks.append(py.dict("type" ~ "text", "text" ~ r.content))
+      for b in media do blocks.append(b)
+      content.append(py.dict("type" ~ "tool_result", "tool_use_id" ~ r.id, "content" ~ blocks))
 
   py.dict("role" ~ "user", "content" ~ content)
 

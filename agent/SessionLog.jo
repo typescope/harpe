@@ -98,21 +98,28 @@ section SessionLog
           msgs = msgs + dictToMessage(json.loads(line).cast[py.Dict])
       truncate(msgs, maxResumeChars)
 
+  //[ The inverse of `attachmentsToDict`: a stored attachment list back into
+    ! `Attachment`s. Shared by `UserText.attachments` and `ToolResult.media` — same
+    ! shape, two call sites.
+  //]
+  private def dictToAttachments(list: py.List): List[Attachment] =
+    var attachments: List[Attachment] = []
+    for aDyn in list do
+      val a = aDyn.cast[py.Dict]
+      val att = Attachment:
+        a.get("name", "").asString
+        a.get("size", 0).asInt
+        a.get("mime", "").asString
+        a.get("inline", false).asBool
+      attachments = attachments + att
+    attachments
+
   //[ The inverse of `messageToDict`: one stored record back into a `Message`. //]
   private def dictToMessage(d: py.Dict): Message =
     val role = d.get("role", "").asString
 
     if role == "user" then
-      var attachments: List[Attachment] = []
-      for aDyn in d.get("attachments", py.list()).cast[py.List] do
-        val a = aDyn.cast[py.Dict]
-        val att = Attachment:
-          a.get("name", "").asString
-          a.get("size", 0).asInt
-          a.get("mime", "").asString
-          a.get("inline", false).asBool
-        attachments = attachments + att
-
+      val attachments = dictToAttachments(d.get("attachments", py.list()).cast[py.List])
       UserText(d.get("text", "").asString, attachments)
 
     else if role == "assistant" then
@@ -127,8 +134,17 @@ section SessionLog
       var results: List[ToolResult] = []
       for rDyn in d.get("results", py.list()).cast[py.List] do
         val r = rDyn.cast[py.Dict]
-        results = results + ToolResult(r.get("id", "").asString, r.get("content", "").asString)
+        val media = dictToAttachments(r.get("media", py.list()).cast[py.List])
+        results = results + ToolResult(r.get("id", "").asString, r.get("content", "").asString, media)
       ToolResults(results)
+
+  //[ An attachment list as a JSON-able dict list — shared by `UserText.attachments`
+    ! and `ToolResult.media`. //]
+  private def attachmentsToDict(attachments: List[Attachment]): py.List =
+    val list = py.list()
+    for a in attachments do
+      list.append: py.dict("name" ~ a.name, "size" ~ a.size, "mime" ~ a.mime, "inline" ~ a.inline)
+    list
 
   //[ One conversation message as a JSON-able dict: a wall-clock `time`, a `role`
     ! tag, and that variant's payload (mirroring `Message`).
@@ -136,10 +152,7 @@ section SessionLog
   private[harpe] def messageToDict(time: Float, m: Message): py.Dict =
     match m
     case UserText(text, attachments) =>
-      val attList = py.list()
-      for a in attachments do
-        attList.append: py.dict("name" ~ a.name, "size" ~ a.size, "mime" ~ a.mime, "inline" ~ a.inline)
-      py.dict("time" ~ time, "role" ~ "user", "text" ~ text, "attachments" ~ attList)
+      py.dict("time" ~ time, "role" ~ "user", "text" ~ text, "attachments" ~ attachmentsToDict(attachments))
 
     case Assistant(text, calls) =>
       val callList = py.list()
@@ -150,7 +163,7 @@ section SessionLog
     case ToolResults(results) =>
       val resultList = py.list()
       for r in results do
-        resultList.append: py.dict("id" ~ r.id, "content" ~ r.content)
+        resultList.append: py.dict("id" ~ r.id, "content" ~ r.content, "media" ~ attachmentsToDict(r.media))
       py.dict("time" ~ time, "role" ~ "tool_results", "results" ~ resultList)
   end
 end
