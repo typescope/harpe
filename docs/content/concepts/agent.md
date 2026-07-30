@@ -41,6 +41,8 @@ The agent composes the framework's parts. Each has its own guide:
 - **[Tools](/concepts/tools/)** — how the agent acts: `runCode` plus any you add.
 - **[Structured output](/concepts/structured-output/)** — why typed Jo programs usually
   replace schema-formatted final answers.
+- **[Human approval](/concepts/approvals/)** — how trusted capabilities ask the
+  session user before an irreversible action.
 - **[Skills](/concepts/skills/)** — read-only reference the agent consults on demand.
 - **[Memory](/concepts/memory/)** — the durable key/value scratchpad the agent curates.
 - **[Context](/concepts/context/)** — what the model sees: prompt + transcript window + memory.

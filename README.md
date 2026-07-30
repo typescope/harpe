@@ -75,6 +75,7 @@ public HTTP endpoint.
 - [Create a custom capability](docs/content/tutorial/create-custom-capabilities.md)
 - [Add defense in depth](docs/content/tutorial/defense-in-depth.md)
 - [Tools](docs/content/concepts/tools.md)
+- [Human approval](docs/content/concepts/approvals.md)
 - [Context](docs/content/concepts/context.md)
 - [Memory](docs/content/concepts/memory.md)
 - [Skills](docs/content/concepts/skills.md)
