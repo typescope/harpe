@@ -22,7 +22,28 @@ jo start
 ```
 
 `jo start` first builds the typed sandbox and then runs the terminal
-application. Type a message to begin; press Escape to interrupt an active turn.
+application. Type a message to begin. Press Escape to interrupt an active turn.
+
+## Make the first change
+
+Replace the first paragraph of `AGENT.md` with:
+
+```markdown
+# Release Assistant
+
+You help developers prepare software releases. Keep answers concise and always
+end with the next concrete action.
+```
+
+Restart `jo start` and ask:
+
+```text
+You ▸ I need to release version 1.2.0.
+```
+
+The reply should now follow the role and response style you wrote. This is the
+fastest customization loop: edit the instructions, restart, and try a real
+request.
 
 ## What to customize
 

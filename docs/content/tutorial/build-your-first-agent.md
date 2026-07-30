@@ -32,9 +32,9 @@ my-agent/
     Task.jo
 ```
 
-There is no session store, memory, progress UI, media processing, or application
-framework hidden behind this example. The complete CLI, web, and Telegram
-templates add those features later.
+The interaction is intentionally primitive—no spinner, cancellation, sessions,
+or media—so you can see the essential agent loop in `Main.jo`. Use the CLI,
+web, or Telegram template as the starting point for a more user-friendly agent.
 
 ## Run it
 
@@ -71,7 +71,9 @@ val agent = new Agent:
 
 The rest of the file reads terminal input, passes it to `agent.runTurn`, and
 prints the answer. `SimpleInteract` implements the small interface through
-which the engine reports turn events and checks cancellation.
+which the engine reports turn events and asks whether a turn was cancelled.
+The learning template ignores events and always answers “not cancelled.” The
+CLI template provides the full terminal behavior.
 
 Nothing in this application is special configuration. It is Jo source copied
 into your project, and you are expected to change it.
@@ -95,8 +97,10 @@ key. If it names an unavailable capability, compilation fails before anything
 runs.
 
 `SandboxRuntime.jo` is trusted application code. It supplies the capabilities
-declared by the API and calls the generated implementation. `Task.jo` is only a
-placeholder: `runCode` replaces it with a fresh program for each tool call.
+declared by the API and calls the generated implementation. `Task.jo` is the
+build-time placeholder that proves the sandbox links. For each real tool call,
+`runCode` compiles the model's program in a temporary directory without
+modifying your project file.
 
 This API/runtime/guest dependency boundary is Harpe's core security mechanism.
 The [sandbox concept guide](/concepts/sandbox/) explains the guarantee and the

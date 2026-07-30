@@ -33,6 +33,26 @@ Start the bot:
 jo start
 ```
 
+## Make the first change
+
+If you do not know your numeric Telegram ID, leave
+`TELEGRAM_ALLOWED_SENDERS` empty for the first run and message the bot in a
+private chat. It will reject the message and tell you the sender ID. Add that
+number to `.env`, restart the bot, and send another message.
+
+Then edit the opening of `AGENT.md`:
+
+```markdown
+# Team Assistant
+
+You help our engineering team answer operational questions.
+Keep Telegram replies short and put commands in code blocks.
+```
+
+Restart the bot and ask it to introduce itself. Its answer should reflect the
+new role. This confirms the token, sender authorization, model, and prompt are
+all wired correctly before you add capabilities.
+
 ## What to customize
 
 ```text

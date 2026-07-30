@@ -12,7 +12,7 @@ reports, billing, and stats.
 decides the format and the destination. The framework ships one that appends JSON
 lines to a file, but you can point the same events at a database or a metrics
 service instead (see [Sending logs somewhere else](#sending-logs-somewhere-else)).
-The examples below assume that default JSON file where they show concrete output;
+The examples below assume that default JSON file where they show concrete output.
 swap in your own `Logger` and the events are identical, only their storage changes.
 
 ## Three properties
@@ -23,7 +23,7 @@ The logging mechanism is built around three properties:
   not a formatted string. You *query and aggregate* it (per session, per category,
   summing tokens) rather than grepping text.
 
-- **Extensible.** A new kind of event is a new category you emit; a new
+- **Extensible.** A new kind of event is a new category you emit. A new
   destination is a `Logger` you install. The two are independent and the wiring
   never grows — one channel carries everything, from `runCode` to your own tools.
 
@@ -58,7 +58,7 @@ the session/chat it happened in. The two categories logged for you:
   `compileSeconds`, and — depending on the outcome — `runSeconds`, `exitCode`,
   `output`, or a `compileError`.
 - **`harpe.model`** — one per model call: `provider`, `model`, `inputTokens`,
-  `outputTokens`. This is your token-usage feed for billing and auditing; it's
+  `outputTokens`. This is your token-usage feed for billing and auditing. It is
   emitted by the built-in Anthropic/OpenAI models and tagged with the session that
   made the call.
 
@@ -77,7 +77,7 @@ def weatherTool(): Tool =
     [Tool.strParam("city", "the city")],
     input => lookUp(input.string("city")))
 
-// The handler's work goes in a small function; it may use `logger` freely.
+// The handler's work goes in a small function. It may use `logger` freely.
 private def lookUp(city: String): RunOutcome receives logger =
   logger.info("myagent.tools.weather", "looked up weather", "city" ~ city)
   new RunOutcome("Sunny in \{city}", "weather · \{city}")
@@ -103,7 +103,7 @@ stamped with the session it ran in.
   logger.warn("myagent.model", "rate limited, retrying", "attempt" ~ 3)
   ```
 
-  The message lands under an `"info"`/`"warning"`/`"error"` key; extra fields ride
+  The message lands under an `"info"`/`"warning"`/`"error"` key. Extra fields ride
   alongside. Pull them out later with `jq 'select(has("error"))'`.
 
 ### Naming your category
@@ -238,4 +238,4 @@ Field values are `String`, `Int`, `Float`, `Bool`, or a nested `Map` of them —
 written bare at the call site.
 
 The framework tags each turn's events with their session automatically (via
-`Logging.withContext`); you only need this if you write your own driver loop.
+`Logging.withContext`). You only need this if you write your own driver loop.

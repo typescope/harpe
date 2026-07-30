@@ -38,12 +38,12 @@ restrictions around the guest process.
 The runner compiles and runs each guest program in an isolated temp directory,
 applying two protections around every build/run that the guest cannot disable:
 
-- **Wall-clock timeout + process-group kill.** Each build/run is time-bounded; on
+- **Wall-clock timeout + process-group kill.** Each build/run is time-bounded. On
   expiry the whole process group is SIGKILLed, so a stuck build or an infinite
   loop — even one that forks — cannot hang the agent. Tool output is size-bounded.
-- **Environment scrub.** Guest code runs with a minimal `PATH`-only environment;
-  every host variable is dropped, secret or not, so a breach inherits none of the
-  agent's secrets. (The trusted compile step keeps the full toolchain env; only
+- **Environment scrub.** Guest code runs with a minimal `PATH`-only environment.
+  Every host variable is dropped, secret or not, so a breach inherits none of the
+  agent's secrets. (The trusted compile step keeps the full toolchain env. Only
   untrusted runs are scrubbed.)
 
 ### Three optional OS-level restrictions
@@ -61,15 +61,15 @@ have to trust — through one seam and the OS tool you prefer.
 
 **The seam — `sandbox/run.sh`.** If an executable `sandbox/run.sh` exists, the
 runner launches each guest program through it (`run.sh <out.py>` instead of
-`python3 <out.py>`); the script sets up confinement and `exec`s the interpreter.
+`python3 <out.py>`). The script sets up confinement and `exec`s the interpreter.
 Absent → plain `python3` with just the background protections. Each driver ships
-a `sandbox/run.sh.example`; enable it by renaming to `run.sh` and `chmod +x`.
+a `sandbox/run.sh.example`. Enable it by renaming to `run.sh` and running `chmod +x`.
 
 Its contract is tiny: `$1` is the compiled `.py`, the run directory is
 `dirname "$1"`, and you finish with `exec <python> "$@"`. Because confinement is
 applied *around* `exec`, it is inherited by the guest and everything it spawns —
 the property that makes `docker`/`bwrap`/Landlock containment sound. (The guest
-already arrives with a minimal `PATH`-only environment; add back anything it
+already arrives with a minimal `PATH`-only environment. Add back anything it
 needs here.) The recipes for each layer below go in that script.
 
 **Lightweight by default, but bring your own stack.** The recipes here use
@@ -83,7 +83,7 @@ gVisor). Whatever you `exec` into, the guest and its children are confined by it
 #### Layer 1 · Resource quotas
 
 Cap memory, CPU, and process count so a runaway program cannot exhaust the host.
-The built-in wall-clock timeout catches *hangs*; these catch *consumption*. One
+The built-in wall-clock timeout catches *hangs*. These catch *consumption*. One
 `ulimit` line each, no dependency:
 
 ```sh
@@ -119,7 +119,7 @@ exec bwrap \
 ```
 
 Or lean on plain Unix permissions: run as a dedicated user (see Layer 3) that
-does not own your files; with `.env`/`~/.ssh` at `600`/`700`, the kernel denies
+does not own your files. With `.env`/`~/.ssh` at `600`/`700`, the kernel denies
 the guest access with zero extra config. Coarser than an allowlist (world-readable
 files stay readable), but fully external.
 
@@ -155,7 +155,8 @@ the rest:
 ```
 table inet harpe {
   chain out {
-    type filter hook output priority 0; policy accept;
+    type filter hook output priority 0
+    policy accept
 
     # Only restrict traffic owned by the sandbox user.
     meta skuid != harpe-sandbox accept

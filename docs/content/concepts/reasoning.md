@@ -45,7 +45,7 @@ Under the hood this uses OpenAI's **Responses API**, which keeps the turn's
 reasoning on OpenAI's servers between tool calls. That means it depends on
 server-side storage being available for your account — if your organization has
 disabled response storage (e.g. a zero-retention policy), reasoning across tool
-calls will not work; use `REASONING_EFFORT=none` or a different provider.
+calls will not work. Use `REASONING_EFFORT=none` or a different provider.
 
 ### Anthropic
 
@@ -62,7 +62,7 @@ Reasoning needs a model that supports it:
 - **OpenAI** — a reasoning model (the `gpt-5` family, the `o` series). For a
   non-reasoning model like `gpt-4o`, set `REASONING_EFFORT=none`.
 - **Anthropic** — Claude Opus 4.6 or newer, or a current Sonnet. The default
-  model reasons; an older `MODEL` override may not.
+  model reasons. An older `MODEL` override may not.
 
 Point the agent at a model that can't reason without turning reasoning off and
 the request will fail — pick the model and the setting together.

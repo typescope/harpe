@@ -33,14 +33,14 @@ def runTask(): Unit receives stdout, fs =
 
 Media support is a small set of types that compose. The interfaces live in the pure
 **`caps` module** — no FFI, no implementations — which is what a sandbox guest
-depends on; the trusted implementations live in the `harpe` module and never enter
+depends on. The trusted implementations live in the `harpe` module and never enter
 the guest's dependency graph.
 
 | Piece | What it is |
 |-------|------------|
 | `Path` | a symbolic, validated path inside the sandbox tree — never a real host path |
 | `FileSystem` | the confined tree: `exists`, `isFile`, `stat`, sorted typed `list`, one-shot reads, and open files |
-| `TextFile` / `BinaryFile` | an open file: whole, windowed, and (for text) lazy line reads; closeable |
+| `TextFile` / `BinaryFile` | a closeable open file with whole, windowed, and lazy text line reads |
 | `Media` / `MediaProvider` | granted media by opaque id: `resolve` a descriptor, `load` into the tree |
 | `PDF`, `Word`, `Image`, `OCR` | format processors — each a separately granted capability |
 
@@ -61,7 +61,7 @@ For a small file, the one-shots `readText` / `readBytes` open, read whole, and
 close in one call. For a large one, `openTextFile` gives a `TextFile` with the
 shapes text actually needs: `text` (whole), `head(n)` / `tail(n)` (the first or
 last lines — `tail` reads backward from the end, so a 2 GB log's tail costs only
-the tail), and `lines` (a lazy iterator, bounded memory; a line window is
+the tail), and `lines` (a lazy iterator with bounded memory. A line window is
 `lines.drop(a).take(b)`). `openBinaryFile` gives a `BinaryFile` — `bytes` (whole)
 and `read(offset, length)` (random access, the byte window that text deliberately
 does not offer). Open files carry their `size` and are closed by the program.
@@ -99,13 +99,13 @@ exceptional. Every capability therefore answers environment errors in its type:
 `Result[T, String]` when there is a reason to give (a missing file, a corrupt
 document, an out-of-range page), `Option` when absence says it all (`resolve`,
 `stat`). The model branches with a `match`, or unwraps the happy path with
-`.success`. Reads on an already-open file are total; misuse — reading a closed
+`.success`. Reads on an already-open file are total. Misuse, such as reading a closed
 file, a negative offset — aborts the run.
 
 `resolve` is cheap — a stat, no read — returning a `Media` descriptor (`mimeType`,
 `fileName`, and an open bag of typed metadata: `sizeBytes`, `pages`, …), so the
 model can decide whether a file is worth loading. `load` puts the bytes at a `Path`
-the model names; from there the guest reads through `FileSystem` or hands the
+the model names. From there the guest reads through `FileSystem` or hands the
 `Path` to a processor.
 
 ### Processors — format capabilities
@@ -188,7 +188,7 @@ The model never sees a host path, a bucket key, or a foreign object.
   ingress — a web upload, a chat file — and the app mints an unguessable id and
   registers it in the session's provider. The model learns ids from the turn
   context and calls `media.resolve` / `media.load` with them. A forged id resolves
-  to `None`; another session's media is unreachable.
+  to `None`. Another session's media is unreachable.
 - In a **single-user / CLI** deployment the model browses the workspace directly
   through `FileSystem` — the user is handing their own files to their own agent.
 
@@ -197,7 +197,7 @@ root, addressed by a key that `keyToPath` maps to a relative path, confined to t
 root underneath as defense in depth. `keyToPath` is the access-control seam — the
 identity mapping for the trusted CLI case, a session-grant lookup for multi-tenant.
 Sources that live elsewhere (an upload store, a bucket, a chat platform's file API)
-implement the same pair; storage is the application's concern, not the framework's.
+implement the same pair. Storage is the application's concern, not the framework's.
 
 ## The broker: how granted media crosses the boundary
 
@@ -215,7 +215,7 @@ happens *inside* the confined guest, which is a security decision: a crafted PDF
 exploits the parser inside the sandbox's walls, never in the trusted host.
 
 The broker is not media-specific. It is the framework's one synchronous host↔guest
-channel — a service registry the guest reaches by name; media is its first service.
+channel. It is a service registry the guest reaches by name, with media as its first service.
 The socket is per run, so concurrent runs are isolated by construction.
 
 ## Understanding is separate from the chat model — by default
@@ -248,7 +248,7 @@ An `Attachment` — the reference-only record a `UserText` or a tool result
 carries — has an `inline` flag. When it is `true`, the provider render layer
 (`agent/models/Anthropic.jo`, `OpenAI.jo`) builds a real `image`/`document`
 content block from the file's bytes (base64, gated to the mime types each
-provider's vision API accepts — JPEG/PNG/GIF/WebP images and PDF documents;
+provider's vision API accepts, including JPEG/PNG/GIF/WebP images and PDF documents.
 anything else stays reference-only regardless of the flag) instead of, or
 alongside, the usual text reference. Nothing about this touches the persisted
 transcript: `inline` is stored exactly as given, and the render layer alone
@@ -301,12 +301,12 @@ The shipped implementations and their Python packages (see `requirements.txt`):
 
 | Capability | Implementation | Backend |
 |------------|----------------|---------|
-| `PDF` | `PdfiumReader` | pypdfium2 — PDFium, Chrome's PDF engine; renders pages, self-contained wheel |
+| `PDF` | `PdfiumReader` | pypdfium2 — PDFium, Chrome's PDF engine. It renders pages from a self-contained wheel. |
 | `Word` | `MarkitdownReader` | markitdown |
 | `Image` | `PillowImage` | Pillow |
 | `OCR` | `TesseractOcr` | `tesseract` system binary (degrades to a message without it) |
 | `OCR` | `RapidOcr` | rapidocr-onnxruntime — pure pip, stronger on photos and rotated text |
 
-Swapping a backend is a new class behind the same interface; the grant, the broker,
+Swapping a backend is a new class behind the same interface. The grant, the broker,
 and the model's programs are unchanged. That is the point of keeping the seams
 apart.

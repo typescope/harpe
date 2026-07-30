@@ -5,7 +5,7 @@ weight = 3
 A model is the agent's brain — the LLM that drives each user turn. It is a thin,
 provider-agnostic interface: given the composed prompt and the tools on offer, it
 produces the assistant's next message (or a typed error), round after round, until
-the turn is done. The loop owns the conversation history across turns; a model only
+the turn is done. The loop owns the conversation history across turns. A model only
 drives **one turn at a time**. That's why Anthropic, OpenAI, and a keyless dummy all
 sit behind the same `Model`.
 
@@ -19,13 +19,13 @@ variables (put them in your agent's `.env`):
   (OpenAI wins if both are set). Setting neither fails fast at startup.
 - **`MODEL`** — the model id. Defaults to `claude-opus-4-6` (Anthropic) or `gpt-5.6`
   (OpenAI).
-- **`OPENAI_BASE_URL`** — optional. OpenAI uses the Responses API; set this only to
+- **`OPENAI_BASE_URL`** — optional. OpenAI uses the Responses API. Set this only to
   reach another Responses-API endpoint (Azure OpenAI, a proxy). Third-party
   chat/completions endpoints (Groq, Together, llama.cpp) are not supported.
 - **`REASONING_EFFORT`** — reasoning effort: `medium` (default), `low`, `high`, or
   `none` to disable reasoning (needed for a non-reasoning model like `gpt-4o`).
 - **`PROMPT_CACHE`** — Anthropic prompt caching: `5m` (default), `1h`, or `off`.
-  (OpenAI caches long prefixes on its own; this is ignored there.)
+  (OpenAI caches long prefixes on its own. This is ignored there.)
 
 So a `.env` of
 
@@ -92,7 +92,7 @@ interface Turn
 
 `reply` is **idempotent**: results are committed only on a successful `Reply`, so
 the loop safely retries a failed round without duplicating them. The model
-**classifies** a failure; the loop owns the **policy** — `Transient` is retried with
+**classifies** a failure. The loop owns the **policy**. `Transient` is retried with
 exponential backoff (up to the configured limit), `Fatal` gives up the turn. A model
 never retries internally.
 
@@ -135,10 +135,10 @@ Things to get right:
 
 - **Classify failures** into `Transient` (worth a retry) vs `Fatal` (not), and let
   the engine handle backoff — don't retry inside the model.
-- **Report usage** in the returned `Usage`; call `logUsage(provider, model, in, out)`
+- **Report usage** in the returned `Usage`. Call `logUsage(provider, model, in, out)`
   if you want the `harpe.model` log event too.
 - **Read `logger` live** — `reply` is `receives logger` (not captured at
   construction), so its logs land in the current turn's context.
 
-`Echo.jo` is the minimal reference (a `SimpleTurn`); `Anthropic.jo` and `OpenAI.jo`
+`Echo.jo` is the minimal reference (a `SimpleTurn`). `Anthropic.jo` and `OpenAI.jo`
 implement `Turn` directly to preserve reasoning across the tool loop.

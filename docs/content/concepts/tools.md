@@ -3,7 +3,7 @@ title = "Tools"
 weight = 5
 +++
 A tool is the agent's way to *act*. The model, mid-turn, chooses to call a tool by
-name with arguments; your handler runs host-side and returns text the model reads
+name with arguments. Your handler runs host-side and returns text the model reads
 on the next step. Every agent ships with `runCode` (write a Jo program, compile it
 against the sandbox, run it) — you extend the toolset by writing your own tools and
 adding them where the driver constructs its `Agent`.
@@ -21,7 +21,7 @@ class Tool(name, description, params, run)
 - **`run`** — your host-side handler: it gets the call's typed input and returns a
   `RunOutcome`.
 
-You describe all of this in Jo; each provider renders its own wire spec from it, so
+You describe all of this in Jo. Each provider renders its own wire spec from it, so
 you never hand-write JSON schema.
 
 See [Structured output](/concepts/structured-output/) for why Harpe usually keeps
@@ -32,7 +32,7 @@ agent's final answer.
 
 `Defaults.tools()` gives every agent:
 
-- **`runCode`** — compile and run a Jo program in the sandbox; the agent's main way
+- **`runCode`** — compile and run a Jo program in the sandbox. This is the agent's main way
   to act.
 - **skill tools** — `skillsList` / `skillsRead` / `skillsSearch`, read-only access
   to the agent's `skills/`.
@@ -54,7 +54,7 @@ def weatherTool(): Tool =
     input => lookUp(input.string("city")))
 
 // Keep the handler body in a small function (a multi-line lambda inside the
-// constructor call doesn't parse); it may use `logger` freely.
+// constructor call doesn't parse). It may use `logger` freely.
 private def lookUp(city: String): RunOutcome =
   new RunOutcome("Sunny in \{city}, 22°C", "weather · \{city}")
 ```
@@ -96,7 +96,7 @@ class RunOutcome(result, summary)
 `elide(text, maxChars)` trims to a head-plus-tail excerpt with the middle marked.
 The rule is **reference, don't inline**: return a bounded excerpt to the model and
 log the full artifact, so nothing is lost (this is what `runCode` does — the elided
-result to the model, the whole output to `logs/agent.jsonl`; see
+result to the model and the whole output to `logs/agent.jsonl`. See
 [logging.md](/concepts/logging/)).
 
 ```jo
@@ -108,7 +108,7 @@ new RunOutcome(elide(output, 4000), "ran · 3.1s")
 You don't have to catch everything. The engine runs every tool through a backstop
 (`runSafely`), so if your handler throws — or `abort`s — the exception becomes an
 *error* `RunOutcome` fed back to the model. The turn continues and the driver never
-crashes. Return a clear message for expected failures; let unexpected ones raise.
+crashes. Return a clear message for expected failures. Let unexpected ones raise.
 
 ## Adding your tool
 
