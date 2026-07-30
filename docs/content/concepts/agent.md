@@ -48,39 +48,10 @@ my-agent/
     jo.toml        # api, runtime, and guest modules
     SandboxAPI.jo  # the typed contract and capability interfaces
     SandboxRuntime.jo # trusted capability implementations
-    Task.jo        # untrusted model-written program, replaced every turn
+    Task.jo        # build-time placeholder for model-written programs
   data/            # sessions, history, and working memory
   logs/            # structured audit trail
 ```
-
-The sandbox modules depend in one direction: the untrusted `guest` can see only
-the interfaces in `api`. The trusted `runtime` supplies their implementations.
-That dependency boundary is what prevents model-written code from reaching
-ambient files, network, shell, or secrets.
-
-![The api module defines the contract shared by the untrusted guest and trusted runtime. The guest implements runTask against that contract, while the runtime supplies the capability implementations.](/img/project-deps.svg)
-
-## The compile-time sandbox
-
-The model's only way to act is to write the body of `runTask`. Its declaration
-names the complete authority available during that turn:
-
-```jo
-// api: the contract you control
-defer def runTask(): Unit receives time, stdout
-
-// guest: the implementation the model writes
-def runTask(): Unit receives time, stdout =
-  println("Today is " + time.today().toString)
-```
-
-Nothing runs until the generated program type-checks. If it names a capability
-that is not declared and supplied, compilation fails before the program starts.
-The [sandbox concept](/concepts/sandbox/) covers the capability gate in detail.
-The [defense-in-depth tutorial](/tutorial/defense-in-depth/) covers optional
-OS-level restrictions.
-
-![The compiled guest is sealed behind a type-checked boundary. Its only paths to the trusted runtime and outside world are the typed capabilities explicitly granted to it.](/img/typed-sandbox.svg)
 
 ## The framework agent
 
@@ -109,6 +80,7 @@ stays provider- and UI-agnostic.
 The agent composes the framework's parts. Each has its own guide:
 
 - **[Model](/concepts/models/)** — the provider-agnostic LLM.
+- **[Compile-time sandboxing](/concepts/sandbox/)** — the capability boundary for generated programs.
 - **[Tools](/concepts/tools/)** — how the agent acts: `runCode` plus any you add.
 - **[Structured output](/concepts/structured-output/)** — why typed Jo programs usually
   replace schema-formatted final answers.

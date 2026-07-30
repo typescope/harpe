@@ -5,6 +5,8 @@ weight = 2
 A Harpe agent acts by writing Jo programs. Every generated program must compile
 against an API chosen by the agent developer before it can run.
 
+![The compiled guest is sealed behind a type-checked boundary. Its only paths to the trusted runtime and outside world are the typed capabilities explicitly granted to it.](/img/typed-sandbox.svg)
+
 ## The capability gate
 
 The generated program belongs to the `guest` module. That module has no Python
