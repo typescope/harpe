@@ -78,8 +78,8 @@ private def runChat(): Unit receives stdout, workspace, logger =
       interact.agentResponse(text)
 
     else
-      if res is Interrupted then println "  ⎋ interrupted"
-      else println "  · request failed"
+      if res is Interrupted then println("  " + Style.warning("⎋ interrupted"))
+      else println("  " + Style.error("· request failed"))
 
     // Persist memory regardless of outcome (it is not rolled back with a turn).
     if !memory.isEmpty then Memory.save(sessionLog.memoryPath, memory)
@@ -87,7 +87,7 @@ private def runChat(): Unit receives stdout, workspace, logger =
 
   sessionLog.close()
 
-  println "  ♪ Elise stopped."
+  println("  " + Style.success("♪ Elise stopped."))
 end
 
 //[ Whether the user explicitly requested the session picker. The template's
@@ -107,11 +107,11 @@ private def chooseSession(resume: Bool): SessionLog receives stdout, workspace =
 
   if !resume || recent.isEmpty || !interactive then SessionLog.newLog()
   else
-    println "Recent sessions:"
+    println Style.accent("Recent sessions")
     var i = 0
     for path in recent do
       val relative = os.path.relpath(path, os.path.abspath("."))
-      println "  \{i + 1}. \{relative}"
+      println("  " + Style.note("\{i + 1}.") + " " + Style.muted(relative))
       i = i + 1
 
     println ""
@@ -124,7 +124,7 @@ private def chooseSession(resume: Bool): SessionLog receives stdout, workspace =
     if selected >= 1 && selected <= recent.size then
       val path = recent.get(selected - 1)
       val relative = os.path.relpath(path, os.path.abspath("."))
-      println "Resuming \{relative}"
+      println(Style.success("Resuming") + " " + relative)
       new SessionLog(path)
     else
       SessionLog.newLog()

@@ -48,23 +48,20 @@ private class Console(out: String => Unit, historyFile: String)
     val cooked = terminal.getAttrs(0)
     signal.onSigint: (signum: Int, frame: py.Dynamic) =>
       terminal.setAttrs(0, cooked)
-      sys.stdoutWrite("\n  ♪ Elise stopped.\n")
+      sys.stdoutWrite("\n  " + Style.success("♪ Elise stopped.") + "\n")
       sys.stdoutFlush()
       val _ = sys.exit(0)
 
-    println """
-
-              ♪           ♫
-        ──────●───────────
-        ───────────●──────
-           E L I S E
-
-           Harpe · CLI
-
-    """
-
-    println "  Ready. Type a message to start."
-    println "  Ctrl-C, Ctrl-D, or 'quit' to exit."
+    println ""
+    println("              " + Style.note("♪") + "           " + Style.accent("♫"))
+    println(Style.muted("        ──────") + Style.note("●") + Style.muted("───────────"))
+    println(Style.muted("        ───────────") + Style.accent("●") + Style.muted("──────"))
+    println("           " + Style.accent("E L I S E"))
+    println ""
+    println("           " + Style.muted("Harpe · CLI"))
+    println ""
+    println("  " + Style.success("Ready.") + " Type a message to start.")
+    println("  " + Style.muted("Ctrl-C, Ctrl-D, or 'quit' to exit."))
 
   //[ Read one line from the user. `None` signals end-of-input (Ctrl-D / EOF),
     ! on which the caller should exit.
@@ -86,7 +83,7 @@ private class Console(out: String => Unit, historyFile: String)
 
   def agentResponse(text: String): Unit =
     println ""
-    println "Elise ▸ \{text}"
+    println(Style.accent("Elise ▸") + " " + text)
 
   //[ Persist history to disk
     !
@@ -138,26 +135,26 @@ private class Console(out: String => Unit, historyFile: String)
       spinner.stop()
 
     case TransientError(detail, delaySeconds) =>
-      println "  · transient error (\{detail}); retrying in \{delaySeconds}s"
+      println("  " + Style.warning("· transient error") + " (\{detail}); retrying in \{delaySeconds}s")
 
     case RequestFailed(detail) =>
-      println "  · request failed: \{detail}"
+      println("  " + Style.error("· request failed:") + " \{detail}")
 
     case RetriesExhausted(detail, attempts) =>
-      println "  · giving up after \{attempts} retries: \{detail}"
+      println("  " + Style.error("· giving up after \{attempts} retries:") + " \{detail}")
 
     case ToolBudgetReached(budget) =>
-      println "  · tool budget reached (\{budget}); requesting final answer"
+      println("  " + Style.warning("· tool budget reached") + " (\{budget}); requesting final answer")
 
     case ToolCallStarted(name) =>
       spinner.start("\{name} · ESC to interrupt")
 
     case ToolCallEnded(name, summary) =>
       spinner.stop()
-      println "  · \{summary}"
+      println("  " + Style.note("·") + " \{summary}")
 
     case ContextCompacted(droppedMessages) =>
-      println "  · context compacted (\{droppedMessages} messages summarized)"
+      println("  " + Style.muted("· context compacted (\{droppedMessages} messages summarized)"))
 end
 
 private section Console
