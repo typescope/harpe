@@ -8,16 +8,31 @@ final answer. Everything around it — sessions, persistence, the UI — belongs
 the **driver**. This page is the overview: the pieces, the turn logic, and how you
 configure or replace them.
 
-## The three agent shapes
+## Start from an application
 
-Every Harpe agent uses the same engine and typed sandbox. What changes is the event
-that starts a turn and the driver that handles its result:
+Use `hello` to inspect the smallest complete Harpe project:
 
-| Shape | Starts with | Good for | Tutorial |
-|---|---|---|---|
-| **Conversational** | a message | assistants and chat interfaces | [Build a conversational agent](/tutorial/conversational-agent/) |
-| **Request-driven** | an incoming request | webhooks and one-shot jobs | [Build a request-driven agent](/tutorial/request-driven-agent/) |
-| **Monitoring** | a schedule | recurring checks and policy watchers | [Build a monitoring agent](/tutorial/monitoring-agent/) |
+```sh
+jo new my-agent --template typescope/harpe:hello
+```
+
+For a real application, pick the interface closest to what you want to build:
+
+```sh
+jo new my-agent --template typescope/harpe:cli
+jo new my-agent --template typescope/harpe:web
+jo new my-agent --template typescope/harpe:telegram
+```
+
+These are starting points, not categories that constrain the finished agent.
+The generated source belongs to you: change its input loop, add a webhook or
+schedule, replace its presentation, or combine it with other application code.
+The same engine and typed sandbox work regardless of what starts a turn.
+
+The tutorials walk through the generated source for the [CLI
+application](/tutorial/create-cli-agent/), [web
+application](/tutorial/create-web-agent/), and [Telegram
+application](/tutorial/create-telegram-agent/).
 
 ## What's in an agent project
 
@@ -31,8 +46,8 @@ my-agent/
   skills/          # reference material consulted on demand
   sandbox/
     jo.toml        # api, runtime, and guest modules
-    Entry.jo       # the typed contract and capability interfaces
-    Runtime.jo     # trusted capability implementations
+    SandboxAPI.jo  # the typed contract and capability interfaces
+    SandboxRuntime.jo # trusted capability implementations
     Task.jo        # untrusted model-written program, replaced every turn
   data/            # sessions, history, and working memory
   logs/            # structured audit trail
@@ -140,8 +155,8 @@ A driver (cli, web, or telegram) wraps the engine with everything it leaves out:
   cancelled, and how it waits during backoff;
 - **owns** sessions and persistence — the transcript archive and the memory snapshot.
 
-The three shipped drivers differ only in their I/O; the agent and engine are
-identical across them.
+The shipped applications differ in their I/O and session handling; the agent
+engine is identical across them.
 
 ## Configuring your agent
 

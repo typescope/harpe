@@ -171,5 +171,3 @@ a second agent needs the same capability.
 
 - [Concepts](/concepts/agent/) — how a turn works and why the capability grant is the whole
   security boundary.
-- [Monitoring agent](/tutorial/monitoring-agent/) — writes two inline capabilities (`inventory`,
-  `reorder`) in a working agent.

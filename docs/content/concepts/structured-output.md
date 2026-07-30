@@ -36,8 +36,8 @@ as schema-valid JSON can.
 
 ## Messages are for people
 
-A conversational agent can finish with text and can use tools or capabilities to
-deliver files and other media alongside it. These are complementary outputs:
+An agent can finish with text and can use tools or capabilities to deliver
+files and other media alongside it. These are complementary outputs:
 the message explains the result to the user; the capability performs the typed
 delivery.
 
