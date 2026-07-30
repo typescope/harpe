@@ -1,0 +1,166 @@
+//[ CommonMark rendered for a terminal. The parser handles Markdown structure.
+  ! This module only decides how that structure should look in Elise's console.
+//]
+
+namespace harpe.cli
+import harpe.ffi.builtins
+
+section Markdown
+  private def parser: py.Dynamic = py.module("markdown_it").MarkdownIt()
+
+  def toTerminal(md: String): String =
+    val tokens = parser.parse(py.dynamic(md)).cast[py.List]
+    val rendered = renderBlocks(tokens)
+    val re = py.module("re")
+    re.sub("\n{3,}", "\n\n", py.dynamic(rendered)).asString.trim
+
+  private def bullet(): Int = 0 - 1
+
+  private def renderBlocks(tokens: py.List): String =
+    var out = ""
+    var lists: List[Int] = []
+    var heading = false
+    var quoteDepth = 0
+    var i = 0
+
+    while i < tokens.size do
+      val token = tokens.get(i)
+      i = i + 1
+      val kind = builtins.attr(token, "type").asString
+
+      if token.hidden.asBool then continue
+
+      if kind == "inline" then
+        var text = renderInline(token.children.cast[py.List])
+        if heading then text = Style.accent(text)
+        if quoteDepth > 0 then text = prefixLines(text, Style.note("│ "))
+        out = out + text
+
+      else if kind == "paragraph_close" then
+        out = out + "\n\n"
+
+      else if kind == "heading_open" then
+        heading = true
+
+      else if kind == "heading_close" then
+        heading = false
+        out = out + "\n\n"
+
+      else if kind == "fence" || kind == "code_block" then
+        val language = token.info.asString.trim
+        val label = if language == "" then "code" else language
+        out = out + Style.muted("┌─ " + label) + "\n"
+        out = out + codeLines(token.content.asString)
+        out = out + Style.muted("└─") + "\n\n"
+
+      else if kind == "bullet_list_open" then
+        lists = lists + bullet()
+
+      else if kind == "ordered_list_open" then
+        lists = lists + 1
+
+      else if kind == "bullet_list_close" || kind == "ordered_list_close" then
+        lists = lists.take(lists.size - 1)
+        if lists.isEmpty then out = out + "\n"
+
+      else if kind == "list_item_open" then
+        if out != "" && !out.endsWith("\n") then out = out + "\n"
+
+        var indent = ""
+        var depth = 1
+        while depth < lists.size do
+          indent = indent + "  "
+          depth = depth + 1
+
+        val n = lists.get(lists.size - 1)
+        if n == bullet() then
+          out = out + indent + Style.note("•") + " "
+        else
+          out = out + indent + Style.note("\{n}.") + " "
+          lists = lists.take(lists.size - 1) + (n + 1)
+
+      else if kind == "list_item_close" then
+        out = out + "\n"
+
+      else if kind == "blockquote_open" then
+        quoteDepth = quoteDepth + 1
+
+      else if kind == "blockquote_close" then
+        quoteDepth = quoteDepth - 1
+        out = out + "\n"
+
+      else if kind == "hr" then
+        out = out + Style.muted("────────────────────────") + "\n\n"
+
+      else if token.content.asString != "" then
+        out = out + token.content.asString + "\n\n"
+
+    out
+
+  private def renderInline(tokens: py.List): String =
+    var out = ""
+    var strong = false
+    var emphasis = false
+    var strike = false
+    var linkUrl = ""
+    var i = 0
+
+    while i < tokens.size do
+      val token = tokens.get(i)
+      i = i + 1
+      val kind = builtins.attr(token, "type").asString
+
+      if kind == "text" then
+        var text = token.content.asString
+        if strong then text = Style.strong(text)
+        if emphasis then text = Style.emphasis(text)
+        if strike then text = Style.strike(text)
+        if linkUrl != "" then text = Style.link(text)
+        out = out + text
+
+      else if kind == "code_inline" then
+        out = out + Style.code(token.content.asString)
+
+      else if kind == "strong_open" then strong = true
+      else if kind == "strong_close" then strong = false
+      else if kind == "em_open" then emphasis = true
+      else if kind == "em_close" then emphasis = false
+      else if kind == "s_open" then strike = true
+      else if kind == "s_close" then strike = false
+
+      else if kind == "link_open" then
+        val href = token.attrGet("href")
+        linkUrl = if href.isNone then "" else href.asString
+
+      else if kind == "link_close" then
+        if linkUrl != "" then out = out + Style.muted(" (" + linkUrl + ")")
+        linkUrl = ""
+
+      else if kind == "softbreak" || kind == "hardbreak" then
+        out = out + "\n"
+
+      else if kind == "image" then
+        out = out + Style.muted("[image: " + token.content.asString + "]")
+
+      else if token.content.asString != "" then
+        out = out + token.content.asString
+
+    out
+
+  private def prefixLines(text: String, prefix: String): String =
+    val lines = py.dynamic(text).split("\n").cast[py.List]
+    var out = ""
+    var i = 0
+    for lineDyn in lines do
+      if i > 0 then out = out + "\n"
+      out = out + prefix + lineDyn.asString
+      i = i + 1
+    out
+
+  private def codeLines(code: String): String =
+    val lines = py.dynamic(code).splitlines().cast[py.List]
+    var out = ""
+    for lineDyn in lines do
+      out = out + Style.muted("│ ") + Style.code(lineDyn.asString) + "\n"
+    out
+end
