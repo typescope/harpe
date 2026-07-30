@@ -16,7 +16,12 @@ private def module: py.Dynamic = py.module("subprocess")
   ! whether the wall-clock timeout fired (in which case `returnCode` is -1 and the
   ! captured streams are empty).
 //]
-class Capped(returnCode: Int, out: String, err: String, timedOut: Bool)
+class Capped(
+    returnCode: Int,
+    out: String,
+    err: String,
+    timedOut: Bool,
+    pauseTimedOut: Bool = false)
 
 //[ The minimal environment for running untrusted guest code: `PATH` only, so the
   ! interpreter (and any `run.sh` confinement tool) can still be found. EVERY other
@@ -66,11 +71,11 @@ def runCapped(args: py.List, timeoutSecs: Float, env: Any = py.none, cwd: Any = 
       val _ = py.try: proc.communicate()
       new Capped(-1, "", "", true)
 
-//[ Run a subprocess with separate execution and approved-pause budgets.
+//[ Run a subprocess while excluding approved pauses from its execution budget.
   !
-  ! Time while `paused` is set consumes `maxPauseSecs`, not `timeoutSecs`. This
-  ! lets a sandbox wait briefly for instant human approval without giving a
-  ! spinning program the same extra wall-clock allowance.
+  ! Time while `paused` is set does not consume `timeoutSecs`. A continuous pause
+  ! may last at most `maxPauseSecs`. The caller chooses that limit, so the process
+  ! runner provides a watchdog without owning the application's approval policy.
 //]
 def runCappedWithPauses(
     args: py.List,
@@ -92,7 +97,7 @@ def runCappedWithPauses(
   val timeMod = py.module("time")
   var last = timeMod.callDynamic("monotonic").asFloat
   var executionLeft = timeoutSecs
-  var pauseLeft = maxPauseSecs
+  var pauseStarted = 0.0
 
   while true do
     match py.try(proc.communicate(timeout = 0.1))
@@ -104,10 +109,19 @@ def runCappedWithPauses(
       val elapsed = now - last
       last = now
 
-      if paused.is_set().asBool then pauseLeft = pauseLeft - elapsed
-      else executionLeft = executionLeft - elapsed
+      if paused.is_set().asBool then
+        if pauseStarted == 0.0 then pauseStarted = now
 
-      if executionLeft <= 0.0 || pauseLeft <= 0.0 then
+        if now - pauseStarted >= maxPauseSecs then
+          val _ = py.try: os.killpg(os.getpgid(proc.pid.asInt), signal.SIGKILL)
+          val _ = py.try: proc.communicate()
+          return new Capped(-1, "", "", true, true)
+
+      else
+        pauseStarted = 0.0
+        executionLeft = executionLeft - elapsed
+
+      if executionLeft <= 0.0 then
         val _ = py.try: os.killpg(os.getpgid(proc.pid.asInt), signal.SIGKILL)
         val _ = py.try: proc.communicate()
         return new Capped(-1, "", "", true)

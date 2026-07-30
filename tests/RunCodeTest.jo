@@ -131,10 +131,10 @@ def run(): Unit receives stdout =
 
   // An unbuilt sandbox reports clearly instead of building or running anything.
   val unbuilt = tempfile.mkdtemp()
-  check("not-built", exec(runCodeTool(unbuilt), guest("  println 1\n")).summary, "sandbox not built")
+  check("not-built", exec(runCodeTool(unbuilt, 5.0), guest("  println 1\n")).summary, "sandbox not built")
 
-  val fast  = runCodeTool(sandboxDir, 120.0, 5.0)   // 5s run backstop
-  val quick = runCodeTool(sandboxDir, 120.0, 2.0)   // 2s run backstop
+  val fast  = runCodeTool(sandboxDir, 5.0, 120.0, 5.0)   // 5s run backstop
+  val quick = runCodeTool(sandboxDir, 5.0, 120.0, 2.0)   // 2s run backstop
 
   // A well-formed program runs and produces output.
   check("normal", tag(exec(fast, guest("  println 42\n"))), "ran")
@@ -173,7 +173,7 @@ def run(): Unit receives stdout =
 
   // Concurrent runs are isolated: 4 parallel programs, 2 building at a time,
   // each must get back its own output (no shared Task.jo / .build clobbering).
-  concurrentCheck(runCodeTool(sandboxDir, 120.0, 5.0, 2), 4)
+  concurrentCheck(runCodeTool(sandboxDir, 5.0, 120.0, 5.0, 2), 4)
 
   // A program that does not type-check is caught at the compile checkpoint.
   val badCompile = exec(fast, guest("  println undefinedThing\n"))

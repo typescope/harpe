@@ -33,8 +33,8 @@ section Defaults
     ! OS-level confinement for `runCode` is external and opt-in: an executable
     ! `sandbox/run.sh` wrapper, if present, owns it (see `docs/concepts/sandbox.md`).
   //]
-  def tools(): List[Tool] receives workspace =
-    val runTool = runCodeTool(workspace.sandboxDir)
+  def tools(approvalDeadline: Float): List[Tool] receives workspace =
+    val runTool = runCodeTool(workspace.sandboxDir, approvalDeadline)
     [runTool, uploadMediaTool()] ++ skillTools(workspace.skillsDir)
 
   //[ The chat model, selected by env vars:

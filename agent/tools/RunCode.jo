@@ -111,6 +111,7 @@ private def runCode(
     gate: py.Dynamic,
     buildTimeout: Float,
     runTimeout: Float,
+    approvalDeadline: Float,
     maxResultChars: Int,
     runScript: String,
     callContext: CallContext)
@@ -124,7 +125,9 @@ private def runCode(
   case Some(donePath) =>
     gate.acquire()
     val runDir = tempfileMod.mkdtemp(prefix = "run-").asString
-    val outcome = py.try(buildAndRun(code, donePath, runDir, buildTimeout, runTimeout, runScript, callContext))
+    val outcome = py.try(buildAndRun(
+      code, donePath, runDir, buildTimeout, runTimeout,
+      approvalDeadline, runScript, callContext))
     val _ = py.try(shutilMod.rmtree(runDir, ignore_errors = true))
     gate.release()
 
@@ -143,6 +146,7 @@ private def buildAndRun(
     runDir: String,
     buildTimeout: Float,
     runTimeout: Float,
+    approvalDeadline: Float,
     runScript: String,
     callContext: CallContext)
 : Tool.RunOutcome receives logger, currentInteract =
@@ -240,7 +244,7 @@ private def buildAndRun(
     runCmd,
     runTimeout,
     approvalActive,
-    600.0,
+    approvalDeadline,
     env = runEnv,
     cwd = runDir
   ))
@@ -259,10 +263,16 @@ private def buildAndRun(
       "compileSeconds" ~ compileSeconds
       "runSeconds"     ~ runSeconds
       "timedOut"       ~ true
-      "phase"          ~ "run"
-    return new Tool.RunOutcome(
-      "The program ran too long and was stopped after \{runTimeout}s (possible infinite loop).",
-      "timed out · ran \{runSeconds}s", [])
+      "phase"          ~ (if run.pauseTimedOut then "approval" else "run")
+
+    if run.pauseTimedOut then
+      return new Tool.RunOutcome(
+        "The approval did not finish within \{approvalDeadline}s, so the program was stopped.",
+        "approval timed out · \{runSeconds}s", [])
+    else
+      return new Tool.RunOutcome(
+        "The program ran too long and was stopped after \{runTimeout}s (possible infinite loop).",
+        "timed out · ran \{runSeconds}s", [])
 
   val runReturnCode = run.returnCode
   val runOutText = run.out.trim
@@ -355,6 +365,11 @@ private def replayAudit(path: String): Unit receives logger =
   ! filesystem, uid) lives outside the process in the optional `sandbox/run.sh`
   ! wrapper (see docs/concepts/sandbox.md).
   !
+  ! `approvalDeadline` is the application's watchdog for one approval pause. It
+  ! should be slightly longer than the deadline enforced by the application's
+  ! interaction UI. This prevents a broken interaction handler from leaving the
+  ! sandbox process waiting forever.
+  !
   ! `maxConcurrent` bounds how many builds+runs proceed at once (each spawns a
   ! compiler + interpreter process); further calls wait for a slot. Concurrent
   ! calls are isolated by construction — each compiles its own source against the
@@ -377,6 +392,7 @@ private def replayAudit(path: String): Unit receives logger =
 //]
 def runCodeTool(
     sandboxDir: String,
+    approvalDeadline: Float,
     buildTimeout: Float = 120.0,
     runTimeout: Float = 30.0,
     maxConcurrent: Int = 4,
@@ -398,5 +414,7 @@ def runCodeTool(
     "runCode",
     "Write a Jo program (namespace sandbox.guest, def runTask), compile it against the agent sandbox, and run it. Returns the program's stdout, or the compile error if it does not build.",
     [Tool.strParam("code", "The Jo source code to compile and run")],
-    input => runCode(input.string("code"), sandboxDir, gate, buildTimeout, runTimeout, maxResultChars, runScript, callContext)
+    input => runCode(
+      input.string("code"), sandboxDir, gate, buildTimeout, runTimeout,
+      approvalDeadline, maxResultChars, runScript, callContext)
   )

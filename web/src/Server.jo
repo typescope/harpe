@@ -97,7 +97,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
   // The `runCode` tool the interactive editor (`/api/run`) executes against — the
   // same compile+sandbox machinery the agent uses, so an edited script runs exactly
   // as the agent's would, with the session's data dir as its `fs` root.
-  private val runTool: Tool = runCodeTool(wspace.sandboxDir)
+  private val runTool: Tool = runCodeTool(wspace.sandboxDir, 610.0)
 
   //[ The WSGI application: establish the request context, then route. Each
     ! request runs on its own thread, which does not inherit the process's
@@ -305,7 +305,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     val memory = new Memory
     val agent = new Agent:
       brain = brain
-      tools = Defaults.tools() ++ memoryTools(memory) ++ [sendFileTool()]
+      tools = Defaults.tools(610.0) ++ memoryTools(memory) ++ [sendFileTool()]
       context = new WindowedContext:
         baseSystem = workspace.read("AGENT.md").getOrElse("")
         memory = memory
@@ -344,7 +344,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
       // transcript stays on disk.
       val agent = new Agent:
         brain = brain
-        tools = Defaults.tools() ++ memoryTools(memory) ++ [sendFileTool()]
+        tools = Defaults.tools(610.0) ++ memoryTools(memory) ++ [sendFileTool()]
         context = new WindowedContext:
           baseSystem = workspace.read("AGENT.md").getOrElse("")
           memory = memory
