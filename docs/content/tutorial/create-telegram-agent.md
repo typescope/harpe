@@ -23,7 +23,7 @@ TELEGRAM_ALLOWED_SENDERS=12345678
 ANTHROPIC_API_KEY=...
 ```
 
-The template calls its default assistant Figaro. Use that name in BotFather if
+The template calls its default assistant Carmen. Use that name in BotFather if
 you want the Telegram profile and replies to match. You can rename it later in
 BotFather and `AGENT.md`.
 
