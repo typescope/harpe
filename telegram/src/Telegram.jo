@@ -79,13 +79,25 @@ private def serve(): Unit receives stdout, workspace, logger =
   // don't inherit it, so the bot re-installs it around each turn (see workerLoop).
   val bot = new TelegramBot(brain, client, allowed, username, botId, logger)
 
-  println "Harpe ▸ Hello Agent is live on Telegram as @\{username} (Ctrl-C to stop)"
+  println """
+
+              ♪           ♫
+        ──────●───────────
+        ───────────●──────
+          F I G A R O
+
+        Harpe · Telegram
+
+    """
+
+  println "  Live as @\{username}"
+  println "  Ctrl-C to stop"
 
   if allowed.isEmpty then
     println "  ⚠ TELEGRAM_ALLOWED_SENDERS is empty — all messages are rejected until you add sender ids."
 
   // Stop cleanly on Ctrl-C instead of dumping a traceback out of the poll loop.
-  signal.shutdownOnSigint("\nHarpe ▸ shutting down.")
+  signal.shutdownOnSigint("\n  ♪ Figaro stopped.")
 
   bot.run()
 
@@ -207,7 +219,7 @@ private class TelegramBot(
     if !isAllowed(senderId) then
       if chatType == "private" then
         client.sendMessage(chatId,
-          "You are not authorized to use this agent.\nYour user id is \{senderId} — ask the operator to add it to TELEGRAM_ALLOWED_SENDERS.")
+          "You are not authorized to use Figaro.\nYour user id is \{senderId} — ask the operator to add it to TELEGRAM_ALLOWED_SENDERS.")
 
       println "  · rejected message from unlisted sender \{senderId} in \{chatType} \{chatId}"
       return

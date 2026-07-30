@@ -48,24 +48,23 @@ private class Console(out: String => Unit, historyFile: String)
     val cooked = terminal.getAttrs(0)
     signal.onSigint: (signum: Int, frame: py.Dynamic) =>
       terminal.setAttrs(0, cooked)
-      sys.stdoutWrite("\nGoodbye.\n")
+      sys.stdoutWrite("\n  ♪ Elise stopped.\n")
       sys.stdoutFlush()
       val _ = sys.exit(0)
 
     println """
 
-          .--.
-         /|  /|
-        / | / |
-       /  |/  |
-      /  /|   |
-     /  / |   |
-    |__/__|___|
-       H A R P E
+              ♪           ♫
+        ──────●───────────
+        ───────────●──────
+           E L I S E
+
+           Harpe · CLI
 
     """
 
-    println "Type a message to start. Ctrl-C, Ctrl-D, or 'quit' to exit."
+    println "  Ready. Type a message to start."
+    println "  Ctrl-C, Ctrl-D, or 'quit' to exit."
 
   //[ Read one line from the user. `None` signals end-of-input (Ctrl-D / EOF),
     ! on which the caller should exit.
@@ -87,7 +86,7 @@ private class Console(out: String => Unit, historyFile: String)
 
   def agentResponse(text: String): Unit =
     println ""
-    println "Agent ▸ \{text}"
+    println "Elise ▸ \{text}"
 
   //[ Persist history to disk
     !

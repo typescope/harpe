@@ -37,10 +37,10 @@ can resume after the process restarts.
 Change the agent name shown in the left sidebar. In `src/Web.jo`, find:
 
 ```jo
-val server = new ChatServer(brain, "Chord", workspace, logger)
+val server = new ChatServer(brain, "Clair", workspace, logger)
 ```
 
-Replace `"Chord"` with your agent's name. Edit `AGENT.md` to give it a matching
+Replace `"Clair"` with your agent's name. Edit `AGENT.md` to give it a matching
 role, then restart `jo start` and reload the page. The new name should appear in
 the sidebar, and replies should follow the new instructions.
 

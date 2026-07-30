@@ -23,6 +23,10 @@ TELEGRAM_ALLOWED_SENDERS=12345678
 ANTHROPIC_API_KEY=...
 ```
 
+The template calls its default assistant Figaro. Use that name in BotFather if
+you want the Telegram profile and replies to match. You can rename it later in
+BotFather and `AGENT.md`.
+
 Access is closed by default. `TELEGRAM_ALLOWED_SENDERS` is a comma-separated
 list of numeric Telegram user IDs. If an unlisted user messages the bot
 privately, it replies with the ID you need to add.
