@@ -46,8 +46,35 @@ private def tag(o: RunOutcome): String =
 
 // Self-provides a no-op logger, so it works on the spawned worker threads too
 // (context params don't cross threads). These tests assert on outcomes, not logs.
+private def execWith(tool: Tool, code: String, ctx: CallContext, interact: Interact): RunOutcome =
+  with
+    logger = Logging.discard,
+    callContext = ctx,
+    currentInteract = interact
+  in tool.run(ToolInput(py.dict("code" ~ code)))
+
 private def exec(tool: Tool, code: String): RunOutcome =
-  with logger = Logging.discard, callContext = CallContext.empty in tool.run(ToolInput(py.dict("code" ~ code)))
+  execWith(tool, code, CallContext.empty, Interact.unattended)
+
+private class ApprovalInteract(decision: ApprovalDecision)
+  view Interact
+
+  var seenTitle = ""
+  var seenDetail = ""
+  var approvalCount = 0
+  var sawMarkdown = false
+
+  def cancelled: Bool = false
+  def pause(seconds: Float): Bool = false
+  def emit(event: turns.TurnEvent): Unit = pass
+
+  def approve(id: String, request: ApprovalRequest): ApprovalDecision =
+    seenTitle = request.title
+    seenDetail = request.detail
+    approvalCount = approvalCount + 1
+    if request.detail.contains("**quarterly-report.pdf**") then sawMarkdown = true
+    decision
+end
 
 // Wrap a runTask body in a minimal guest program.
 private def guest(body: String): String =
@@ -111,6 +138,32 @@ def run(): Unit receives stdout =
 
   // A well-formed program runs and produces output.
   check("normal", tag(exec(fast, guest("  println 42\n"))), "ran")
+
+  // A trusted sandbox capability can request approval over the per-run broker.
+  // The request stays out of the transcript and the decision returns to the
+  // waiting sandbox process.
+  val approvalInteract = new ApprovalInteract(Approved)
+  val approvalOut = execWith(
+    fast,
+    guest("  println 7\n"),
+    Map("HARPE_TEST_APPROVAL" ~ "1"),
+    approvalInteract
+  )
+  check("instant-approval-run", tag(approvalOut), "ran")
+  check(
+    "instant-approval-decision",
+    if approvalOut.result.contains("approval=approved") &&
+       approvalOut.result.contains("approval2=approved")
+    then "approved" else "missing",
+    "approved"
+  )
+  check("instant-approval-reuses-connection", "\{approvalInteract.approvalCount}", "2")
+  check("instant-approval-title", approvalInteract.seenTitle, "Notify customer")
+  check(
+    "instant-approval-markdown",
+    if approvalInteract.sawMarkdown then "markdown" else "missing",
+    "markdown"
+  )
 
   // The FileSystem capability reaches the guest: it reads its own run dir (which holds
   // the compiled out.py) through the granted `fs`.

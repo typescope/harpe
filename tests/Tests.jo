@@ -13,14 +13,20 @@ import harpe.logging.Logging
 import harpe.logging.logger
 import harpe.CallContext
 import harpe.callContext
+import harpe.Interact
+import harpe.currentInteract
 
 // Suites that drive tools/turns need `logger` and `callContext` in scope; install
 // no-op/empty ones for the whole harness (RunCodeTest self-provides on its worker
 // threads, since context params do not cross thread boundaries).
 def main(): Unit receives stdout =
-  with logger = Logging.discard, callContext = CallContext.empty in suites()
+  with
+    logger = Logging.discard,
+    callContext = CallContext.empty,
+    currentInteract = Interact.unattended
+  in suites()
 
-private def suites(): Unit receives stdout, logger, callContext =
+private def suites(): Unit receives stdout, logger, callContext, currentInteract =
   println "unix socket (unit):"
   SocketTest.run()
 
