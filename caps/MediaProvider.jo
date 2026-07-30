@@ -5,8 +5,8 @@
   ! in a database rather than the local tree — though one class (`FileSystemImpl`, in
   ! the harpe module) can implement both views.
   !
-  ! `load` puts the resource at a `Path`, then the guest reads it through `FileSystem`
-  ! or hands the `Path` to a processor.
+  ! `load` puts the resource at a relative path, then the guest reads it through
+  ! `FileSystem` or hands the path to a processor.
 //]
 
 namespace harpe.caps
@@ -20,7 +20,7 @@ interface MediaProvider
   def resolve(id: String): Option[Media]
 
   //[ Load `id` into the filesystem at `target`; `false` if `id` is not granted. //]
-  def load(id: String, target: Path): Bool
+  def load(id: String, target: String): Bool
 end
 
 //[ The ambient granted-media provider. //]

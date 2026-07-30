@@ -114,7 +114,7 @@ def run(): Unit receives stdout =
 
   // The FileSystem capability reaches the guest: it reads its own run dir (which holds
   // the compiled out.py) through the granted `fs`.
-  val fsOut = exec(fast, guestFs("  println fs.exists(fs.root / \"out.py\")\n")).result
+  val fsOut = exec(fast, guestFs("  println fs.exists(\"out.py\")\n")).result
   assert: fsOut.contains("true"), "filesystem capability: guest could not read its run dir — got [\{fsOut}]"
   println "  ok filesystem-capability"
 

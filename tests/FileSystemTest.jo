@@ -3,7 +3,7 @@
   ! Unit test for `harpe.media.FileSystem`: a `FileSystemImpl` rooted at a temp dir —
   ! `exists`/`isFile`/`stat`/`list`, one-shot reads and writes (`writeTextFile`,
   ! `createBinaryFile`), and open files: `TextFile` (whole, head/tail, lazy line reads)
-  ! and `BinaryFile` (as `Bytes`, including in-place write), all over `Path`.
+  ! and `BinaryFile` (as `Bytes`, including in-place write), all over relative paths.
 //]
 
 namespace harpe.test.FileSystemTest
@@ -25,6 +25,11 @@ private def isErr(build: () => FileSystem): Bool =
   case Ok(_)  => false
   case Err(_) => true
 
+private def rejectsPath(fs: FileSystem, path: String): Bool =
+  match py.try(fs.exists(path))
+  case Ok(_)  => false
+  case Err(_) => true
+
 // Drain a file's lines into "a|b|c", closing it.
 private def joinLines(f: TextFile): String =
   var s = ""
@@ -42,13 +47,16 @@ def run(): Unit receives stdout =
 
   val fs: FileSystem = FileSystemImpl.local(dir)
 
-  check("exists", fs.exists(fs.root / "notes.txt"))
-  check("missing", !fs.exists(fs.root / "nope.txt"))
+  check("rejects parent traversal", rejectsPath(fs, "../notes.txt"))
+  check("rejects absolute paths", rejectsPath(fs, "/notes.txt"))
 
-  check("lines stream", joinLines(fs.openTextFile(fs.root / "notes.txt").success) == "line1|line2|line3")
+  check("exists", fs.exists("notes.txt"))
+  check("missing", !fs.exists("nope.txt"))
+
+  check("lines stream", joinLines(fs.openTextFile("notes.txt").success) == "line1|line2|line3")
 
   // Whole read, head/tail, size, and early close on one open file.
-  val notes = fs.openTextFile(fs.root / "notes.txt").success
+  val notes = fs.openTextFile("notes.txt").success
   check("text whole", notes.text == "line1\nline2\nline3\n")
   check("size on handle", notes.size == 18)
 
@@ -67,39 +75,39 @@ def run(): Unit receives stdout =
   // final line without a trailing newline.
   val filler = py.dynamic("line\n").callDynamic("__mul__", 20000).asString
   file.write(os.path.join(dir, "big.txt"), filler + "last")
-  val big = fs.openTextFile(fs.root / "big.txt").success
+  val big = fs.openTextFile("big.txt").success
   val bt = big.tail(2)
   check("tail across blocks", bt.size == 2 && bt.get(0) == "line" && bt.get(1) == "last")
   big.close()
 
   // Environment errors come back typed, never as a crash.
-  check("open missing is Err", fs.openTextFile(fs.root / "nope.txt").isErr)
-  check("open a directory is Err", fs.openBinaryFile(fs.root / "sub").isErr)
-  check("list a file is Err", fs.list(fs.root / "notes.txt").isErr)
+  check("open missing is Err", fs.openTextFile("nope.txt").isErr)
+  check("open a directory is Err", fs.openBinaryFile("sub").isErr)
+  check("list a file is Err", fs.list("notes.txt").isErr)
 
   // One-shot reads for small files (open, read, close in one call).
-  check("readText one-shot", fs.readText(fs.root / "notes.txt").success == "line1\nline2\nline3\n")
-  check("readText missing is Err", fs.readText(fs.root / "nope.txt").isErr)
-  check("readBytes one-shot", fs.readBytes(fs.root / "sub" / "a.txt").success.toBase64 == "aGk=")
+  check("readText one-shot", fs.readText("notes.txt").success == "line1\nline2\nline3\n")
+  check("readText missing is Err", fs.readText("nope.txt").isErr)
+  check("readBytes one-shot", fs.readBytes("sub/a.txt").success.toBase64 == "aGk=")
 
   // Encoding: UTF-8 default with replacement; windows-1252 by name; others → Err.
   file.writeBytes(os.path.join(dir, "legacy.txt"), py.dynamic("caf\u{E9}").callDynamic("encode", "windows-1252"))
-  check("utf-8 default replaces", fs.readText(fs.root / "legacy.txt").success == "caf\u{FFFD}")
-  check("explicit encoding", fs.readText(fs.root / "legacy.txt", "windows-1252").success == "caf\u{E9}")
-  check("outside the encoding set is Err", fs.openTextFile(fs.root / "legacy.txt", "utf-16").isErr)
+  check("utf-8 default replaces", fs.readText("legacy.txt").success == "caf\u{FFFD}")
+  check("explicit encoding", fs.readText("legacy.txt", "windows-1252").success == "caf\u{E9}")
+  check("outside the encoding set is Err", fs.openTextFile("legacy.txt", "utf-16").isErr)
 
   // stat: the single metadata record.
-  val info = fs.stat(fs.root / "notes.txt").getOrElse(new FileInfo(false, 0, 0))
+  val info = fs.stat("notes.txt").getOrElse(new FileInfo(false, 0, 0))
   check("stat is file", info.isFile)
   check("stat size", info.sizeBytes == 18)
   check("stat mtime", info.modifiedAt > 0)
-  check("stat dir", !fs.stat(fs.root / "sub").getOrElse(new FileInfo(true, 0, 0)).isFile)
-  check("stat missing is None", fs.stat(fs.root / "nope.txt") is None)
+  check("stat dir", !fs.stat("sub").getOrElse(new FileInfo(true, 0, 0)).isFile)
+  check("stat missing is None", fs.stat("nope.txt") is None)
 
-  check("isFile file", fs.isFile(fs.root / "notes.txt"))
-  check("isFile dir", !fs.isFile(fs.root / "sub"))
+  check("isFile file", fs.isFile("notes.txt"))
+  check("isFile dir", !fs.isFile("sub"))
 
-  val bin = fs.openBinaryFile(fs.root / "sub" / "a.txt").success
+  val bin = fs.openBinaryFile("sub/a.txt").success
   val bytes = bin.bytes
   check("binary whole size", bytes.size == 2)
   check("binary whole base64", bytes.toBase64 == "aGk=")
@@ -108,11 +116,11 @@ def run(): Unit receives stdout =
   bin.close()
 
   // writeTextFile: overwrite an existing file (UTF-8) in one shot, replacing content.
-  fs.writeTextFile(fs.root / "notes.txt", "updated\n")
-  check("writeTextFile overwrites", fs.readText(fs.root / "notes.txt").success == "updated\n")
+  fs.writeTextFile("notes.txt", "updated\n")
+  check("writeTextFile overwrites", fs.readText("notes.txt").success == "updated\n")
 
   // Binary write: patch one byte in place, without truncation.
-  val binEdit = fs.openBinaryFile(fs.root / "sub" / "a.txt").success
+  val binEdit = fs.openBinaryFile("sub/a.txt").success
   val firstByte = binEdit.read(0, 1)        // "h"
   binEdit.write(1, firstByte)               // "hi" → "hh"
   check("binary write", binEdit.bytes.toBase64 == "aGg=")
@@ -120,22 +128,22 @@ def run(): Unit receives stdout =
   binEdit.close()
 
   // list: typed entries, sorted by name.
-  val entries = fs.list(fs.root).success
-  check("list entry count", entries.size == 4)
-  check("list sorted", entries.get(0).path.toString == "/big.txt" && entries.get(3).path.toString == "/sub")
+  val entries = fs.list("").success
+  check("empty path names the root", entries.size == 4)
+  check("list sorted", entries.get(0).path == "big.txt" && entries.get(3).path == "sub")
   check("list entry kinds", !entries.get(0).isDirectory && entries.get(3).isDirectory)
 
   // writeTextFile / createBinaryFile create the file and any missing parent directory.
-  fs.writeTextFile(fs.root / "gen" / "note.txt", "hello")
-  check("writeTextFile creates a new file + parent", fs.readText(fs.root / "gen" / "note.txt").success == "hello")
+  fs.writeTextFile("gen/note.txt", "hello")
+  check("writeTextFile creates a new file + parent", fs.readText("gen/note.txt").success == "hello")
 
-  val blob = fs.createBinaryFile(fs.root / "gen" / "out.bin")
-  blob.write(0, fs.readBytes(fs.root / "sub" / "a.txt").success)   // "hh" from the binary-write patch above
+  val blob = fs.createBinaryFile("gen/out.bin")
+  blob.write(0, fs.readBytes("sub/a.txt").success)   // "hh" from the binary-write patch above
   blob.close()
-  check("createBinaryFile round-trips bytes", fs.readBytes(fs.root / "gen" / "out.bin").success.toBase64 == "aGg=")
+  check("createBinaryFile round-trips bytes", fs.readBytes("gen/out.bin").success.toBase64 == "aGg=")
 
   check("rejects a nonexistent root", isErr(() => FileSystemImpl.local(os.path.join(dir, "no-such-subdir"))))
 
   // writeTextFile: non-ASCII text round-trips correctly in text mode.
-  fs.writeTextFile(fs.root / "unicode.txt", "caf\u{E9}\n")
-  check("writeTextFile round-trips unicode", fs.readText(fs.root / "unicode.txt").success == "caf\u{E9}\n")
+  fs.writeTextFile("unicode.txt", "caf\u{E9}\n")
+  check("writeTextFile round-trips unicode", fs.readText("unicode.txt").success == "caf\u{E9}\n")

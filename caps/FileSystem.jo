@@ -1,8 +1,8 @@
 //[ FileSystem.jo
   !
-  ! The sandbox filesystem the guest reads and writes: a confined tree it navigates
-  ! with `Path`. Pure interface — the trusted implementation (`FileSystemImpl`, in
-  ! the harpe module) resolves each `Path` against the real root and does local I/O.
+  ! The sandbox filesystem the guest reads and writes: a confined tree addressed
+  ! by relative string paths. Pure interface — trusted implementations validate a
+  ! path with `FileSystem.validate` before resolving it against their real root.
 //]
 
 namespace harpe.caps
@@ -20,9 +20,9 @@ class FileInfo(isFile: Bool, sizeBytes: Int, modifiedAt: Int)
   ! The type information a listing carries for free, so a tree walk needs no stat
   ! per entry.
 //]
-class DirEntry(path: Path, isDirectory: Bool)
+class DirEntry(path: String, isDirectory: Bool)
 
-//[ A confined filesystem the guest reads and writes via `Path`.
+//[ A confined filesystem the guest reads and writes via relative string paths.
   !
   ! Error convention: a failure the program can plan around comes back in the
   ! type — `Result[T, String]` when there is a reason to give, `Option` when
@@ -34,23 +34,20 @@ class DirEntry(path: Path, isDirectory: Bool)
   ! an unrecoverable I/O fault, and both abort the run.
 //]
 interface FileSystem
-  //[ The root, for building paths: `fs.root / "docs" / "x.pdf"`. //]
-  def root: Path = Path.root
-
   //[ Whether a file or directory exists at `path`. //]
-  def exists(path: Path): Bool
+  def exists(path: String): Bool
 
   //[ Whether `path` is an existing file. //]
-  def isFile(path: Path): Bool
+  def isFile(path: String): Bool
 
   //[ The metadata record for `path`; `None` when nothing exists there. //]
-  def stat(path: Path): Option[FileInfo]
+  def stat(path: String): Option[FileInfo]
 
-  //[ The entries directly under `dir`, sorted by name.
+  //[ The entries directly under `dir`, sorted by name. Pass `""` for the root.
     !
     ! `Err` when `dir` is not a directory.
   //]
-  def list(dir: Path): Result[List[DirEntry], String]
+  def list(dir: String): Result[List[DirEntry], String]
 
   //[ Open the file at `path` for text reads. Close it when done.
     !
@@ -61,10 +58,10 @@ interface FileSystem
     ! mojibake or U+FFFD in the output is the signal to reopen with the other
     ! encoding.
   //]
-  def openTextFile(path: Path, encoding: String = "utf-8"): Result[TextFile, String]
+  def openTextFile(path: String, encoding: String = "utf-8"): Result[TextFile, String]
 
   //[ Open the file at `path` for binary reads. Close it when done. //]
-  def openBinaryFile(path: Path): Result[BinaryFile, String]
+  def openBinaryFile(path: String): Result[BinaryFile, String]
 
   //[ Open the PDF document at `path` — parse and validate once; the `PDF` is the
     ! handle for page-wise reading. Close it when done.
@@ -72,7 +69,7 @@ interface FileSystem
     ! A shortcut through the ambient `pdfReader` backend; rebind the param to swap
     ! the backend.
   //]
-  def openPDF(path: Path): Result[PDF, String] receives pdfReader =
+  def openPDF(path: String): Result[PDF, String] receives pdfReader =
     pdfReader.open(path)
 
   //[ Open the spreadsheet workbook (`.xlsx`) at `path` — parse and validate once;
@@ -80,7 +77,7 @@ interface FileSystem
     !
     ! A shortcut through the ambient `excelReader` backend.
   //]
-  def openWorkbook(path: Path): Result[Workbook, String] receives excelReader =
+  def openWorkbook(path: String): Result[Workbook, String] receives excelReader =
     excelReader.open(path)
 
   //[ Open the Word document (`.docx`) at `path` — parse once; the `Word` is the
@@ -88,21 +85,21 @@ interface FileSystem
     !
     ! A shortcut through the ambient `wordReader` backend.
   //]
-  def openWord(path: Path): Result[Word, String] receives wordReader =
+  def openWord(path: String): Result[Word, String] receives wordReader =
     wordReader.open(path)
 
   //[ The whole file as text — the one-shot for a small file (opens, reads, closes).
     !
     ! For a large file, open it and use `lines`, `head`, or `tail` instead.
   //]
-  def readText(path: Path, encoding: String = "utf-8"): Result[String, String] =
+  def readText(path: String, encoding: String = "utf-8"): Result[String, String] =
     openTextFile(path, encoding).map: file =>
       val content = file.text
       file.close()
       content
 
   //[ The whole file's bytes — the one-shot counterpart of `readText`. //]
-  def readBytes(path: Path): Result[Bytes, String] =
+  def readBytes(path: String): Result[Bytes, String] =
     openBinaryFile(path).map: file =>
       val content = file.bytes
       file.close()
@@ -112,13 +109,37 @@ interface FileSystem
     ! file (and any missing parent directories) if needed. The write counterpart of
     ! `readText`: a one-shot for producing a text artifact.
   //]
-  def writeTextFile(file: Path, content: String): Unit
+  def writeTextFile(file: String, content: String): Unit
 
   //[ Create (or truncate) the file at `path` and return it open for binary writing;
     ! any missing parent directories are created. Build the bytes with
     ! `BinaryFile.write`, then `close`. For text output, prefer `writeTextFile`.
   //]
-  def createBinaryFile(path: Path): BinaryFile
+  def createBinaryFile(path: String): BinaryFile
+end
+
+section FileSystem
+  //[ Validate a portable path inside a confined filesystem.
+    !
+    ! `""` names the root. Every other accepted path is relative, uses `/`, and
+    ! contains only non-empty segments other than `.` and `..`. Backslashes,
+    ! absolute paths, Windows drive paths, and NUL are rejected.
+    !
+    ! Returns `None` when valid or `Some(message)` describing why the path is
+    ! invalid.
+  //]
+  def validate(path: String): Option[String] =
+    if path == "" then None
+    else if path.startsWith("/") then Some("path must be relative")
+    else if path.contains("\\") then Some("path must use '/' as its separator")
+    else if path.contains("\u{0}") then Some("path must not contain NUL")
+    else if path.size >= 2 && path.get(1) == ':' then Some("path must not contain a drive prefix")
+    else
+      for segment in path.split("/") do
+        if segment == "" then return Some("path must not contain empty segments")
+        if segment == "." then return Some("path must not contain '.' segments")
+        if segment == ".." then return Some("path must not contain '..' segments")
+      None
 end
 
 //[ The ambient confined filesystem. //]

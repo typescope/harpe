@@ -64,5 +64,5 @@ def run(): Unit receives stdout =
   check("host refuses an ungranted",  !source.copyTo("nope.txt", os.path.join(scratch, "x.txt")))
 
   val fs = FileSystemImpl.local(scratch)
-  check("guest sees the staged file", fs.exists(fs.root / "report.txt"))
-  check("guest reads the content",    joinLines(fs.openTextFile(fs.root / "report.txt").success) == "BODY")
+  check("guest sees the staged file", fs.exists("report.txt"))
+  check("guest reads the content",    joinLines(fs.openTextFile("report.txt").success) == "BODY")

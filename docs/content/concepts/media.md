@@ -20,7 +20,7 @@ is a *program*, and a Harpe agent already writes programs:
 ```jo
 def runTask(): Unit receives stdout, fs =
   // scan a huge log — streamed line by line, the file is never loaded
-  match fs.openTextFile(fs.root / "logs" / "app.log")
+  match fs.openTextFile("logs/app.log")
   case Err(e)  => println: e
   case Ok(log) =>
     for line in log.lines do
@@ -38,24 +38,22 @@ the guest's dependency graph.
 
 | Piece | What it is |
 |-------|------------|
-| `Path` | a symbolic, validated path inside the sandbox tree — never a real host path |
 | `FileSystem` | the confined tree: `exists`, `isFile`, `stat`, sorted typed `list`, one-shot reads, and open files |
 | `TextFile` / `BinaryFile` | a closeable open file with whole, windowed, and lazy text line reads |
 | `Media` / `MediaProvider` | granted media by opaque id: `resolve` a descriptor, `load` into the tree |
 | `PDF`, `Word`, `Image`, `OCR` | format processors — each a separately granted capability |
 
-### `Path` — a symbolic handle, not a string
+### `FileSystem` — a confined tree of openable files
+
+Filesystem methods take portable relative paths such as `"docs/report.pdf"`.
+Implementations validate each path with `FileSystem.validate` before resolving it
+against their root. The helper rejects absolute paths, parent traversal, empty
+segments, backslashes, drive paths, and NUL. It returns `None` for a valid path or
+`Some(message)` for an invalid path. An empty string names the root:
 
 ```jo
-val report = fs.root / "docs" / "report.pdf"
+val entries = fs.list("").success
 ```
-
-A `Path` holds no root and does no I/O. Every segment is validated at construction —
-`..`, absolute paths, and separators cannot appear — so an invalid path *cannot
-exist*, and only the trusted runtime resolves one against the real root. Path
-traversal is impossible by construction, not by review.
-
-### `FileSystem` — a confined tree of openable files
 
 For a small file, the one-shots `readText` / `readBytes` open, read whole, and
 close in one call. For a large one, `openTextFile` gives a `TextFile` with the
@@ -87,7 +85,7 @@ a store — is granted by **id**. The provider answers two questions:
 ```jo
 interface MediaProvider
   def resolve(id: String): Option[Media]        // descriptor: mime, name, metadata
-  def load(id: String, target: Path): Bool      // materialize into the tree
+  def load(id: String, target: String): Bool    // relative destination path
 ```
 
 ### Errors come back in the type
@@ -104,13 +102,13 @@ file, a negative offset — aborts the run.
 
 `resolve` is cheap — a stat, no read — returning a `Media` descriptor (`mimeType`,
 `fileName`, and an open bag of typed metadata: `sizeBytes`, `pages`, …), so the
-model can decide whether a file is worth loading. `load` puts the bytes at a `Path`
-the model names. From there the guest reads through `FileSystem` or hands the
-`Path` to a processor.
+model can decide whether a file is worth loading. `load` puts the bytes at a
+relative path the model names. From there the guest reads through `FileSystem` or
+hands the path to a processor.
 
 ### Processors — format capabilities
 
-A processor turns a file (named by a `Path`) into text or structured values. Each is
+A processor turns a file named by a relative path into text or structured values. Each is
 FFI-backed, so each is a **separately granted capability** — an agent may read PDFs
 but not run OCR — and every method is FFI-bound: anything composable in pure Jo
 (searching a document, say, is a loop over `pageText`) deliberately stays out of the
@@ -118,25 +116,23 @@ interfaces.
 
 ```jo
 interface PDF
-  def pageCount(src: Path): Result[Int, String]
-  def pageText(src: Path, page: Int): Result[String, String]            // 1-based
-  def outline(src: Path): Result[List[Heading], String]                 // table of contents
-  def metadata(src: Path): Result[Map[String, String], String]          // Title, Author, …
-  def pageContent(src: Path, page: Int): Result[PageContent, String]    // texts/images/paths
-  def pageImage(src: Path, page: Int, target: Path, scale: Int = 2): Result[ImageSize, String]
-
-interface Word
-  def text(src: Path): Result[String, String]
+  def pageCount: Int
+  def outline: List[Heading]
+  def metadata: Map[String, String]
+  def pageText(page: Int): Result[String, String]
+  def pageContent(page: Int): PageContent
+  def pageImage(page: Int, target: String, scale: Int = 2): Result[ImageSize, String]
+  def close(): Unit
 
 interface Image                                                         // pixel work only
-  def dimensions(src: Path): Result[ImageSize, String]
-  def metadata(src: Path): Result[Map[String, String], String]          // format, mode, EXIF
-  def resize(src: Path, width: Int, height: Int, target: Path): Result[ImageSize, String]
-  def crop(src: Path, x: Int, y: Int, width: Int, height: Int, target: Path): Result[ImageSize, String]
-  def convert(src: Path, target: Path): Result[ImageSize, String]
+  def dimensions(src: String): Result[ImageSize, String]
+  def metadata(src: String): Result[Map[String, String], String]
+  def resize(src: String, width: Int, height: Int, target: String): Result[ImageSize, String]
+  def crop(src: String, x: Int, y: Int, width: Int, height: Int, target: String): Result[ImageSize, String]
+  def convert(src: String, target: String): Result[ImageSize, String]
 
 interface OCR                                                           // content extraction
-  def text(src: Path): Result[String, String]
+  def text(src: String): Result[String, String]
 ```
 
 The `PDF` methods are picked for how an agent navigates a large document: `outline`
@@ -153,9 +149,8 @@ OCR engine swap independently: the framework ships a Tesseract-backed reader and
 RapidOCR-backed one (pure pip, stronger on photos), and a cloud OCR or vision-model
 describer arrives later as another implementation of the same interface.
 
-Processors that *produce* a file — a rendered page, a resized image — write to a
-`target: Path` the caller names, the same convention as `MediaProvider.load`. Output
-stays confined by `Path`'s construction, and the providers stay read-only.
+Processors that *produce* a file — a rendered page or resized image — write to a
+relative target the caller names. The implementation validates it before writing.
 
 ## The pieces compose
 
@@ -163,17 +158,18 @@ The capabilities are designed to chain. The canonical example — read a PDF pag
 and fall back to OCR when it turns out to be scanned:
 
 ```jo
-def runTask(): Unit receives stdout, fs, media, pdf, ocr =
-  val doc = fs.root / "report.pdf"
-  media.load(reportId, doc)
-
-  val txt = pdf.pageText(doc, 40).success
+def runTask(): Unit receives stdout, fs, media, ocr =
+  media.load(reportId, "report.pdf")
+  val doc = fs.openPDF("report.pdf").success
+  val txt = doc.pageText(40).success
 
   if txt != "" then println: txt
   else
     // a scanned page: render it, then read the pixels
-    val _ = pdf.pageImage(doc, 40, fs.root / "p40.png").success
-    println: ocr.text(fs.root / "p40.png").success
+    val _ = doc.pageImage(40, "p40.png").success
+    println: ocr.text("p40.png").success
+
+  doc.close()
 ```
 
 Every step is a typed call the model composes itself — no host round-trip per file,
@@ -284,9 +280,9 @@ Layers, from the type outward:
   tree, and one a turn was not granted does not compile, so it never runs — the
   [compile-time gate](/concepts/sandbox/). The interfaces come from the pure
   `caps` module, so implementations are not even in the guest's dependency graph.
-- **Identifiers and handles are opaque.** The model holds granted ids and `Path`
-  values it cannot forge: no path construction, no enumeration, no cross-session
-  reach.
+- **Media identifiers are opaque.** A forged id resolves to `None`, and another
+  session's media remains unreachable. Filesystem implementations validate relative
+  paths before resolving them inside their configured root.
 - **The broker is the trust boundary, and it lives in the host.** Even a guest that
   broke the type gate could only ask the broker for this session's grants — the
   blast radius is media the model was meant to read.

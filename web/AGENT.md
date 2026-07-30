@@ -46,8 +46,8 @@ def runTask(): Unit receives IO.stdout, fs, pdfReader, excelReader, wordReader, 
 `pdfReader`, `openWorkbook` needs `excelReader`, `openWord` needs `wordReader`.)
 
 - `fs: FileSystem` — the session's file tree, which you can read **and write**.
-  Build paths from the root: `fs.root / "letter.pdf"`.
-  - Read: `fs.list(fs.root)` (entries with `.path`/`.isDirectory`), `fs.stat(p)`
+  Use relative paths such as `"letter.pdf"` or `"docs/report.pdf"`.
+  - Read: `fs.list("")` (entries with `.path`/`.isDirectory`), `fs.stat(p)`
     (size, modified time), `fs.readText(p)` for a small file; for a big one
     `fs.openTextFile(p)` then `lines`/`head(n)`/`tail(n)`.
   - Write: `fs.writeTextFile(p, content)` for a text/CSV/Markdown file, or
@@ -108,13 +108,13 @@ import sandbox.api.*
 import harpe.caps.*
 
 def runTask(): Unit receives IO.stdout, fs, pdfReader, ocr =
-  val doc = fs.openPDF(fs.root / "report.pdf").success
+  val doc = fs.openPDF("report.pdf").success
   val page = doc.pageText(3).success
 
   if page != "" then println: page
   else
-    val _ = doc.pageImage(3, fs.root / "p3.png").success
-    println: ocr.text(fs.root / "p3.png").success
+    val _ = doc.pageImage(3, "p3.png").success
+    println: ocr.text("p3.png").success
 
   doc.close()
 ```

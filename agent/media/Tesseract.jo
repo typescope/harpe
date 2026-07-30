@@ -1,7 +1,7 @@
 //[ Tesseract.jo
   !
   ! A concrete `OCR` capability backed by the Tesseract system binary. It resolves
-  ! a `Path` against its root and asks `tesseract` to write recognized text to
+  ! a relative path against its root and asks `tesseract` to write recognized text to
   ! stdout.
   !
   ! Needs the `tesseract` **system** binary (e.g. `apt install tesseract-ocr`).
@@ -15,7 +15,7 @@ namespace harpe.media
 import harpe.caps.*
 import harpe.ffi.subprocess
 
-//[ A Tesseract-backed OCR reader, resolving a `Path` against `root`. //]
+//[ A Tesseract-backed OCR reader, resolving a relative path against `root`. //]
 class TesseractOcr
   val root: String
   val language: String
@@ -32,12 +32,12 @@ class TesseractOcr
 
   view OCR
 
-  def text(src: Path): Result[String, String] =
+  def text(src: String): Result[String, String] =
     match py.try(recognize(src))
     case Ok(result) => result
     case Err(e)     => Err(e.message)
 
-  private def recognize(src: Path): Result[String, String] =
+  private def recognize(src: String): Result[String, String] =
     val out = subprocess.runCapped:
       py.list:
         "tesseract"

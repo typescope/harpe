@@ -42,8 +42,8 @@ def runTask(): Unit receives IO.stdout, fs, pdfReader, excelReader, wordReader, 
 `openPDF` needs `pdfReader`, `openWorkbook` needs `excelReader`, `openWord` needs
 `wordReader`)
 
-- `fs: FileSystem` — the read-only tree. Build paths from the root:
-  `fs.root / "letter.pdf"`. `fs.list(fs.root)` (sorted entries with
+- `fs: FileSystem` — the read-only tree. Use relative paths such as
+  `"letter.pdf"` or `"docs/report.pdf"`. `fs.list("")` (sorted entries with
   `.path`/`.isDirectory`), `fs.stat(p)` (size, modified time), `fs.readText(p)`
   for a small file; for a big one `fs.openTextFile(p)` then `lines` / `head(n)` /
   `tail(n)`. It also opens documents:
@@ -69,7 +69,7 @@ def runTask(): Unit receives IO.stdout, fs, pdfReader, excelReader, wordReader, 
   `Region` (`Region.rect`/`roundRect`/`circle`), `stroke(outline)` over an open
   `Trace` (`Trace.from(x,y).lineTo(...).curveTo(...)`) or a closed `Region`,
   `textAt(x, baseline, text)`, `imageAt(src, x, y, w)`, then `save(target)` — the
-  target is a `Path` from the root, e.g. `fs.root / "chart.png"`. Drawing state
+  target is a relative path, e.g. `"chart.png"`. Drawing state
   is the ambient `DrawingContext` params (`fillColor`, `strokeColor`,
   `textColor`, `lineWidth`, `alpha`, `font`, `transform`), changed by rebinding:
   `with DrawingContext.fillColor = c in canvas.fill(region)`. Font/image facts
@@ -107,13 +107,13 @@ namespace sandbox.guest
 import sandbox.api.*
 
 def runTask(): Unit receives IO.stdout, fs, pdfReader, ocr =
-  val doc = fs.openPDF(fs.root / "report.pdf").success
+  val doc = fs.openPDF("report.pdf").success
   val page = doc.pageText(3).success
 
   if page != "" then println: page
   else
-    val _ = doc.pageImage(3, fs.root / "p3.png").success
-    println: ocr.text(fs.root / "p3.png").success
+    val _ = doc.pageImage(3, "p3.png").success
+    println: ocr.text("p3.png").success
 
   doc.close()
 ```
@@ -129,4 +129,3 @@ included in your context each turn. Use it so you don't lose track over a longer
 
 Keep notes like `goal`, `plan`, `todos`, and `facts` up to date as you work, and
 keep each concise.
-

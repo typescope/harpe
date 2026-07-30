@@ -60,7 +60,7 @@ class GithubImpl
     this.prInfo = getPR()
     // Download the full repo snapshot once before the LLM starts reviewing.
     // Subsequent sandbox invocations reuse the extracted files via the sentinel.
-    val sentinel = Path.join(".downloaded_" + pr.repo + pr.num)
+    val sentinel = ".downloaded_" + pr.repo + pr.num
     this.repoDir = fs.readText(sentinel) rescue Err(_) =>
       val prefix =
         client.downloadRepo(pr.owner, pr.repo, prInfo.headSha) rescue Err(msg) =>
@@ -99,7 +99,7 @@ class GithubImpl
   //[ Read repo file — tries local snapshot first, falls back to GitHub API. //]
   def readFile(path: String, start: Int = 0, ends: Int = -1): String =
     // Use raw python file read
-    match fs.readText(Path.join(repoDir, ..path.split("/")))
+    match fs.readText(repoDir + "/" + path)
     case Ok(content) =>
       // TODO: optimize for large files
       val lines = content.split("\n")
@@ -150,7 +150,7 @@ class GithubImpl
       val path = file.asString
       if isBinaryPath(path) then continue
 
-      val content = fs.readText(Path.join(..path.split("/"))) rescue Err(_) => continue
+      val content = fs.readText(path) rescue Err(_) => continue
 
       val relPath = path.replace(repoDir + "/", "")
       val lines   = content.split("\n")
