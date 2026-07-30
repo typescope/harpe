@@ -218,23 +218,63 @@ The broker is not media-specific. It is the framework's one synchronous host↔g
 channel — a service registry the guest reaches by name; media is its first service.
 The socket is per run, so concurrent runs are isolated by construction.
 
-## Understanding is separate from the chat model — on purpose
+## Understanding is separate from the chat model — by default
 
 You could send a file straight to a multimodal model and let it reason over the
-pixels. Harpe does not make that the default, and the reason is architectural: a
-file understood by the program, converted to text once, then flows through the
-ordinary transcript. That keeps the pipeline uniform (the chat model is always fed
-text, so swapping it never touches file handling), keeps the transcript cheap (a
-file is understood once, not re-billed every turn it sits in history), and lets the
-understanding step be anything — a PDF text layer, an OCR engine, a **local** model
-that never leaves the machine, or a cloud multimodal model used *as* a describer
-behind the `OCR` interface. Fusion becomes one implementation choice, not the shape
-of the whole system.
+pixels. That is not Harpe's default, and the reason is architectural: a file
+understood by the program, converted to text once, then flows through the
+ordinary transcript. That keeps the pipeline uniform (the chat model is normally
+fed text, so swapping it usually leaves file handling untouched), keeps the
+transcript cheap by default (a file is understood once, not re-billed every turn
+it sits in history), and lets the understanding step be anything — a PDF text
+layer, an OCR engine, a **local** model that never leaves the machine, or a cloud
+multimodal model used *as* a describer behind the `OCR` interface. Fusion becomes
+one implementation choice, not the shape of the whole system.
 
 The trade is real: the model reasons over the *extraction*, not the original pixels,
 so fine cross-modal questions ("compare the chart on page 3 to the table") depend on
 what the processors surface. For agent workloads that is almost always fine — and
 `pageImage` keeps the pixels one call away.
+
+### The opt-in escape hatch: showing the chat model real pixels
+
+This is a different, host-side mechanism from the guest-side `MediaProvider`
+above — it is not about what a program's *code* can read, but about what the
+*chat model itself* sees in its request, for the small set of cases (a photo,
+a chart, a scanned form with no legible text) where OCR/text extraction loses
+too much.
+
+An `Attachment` — the reference-only record a `UserText` or a tool result
+carries — has an `inline` flag. When it is `true`, the provider render layer
+(`agent/models/Anthropic.jo`, `OpenAI.jo`) builds a real `image`/`document`
+content block from the file's bytes (base64, gated to the mime types each
+provider's vision API accepts — JPEG/PNG/GIF/WebP images and PDF documents;
+anything else stays reference-only regardless of the flag) instead of, or
+alongside, the usual text reference. Nothing about this touches the persisted
+transcript: `inline` is stored exactly as given, and the render layer alone
+decides whether to act on it, checked fresh on every request.
+
+That decision is deliberately narrow, to keep the "not re-billed every turn"
+property that makes the default path cheap:
+
+- A `UserText`'s attachment inlines only when that message is the **newest**
+  one in the model's rendered window. Once a later turn starts, the same
+  history is rebuilt from scratch and that attachment is no longer newest — it
+  silently falls back to reference-only, so a past image is never resent (and
+  re-billed) on every turn it sits in history.
+- A tool result's `media` (`Tool.RunOutcome`/`ToolResult`) inlines
+  unconditionally, but only within the turn the tool was called — a tool
+  result is never re-derived from committed history the way it is from a
+  fresh call, so the same guarantee holds without needing a positional check.
+
+Any tool can use this — `RunOutcome` carries a `media: List[Attachment]`
+alongside its text result, so a tool that resolves a data-directory file (an
+`uploadMedia`-style tool, for instance) can hand the model real pixels on
+demand, in the turn the file arrives or any later turn the model asks for it
+again — full fidelity each time, not a cached description. This is additive
+to everything above: OCR and the other processors remain the default and only
+automatic path: an attachment is inlined only when some tool explicitly says
+so, never automatically just because it exists.
 
 ## Why it is secure
 
