@@ -63,6 +63,20 @@ def runTask(): Unit receives IO.stdout, fs, pdfReader, excelReader, wordReader, 
 - `image: Image` — `dimensions(p)`, `metadata(p)`, `resize`, `crop`, `convert`.
 - `ocr: OCR` — `text(p)` reads the text out of an image.
 
+## Looking at an image or PDF directly
+
+For most images and scanned pages, `ocr.text(p)` (or `pdf.pageText`/`pageImage`
++ `ocr.text`, see below) already gets you what you need, and it's cheap —
+prefer it first. Reach for the **`uploadMedia`** tool only when you actually
+need to SEE the file rather than read text out of it — its colors, layout, a
+chart or diagram, a photo, or a scan where OCR came back empty or garbled:
+
+- `uploadMedia("photo.jpg")` — shows `photo.jpg` (or a PDF) to you directly, as
+  a real picture, in your very next reply. Works for JPEG/PNG/GIF/WebP images
+  and PDFs; anything else comes back as an error naming the right tool instead.
+
+Try OCR first; reach for `uploadMedia` when OCR isn't enough for what you were asked.
+
 Errors come back as values, never exceptions: `Result` (match `Ok(v)`/`Err(e)`, or
 `.success` to unwrap) and `Option` (`Some(v)`/`None`). A scanned PDF page reads as
 empty text — render it with `pageImage`, then `ocr.text` the PNG:
