@@ -76,6 +76,18 @@ private class ApprovalInteract(decision: ApprovalDecision)
     decision
 end
 
+private class StuckApprovalInteract()
+  view Interact
+
+  def cancelled: Bool = false
+  def pause(seconds: Float): Bool = false
+  def emit(event: turns.TurnEvent): Unit = pass
+
+  def approve(id: String, request: ApprovalRequest): ApprovalDecision =
+    py.module("time").sleep(py.dynamic(1.0))
+    Approved
+end
+
 // Wrap a runTask body in a minimal guest program.
 private def guest(body: String): String =
   "namespace sandbox.guest\nimport sandbox.api.*\n\ndef runTask(): Unit receives IO.stdout =\n" + body
@@ -164,6 +176,17 @@ def run(): Unit receives stdout =
     if approvalInteract.sawMarkdown then "markdown" else "missing",
     "markdown"
   )
+
+  // An application-supplied approval deadline stops a run even if its trusted
+  // interaction handler never returns.
+  val approvalWatchdog = runCodeTool(sandboxDir, 0.2, 120.0, 5.0)
+  val stuckApproval = execWith(
+    approvalWatchdog,
+    guest("  println 7\n"),
+    Map("HARPE_TEST_APPROVAL" ~ "1"),
+    new StuckApprovalInteract
+  )
+  check("approval-watchdog", stuckApproval.summary.split(" · ").get(0), "approval timed out")
 
   // The FileSystem capability reaches the guest: it reads its own run dir (which holds
   // the compiled out.py) through the granted `fs`.
