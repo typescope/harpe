@@ -1,0 +1,46 @@
+//[ Approvals.jo
+  !
+  ! Instant human approval during one active agent run. Approval is an out-of-band
+  ! interaction. It is never appended to the model transcript.
+//]
+
+namespace harpe
+
+//[ The human-readable approval request.
+  !
+  ! `title` is short plain text. `detail` is Markdown rendered by the driver.
+//]
+class ApprovalRequest(title: String, detail: String)
+
+//[ The result returned to the waiting sandboxed program. //]
+union ApprovalDecision =
+    Approved
+  | Rejected
+  | ApprovalTimedOut
+  | ApprovalCancelled
+
+section ApprovalDecision
+  //[ Stable wire name used by the broker protocol. //]
+  def wire(decision: ApprovalDecision): String =
+    match decision
+    case Approved          => "approved"
+    case Rejected          => "rejected"
+    case ApprovalTimedOut  => "timed_out"
+    case ApprovalCancelled => "cancelled"
+
+  //[ Decode a broker response. Unknown values are treated as cancellation. //]
+  def fromWire(value: String): ApprovalDecision =
+    match value
+    case "approved"  => Approved
+    case "rejected"  => Rejected
+    case "timed_out" => ApprovalTimedOut
+    case _           => ApprovalCancelled
+end
+
+//[ Instant approval available to trusted sandbox capability implementations. //]
+interface Approvals
+  def request(request: ApprovalRequest): ApprovalDecision
+end
+
+//[ The sandbox runtime binds one implementation for the lifetime of the program. //]
+param approvals: Approvals

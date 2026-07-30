@@ -119,7 +119,7 @@ section Agent
 
             val outcome =
               if tools.find(t => t.name == toolName) is Some(t) then
-                runSafely(t, call.input)
+                with currentInteract = interact in runSafely(t, call.input)
               else
                 RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}", [])
 

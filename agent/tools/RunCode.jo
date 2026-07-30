@@ -35,6 +35,7 @@ import harpe.ffi.text
 import harpe.ffi.json
 
 import harpe.*
+import harpe.broker.*
 import harpe.logging.*
 
 private def shutilMod: py.Dynamic = py.module("shutil")
@@ -113,7 +114,7 @@ private def runCode(
     maxResultChars: Int,
     runScript: String,
     callContext: CallContext)
-: Tool.RunOutcome receives logger =
+: Tool.RunOutcome receives logger, currentInteract =
   match findDoneFile(sandboxDir)
   case None =>
     new Tool.RunOutcome(
@@ -144,7 +145,7 @@ private def buildAndRun(
     runTimeout: Float,
     runScript: String,
     callContext: CallContext)
-: Tool.RunOutcome receives logger =
+: Tool.RunOutcome receives logger, currentInteract =
   // Each run emits one `harpe.tools.runCode` log entry — the program under test
   // plus the fields specific to how it ended — to the injected channel. What
   // becomes of the entry (format, destination) is the Logger backend's policy.
@@ -214,6 +215,17 @@ private def buildAndRun(
   val runEnv = subprocess.guestEnv()
   runEnv.set("HARPE_AUDIT_LOG", runAudit)
 
+  // One broker belongs to one sandbox run. Approval requests travel over this
+  // socket and are forwarded to the current Interact without entering the model
+  // transcript.
+  val brokerPath = os.path.join(runDir, "broker.sock")
+  val approvalActive = threading.event()
+  val broker = Broker.start(
+    brokerPath,
+    frame => handleBroker(frame, currentInteract, approvalActive)
+  )
+  runEnv.set("HARPE_BROKER_SOCKET", brokerPath)
+
   // The driver's per-turn config, copied in verbatim — `runCode` interprets none
   // of it: the keys are guest env-var names the driver chose (an application
   // protocol between the driver and its own sandbox runtime, not the framework's).
@@ -224,7 +236,19 @@ private def buildAndRun(
   // Run the guest IN its own run dir, so its working directory (`.`) is that
   // isolated scratch — never the host's agent dir — with no env var needed to name it.
   val t1 = time.now()
-  val run = subprocess.runCapped(runCmd, runTimeout, env = runEnv, cwd = runDir)
+  val attemptedRun = py.try(subprocess.runCappedWithPauses(
+    runCmd,
+    runTimeout,
+    approvalActive,
+    600.0,
+    env = runEnv,
+    cwd = runDir
+  ))
+  broker.stop()
+  val run =
+    match attemptedRun
+    case Ok(value)   => value
+    case Err(error) => abort error.message
   val runSeconds = builtins.round(time.now() - t1, 2)
 
   if run.timedOut then
@@ -266,6 +290,43 @@ private def buildAndRun(
     "exitCode"       ~ runReturnCode
     "output"         ~ result
   new Tool.RunOutcome(result, summary, [])
+
+//[ Handle one cross-cutting request from a sandboxed program. //]
+private def handleBroker(
+    frame: Frame,
+    interact: Interact,
+    approvalActive: py.Dynamic)
+: Frame =
+  val body = json.loads(frame.json).cast[py.Dict]
+  val service = body.get("service", "").asString
+
+  if service != "approval" then
+    Frame.error("unknown broker service: '\{service}'")
+
+  else
+    val title = body.get("title", "").asString
+    val detail = body.get("detail", "").asString
+
+    if title.trim == "" then Frame.error("approval title must not be empty")
+    else if title.size > 200 then Frame.error("approval title exceeds 200 characters")
+    else if detail.size > 10000 then Frame.error("approval detail exceeds 10000 characters")
+    else
+      val id = py.module("uuid").uuid4().toString
+      approvalActive.set()
+      val attempted = py.try:
+        if interact.cancelled then ApprovalCancelled
+        else interact.approve(id, ApprovalRequest(title, detail))
+      approvalActive.clear()
+      val decision =
+        match attempted
+        case Ok(value)   => value
+        case Err(error) => abort error.message
+
+      Frame.of(json.dumps(py.dict(
+        "ok" ~ true,
+        "id" ~ id,
+        "decision" ~ ApprovalDecision.wire(decision)
+      )))
 
 //[ Replay the sandbox's audit log through the ambient (contextual) `logger`.
   !

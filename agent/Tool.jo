@@ -55,7 +55,7 @@ class Tool(
   // logger and driver `CallContext` at the call site (the turn loop), so the
   // current turn's logging context (see `Logging.withContext`) and config reach it
   // — rather than freezing what the tool was built with.
-  run: ToolInput => RunOutcome receives logger, callContext
+  run: ToolInput => RunOutcome receives logger, callContext, currentInteract
 )
 
 section Tool
@@ -133,7 +133,7 @@ section Tool
     ! back to the model as a tool result — so the model can react — rather than
     ! crashing the turn (or the driver).
   //]
-  def runSafely(tool: Tool, input: ToolInput): RunOutcome receives logger, callContext =
+  def runSafely(tool: Tool, input: ToolInput): RunOutcome receives logger, callContext, currentInteract =
     match py.try(tool.run(input))
     case Ok(outcome) => outcome
 

@@ -1,0 +1,51 @@
+//[ BrokerApprovals.jo
+  !
+  ! The sandbox-side client for instant approval. It sends a request over the
+  ! per-run broker and blocks until the agent's `Interact` returns a decision.
+//]
+
+namespace harpe.interact
+
+import harpe.*
+import harpe.broker.*
+import harpe.ffi.json
+import harpe.ffi.os
+import harpe.ffi.threading
+
+//[ One persistent approval connection for the lifetime of a sandbox program. //]
+class BrokerApprovals(client: BrokerClient)
+  private val lock = threading.lock()
+
+  view Approvals
+
+  def request(request: ApprovalRequest): ApprovalDecision =
+    lock.acquire()
+    val frame = Frame.of(json.dumps(py.dict(
+      "service" ~ "approval",
+      "title" ~ request.title,
+      "detail" ~ request.detail
+    )))
+    val response = client.request(frame)
+    lock.release()
+
+    val body = json.loads(response.json).cast[py.Dict]
+    ApprovalDecision.fromWire(body.get("decision", "cancelled").asString)
+end
+
+section BrokerApprovals
+  //[ Connect once to the per-run broker named by `HARPE_BROKER_SOCKET`.
+    !
+    ! A runtime launched outside `runCode` receives an unavailable implementation
+    ! whose requests are cancelled.
+  //]
+  def connect(): Approvals =
+    val path = os.getenv("HARPE_BROKER_SOCKET", "")
+    if path == "" then new UnavailableApprovals
+    else new BrokerApprovals(BrokerClient.connect(path))
+end
+
+private class UnavailableApprovals
+  view Approvals
+
+  def request(request: ApprovalRequest): ApprovalDecision = ApprovalCancelled
+end
