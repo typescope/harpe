@@ -11,13 +11,10 @@ import harpe.ffi.signal
 import harpe.ffi.terminal
 import harpe.ffi.builtins
 import harpe.ffi.file
+import harpe.ffi.time
 
 import jo.IO.stdout
-import harpe.Interact
-import harpe.Model
-import harpe.Model.ReplyResult
-import harpe.Model.Rendered
-import harpe.Tool
+import harpe.*
 import harpe.turns.*
 
 private union WorkerOutcome =
@@ -85,6 +82,8 @@ private class Console(out: String => Unit, historyFile: String)
     println ""
     println(Style.accent("Elise ▸") + " " + Markdown.toTerminal(text))
 
+  def stopProgress(): Unit = spinner.stop()
+
   //[ Persist history to disk
     !
     ! Called after every message so it survives any exit (Ctrl-C, a crash, …)
@@ -105,10 +104,11 @@ private class Console(out: String => Unit, historyFile: String)
     val interrupt = threading.event()
     val stopWatch = threading.event()
     val active = threading.event()
+    val approvalActive = threading.event()
     active.set()
-    val turnInteract = Console.turnInteract(this, interrupt, active)
+    val turnInteract = Console.turnInteract(this, interrupt, active, approvalActive)
     val savedTerm = Console.enterCbreak()
-    Console.startEscWatcher(interrupt, stopWatch)
+    Console.startEscWatcher(interrupt, stopWatch, approvalActive)
 
     val outcome = Console.callInterruptible(turnInteract, () => f(turnInteract), () => workerLock.release())
 
@@ -158,10 +158,19 @@ private class Console(out: String => Unit, historyFile: String)
 end
 
 private section Console
-  def turnInteract(console: Console, interrupt: py.Dynamic, active: py.Dynamic): Interact =
-    new ConsoleTurnInteract(console, interrupt, active)
+  def turnInteract(
+      console: Console,
+      interrupt: py.Dynamic,
+      active: py.Dynamic,
+      approvalActive: py.Dynamic)
+  : Interact =
+    new ConsoleTurnInteract(console, interrupt, active, approvalActive)
 
-  private class ConsoleTurnInteract(console: Console, interrupt: py.Dynamic, active: py.Dynamic)
+  private class ConsoleTurnInteract(
+      console: Console,
+      interrupt: py.Dynamic,
+      active: py.Dynamic,
+      approvalActive: py.Dynamic)
     view Interact
 
     def cancelled: Bool =
@@ -172,7 +181,66 @@ private section Console
 
     def emit(event: TurnEvent): Unit =
       if !cancelled then console.display(event)
+
+    def approve(id: String, request: ApprovalRequest): ApprovalDecision =
+      with IO.stdout = console.out in
+        Console.askApproval(console, interrupt, active, approvalActive, request)
   end
+
+  private def askApproval(
+      console: Console,
+      interrupt: py.Dynamic,
+      active: py.Dynamic,
+      approvalActive: py.Dynamic,
+      request: ApprovalRequest)
+  : ApprovalDecision receives stdout =
+    console.stopProgress()
+    approvalActive.set()
+
+    println ""
+    println("  " + Style.warning("Approval required"))
+    println("  " + Style.strong(request.title))
+    if request.detail.trim != "" then
+      println ""
+      println(Markdown.toTerminal(request.detail))
+    println ""
+    println("  " + Style.muted("Approve? [y/N] · expires in 10 minutes"))
+
+    val deadline = time.now() + 600.0
+    var decision: ApprovalDecision = ApprovalTimedOut
+    var waiting = true
+
+    while waiting do
+      if interrupt.is_set().asBool || !active.is_set().asBool then
+        decision = ApprovalCancelled
+        waiting = false
+
+      else if time.now() >= deadline then
+        decision = ApprovalTimedOut
+        waiting = false
+
+      else if Console.stdinReady(0.1) then
+        val ch = os.read(0, 1)
+        if builtins.len(ch) == 1 then
+          val code = builtins.ord(ch)
+          if code == 121 || code == 89 then
+            decision = Approved
+            waiting = false
+          else if code == 110 || code == 78 || code == 10 || code == 13 then
+            decision = Rejected
+            waiting = false
+          else if code == 27 then
+            decision = ApprovalCancelled
+            interrupt.set()
+            waiting = false
+
+    approvalActive.clear()
+    match decision
+    case Approved          => println("  " + Style.success("Approved."))
+    case Rejected          => println("  " + Style.warning("Rejected."))
+    case ApprovalTimedOut  => println("  " + Style.warning("Approval timed out."))
+    case ApprovalCancelled => println("  " + Style.muted("Approval cancelled."))
+    decision
 
   // Put the terminal in cbreak mode so a single keypress (ESC) is readable
   // without Enter. Returns the saved settings to restore later.
@@ -193,10 +261,12 @@ private section Console
 
   // Background thread: set `interrupt` when the user presses ESC (a lone ESC,
   // not an escape sequence like an arrow key). Stops when `stop` is set.
-  def startEscWatcher(interrupt: py.Dynamic, stop: py.Dynamic): Unit =
+  def startEscWatcher(interrupt: py.Dynamic, stop: py.Dynamic, approvalActive: py.Dynamic): Unit =
     val watcher = () =>
       while !stop.is_set().asBool && !interrupt.is_set().asBool do
-        if stdinReady(0.1) then
+        if approvalActive.is_set().asBool then
+          stop.wait(0.05)
+        else if stdinReady(0.1) && !approvalActive.is_set().asBool then
           val ch = os.read(0, 1)
           if builtins.len(ch) == 1 && builtins.ord(ch) == 27 then
             // a lone ESC (no byte follows) — not part of an arrow-key sequence
