@@ -8,50 +8,7 @@ final answer. Everything around it — sessions, persistence, the UI — belongs
 the **driver**. This page is the overview: the pieces, the turn logic, and how you
 configure or replace them.
 
-## Start from an application
-
-Use `hello` to inspect the smallest complete Harpe project:
-
-```sh
-jo new my-agent --template typescope/harpe:hello
-```
-
-For a real application, pick the interface closest to what you want to build:
-
-```sh
-jo new my-agent --template typescope/harpe:cli
-jo new my-agent --template typescope/harpe:web
-jo new my-agent --template typescope/harpe:telegram
-```
-
-These are starting points, not categories that constrain the finished agent.
-The generated source belongs to you: change its input loop, add a webhook or
-schedule, replace its presentation, or combine it with other application code.
-The same engine and typed sandbox work regardless of what starts a turn.
-
-The tutorials walk through the generated source for the [CLI
-application](/tutorial/create-cli-agent/), [web
-application](/tutorial/create-web-agent/), and [Telegram
-application](/tutorial/create-telegram-agent/).
-
-## What's in an agent project
-
-An agent is a Jo app whose `jo.toml` selects a Harpe driver. The work specific to
-your agent lives in its instructions, skills, and sandbox:
-
-```text
-my-agent/
-  jo.toml          # selects the driver and launches the Harpe loop
-  AGENT.md         # persona and standing instructions
-  skills/          # reference material consulted on demand
-  sandbox/
-    jo.toml        # api, runtime, and guest modules
-    SandboxAPI.jo  # the typed contract and capability interfaces
-    SandboxRuntime.jo # trusted capability implementations
-    Task.jo        # build-time placeholder for model-written programs
-  data/            # sessions, history, and working memory
-  logs/            # structured audit trail
-```
+![A driver owns presentation and sessions. It runs an Agent composed of a model, tools, and context, with policy supplied for each turn.](/img/agent-components.svg)
 
 ## The framework agent
 
