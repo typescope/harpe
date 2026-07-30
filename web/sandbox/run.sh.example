@@ -13,9 +13,9 @@
 #   - The run directory is `dirname "$1"` — bind-mount it for container wrappers.
 #   - Do your setup, then `exec <python> "$@"`.
 #
-# The runner already launches this with a MINIMAL environment (PATH only) — no
-# host secrets are inherited. Add back anything the guest legitimately needs
-# here (e.g. HOME, LANG, or a capability's own credential).
+# The runner passes PATH, HARPE_AUDIT_LOG, and the key/value pairs the
+# application explicitly grants through its call context. No other host
+# variables are inherited. Add anything else only when the guest needs it.
 #
 # Pick and adapt ONE of the blocks below (they are examples, not layered):
 

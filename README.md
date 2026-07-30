@@ -1,242 +1,93 @@
 # Harpe
 
-An agent framework for Jo. A Harpe agent is an LLM that acts **only** by
-writing Jo programs, compiled against a typed capability sandbox and run each
-turn. The compile step is the security checkpoint: a program that names a
-capability you didn't grant fails to compile, so it never runs.
+Harpe is an agent framework for [Jo](https://jo-lang.org/).
 
-Harpe ships as a **core library plus three runnable agents** — terminal
-(`cli/`), browser (`web/`), and Telegram (`telegram/`). Each agent directory
-carries both its driver code and its identity (`AGENT.md`, `skills/`,
-`sandbox/`, assets). **To make your own agent, copy one and edit it.**
+A Harpe agent acts by writing typed Jo programs. Each program is compiled
+against the capabilities you grant before it can run. Code that asks for an
+unavailable capability does not compile.
 
 ## Quick start
 
+Install Jo:
+
 ```sh
-cd cli                        # or web/, or telegram/
+curl -sSf https://jo-lang.org/install.sh | sh
+```
+
+Create the minimal learning agent:
+
+```sh
+jo new my-agent --template typescope/harpe:hello
+cd my-agent
 pip install -r requirements.txt
-cp .env.example .env          # set ANTHROPIC_API_KEY (or OPENAI_API_KEY)
-jo start                      # builds the sandbox guest, then launches the agent
+cp .env.example .env
 ```
 
-- **cli** — chat in your terminal (ESC interrupts a running turn).
-- **web** — open `http://127.0.0.1:8765` (`HOST`/`PORT` to change). Sessions
-  live at `/c/<id>` and resume across restarts.
-- **telegram** — also set `TELEGRAM_BOT_TOKEN` (from @BotFather) and
-  `TELEGRAM_ALLOWED_SENDERS` (comma-separated numeric user ids; access is
-  closed by default — an unlisted sender is told their id in a private chat).
-  No public endpoint needed: the bot long-polls.
+Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in `.env`, then run:
 
-`jo start` is the `[commands]` entry in the agent's `jo.toml`:
-`jo build --spec sandbox/jo.toml guest && jo run` — build the sandbox the model
-compiles against, then run the agent. (Requires Jo 0.12+.)
-
-## Layout
-
-```
-harpe/
-  agent/                 # `harpe`: the core library — one file per abstraction
-    src/
-      Agent.jo           #   Agent (brain + tools + context + budget) + the turn engine
-      Model.jo           #   Model interface + the conversation model (Message, …)
-      Tool.jo            #   Tool abstraction (typed params, ToolInput, RunOutcome)
-      Context.jo         #   Context interface — pluggable context engineering
-      Memory.jo          #   the agent-curated working-memory store
-      SessionLog.jo      #   the append-only transcript archive (audit)
-      Workspace.jo       #   the agent working dir (context param)
-      Interact.jo        #   interact with turn logic
-      models/            #   `harpe.models`: anthropic / openai / echo
-      tools/             #   `harpe.tools`: runCode, skill tools, memory tools
-      context/           #   `harpe.context`: WindowedContext, SummarizingContext
-      ffi/, util.jo      #   Python interop; transcript windowing
-  sandbox/               # `harpe-sandbox`: the Sandbox host-side abstraction
-  cli/  web/  telegram/  # the three runnable agents (see Quick start)
+```sh
+jo start
 ```
 
-Each agent directory contains:
+The `hello` application is intentionally small. Its terminal interaction has no
+spinner, cancellation, sessions, or media handling. You can read the complete
+agent loop in `src/Main.jo`.
 
-```
-  jo.toml                # deps harpe; links jo.main to its driver; `start` command
-  AGENT.md               # the system prompt, used verbatim
-  skills/                # read-only reference files the agent can browse
-  sandbox/
-    api/                 # declares runTask — the granted capabilities
-    runtime/             # builds Sandbox + capability impls, calls runTask
-    guest/               # the model's per-turn program (rewritten by runCode)
-  src/                   # the driver (Cli.jo / Web.jo / Server.jo / Telegram.jo, …)
-  assets/index.html      # web only: the chat page, served from disk — edit it live
-```
+Follow [Build Your First Agent](docs/content/tutorial/build-your-first-agent.md)
+to inspect each part.
 
-## How a turn works
+## Start from an application
 
-An **`Agent`** bundles what thinks, what it can do, what it sees, and its turn
-policy:
+Harpe also ships three complete applications. Each template copies its source
+into your project so you can inspect and customize it.
 
-```
-class Agent(brain: Model, tools: List[Tool], context: Context)
-  def runTurn(interact: Interact, maxToolRounds: Int, maxRetries: Int): TurnResult
-```
+| Template | Includes | Guide |
+|---|---|---|
+| `cli` | terminal history, progress, cancellation, memory, and logs | [Create a CLI Agent](docs/content/tutorial/create-cli-agent.md) |
+| `web` | browser sessions, streaming, uploads, and downloadable files | [Create a Web Agent](docs/content/tutorial/create-web-agent.md) |
+| `telegram` | bot sessions, sender authorization, attachments, and Telegram rendering | [Create a Telegram Agent](docs/content/tutorial/create-telegram-agent.md) |
 
-`runTurn` asks the model, runs the tool calls it makes, and repeats until the
-model answers in plain text. Transient model errors retry with backoff; after
-`maxToolRounds` tool rounds the model is asked once more with no tools, forcing
-a final answer. The driver implements `Interact` (how the model call is issued
-and cancelled, how progress is shown) and owns sessions and persistence.
-
-For the whole picture — the pieces, the turn logic, and how to configure or
-replace them — start with [docs/concepts/agent.md](docs/concepts/agent.md).
-
-The model is a provider-agnostic interface (Anthropic, OpenAI, or a keyless
-dummy), selected by env var and overridable in the driver — see
-[docs/concepts/models.md](docs/concepts/models.md).
-
-The default toolset is `runCode` (write, compile, and run a Jo program in the
-sandbox), three read-only skill tools (`skillsList` / `skillsRead` /
-`skillsSearch`) over the agent's `skills/` reference docs
-([docs/concepts/skills.md](docs/concepts/skills.md)), and three memory tools (below); write your own
-and add them where the driver builds its `Agent` — see [docs/concepts/tools.md](docs/concepts/tools.md). Large tool
-outputs are elided
-to a bounded excerpt; the full output is logged to `logs/agent.jsonl` (one JSON
-line per event, filter by `category` with `jq`). The logging layer is a
-structured event stream you can build billing/usage/stats on — see
-[docs/concepts/logging.md](docs/concepts/logging.md).
-
-## Context and memory
-
-What the model sees each request is composed by the agent's **`Context`** — a
-per-session value and the framework's only context-engineering surface:
-
-```
-interface Context
-  def append(message: Message): Unit               // record a transcript event
-  def render(interact: Interact): Rendered         // compose this request
-  def observe(usage: Usage): Unit                  // the last reply's token counts
-  def mark(): Unit                                 // turn start (for rollback)
-  def rollback(): Unit                             // drop since mark
-end
+```sh
+jo new my-agent --template typescope/harpe:cli
+jo new my-agent --template typescope/harpe:web
+jo new my-agent --template typescope/harpe:telegram
 ```
 
-Two strategies ship, named by their transcript policy:
+After creating one:
 
-- **`WindowedContext`** (default): system = `AGENT.md` + a volatile memory
-  block; messages = a sliding window of recent turns (~24k chars, whole turns).
-- **`SummarizingContext`**: old turns are distilled into a rolling summary by an
-  extra model call (its own `distiller` model — can be a cheaper one) instead of
-  dropped, triggered when the provider's reported input-token count crosses a
-  high-water mark.
-
-**Memory** is a string→string map the *LLM itself* curates via `updateMemory` /
-`readMemory` / `listMemory`; it is rendered into every request and persists per
-session (`<id>.memory.json`, written at turn commit). Which keys to keep is
-steered by your `AGENT.md`, not by the framework — see
-[docs/concepts/memory.md](docs/concepts/memory.md). The full transcript is always archived as
-append-only JSONL under `logs/` for audit — context is constructed, never replayed
-wholesale. Developer guides: [context](docs/concepts/context.md), [memory](docs/concepts/memory.md).
-
-## Make it yours
-
-Copy an agent directory, then:
-
-**Prompt and knowledge.** Edit `AGENT.md` (used verbatim as the stable system
-prompt) and drop reference files into `skills/` — the agent browses them with
-the read-only skill tools.
-
-**Grant capabilities (the usual path).** Give the *LLM* a new typed ability
-inside the sandbox: declare the capability in the `api` module, widen `runTask`'s
-`receives`, and construct the implementation in the `runtime` module (impls get the
-`Sandbox` for logging/env/resource caps — never the model). Ungranted abilities
-fail to compile in the model's code.
-
-**Add host tools (advanced).** Tools run in the loop process, *outside* the
-sandbox, so keep them narrow. A tool is data plus a handler — typed parameters,
-no hand-written JSON schema:
-
-```jo
-def textLength(): Tool =
-  Tool:
-    "textLength"
-    "Return the number of characters in a string."
-    [strParam("text", "The text to measure")]
-    input =>
-      val n = input.string("text").size
-      new RunOutcome("\{n}", "measured · \{n} chars")
+```sh
+cd my-agent
+pip install -r requirements.txt
+cp .env.example .env
+jo start
 ```
 
-Offer it by editing the toolset line where your driver constructs its `Agent`:
+The web application listens on `http://127.0.0.1:8765` by default.
 
-```jo
-val tools = Defaults.tools() ++ memoryTools(memory) ++ [textLength()]
-```
+The Telegram application also needs `TELEGRAM_BOT_TOKEN` and a comma-separated
+`TELEGRAM_ALLOWED_SENDERS` list. It uses long polling, so it does not need a
+public HTTP endpoint.
 
-The shipped drivers assemble the agent inline at session creation: the prompt
-comes from `AGENT.md`, the toolset is `Defaults.tools() ++ memoryTools(memory)`,
-the context is `WindowedContext`, and the turn budget is passed directly to
-`runTurn`. This is *this* agent's code, not framework code, so edit the driver to
-change the prompt source, tools, context strategy, model, budgets, web idle time,
-or Telegram allowlist. The common cases still delegate to `harpe.Defaults` for
-base tools and the env-selected model. There are no registration hooks: to change
-behavior, change the code.
+## Documentation
 
-**Choose the model.** `harpe.Model` is provider-agnostic; `Defaults.model()`
-selects by whichever API key is set (OpenAI wins if both are):
-
-| Provider  | Key set             | `MODEL` default   | Extra                       |
-|-----------|---------------------|-------------------|-----------------------------|
-| Anthropic | `ANTHROPIC_API_KEY` | `claude-opus-4-6` | —                           |
-| OpenAI    | `OPENAI_API_KEY`    | `gpt-5.6`         | `REASONING_EFFORT` (optional — low/medium/high/none) |
-
-Or replace the driver's `Defaults.model()` call with any `Model` —
-`harpe.models.echo()` is a keyless dummy for wiring tests. A new provider is one file: a class that
-`view Model` plus a factory.
-
-**Restyle the web page.** `web/assets/index.html` is a plain self-contained
-page, served from disk and read per request — edits show on browser refresh, no
-rebuild.
-
-## How the sandbox is wired
-
-The sandbox is a single project with three modules — `api`, `runtime`, and the
-model's per-turn program `guest`. The `guest` module depends on `api` and links
-the entry to your `runtime`:
-
-```toml
-# sandbox/jo.toml
-[module.guest]
-kind = "app"
-platform = "python"
-src = ["Task.jo"]
-
-modules = ["api", { id = "runtime", link = true }]
-
-links = [
-  { from = "jo.main", to = "sandbox.runtime.main" },
-  { from = "sandbox.api.runTask", to = "sandbox.guest.runTask" },
-]
-```
-
-`sandbox.runtime.main` builds the host-side `Sandbox`, constructs the granted
-capability impls, and calls `runTask`. On each `runCode` the driver compiles and
-runs the program in an isolated temp directory, under a wall-clock timeout
-(process-group kill) and with the provider keys scrubbed from its environment,
-then feeds stdout — or the compile/timeout error — back to the model. OS-level confinement (resource caps, filesystem/network, uid drop) is
-opt-in and external — an executable `sandbox/run.sh` wrapper of your choice
-(`ulimit`, `landrun`, `bwrap`, `docker`, …). See [docs/concepts/sandbox.md](docs/concepts/sandbox.md).
+- [Agent concepts](docs/content/concepts/agent.md)
+- [Compile-time sandboxing](docs/content/concepts/sandbox.md)
+- [Create a custom capability](docs/content/tutorial/create-custom-capabilities.md)
+- [Add defense in depth](docs/content/tutorial/defense-in-depth.md)
+- [Tools](docs/content/concepts/tools.md)
+- [Context](docs/content/concepts/context.md)
+- [Memory](docs/content/concepts/memory.md)
+- [Skills](docs/content/concepts/skills.md)
+- [Media](docs/content/concepts/media.md)
+- [Logging](docs/content/concepts/logging.md)
 
 ## Development
 
-The core library has a pure test suite (no network, no tty):
+Install the test dependencies and run the suite:
 
 ```sh
-cd agent && jo test
+pip install -r requirements.txt
+jo run test
 ```
 
-## Status / next
-
-Working: all three agents, the sandbox pipeline, retries/budgets, bounded tool
-results, per-session memory with persistence and resume (web/Telegram), and the
-pluggable `Context` layer with windowing and summarizing strategies.
-
-Next: streaming + token/usage accounting (calibrate context budgets with real
-tokens); more `Sandbox` facilities (agent↔sandbox messaging) and reusable
-capabilities (e.g. a typed `FS`); CLI session resume; confirmation for
-irreversible actions.
+Harpe requires Jo 0.12 or newer.

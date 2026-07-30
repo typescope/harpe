@@ -208,10 +208,9 @@ private def buildAndRun(
   val runCmd = if useRunSh then py.list(runScript, runOut)
                else py.list("python3", runOut)
 
-  // Untrusted guest code runs with a minimal PATH-only environment (guestEnv),
-  // inheriting none of the host's secrets — plus the audit-log path the sandbox
-  // runtime writes its records to. The build step above keeps the full env — it is
-  // the trusted compiler needing the toolchain.
+  // Start the untrusted guest with PATH only, then add the audit-log path and
+  // the application-selected callContext values below. It inherits no other
+  // host variables. The trusted compiler above keeps the full toolchain env.
   val runEnv = subprocess.guestEnv()
   runEnv.set("HARPE_AUDIT_LOG", runAudit)
 
