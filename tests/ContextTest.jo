@@ -71,7 +71,7 @@ private def turn8(u: String, a: String): List[Message] = [user(u), asst(a)]
 // A turn that calls a tool: user, assistant tool_use, tool result, assistant text.
 private def toolTurn(u: String, code: String, out: String): List[Message] =
   val call = ToolCall("id", "runCode", ToolInput(py.dict("code" ~ code)))
-  [UserText(u, []), Assistant("", [call]), ToolResults([ToolResult("id", out)]), Assistant("done", [])]
+  [UserText(u, []), Assistant("", [call]), ToolResults([ToolResult("id", out, [])]), Assistant("done", [])]
 
 def run(): Unit receives stdout, logger =
   val nix = new NoInteract
