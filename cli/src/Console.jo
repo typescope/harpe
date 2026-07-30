@@ -204,11 +204,13 @@ private section Console
       println ""
       println(Markdown.toTerminal(request.detail))
     println ""
-    println("  " + Style.muted("Approve? [y/N] · expires in 10 minutes"))
+    sys.stdoutWrite("  " + Style.muted("Approve? [y/N] "))
+    sys.stdoutFlush()
 
     val deadline = time.now() + 600.0
     var decision: ApprovalDecision = ApprovalTimedOut
     var waiting = true
+    var needsNewline = true
 
     while waiting do
       if interrupt.is_set().asBool || !active.is_set().asBool then
@@ -228,6 +230,7 @@ private section Console
             waiting = false
           else if code == 110 || code == 78 || code == 10 || code == 13 then
             decision = Rejected
+            if code == 10 || code == 13 then needsNewline = false
             waiting = false
           else if code == 27 then
             decision = ApprovalCancelled
@@ -235,6 +238,7 @@ private section Console
             waiting = false
 
     approvalActive.clear()
+    if needsNewline then println ""
     match decision
     case Approved          => println("  " + Style.success("Approved."))
     case Rejected          => println("  " + Style.warning("Rejected."))
