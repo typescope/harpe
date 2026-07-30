@@ -21,6 +21,7 @@ import harpe.ffi.os
 import harpe.ffi.time
 import harpe.ffi.json
 import harpe.ffi.file
+import harpe.ffi.glob
 
 import harpe.util.truncate
 import harpe.Model.*
@@ -78,6 +79,28 @@ section SessionLog
   def newLog(): SessionLog receives workspace =
     val path = workspace.relative(time.strftime("logs/sessions/%Y/%m/%d/%H-%M-%S") + ".jsonl")
     new SessionLog(path)
+
+  //[ Up to `limit` persisted session paths, newest first.
+    !
+    ! Session paths contain zero-padded date and time components, so lexical path
+    ! order is chronological. Drivers can use this to offer resume without
+    ! understanding the storage layout.
+  //]
+  def recentFiles(root: String, limit: Int): List[String] =
+    if limit <= 0 || !os.path.isdir(root) then []
+    else
+      var paths: List[String] = []
+      for pathDyn in glob.glob(os.path.join(root, "**/*.jsonl"), recursive = true) do
+        paths = paths + pathDyn.asString
+
+      val ordered = paths.sortBy(path => path)
+      var recent: List[String] = []
+      var i = ordered.size - 1
+      while i >= 0 && recent.size < limit do
+        recent = recent + ordered.get(i)
+        i = i - 1
+      end
+      recent
 
   //[ Reconstruct a conversation from a JSONL session file at `path`, in order.
     !

@@ -3,8 +3,9 @@ title = "Create a CLI Agent"
 weight = 2
 +++
 The CLI template is a complete terminal application with input history,
-progress feedback, cancellation, memory, and an audit log. Its source is copied
-into your project so you can inspect and change every part of it.
+progress feedback, cancellation, resumable sessions, memory, and an audit log.
+Its source is copied into your project so you can inspect and change every part
+of it.
 
 ## Create the project
 
@@ -23,6 +24,15 @@ jo start
 
 `jo start` first builds the typed sandbox and then runs the terminal
 application. Type a message to begin. Press Escape to interrupt an active turn.
+
+By default, every launch starts a new session. To continue an earlier one, run:
+
+```sh
+jo resume
+```
+
+The CLI lists the five newest sessions. Enter a number to restore its
+conversation and memory. Press Enter to start a new session.
 
 ## Make the first change
 

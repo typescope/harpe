@@ -43,7 +43,7 @@ into your project so you can inspect and customize it.
 
 | Template | Includes | Guide |
 |---|---|---|
-| `cli` | terminal history, progress, cancellation, memory, and logs | [Create a CLI Agent](docs/content/tutorial/create-cli-agent.md) |
+| `cli` | terminal history, progress, cancellation, resumable sessions, memory, and logs | [Create a CLI Agent](docs/content/tutorial/create-cli-agent.md) |
 | `web` | browser sessions, streaming, uploads, and downloadable files | [Create a Web Agent](docs/content/tutorial/create-web-agent.md) |
 | `telegram` | bot sessions, sender authorization, attachments, and Telegram rendering | [Create a Telegram Agent](docs/content/tutorial/create-telegram-agent.md) |
 

@@ -39,31 +39,24 @@ def main(): Unit receives stdout =
       Logging.withLogger(new JsonlLogger(wspace.relative("logs/agent.jsonl")), () => runChat())
 
 private def runChat(): Unit receives stdout, workspace, logger =
-  // The agent's working memory is in-process for the run (the CLI has no
-  // session resume), and the context starts on an empty transcript.
-  val memory = new Memory
+  val inputHistory = workspace.relative("logs/inputs.txt")
+  val interact = new Console(stdout, inputHistory)
+  interact.init()
+
+  val sessionLog = chooseSession(resumeRequested())
+  val memory = Memory.load(sessionLog.memoryPath)
   val agent = new Agent:
     brain = Defaults.model()
     tools = Defaults.tools() ++ memoryTools(memory)
     context = new WindowedContext:
       baseSystem = workspace.read("AGENT.md").getOrElse("")
       memory = memory
-      initial = []
+      initial = SessionLog.loadFile(sessionLog.path)
 
   // The per-turn tool context; constant for a CLI run (one local working dir).
   val data = workspace.relative("data")
   if !os.path.isdir(data) then os.makedirs(data)
   val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(data))
-
-  val inputHistory = workspace.relative("logs/inputs.txt")
-  val interact = new Console(stdout, inputHistory)
-
-  interact.init()
-
-  // Where this session's conversation is serialized; fixed at session start. Memory
-  // is saved beside it (`sessionLog.memoryPath`) for inspection — the CLI does not
-  // resume, so it is written but never loaded.
-  val sessionLog = SessionLog.newLog()
 
   while true do
     // `None` is end-of-input (Ctrl-D); a blank line or a Ctrl-C'd prompt is
@@ -96,3 +89,42 @@ private def runChat(): Unit receives stdout, workspace, logger =
 
   println "Goodbye."
 end
+
+//[ Whether the user explicitly requested the session picker. The template's
+  ! `jo resume` command passes this internal application flag.
+//]
+private def resumeRequested(): Bool =
+  for argDyn in py.module("sys").argv.cast[py.List] do
+    if argDyn.asString == "--resume" then return true
+  false
+
+//[ Let an interactive user continue one of the five newest sessions. The normal
+  ! startup path creates a fresh session without another prompt.
+//]
+private def chooseSession(resume: Bool): SessionLog receives stdout, workspace =
+  val recent = SessionLog.recentFiles(workspace.relative("logs/sessions"), 5)
+  val interactive = py.module("sys").stdin.isatty().asBool
+
+  if !resume || recent.isEmpty || !interactive then SessionLog.newLog()
+  else
+    println "Recent sessions:"
+    var i = 0
+    for path in recent do
+      val relative = os.path.relpath(path, os.path.abspath("."))
+      println "  \{i + 1}. \{relative}"
+      i = i + 1
+
+    println ""
+    val answer =
+      match py.try(py.input("Resume a session number, or press Enter for a new session ▸ "))
+      case Ok(value) => value.trim
+      case Err(_)    => ""
+
+    val selected = Int.parse(answer) rescue None => 0
+    if selected >= 1 && selected <= recent.size then
+      val path = recent.get(selected - 1)
+      val relative = os.path.relpath(path, os.path.abspath("."))
+      println "Resuming \{relative}"
+      new SessionLog(path)
+    else
+      SessionLog.newLog()
