@@ -1,32 +1,13 @@
-# Python runtime dependencies for the Harpe loop.
-# readline, threading, json, etc. are all in the Python standard library.
-#
-# Pinned to tested major ranges: the error classification reads SDK exception
-# status codes / class names, and client kwargs (timeout, max_retries) must
-# exist — both can shift across SDK major versions.
-anthropic>=0.40,<1   # required for PROVIDER=anthropic (default)
-openai>=2.21,<3      # required for PROVIDER=openai
+# Model providers
+anthropic>=0.40
+openai>=2.21
 
-# Media capabilities (harpe.media). pypdfium2 (PDFium, Chrome's PDF engine) gives
-# page-level PDF access as a self-contained wheel, no system dependency.
-pypdfium2>=5,<6
-python-docx>=1,<2    # Word reading (FileSystem.openWord)
-openpyxl>=3.1,<4     # spreadsheet reading (FileSystem.openWorkbook)
-pillow>=10,<13       # Image pixel work, and image loading for Canvas.imageAt
+# Document and image capabilities wired by sandbox/SandboxRuntime.jo
+pypdfium2>=5
+python-docx
+openpyxl
+pillow
 
-# Drawing capability (harpe.media CairoCanvas). cairocffi rather than pycairo:
-# building a cairo font face from a font file needs an entry point neither
-# binding exposes, and cairocffi is pure CFFI so it can simply be declared.
-# Needs the system libraries libcairo and libfreetype.
-cairocffi>=1.7,<2    # cairo bindings: anti-aliasing, joins, clip, gradients, groups
-uharfbuzz>=0.39,<1   # text shaping: kerning, ligatures, positioned glyph ids
-cffi>=1.16,<2        # declares the cairo/FreeType entry points cairocffi omits
-
-#
-# OCR (harpe.media OCR capability) — two shipped backends, pick one:
-# - TesseractOcr shells out to the Tesseract SYSTEM binary
-#   (e.g. `apt install tesseract-ocr`). Absent the binary, OCR.text returns a
-#   message.
-# - rapidocr-onnxruntime (RapidOcr) is pure pip (~100 MB with onnxruntime), no system
-#   binary, and stronger on photos and rotated text. Uncomment to use it.
-# rapidocr-onnxruntime>=1.3,<2
+# OCR uses the Tesseract system binary. Install tesseract-ocr with your system
+# package manager. To use the pure-Python backend instead, add:
+# rapidocr-onnxruntime>=1.3
