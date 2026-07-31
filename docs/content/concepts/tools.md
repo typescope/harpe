@@ -48,12 +48,13 @@ import harpe.Tool
 import harpe.Tool.*
 
 def weatherTool(): Tool =
-  new Tool("weather", "Look up the current weather in a city",
-    [strParam("city", "the city to look up")],
-    input => lookUp(input.string("city")))
+  new Tool:
+    name = "weather"
+    description = "Look up the current weather in a city"
+    params = [strParam("city", "the city to look up")]
+    run = input => lookUp(input.string("city"))
 
-// Keep the handler body in a small function (a multi-line lambda inside the
-// constructor call doesn't parse). It may use `logger` freely.
+// Keep the handler body in a small function. It may use `logger` freely.
 private def lookUp(city: String): RunOutcome =
   new RunOutcome("Sunny in \{city}, 22°C", "weather · \{city}")
 ```
