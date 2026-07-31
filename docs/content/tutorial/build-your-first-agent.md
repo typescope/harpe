@@ -61,7 +61,7 @@ Open `src/Main.jo`. It assembles the entire agent:
 ```jo
 val agent = new Agent:
   brain = Defaults.model()
-  tools = [runCodeTool(workspace.sandboxDir)]
+  tools = [runCodeTool(workspace.sandboxDir, 610.0)]
   context = new FullContext:
     baseSystem = workspace.read("AGENT.md").getOrElse("")
     memory = memory
@@ -103,7 +103,7 @@ modifying your project file.
 
 This API/runtime/guest dependency boundary is Harpe's core security mechanism.
 The [sandbox concept guide](/concepts/sandbox/) explains the compiler guarantee.
-The [defense-in-depth tutorial](/tutorial/defense-in-depth/) adds OS-level
+The [defense-in-depth guide](/guides/defense-in-depth/) adds OS-level
 confinement.
 
 ## Change its behavior

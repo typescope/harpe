@@ -1,5 +1,5 @@
 +++
-title = "Compile-time sandboxing"
+title = "Sandbox Architecture"
 +++
 A Harpe agent acts by writing Jo programs. Every generated program must compile
 against an API chosen by the agent developer before it can run.
@@ -87,5 +87,5 @@ The [custom capability tutorial](/tutorial/create-custom-capabilities/) shows
 the complete pattern.
 
 For protection below the compiler boundary, follow [Add defense in
-depth](/tutorial/defense-in-depth/). It covers timeouts, environment scrubbing,
+depth](/guides/defense-in-depth/). It covers timeouts, environment scrubbing,
 resource limits, filesystem isolation, and network restrictions.

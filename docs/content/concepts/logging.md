@@ -72,20 +72,22 @@ import harpe.Tool
 import harpe.Tool.*
 
 def weatherTool(): Tool =
-  new Tool("weather", "Look up the weather in a city",
-    [Tool.strParam("city", "the city")],
-    input => lookUp(input.string("city")))
+  new Tool:
+    name = "weather"
+    description = "Look up the weather in a city"
+    params = [Tool.strParam("city", "the city")]
+    run = input => lookUp(input.string("city"))
 
 // The handler's work goes in a small function. It may use `logger` freely.
 private def lookUp(city: String): RunOutcome receives logger =
   logger.info("myagent.tools.weather", "looked up weather", "city" ~ city)
-  new RunOutcome("Sunny in \{city}", "weather · \{city}")
+  new RunOutcome("Sunny in \{city}", "weather · \{city}", [])
 ```
 
 Add it where your driver builds the toolset:
 
 ```jo
-val tools = Defaults.tools() ++ [weatherTool()]
+val tools = Defaults.tools(610.0) ++ [weatherTool()]
 ```
 
 Now every call to your tool writes a `myagent.tools.weather` record, already

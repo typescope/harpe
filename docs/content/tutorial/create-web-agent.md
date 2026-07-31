@@ -78,5 +78,3 @@ my-agent/
 
 The generated server is application code, not hidden framework machinery. That
 makes its session and file-handling behavior inspectable before you deploy it.
-
-Next: [create a custom capability](/tutorial/create-custom-capabilities/).

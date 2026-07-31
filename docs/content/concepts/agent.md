@@ -21,7 +21,7 @@ class Agent(brain: Model, tools: List[Tool], context: Context)
 An agent is four things (the fourth, its turn policy, is passed per turn):
 
 - a **brain** — the [model](/concepts/models/) it thinks with.
-- **tools** — its [capabilities](/concepts/tools/) (including the memory tools).
+- **tools** — model-facing actions such as `runCode`, skills, and memory.
 - a **context** — the [strategy](/concepts/context/) that composes what the model sees each
   request.
 - a **turn policy** — how many tool rounds a turn may take.
@@ -103,7 +103,7 @@ The shipped drivers wire the defaults inline:
 ```jo
 val agent = new Agent:
   brain = brain                                           // Defaults.model(), shared for the process
-  tools = Defaults.tools() ++ memoryTools(memory)          // runCode + skills + memory
+  tools = Defaults.tools(610.0) ++ memoryTools(memory)     // runCode + skills + media + memory
   context = new WindowedContext:
     baseSystem = workspace.read("AGENT.md").getOrElse("")
     memory = memory
@@ -112,7 +112,8 @@ val agent = new Agent:
 agent.runTurn(userMsg, interact, maxToolRounds = 50, maxRetries = 4)
 ```
 
-Customize by editing the driver: add a tool (`Defaults.tools() ++ [myTool]`),
+Customize by editing the driver: add a tool
+(`Defaults.tools(610.0) ++ [myTool]`),
 swap the context strategy (a `SummarizingContext`), pin a specific model, or
 change the budgets. This is plain code, not configuration — it assumes freely and
 you diverge by writing Jo.

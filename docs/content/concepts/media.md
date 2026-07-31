@@ -119,5 +119,5 @@ all rooted at `HARPE_DATA_DIR`. Replace a backend there without changing the
 guest API. Keep credentials and remote clients in the trusted runtime.
 
 Parsers and OCR engines still process untrusted input. Use the optional runtime
-isolation described in [Add Defense in Depth](/tutorial/defense-in-depth/) for
+isolation described in [Add Defense in Depth](/guides/defense-in-depth/) for
 resource limits and process confinement.

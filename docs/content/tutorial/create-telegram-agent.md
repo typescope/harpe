@@ -84,5 +84,3 @@ my-agent/
 The Telegram client and polling loop are copied into your project deliberately:
 you can audit the network boundary and change it when the application needs
 webhooks, group-specific policy, or another deployment model.
-
-Next: [create a custom capability](/tutorial/create-custom-capabilities/).

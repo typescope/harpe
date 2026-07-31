@@ -71,7 +71,7 @@ public HTTP endpoint.
 ## Documentation
 
 - [Agent concepts](docs/content/concepts/agent.md)
-- [Compile-time sandboxing](docs/content/concepts/sandbox.md)
+- [Sandbox architecture](docs/content/concepts/sandbox.md)
 - [Create a custom capability](docs/content/tutorial/create-custom-capabilities.md)
 - [Add defense in depth](docs/content/tutorial/defense-in-depth.md)
 - [Tools](docs/content/concepts/tools.md)

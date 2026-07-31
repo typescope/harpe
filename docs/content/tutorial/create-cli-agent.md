@@ -89,5 +89,3 @@ budget, edit the `Agent` construction in `src/Cli.jo`.
 Choose CLI for local tools, developer assistants, experiments, and the shortest
 path from an idea to a working agent. If you only want to understand Harpe's
 mechanism first, use the smaller [`hello` walkthrough](/tutorial/build-your-first-agent/).
-
-Next: [create a custom capability](/tutorial/create-custom-capabilities/).

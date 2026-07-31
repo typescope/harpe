@@ -7,6 +7,20 @@ on the next step. Every agent ships with `runCode` (write a Jo program, compile 
 against the sandbox, run it) — you extend the toolset by writing your own tools and
 adding them where the driver constructs its `Agent`.
 
+## Tools and capabilities
+
+Tools and capabilities sit on opposite sides of the generated-program boundary:
+
+![The chat model calls runCode, a model-facing tool. runCode compiles a generated Jo program inside the guest boundary, where it can use only the typed capabilities granted by the application.](/img/tools-capabilities.svg)
+
+A tool is offered directly to the chat model. Its handler runs host-side and
+returns a result to the model. `runCode` is the tool that compiles and executes a
+generated Jo program.
+
+A [capability](/capabilities/overview/) is offered to that program through
+`SandboxAPI.jo`. It is not a model tool and does not appear in the provider's
+tool schema. The compiler checks its use before the program runs.
+
 ## What a tool is
 
 ```jo
@@ -29,10 +43,12 @@ agent's final answer.
 
 ## What ships
 
-`Defaults.tools()` gives every agent:
+`Defaults.tools(approvalDeadline)` provides:
 
 - **`runCode`** — compile and run a Jo program in the sandbox. This is the agent's main way
   to act.
+- **`uploadMedia`** — show an image or PDF from the data directory directly to
+  the chat model.
 - **skill tools** — `skillsList` / `skillsRead` / `skillsSearch`, read-only access
   to the agent's `skills/`.
 
@@ -56,7 +72,7 @@ def weatherTool(): Tool =
 
 // Keep the handler body in a small function. It may use `logger` freely.
 private def lookUp(city: String): RunOutcome =
-  new RunOutcome("Sunny in \{city}, 22°C", "weather · \{city}")
+  new RunOutcome("Sunny in \{city}, 22°C", "weather · \{city}", [])
 ```
 
 ## Parameters
@@ -85,12 +101,14 @@ input.intOr("count", 10)       // 10 if absent
 ## Returning a result
 
 ```jo
-class RunOutcome(result, summary)
+class RunOutcome(result, summary, media)
 ```
 
 - **`result`** is the text fed back to the model — what it sees as the tool's
   output.
 - **`summary`** is a one-line status for the console and logs (e.g. `"weather · Paris"`).
+- **`media`** is a list of attachments to show directly to the model; use `[]`
+  for an ordinary text result.
 
 **Bound large output.** Context is finite, so don't feed the model a megabyte.
 `elide(text, maxChars)` trims to a head-plus-tail excerpt with the middle marked.
@@ -100,7 +118,7 @@ result to the model and the whole output to `logs/agent.jsonl`. See
 [logging.md](/concepts/logging/)).
 
 ```jo
-new RunOutcome(elide(output, 4000), "ran · 3.1s")
+new RunOutcome(elide(output, 4000), "ran · 3.1s", [])
 ```
 
 ## Errors are safe
@@ -116,12 +134,12 @@ Tools are assembled per session where your driver constructs its `Agent` — app
 yours to the defaults:
 
 ```jo
-Defaults.tools() ++ memoryTools(memory) ++ [weatherTool()]
+Defaults.tools(610.0) ++ memoryTools(memory) ++ [weatherTool()]
 ```
 
 That is the whole wiring: the model now sees `weather` in its toolset and can call
 it. (An agent with different needs can build the toolset from scratch instead of
-starting from `Defaults.tools()`.)
+starting from `Defaults.tools(610.0)`.)
 
 ## Logging from a tool
 
@@ -131,7 +149,7 @@ own category:
 ```jo
 private def lookUp(city: String): RunOutcome receives logger =
   logger.info("myagent.tools.weather", "looked up weather", "city" ~ city)
-  new RunOutcome("Sunny in \{city}, 22°C", "weather · \{city}")
+  new RunOutcome("Sunny in \{city}, 22°C", "weather · \{city}", [])
 ```
 
 The event is stamped with the session automatically — ready for auditing or usage

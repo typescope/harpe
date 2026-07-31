@@ -1,12 +1,13 @@
 +++
 title = "Add Defense in Depth"
+aliases = ["/tutorial/defense-in-depth/"]
 +++
 Compile-time sandboxing gives generated programs fine-grained permissions
 through typed capabilities. However, compile-time sandboxing does not limit CPU
 and memory usage. You can enforce those limits with OS-level mechanisms. You
 may also add file and network rules for defense in depth.
 
-This tutorial configures the `sandbox/run.sh` wrapper shipped by the CLI, web,
+This guide configures the `sandbox/run.sh` wrapper shipped by the CLI, web,
 and Telegram templates.
 
 ## What Harpe already applies
