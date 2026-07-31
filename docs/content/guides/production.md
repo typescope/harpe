@@ -44,27 +44,19 @@ restrictions add defense in depth around the compile-time capability boundary.
 Follow [Add Defense in Depth](/guides/defense-in-depth/) to configure the
 external sandbox.
 
-## Logs and retention
+## Observability and evaluation
 
-Install a durable [`Logger`](/concepts/logging/). Correlate model calls,
-generated programs, approvals, and capability effects with the user, tenant,
-and session that caused them.
-
-Decide explicitly:
-
-- which prompts, outputs, files, and generated programs may be retained
-- who can query or export logs
-- how secrets and personal data are redacted
-- when transcripts, memory, files, and audit records are deleted
-
-Do not treat the conversation transcript as the audit log. It omits host-side
-events such as approval traffic and trusted implementation details.
+The [Logger](/concepts/logging/) infrastructure provides a structured,
+contextual event stream independent of its destination. Install a backend that
+sends events to a database, data warehouse, observability service, or evaluation
+pipeline. Build a fully customized observability and evaluation platform on the
+same infrastructure.
 
 ## Billing and accounting
 
 Harpe does not calculate prices or issue invoices. Built-in models emit one
 `harpe.model` event per call with the provider, model, input tokens, output
-tokens, and session context. Use a durable [`Logger`](/concepts/logging/) to
+tokens, and session context. Use a durable [Logger](/concepts/logging/) to
 aggregate these events by customer and apply the relevant price table.
 
 For other billable work, emit structured events from trusted tools and
@@ -79,9 +71,12 @@ Review the model provider's retention, regional processing, and training
 policies for the data your agent handles. Configure provider-side storage to
 match your requirements.
 
-Keep sensitive intermediate data inside generated programs when possible.
-Return only the bounded result the model needs, and inline images or documents
-only when visual reasoning is required.
+For high-stakes workflows or highly sensitive data, consider deploying a
+**local open-weight model**.
+
+Define retention and deletion policies for prompts, outputs, files, generated
+programs, memory, and audit events. Restrict who can query or export them, and
+redact secrets and personal data.
 
 ## Test the boundaries
 
