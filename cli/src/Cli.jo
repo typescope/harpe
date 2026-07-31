@@ -14,6 +14,7 @@
 //]
 
 namespace harpe.cli
+import harpe.ffi.glob
 import harpe.ffi.os
 import harpe.ffi.time
 
@@ -98,14 +99,40 @@ private def resumeRequested(): Bool =
     if argDyn.asString == "--resume" then return true
   false
 
+section Session
+  //[ A new CLI session log, named from its start time. //]
+  def newLog(): SessionLog receives workspace =
+    val path =
+      workspace.relative(time.strftime("logs/sessions/%Y/%m/%d/%H-%M-%S") + ".jsonl")
+    new SessionLog(path)
+
+  //[ Up to `limit` CLI session logs, newest first. //]
+  def recentFiles(limit: Int): List[String] receives workspace =
+    val root = workspace.relative("logs/sessions")
+    if limit <= 0 || !os.path.isdir(root) then []
+    else
+      var paths: List[String] = []
+      for pathDyn in glob.glob(os.path.join(root, "**/*.jsonl"), recursive = true) do
+        paths = paths + pathDyn.asString
+
+      val ordered = paths.sortBy(path => path)
+      var recent: List[String] = []
+      var i = ordered.size - 1
+      while i >= 0 && recent.size < limit do
+        recent = recent + ordered.get(i)
+        i = i - 1
+      end
+      recent
+end
+
 //[ Let an interactive user continue one of the five newest sessions. The normal
   ! startup path creates a fresh session without another prompt.
 //]
 private def chooseSession(resume: Bool): SessionLog receives stdout, workspace =
-  val recent = SessionLog.recentFiles(workspace.relative("logs/sessions"), 5)
+  val recent = Session.recentFiles(5)
   val interactive = py.module("sys").stdin.isatty().asBool
 
-  if !resume || recent.isEmpty || !interactive then SessionLog.newLog()
+  if !resume || recent.isEmpty || !interactive then Session.newLog()
   else
     println Style.accent("Recent sessions")
     var i = 0
@@ -127,4 +154,4 @@ private def chooseSession(resume: Bool): SessionLog receives stdout, workspace =
       println(Style.success("Resuming") + " " + relative)
       new SessionLog(path)
     else
-      SessionLog.newLog()
+      Session.newLog()

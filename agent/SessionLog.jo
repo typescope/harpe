@@ -1,27 +1,20 @@
 //[ SessionLog.jo
   !
-  ! Serializing an agent conversation to disk. Each session is one JSONL file
-  ! under `logs/sessions/<yyyy>/<mm>/<dd>/<hh-mm-ss>.jsonl` — the path fixed at
-  ! session start — holding one JSON record per `Message`, in the order the loop
-  ! committed them.
+  ! Serializing an agent conversation to a caller-selected JSONL file. The file
+  ! holds one JSON record per `Message`, in the order the application committed
+  ! them.
   !
   ! Records are appended (not rewritten) as turns commit, so each carries its own
   ! wall-clock `time`, stamped once and never disturbed by later turns.
   !
-  ! This is the conversational audit trail, distinct from the structured event
-  ! log (`logs/agent.jsonl`, e.g. `runCode`'s `harpe.tools.runCode` records). It lives at the
-  ! package root (not under a
-  ! single agent type) because any agent — not just the CLI — can persist its
-  ! conversation. Serializing is the first step: it is the foundation for later
-  ! auditing a past run, or letting the user pick a saved session to load.
+  ! Applications choose the storage layout, filename convention, and discovery
+  ! behavior. `SessionLog` only appends and loads messages.
 //]
 
 namespace harpe
 import harpe.ffi.os
-import harpe.ffi.time
 import harpe.ffi.json
 import harpe.ffi.file
-import harpe.ffi.glob
 
 import harpe.util.truncate
 import harpe.Model.*
@@ -69,38 +62,6 @@ section SessionLog
     ! separate concern owned by `render`. The full transcript always stays on disk.
   //]
   def maxResumeChars: Int = 1000000
-
-  //[ The path for a new session's log, fixed at session start.
-    !
-    ! `logs/sessions/<yyyy>/<mm>/<dd>/<hh-mm-ss>.jsonl`, resolved against the
-    ! workspace root. The single `strftime` call keeps the date directories and
-    ! the time filename drawn from one instant.
-  //]
-  def newLog(): SessionLog receives workspace =
-    val path = workspace.relative(time.strftime("logs/sessions/%Y/%m/%d/%H-%M-%S") + ".jsonl")
-    new SessionLog(path)
-
-  //[ Up to `limit` persisted session paths, newest first.
-    !
-    ! Session paths contain zero-padded date and time components, so lexical path
-    ! order is chronological. Drivers can use this to offer resume without
-    ! understanding the storage layout.
-  //]
-  def recentFiles(root: String, limit: Int): List[String] =
-    if limit <= 0 || !os.path.isdir(root) then []
-    else
-      var paths: List[String] = []
-      for pathDyn in glob.glob(os.path.join(root, "**/*.jsonl"), recursive = true) do
-        paths = paths + pathDyn.asString
-
-      val ordered = paths.sortBy(path => path)
-      var recent: List[String] = []
-      var i = ordered.size - 1
-      while i >= 0 && recent.size < limit do
-        recent = recent + ordered.get(i)
-        i = i - 1
-      end
-      recent
 
   //[ Reconstruct a conversation from a JSONL session file at `path`, in order.
     !

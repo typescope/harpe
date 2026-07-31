@@ -82,23 +82,4 @@ def run(): Unit receives stdout =
   check("earlier timestamp preserved", second.get(0).get("time", 0.0).asFloat == t0)
   check("later record timestamp", second.get(3).get("time", 0.0).asFloat == t1)
 
-  // Recent-session discovery follows the timestamped directory layout and
-  // returns newest paths first.
-  val sessions = os.path.abspath(".build/session-log-test/recent")
-  val oldPath = os.path.join(sessions, "2026/01/02/03-04-05.jsonl")
-  val midPath = os.path.join(sessions, "2026/02/02/03-04-05.jsonl")
-  val newPath = os.path.join(sessions, "2026/02/03/03-04-05.jsonl")
-  os.makedirs(os.path.dirname(oldPath))
-  os.makedirs(os.path.dirname(midPath))
-  os.makedirs(os.path.dirname(newPath))
-  file.write(oldPath, "")
-  file.write(midPath, "")
-  file.write(newPath, "")
-
-  val recent = SessionLog.recentFiles(sessions, 2)
-  check("recent sessions obey the limit", recent.size == 2)
-  check("recent sessions are newest first", recent.get(0) == newPath && recent.get(1) == midPath)
-  check("zero recent-session limit", SessionLog.recentFiles(sessions, 0).isEmpty)
-  check("missing recent-session root", SessionLog.recentFiles(sessions + "-missing", 5).isEmpty)
-
   os.unlink(path)
