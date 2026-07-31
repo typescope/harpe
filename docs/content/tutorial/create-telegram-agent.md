@@ -3,7 +3,7 @@ title = "Create a Telegram Agent"
 +++
 The Telegram template is a complete bot that long-polls Telegram, keeps
 persistent state per chat, accepts attachments, and renders replies using
-Telegram-compatible Markdown. It does not require a public HTTP endpoint.
+Telegram-compatible Markdown.
 
 ## Create the project
 
@@ -14,7 +14,9 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Create a bot with Telegram's `@BotFather`, then configure:
+Follow Telegram's official
+[bot tutorial](https://core.telegram.org/bots/tutorial#obtain-your-bot-token) to
+create a bot and obtain its token. Then configure:
 
 ```sh
 TELEGRAM_BOT_TOKEN=...
@@ -22,9 +24,9 @@ TELEGRAM_ALLOWED_SENDERS=12345678
 ANTHROPIC_API_KEY=...
 ```
 
-The template calls its default assistant Carmen. Use that name in BotFather if
-you want the Telegram profile and replies to match. You can rename it later in
-BotFather and `AGENT.md`.
+The assistant is called **Carmen**. Use that name when registering the bot if
+you want its Telegram profile and replies to match. You can rename it later in
+Telegram and `AGENT.md`.
 
 Access is closed by default. `TELEGRAM_ALLOWED_SENDERS` is a comma-separated
 list of numeric Telegram user IDs. If an unlisted user messages the bot
@@ -35,26 +37,6 @@ Start the bot:
 ```sh
 jo start
 ```
-
-## Make the first change
-
-If you do not know your numeric Telegram ID, leave
-`TELEGRAM_ALLOWED_SENDERS` empty for the first run and message the bot in a
-private chat. It will reject the message and tell you the sender ID. Add that
-number to `.env`, restart the bot, and send another message.
-
-Then edit the opening of `AGENT.md`:
-
-```markdown
-# Team Assistant
-
-You help our engineering team answer operational questions.
-Keep Telegram replies short and put commands in code blocks.
-```
-
-Restart the bot and ask it to introduce itself. Its answer should reflect the
-new role. This confirms the token, sender authorization, model, and prompt are
-all wired correctly before you add capabilities.
 
 ## What to customize
 
@@ -80,7 +62,3 @@ my-agent/
   or authorization policy.
 - Edit `src/Session.jo` to change attachment handling and persistence.
 - Edit the sandbox to grant domain-specific capabilities.
-
-The Telegram client and polling loop are copied into your project deliberately:
-you can audit the network boundary and change it when the application needs
-webhooks, group-specific policy, or another deployment model.
