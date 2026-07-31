@@ -31,6 +31,8 @@ jo start
 Open `http://127.0.0.1:8765`. Each conversation has its own URL and can resume
 after the process restarts.
 
+[![The Harpe web agent showing persistent conversations, generated-program traces, PDF attachments, an SVG result, and files scoped to the current session.](/img/web-agent.gif)](/img/web-agent.gif)
+
 ## Make the first change
 
 Change the agent name shown in the left sidebar. In `src/Web.jo`, find:
