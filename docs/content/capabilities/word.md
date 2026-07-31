@@ -1,9 +1,14 @@
 +++
 title = "Word"
 +++
-`Word` reads `.docx` files as paragraphs and headings. Word documents do not
-have stable pages—the pagination depends on rendering—so the capability exposes
-their logical structure instead.
+Word support has two interfaces:
+
+- `WordReader` opens a `.docx` file.
+- `Word` is the open, paragraph-wise handle it returns.
+
+`FileSystem.openWord` is a shortcut through the ambient `wordReader` capability.
+Word documents do not have stable pages—the pagination depends on rendering—so
+`Word` exposes their logical structure instead.
 
 ```jo
 def runTask(): Unit receives stdout, fs, wordReader =
@@ -21,13 +26,33 @@ def runTask(): Unit receives stdout, fs, wordReader =
 
 Paragraphs are 1-based. Close the document when finished.
 
-The interface provides:
+The outline maps headings to paragraph indices. Use it to locate a section
+before reading a paragraph window.
 
-- `paragraphCount`
-- `outline` — heading title, paragraph index, and level
-- `paragraphs(start, count)` — a paragraph window
+The shipped runtime binds `WordReader` to `DocxReader`, backed by `python-docx`:
 
-Use the outline to locate a section before reading its paragraphs.
+```jo
+wordReader = new DocxReader(root)
+```
 
-The shipped `DocxReader` backend uses `python-docx`. It extracts paragraph text
-and styles; it is not a full Word renderer.
+It extracts paragraph text and styles; it is not a full Word renderer. Replace
+the binding in `SandboxRuntime.jo` to use another implementation.
+
+## Interface reference
+
+```jo
+class WordHeading(title: String, paragraph: Int, level: Int)
+
+interface WordReader
+  def open(src: String): Result[Word, String]
+end
+
+interface Word
+  def paragraphCount: Int
+  def outline: List[WordHeading]
+  def paragraphs(start: Int, count: Int): List[String]
+  def close(): Unit
+end
+
+param wordReader: WordReader
+```

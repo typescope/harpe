@@ -16,18 +16,39 @@ def runTask(): Unit receives stdout, image =
     case Err(error) => println: error
 ```
 
-The capability provides:
-
-- `dimensions(src)`
-- `metadata(src)` — format, mode, and available EXIF fields
-- `resize(src, width, height, target)` — preserves aspect ratio and never enlarges
-- `crop(src, x, y, width, height, target)`
-- `convert(src, target)` — chooses the output format from the target extension
-
-Every output is written to a relative target path in the same confined data
-directory.
+Resize preserves aspect ratio and never enlarges the source. Conversion chooses
+the output format from the target extension. Every derived image is written to
+a relative target path in the same confined data directory.
 
 Use [OCR](/capabilities/ocr/) to extract text. Use the framework's
 `uploadMedia` tool when the chat model needs to inspect the actual pixels.
 
 The shipped implementation is `PillowImage`, backed by Pillow.
+
+## Interface reference
+
+```jo
+class ImageSize(width: Int, height: Int)
+
+interface Image
+  def dimensions(src: String): Result[ImageSize, String]
+  def metadata(src: String): Result[Map[String, String], String]
+  def resize(
+    src: String,
+    width: Int,
+    height: Int,
+    target: String
+  ): Result[ImageSize, String]
+  def crop(
+    src: String,
+    x: Int,
+    y: Int,
+    width: Int,
+    height: Int,
+    target: String
+  ): Result[ImageSize, String]
+  def convert(src: String, target: String): Result[ImageSize, String]
+end
+
+param image: Image
+```

@@ -38,3 +38,13 @@ def runTask(): Unit receives stdout, fs, pdfReader, ocr =
 
 CLI and Web bind `TesseractOcr`. Telegram binds `RapidOcr`. Change the binding
 in `SandboxRuntime.jo` to select another implementation.
+
+## Interface reference
+
+```jo
+interface OCR
+  def text(src: String): Result[String, String]
+end
+
+param ocr: OCR
+```

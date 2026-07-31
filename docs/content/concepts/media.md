@@ -20,9 +20,9 @@ sees relative paths, never the surrounding workspace or a host path.
 
 For the guest-facing APIs, see:
 
-- [`FileSystem`](/capabilities/file-system/)
+- [File System](/capabilities/file-system/)
 - [PDF](/capabilities/pdf/)
-- [Workbook](/capabilities/workbook/)
+- [Excel](/capabilities/excel/)
 - [Word](/capabilities/word/)
 - [Image](/capabilities/image/)
 - [OCR](/capabilities/ocr/)

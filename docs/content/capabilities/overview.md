@@ -4,8 +4,8 @@ title = "Overview"
 Harpe provides a set of typed capabilities for common agent work. The CLI, Web,
 and Telegram templates grant them by default:
 
-- a confined [`FileSystem`](/capabilities/file-system/)
-- [PDF](/capabilities/pdf/), [Workbook](/capabilities/workbook/), and
+- a confined [file system](/capabilities/file-system/)
+- [PDF](/capabilities/pdf/), [Excel](/capabilities/excel/), and
   [Word](/capabilities/word/) readers
 - [Image](/capabilities/image/) operations
 - [OCR](/capabilities/ocr/)
