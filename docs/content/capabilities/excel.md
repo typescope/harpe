@@ -55,11 +55,7 @@ end
 interface Workbook
   def sheets: List[String]
   def dimensions(sheet: String): Option[SheetSize]
-  def rows(
-    sheet: String,
-    start: Int,
-    count: Int
-  ): Option[List[List[String]]]
+  def rows(sheet: String, start: Int, count: Int): Option[List[List[String]]]
   def close(): Unit
 end
 

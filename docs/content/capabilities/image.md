@@ -33,20 +33,8 @@ class ImageSize(width: Int, height: Int)
 interface Image
   def dimensions(src: String): Result[ImageSize, String]
   def metadata(src: String): Result[Map[String, String], String]
-  def resize(
-    src: String,
-    width: Int,
-    height: Int,
-    target: String
-  ): Result[ImageSize, String]
-  def crop(
-    src: String,
-    x: Int,
-    y: Int,
-    width: Int,
-    height: Int,
-    target: String
-  ): Result[ImageSize, String]
+  def resize(src: String, width: Int, height: Int, target: String): Result[ImageSize, String]
+  def crop(src: String, x: Int, y: Int, width: Int, height: Int, target: String): Result[ImageSize, String]
   def convert(src: String, target: String): Result[ImageSize, String]
 end
 
