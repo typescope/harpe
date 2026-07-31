@@ -28,8 +28,8 @@ Start the application:
 jo start
 ```
 
-Open `http://127.0.0.1:8765`. Each conversation has its own URL under `/c/` and
-can resume after the process restarts.
+Open `http://127.0.0.1:8765`. Each conversation has its own URL and can resume
+after the process restarts.
 
 ## Make the first change
 
@@ -43,8 +43,8 @@ Replace `"Clair"` with your agent's name. Edit `AGENT.md` to give it a matching
 role, then restart `jo start` and reload the page. The new name should appear in
 the sidebar, and replies should follow the new instructions.
 
-Send a message and copy the resulting `/c/...` URL. Restart the application and
-open that URL again. The conversation should still be present.
+Send a message and copy the URL. Restart the application and open that URL
+again. The conversation should still be present.
 
 ## What to customize
 
@@ -75,6 +75,3 @@ my-agent/
 - Edit the sandbox to grant domain-specific capabilities.
 - Edit `src/Server.jo` when you need different routes, authentication, upload
   policy, or integration with an existing web application.
-
-The generated server is application code, not hidden framework machinery. That
-makes its session and file-handling behavior inspectable before you deploy it.
