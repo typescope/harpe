@@ -1,6 +1,5 @@
 +++
 title = "Compile-time sandboxing"
-weight = 2
 +++
 A Harpe agent acts by writing Jo programs. Every generated program must compile
 against an API chosen by the agent developer before it can run.

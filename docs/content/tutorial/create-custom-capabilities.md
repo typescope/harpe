@@ -1,6 +1,5 @@
 +++
 title = "Create a Custom Capability"
-weight = 5
 +++
 A capability is a typed path from model-written code into trusted application
 code. Its interface defines what generated programs may request. Its runtime

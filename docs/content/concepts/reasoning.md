@@ -1,6 +1,5 @@
 +++
 title = "Reasoning"
-weight = 4
 +++
 Modern models can **reason** before they answer — work through a problem
 step by step internally, then reply. On hard tasks this raises quality, and for

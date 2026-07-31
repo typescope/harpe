@@ -1,6 +1,5 @@
 +++
 title = "Structured output"
-weight = 6
 +++
 Most agent frameworks produce text. When code needs the answer, they ask the
 model for JSON matching a schema, parse it, and validate the result. Harpe

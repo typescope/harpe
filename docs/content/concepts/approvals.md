@@ -1,6 +1,5 @@
 +++
 title = "Human approval"
-weight = 7
 +++
 Compile-time capabilities decide which operations generated programs may call.
 Human approval decides whether one particular operation should proceed.

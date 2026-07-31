@@ -1,6 +1,5 @@
 +++
 title = "Media"
-weight = 12
 +++
 Agents deal in text, but the world ships files: PDFs, scans, screenshots,
 spreadsheets, slide decks, multi-GB logs. A Harpe agent acts by writing programs, so

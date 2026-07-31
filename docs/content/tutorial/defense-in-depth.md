@@ -1,6 +1,5 @@
 +++
 title = "Add Defense in Depth"
-weight = 6
 +++
 Compile-time sandboxing gives generated programs fine-grained permissions
 through typed capabilities. However, compile-time sandboxing does not limit CPU

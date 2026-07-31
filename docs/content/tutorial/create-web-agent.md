@@ -1,6 +1,5 @@
 +++
 title = "Create a Web Agent"
-weight = 3
 +++
 The web template is a complete browser application with persistent sessions,
 streamed progress, uploads, downloadable files, and a customizable frontend.

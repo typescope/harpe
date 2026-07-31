@@ -1,6 +1,5 @@
 +++
 title = "Build Your First Agent"
-weight = 1
 +++
 Harpe agents act by writing typed Jo programs. The `hello` template strips that
 idea down to the smallest useful application so you can inspect the whole path

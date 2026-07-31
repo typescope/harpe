@@ -1,6 +1,5 @@
 +++
 title = "Models"
-weight = 3
 +++
 A model is the agent's brain — the LLM that drives each user turn. It is a thin,
 provider-agnostic interface: given the composed prompt and the tools on offer, it

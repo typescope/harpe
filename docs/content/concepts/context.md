@@ -1,6 +1,5 @@
 +++
 title = "Context management"
-weight = 10
 +++
 A model's input is bounded, but a session can run indefinitely. So on every
 request *something* must decide what the model sees — the instructions, how much

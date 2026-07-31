@@ -1,6 +1,5 @@
 +++
 title = "Create a CLI Agent"
-weight = 2
 +++
 The CLI template is a complete terminal application with input history,
 progress feedback, cancellation, resumable sessions, memory, and an audit log.

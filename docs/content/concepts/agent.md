@@ -1,6 +1,5 @@
 +++
 title = "The agent"
-weight = 1
 +++
 At the center of Harpe is the **Agent** — a small bundle plus a turn engine. The
 bundle is what makes an agent *this* agent. The engine drives one user turn to a

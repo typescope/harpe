@@ -1,6 +1,5 @@
 +++
 title = "Skills"
-weight = 8
 +++
 Skills are the agent's **reference material** — files it reads on demand while
 working. Drop a Markdown file (or any file) into your agent's `skills/` directory,

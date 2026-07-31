@@ -1,6 +1,5 @@
 +++
 title = "Create a Telegram Agent"
-weight = 4
 +++
 The Telegram template is a complete bot that long-polls Telegram, keeps
 persistent state per chat, accepts attachments, and renders replies using

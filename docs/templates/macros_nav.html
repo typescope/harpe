@@ -1,4 +1,5 @@
 {% macro sidebar(current) %}
+{% set navigation = load_data(path="navigation.json") %}
 <aside class="side">
   <details class="side-disclosure" open>
     <summary>
@@ -7,13 +8,12 @@
     </summary>
     <div class="side-menu">
       <nav aria-label="Documentation">
-        {% for s in ["tutorial", "concepts"] %}
-          {% set sec = get_section(path = s ~ "/_index.md") %}
+        {% for section in navigation.sections %}
           <div class="side-group">
-            <span class="side-title">{{ sec.title }}</span>
+            <span class="side-title">{{ section.title }}</span>
             <ul>
-            {% for p in sec.pages %}
-              <li><a{% if current == p.permalink %} class="active"{% endif %} href="{{ p.path | safe }}">{{ p.title }}</a></li>
+            {% for item in section.items %}
+              <li><a{% if current is ending_with(item.path) %} class="active"{% endif %} href="{{ item.path | safe }}">{{ item.title }}</a></li>
             {% endfor %}
             </ul>
           </div>
@@ -23,6 +23,28 @@
   </details>
 </aside>
 {% endmacro sidebar %}
+
+{% macro pager(current) %}
+{% set navigation = load_data(path="navigation.json") %}
+{% for section in navigation.sections %}
+  {% for item in section.items %}
+    {% if current == item.path %}
+      <nav class="pager">
+        {% if not loop.first %}
+          {% set previous_index = loop.index0 - 1 %}
+          {% set previous = section.items[previous_index] %}
+          <a class="prev" href="{{ previous.path | safe }}"><span>←&nbsp;Previous</span>{{ previous.title }}</a>
+        {% endif %}
+        {% if not loop.last %}
+          {% set next_index = loop.index0 + 1 %}
+          {% set next = section.items[next_index] %}
+          <a class="next" href="{{ next.path | safe }}"><span>Next&nbsp;→</span>{{ next.title }}</a>
+        {% endif %}
+      </nav>
+    {% endif %}
+  {% endfor %}
+{% endfor %}
+{% endmacro pager %}
 
 {% macro toc(page) %}
 {% if page.toc %}
