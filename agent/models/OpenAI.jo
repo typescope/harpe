@@ -149,8 +149,8 @@ end
 private class OpenAIResponsesModel(client: py.Dynamic, model: String, effort: String)
   view Model
 
-  def startTurn(base: Rendered): Turn receives callContext =
-    new OpenAIResponsesTurn(client, model, effort, base, callContext.getOrElse("HARPE_DATA_DIR", ""))
+  def startTurn(base: Rendered): Turn =
+    new OpenAIResponsesTurn(client, model, effort, base)
 end
 
 //[ A reasoning-preserving turn on the Responses API.
@@ -162,7 +162,7 @@ end
   ! default server-side `store`; it is the native Responses path for reasoning +
   ! tools.
 //]
-private class OpenAIResponsesTurn(client: py.Dynamic, model: String, effort: String, base: Rendered, dataDir: String)
+private class OpenAIResponsesTurn(client: py.Dynamic, model: String, effort: String, base: Rendered)
   view Turn
 
   // "" until the first successful reply, then the id to chain the next request
@@ -170,6 +170,7 @@ private class OpenAIResponsesTurn(client: py.Dynamic, model: String, effort: Str
   private var prevId: String = ""
 
   def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger, callContext =
+    val dataDir = callContext.getOrElse("HARPE_DATA_DIR", "")
     val toolSpecs = py.list()
     for t in tools do toolSpecs.append(OpenAIResponses.toolSpec(t))
 

@@ -182,8 +182,8 @@ private def parseReply(response: py.Dynamic): Assistant =
 private class AnthropicModel(client: py.Dynamic, model: String, cache: AnthropicCache)
   view Model
 
-  def startTurn(base: Rendered): Turn receives callContext =
-    new AnthropicTurn(client, model, cache, base, callContext.getOrElse("HARPE_DATA_DIR", ""))
+  def startTurn(base: Rendered): Turn =
+    new AnthropicTurn(client, model, cache, base)
 end
 
 //[ A reasoning-preserving turn on the Messages API.
@@ -195,15 +195,21 @@ end
   ! rejected. `parseReply` still extracts only text + tool calls for the engine —
   ! the reasoning rides in the wire history, never in the semantic `Message`.
 //]
-private class AnthropicTurn(client: py.Dynamic, model: String, cache: AnthropicCache, base: Rendered, dataDir: String)
+private class AnthropicTurn(client: py.Dynamic, model: String, cache: AnthropicCache, base: Rendered)
   view Turn
 
-  // The wire messages, accumulated across the turn: seeded from the base
-  // transcript (cache-annotated), then grown with raw tool_result and assistant
-  // turns. Reassigned only on success, so a retry re-sends the same round.
-  private var messages: py.List = toMessages(base.messages, cache, dataDir)
+  // The wire messages, accumulated across the turn. They are seeded lazily on
+  // the first reply, when the session's data directory is available, then grown
+  // with raw tool_result and assistant turns.
+  private var messages: py.List = py.list()
+  private var initialized: Bool = false
 
   def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger, callContext =
+    val dataDir = callContext.getOrElse("HARPE_DATA_DIR", "")
+    if !initialized then
+      messages = toMessages(base.messages, cache, dataDir)
+      initialized = true
+
     val toolSpecs = py.list()
     for t in tools do toolSpecs.append(toolSpec(t))
 
