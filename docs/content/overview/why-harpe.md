@@ -5,59 +5,65 @@ Harpe is a framework for building **specialized agents** with boundaries
 enforced by [compile-time sandboxing](/overview/compile-time-sandboxing/). It is
 not a coding agent for developing a software repository.
 
-A Harpe agent has a particular job: review a pull request, process a document,
-operate an internal workflow, answer through a support channel, or coordinate
-another bounded task. You decide which capabilities that job requires. The
-agent can write small Jo programs to combine those capabilities, but it cannot
-reach beyond the interface you gave it.
+Harpe is designed for agentic workflows involving critical infrastructure,
+sensitive data, or consequential operations—where broad access is unacceptable
+and fine-grained permissions matter.
 
-Harpe targets agents that work with critical infrastructure, sensitive data,
-or consequential operations—settings where broad access is unacceptable and
-fine-grained permissions matter. Their boundaries should be clear enough to
-review and strong enough to enforce independently of the model's instructions.
+![Model-generated code is confined behind a typed boundary. It can reach the trusted runtime and outside world only through capabilities explicitly exposed by the application's API.](/img/typed-sandbox.svg)
 
-## Specialization over general access
+## Put authority in code
 
-General-purpose agents are often given a shell, a filesystem, and broad network
-access, then constrained mainly through instructions. That is useful when the
-job itself is open-ended software development. It is a poor fit when an agent
-should have narrow, durable authority.
+The relevant question is not whether prompts can be subverted, but what
+authority remains after they are. Does the agent inherit a shell, raw
+credentials, and broad service clients, or is it confined to the few domain
+operations its role requires?
 
-Harpe starts from the opposite direction:
+Harpe makes that boundary part of the application:
 
-- the application defines the agent's purpose, interaction model, and context
-- a typed sandbox API defines everything model-written code may do
-- the Jo compiler rejects programs that request capabilities outside that API
-- optional process isolation supplies a second, independent boundary
+- the prompt defines the role
+- a typed API defines the only operations available to generated code
+- trusted code keeps credentials, tenant scope, and validation outside the
+  model's reach
 
-The boundary is executable architecture rather than a sentence in a system
-prompt.
+Ask for anything beyond that API and compilation fails before execution. The
+grant is fine-grained, visible in versioned source, and checked for every
+generated program.
 
 ## Why let the agent write code?
 
-A fixed collection of tool calls can become awkward when a task needs loops,
-branching, transformations, or several operations composed together. Harpe lets
-the model express that logic as a small typed program for the current turn.
+Code is a compact, composable action language for agents. The CodeAct research
+found that executable code actions outperformed common text and JSON action
+formats by up to 20% in its benchmarks. Code gives models familiar loops,
+branching, error handling, and data transformations instead of forcing every
+step through a separate tool call.
 
-The code is a means of operating the specialized agent—not permission to edit
-the agent itself. It compiles against the capabilities selected by the
-application, runs, and returns its result. An unavailable capability does not
-compile.
+It can also keep tools and intermediate data out of the model's context.
+Anthropic shows agents loading tool definitions on demand and filtering results
+in the execution environment. Cloudflare's Code Mode applies the same idea to
+its API: code acts as a compact plan that can discover and compose operations
+while returning only the data the model needs.
+
+But executing model-written code creates an authority problem. Harpe's answer
+is to compile each program against a narrow API. The agent gets the expressive
+power of code without ambient access to the host or application.
 
 ## When Harpe fits
 
-Harpe is a good fit when:
+Choose Harpe when:
 
 - the agent has a clear role and a known set of external systems
-- authority should be reviewable in source code
-- generated actions should be checked before execution
-- you want to own the application loop, memory, approvals, and user experience
-- different deployments need different, least-authority capability sets
+- authority must be narrow, reviewable, and enforced before execution
+- you want to own the application, approvals, memory, and interaction model
 
-Harpe is probably not the right abstraction when you want an autonomous coding
-assistant with unrestricted access to a changing repository and development
-environment. Use a code agent for that. Use Harpe when you are developing the
-bounded agent itself.
+If you want an autonomous assistant with broad access to a changing repository
+and development environment, use a code agent. Use Harpe to build the bounded
+agent itself.
 
 Next: see why [compile-time sandboxing](/overview/compile-time-sandboxing/)
 makes those boundaries durable.
+
+## References
+
+- [Executable Code Actions Elicit Better LLM Agents](https://arxiv.org/abs/2402.01030)
+- [Code execution with MCP: Building more efficient agents](https://www.anthropic.com/engineering/code-execution-with-mcp)
+- [Code Mode: give agents an entire API in 1,000 tokens](https://blog.cloudflare.com/code-mode-mcp/)
