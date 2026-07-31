@@ -1,23 +1,26 @@
 +++
 title = "Sandbox Architecture"
 +++
-A Harpe agent acts by writing Jo programs. Every generated program must compile
-against an API chosen by the agent developer before it can run.
+Harpe treats LLM-generated programs as untrusted code. Before a program can
+run, it must compile against capability interfaces chosen by the agent
+developer. Authority that is not granted is a compilation error.
 
 ![The compiled guest is sealed behind a type-checked boundary. Its only paths to the trusted runtime and outside world are the typed capabilities explicitly granted to it.](/img/typed-sandbox.svg)
 
-## The capability gate
+## The capability boundary
 
-The generated program belongs to the `guest` module. That module has no Python
-FFI and depends only on the pure `api` module:
+Generated code belongs to a guest module. Its dependency graph contains the
+application's capability API and any explicitly included pure libraries. It
+does not contain Python FFI, capability implementations, or the rest of the
+host application.
 
 ![The untrusted guest uses the API contract. The trusted runtime implements the contract and links the guest entry point.](/img/project-deps.svg)
 
-The API declares `runTask` and the capabilities it may receive:
+The API declares the guest entry point and the capabilities available to it:
 
 ```jo
 interface Clock
-  def today(): String
+  def now: String
 end
 
 param clock: Clock
@@ -25,25 +28,25 @@ param clock: Clock
 defer def runTask(): Unit receives stdout, clock
 ```
 
-The model may write:
+Generated code can use the grant:
 
 ```jo
 def runTask(): Unit receives stdout, clock =
-  println clock.today()
+  println clock.now
 ```
 
-It cannot use a file system, network client, shell, Python module, or undeclared
-clock operation. Those names and implementations are absent from its dependency
-graph. The compiler rejects the program before it runs.
+It cannot access a file system, network client, shell, Python module, or an
+undeclared clock operation. Those paths are absent from its compilation
+environment.
 
-## The trusted runtime
+## Trusted implementations
 
-The `runtime` module implements the interfaces and supplies them when it calls
-the guest:
+A trusted runtime implements capability interfaces and binds them before
+entering generated code:
 
 ```jo
 class SystemClock()
-  def today(): String = ...
+  def now: String = ...
   view Clock
 end
 
@@ -51,41 +54,53 @@ with clock = new SystemClock in
   runTask()
 ```
 
-The runtime may use FFI, credentials, and provider SDKs. Generated code sees
-only the narrow `Clock` view. This is why adding a capability requires a
-deliberate change on both sides of the boundary.
+Trusted implementations may use FFI, credentials, provider SDKs, and
+application state. They are responsible for validation and tenant scope.
+Generated code receives only the narrow capability interface.
 
-Harpe's built-in capability interfaces live in the pure `caps` module. It
-contains interfaces and value types, but no FFI or implementations. An agent's
-API can depend on `caps` without pulling the trusted Harpe runtime into the
-guest.
+Harpe's built-in capability interfaces and value types live in the pure
+`harpe-caps` module. Their trusted implementations live outside the guest
+dependency graph. An application can replace an implementation without changing
+the interface exposed to generated code.
 
-## What the compiler guarantees
-
-For a successfully compiled guest program:
-
-- every capability call exists in the API
-- every argument and result matches the declared types
-- every required capability appears in `runTask`'s `receives`
-- Python FFI and unlisted modules remain unavailable
-
-The grant is structural. Prompt instructions cannot widen it, and prompt
-injection cannot make an undeclared operation compile.
-
-## What it does not guarantee
-
-The compiler proves authority, not intent. A valid program can still:
-
-- pass the wrong customer to an allowed operation
-- make an expensive call that its interface permits
-- loop or consume excessive resources
-- exploit a compiler or trusted runtime bug
-
-Design narrow capabilities first. Use domain types and separate read authority
-from write authority. Put credentials and tenant scope in trusted runtime code.
+Use narrow domain capabilities and derive user or tenant scope in trusted code.
+Separate read and write authority when they should be granted independently.
 The [custom capability tutorial](/tutorial/create-custom-capabilities/) shows
 the complete pattern.
 
-For protection below the compiler boundary, follow [Add defense in
-depth](/guides/defense-in-depth/). It covers timeouts, environment scrubbing,
-resource limits, filesystem isolation, and network restrictions.
+## Per program
+
+When the model calls `runCode`, Harpe:
+
+1. writes the generated source into a fresh run directory
+2. compiles it against the prebuilt capability API and dependencies
+3. executes it only if compilation succeeds
+4. starts the trusted runtime, which supplies the granted capabilities
+
+Each program gets its own source, output, and compiler artifacts. Shared
+dependencies remain read-only, so concurrent runs do not mutate one another's
+build state.
+
+## What the compiler guarantees
+
+For a program that compiles:
+
+- every capability call exists in the exposed API
+- arguments and results match the declared types
+- capability requirements propagate through nested calls
+- every required capability is declared by the guest entry point
+- FFI and modules outside the guest dependency graph remain unavailable
+
+The grant is structural. Prompt instructions cannot widen it. Prompt injection
+cannot make an undeclared operation compile.
+
+## What it does not guarantee
+
+The compiler proves authority, not intent. A permitted program can still choose
+the wrong argument or misuse an allowed operation. Consequential capabilities
+may require [human approval](/concepts/approvals/) in their trusted
+implementations.
+
+An external sandbox can limit CPU and memory and apply system-level file system
+and network policies. These controls provide defense in depth around the
+compile-time boundary. See [Add Defense in Depth](/guides/defense-in-depth/).
