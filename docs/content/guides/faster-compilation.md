@@ -31,8 +31,7 @@ jo --version
 ```
 
 Harpe replays the compiler launcher recorded when the sandbox was built, so
-subsequent `runCode` calls use the native binary. Repeat these steps after
-installing a new Jo version.
+subsequent `runCode` calls use the native binary.
 
 See [Install Jo](https://jo-lang.org/usage/install.html) for the upstream
 installation instructions and native-launcher tip.
