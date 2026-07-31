@@ -61,9 +61,8 @@ The compiler proves authority, not intent. A permitted program can still choose
 the wrong calendar slot or make an expensive allowed request. Use narrow
 interfaces and human approval for consequential operations.
 
-OS isolation remains useful for resource limits and vulnerabilities in the
-compiler or trusted runtime. Harpe treats it as defense in depth, not as a
-substitute for application-level boundaries.
+Runtime sandboxes remain useful for resource limits and for defense in depth.
+However, they are not a substitute for application-level boundaries.
 
 For the mechanics and guarantees, read the detailed
 [Sandbox concept](/concepts/sandbox/). To build one, follow
