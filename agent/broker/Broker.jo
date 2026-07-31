@@ -11,7 +11,7 @@
   ! Wire format: each frame is `[4-byte jsonLen][json][4-byte blobLen][blob]` — a
   ! UTF-8 JSON header plus an optional **raw** binary trailer. Bytes ride the trailer,
   ! never base64 inside the JSON, so a byte range costs no encode/decode and no 33%
-  ! inflation. Large payloads do not travel here at all: the guest gets a `Path` to a
+  ! inflation. Large payloads do not travel here at all: the guest gets a relative path to a
   ! file the host materialized in the shared run dir and reads it directly. The broker
   ! carries only bounded reads (a text line range, a small buffer) and metadata.
   !

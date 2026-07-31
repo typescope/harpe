@@ -35,6 +35,7 @@ import harpe.ffi.text
 import harpe.ffi.json
 
 import harpe.*
+import harpe.broker.*
 import harpe.logging.*
 
 private def shutilMod: py.Dynamic = py.module("shutil")
@@ -110,28 +111,31 @@ private def runCode(
     gate: py.Dynamic,
     buildTimeout: Float,
     runTimeout: Float,
+    approvalDeadline: Float,
     maxResultChars: Int,
     runScript: String,
     callContext: CallContext)
-: Tool.RunOutcome receives logger =
+: Tool.RunOutcome receives logger, currentInteract =
   match findDoneFile(sandboxDir)
   case None =>
     new Tool.RunOutcome(
       "The sandbox is not built. Run `jo build` in the sandbox project once before starting the agent.",
-      "sandbox not built")
+      "sandbox not built", [])
 
   case Some(donePath) =>
     gate.acquire()
     val runDir = tempfileMod.mkdtemp(prefix = "run-").asString
-    val outcome = py.try(buildAndRun(code, donePath, runDir, buildTimeout, runTimeout, runScript, callContext))
+    val outcome = py.try(buildAndRun(
+      code, donePath, runDir, buildTimeout, runTimeout,
+      approvalDeadline, runScript, callContext))
     val _ = py.try(shutilMod.rmtree(runDir, ignore_errors = true))
     gate.release()
 
     // Bound only the text the model sees; `buildAndRun` has already logged the full
     // output/error to the run log, so nothing is lost from the record.
     match outcome
-    case Ok(outc) => Tool.RunOutcome: Tool.elide(outc.result, maxResultChars), outc.summary
-    case Err(e)   => Tool.RunOutcome("The run failed unexpectedly: \{e.message}", "internal error")
+    case Ok(outc) => Tool.RunOutcome: Tool.elide(outc.result, maxResultChars), outc.summary, outc.media
+    case Err(e)   => Tool.RunOutcome("The run failed unexpectedly: \{e.message}", "internal error", [])
 
 //[ Compile and run `code` in `runDir` by replaying the recorded invocation from
   ! `donePath`, logging the outcome.
@@ -142,9 +146,10 @@ private def buildAndRun(
     runDir: String,
     buildTimeout: Float,
     runTimeout: Float,
+    approvalDeadline: Float,
     runScript: String,
     callContext: CallContext)
-: Tool.RunOutcome receives logger =
+: Tool.RunOutcome receives logger, currentInteract =
   // Each run emits one `harpe.tools.runCode` log entry — the program under test
   // plus the fields specific to how it ended — to the injected channel. What
   // becomes of the entry (format, destination) is the Logger backend's policy.
@@ -171,7 +176,7 @@ private def buildAndRun(
       "phase"          ~ "compile"
     return new Tool.RunOutcome(
       "The build timed out after \{buildTimeout}s.",
-      "build timed out · \{buildTimeout}s")
+      "build timed out · \{buildTimeout}s", [])
 
   if build.returnCode != 0 then
     val compileError = compilerErrorText(build.out, build.err)
@@ -183,11 +188,11 @@ private def buildAndRun(
       "compileError"   ~ compileError
     return new Tool.RunOutcome(
       "The program did not compile (\{compileSeconds}s):\n\{compileError}",
-      "did not compile · \{compileSeconds}s")
+      "did not compile · \{compileSeconds}s", [])
 
   // 2. Run the compiled program (its path is the `-o` we just supplied).
   if !os.path.isfile(runOut) then
-    return new Tool.RunOutcome("The program compiled but no executable was found.", "no executable produced")
+    return new Tool.RunOutcome("The program compiled but no executable was found.", "no executable produced", [])
 
   // A `sandbox/run.sh` wrapper (defense in depth) owns how the program runs — the
   // interpreter, any uid drop, and OS-level confinement (ulimit/landrun/bwrap/…).
@@ -208,12 +213,22 @@ private def buildAndRun(
   val runCmd = if useRunSh then py.list(runScript, runOut)
                else py.list("python3", runOut)
 
-  // Untrusted guest code runs with a minimal PATH-only environment (guestEnv),
-  // inheriting none of the host's secrets — plus the audit-log path the sandbox
-  // runtime writes its records to. The build step above keeps the full env — it is
-  // the trusted compiler needing the toolchain.
+  // Start the untrusted guest with PATH only, then add the audit-log path and
+  // the application-selected callContext values below. It inherits no other
+  // host variables. The trusted compiler above keeps the full toolchain env.
   val runEnv = subprocess.guestEnv()
   runEnv.set("HARPE_AUDIT_LOG", runAudit)
+
+  // One broker belongs to one sandbox run. Approval requests travel over this
+  // socket and are forwarded to the current Interact without entering the model
+  // transcript.
+  val brokerPath = os.path.join(runDir, "broker.sock")
+  val approvalActive = threading.event()
+  val broker = Broker.start(
+    brokerPath,
+    frame => handleBroker(frame, currentInteract, approvalActive)
+  )
+  runEnv.set("HARPE_BROKER_SOCKET", brokerPath)
 
   // The driver's per-turn config, copied in verbatim — `runCode` interprets none
   // of it: the keys are guest env-var names the driver chose (an application
@@ -225,7 +240,19 @@ private def buildAndRun(
   // Run the guest IN its own run dir, so its working directory (`.`) is that
   // isolated scratch — never the host's agent dir — with no env var needed to name it.
   val t1 = time.now()
-  val run = subprocess.runCapped(runCmd, runTimeout, env = runEnv, cwd = runDir)
+  val attemptedRun = py.try(subprocess.runCappedWithPauses(
+    runCmd,
+    runTimeout,
+    approvalActive,
+    approvalDeadline,
+    env = runEnv,
+    cwd = runDir
+  ))
+  broker.stop()
+  val run =
+    match attemptedRun
+    case Ok(value)   => value
+    case Err(error) => abort error.message
   val runSeconds = builtins.round(time.now() - t1, 2)
 
   if run.timedOut then
@@ -236,10 +263,16 @@ private def buildAndRun(
       "compileSeconds" ~ compileSeconds
       "runSeconds"     ~ runSeconds
       "timedOut"       ~ true
-      "phase"          ~ "run"
-    return new Tool.RunOutcome(
-      "The program ran too long and was stopped after \{runTimeout}s (possible infinite loop).",
-      "timed out · ran \{runSeconds}s")
+      "phase"          ~ (if run.pauseTimedOut then "approval" else "run")
+
+    if run.pauseTimedOut then
+      return new Tool.RunOutcome(
+        "The approval did not finish within \{approvalDeadline}s, so the program was stopped.",
+        "approval timed out · \{runSeconds}s", [])
+    else
+      return new Tool.RunOutcome(
+        "The program ran too long and was stopped after \{runTimeout}s (possible infinite loop).",
+        "timed out · ran \{runSeconds}s", [])
 
   val runReturnCode = run.returnCode
   val runOutText = run.out.trim
@@ -266,7 +299,44 @@ private def buildAndRun(
     "runSeconds"     ~ runSeconds
     "exitCode"       ~ runReturnCode
     "output"         ~ result
-  new Tool.RunOutcome(result, summary)
+  new Tool.RunOutcome(result, summary, [])
+
+//[ Handle one cross-cutting request from a sandboxed program. //]
+private def handleBroker(
+    frame: Frame,
+    interact: Interact,
+    approvalActive: py.Dynamic)
+: Frame =
+  val body = json.loads(frame.json).cast[py.Dict]
+  val service = body.get("service", "").asString
+
+  if service != "approval" then
+    Frame.error("unknown broker service: '\{service}'")
+
+  else
+    val title = body.get("title", "").asString
+    val detail = body.get("detail", "").asString
+
+    if title.trim == "" then Frame.error("approval title must not be empty")
+    else if title.size > 200 then Frame.error("approval title exceeds 200 characters")
+    else if detail.size > 10000 then Frame.error("approval detail exceeds 10000 characters")
+    else
+      val id = py.module("uuid").uuid4().toString
+      approvalActive.set()
+      val attempted = py.try:
+        if interact.cancelled then ApprovalCancelled
+        else interact.approve(id, ApprovalRequest(title, detail))
+      approvalActive.clear()
+      val decision =
+        match attempted
+        case Ok(value)   => value
+        case Err(error) => abort error.message
+
+      Frame.of(json.dumps(py.dict(
+        "ok" ~ true,
+        "id" ~ id,
+        "decision" ~ ApprovalDecision.wire(decision)
+      )))
 
 //[ Replay the sandbox's audit log through the ambient (contextual) `logger`.
   !
@@ -295,6 +365,11 @@ private def replayAudit(path: String): Unit receives logger =
   ! filesystem, uid) lives outside the process in the optional `sandbox/run.sh`
   ! wrapper (see docs/concepts/sandbox.md).
   !
+  ! `approvalDeadline` is the application's watchdog for one approval pause. It
+  ! should be slightly longer than the deadline enforced by the application's
+  ! interaction UI. This prevents a broken interaction handler from leaving the
+  ! sandbox process waiting forever.
+  !
   ! `maxConcurrent` bounds how many builds+runs proceed at once (each spawns a
   ! compiler + interpreter process); further calls wait for a slot. Concurrent
   ! calls are isolated by construction — each compiles its own source against the
@@ -317,6 +392,7 @@ private def replayAudit(path: String): Unit receives logger =
 //]
 def runCodeTool(
     sandboxDir: String,
+    approvalDeadline: Float,
     buildTimeout: Float = 120.0,
     runTimeout: Float = 30.0,
     maxConcurrent: Int = 4,
@@ -338,5 +414,7 @@ def runCodeTool(
     "runCode",
     "Write a Jo program (namespace sandbox.guest, def runTask), compile it against the agent sandbox, and run it. Returns the program's stdout, or the compile error if it does not build.",
     [Tool.strParam("code", "The Jo source code to compile and run")],
-    input => runCode(input.string("code"), sandboxDir, gate, buildTimeout, runTimeout, maxResultChars, runScript, callContext)
+    input => runCode(
+      input.string("code"), sandboxDir, gate, buildTimeout, runTimeout,
+      approvalDeadline, maxResultChars, runScript, callContext)
   )

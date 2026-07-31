@@ -18,13 +18,13 @@ import harpe.ffi.builtins
 
 private def pdfiumMod: py.Dynamic = py.module("pypdfium2")
 
-//[ The pypdfium2 `PdfReader` backend, resolving a `Path` against `root`.
+//[ The pypdfium2 `PdfReader` backend, resolving a relative path against `root`.
   ! Parses once; `Err` for a missing or corrupt document.
 //]
 class PdfiumReader(root: String)
   view PdfReader
 
-  def open(src: Path): Result[PDF, String] =
+  def open(src: String): Result[PDF, String] =
     orMessage(py.try(pdfiumMod.PdfDocument(resolvePath(root, src)))).map: doc =>
       new PdfImpl(doc, root)
 end
@@ -90,7 +90,7 @@ private class PdfImpl(doc: py.Dynamic, root: String)
 
     new PageContent(texts, images, paths)
 
-  def pageImage(page: Int, target: Path, scale: Int = 2): Result[ImageSize, String] =
+  def pageImage(page: Int, target: String, scale: Int = 2): Result[ImageSize, String] =
     checkPage(page)
     orMessage: py.try(render(page, target, scale))
 
@@ -99,7 +99,7 @@ private class PdfImpl(doc: py.Dynamic, root: String)
     case Ok(_)  => pass
     case Err(_) => pass
 
-  private def render(page: Int, target: Path, scale: Int): ImageSize =
+  private def render(page: Int, target: String, scale: Int): ImageSize =
     val image = doc.get_page(page - 1).render(scale).to_pil()
 
     val realTarget = resolvePath(root, target)

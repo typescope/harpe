@@ -14,6 +14,7 @@
 //]
 
 namespace harpe.cli
+import harpe.ffi.glob
 import harpe.ffi.os
 import harpe.ffi.time
 
@@ -39,31 +40,24 @@ def main(): Unit receives stdout =
       Logging.withLogger(new JsonlLogger(wspace.relative("logs/agent.jsonl")), () => runChat())
 
 private def runChat(): Unit receives stdout, workspace, logger =
-  // The agent's working memory is in-process for the run (the CLI has no
-  // session resume), and the context starts on an empty transcript.
-  val memory = new Memory
+  val inputHistory = workspace.relative("logs/inputs.txt")
+  val interact = new Console(stdout, inputHistory)
+  interact.init()
+
+  val sessionLog = chooseSession(resumeRequested())
+  val memory = Memory.load(sessionLog.memoryPath)
   val agent = new Agent:
     brain = Defaults.model()
-    tools = Defaults.tools() ++ memoryTools(memory)
+    tools = Defaults.tools(610.0) ++ memoryTools(memory) ++ [runBashTool()]
     context = new WindowedContext:
       baseSystem = workspace.read("AGENT.md").getOrElse("")
       memory = memory
-      initial = []
+      initial = SessionLog.loadFile(sessionLog.path)
 
   // The per-turn tool context; constant for a CLI run (one local working dir).
   val data = workspace.relative("data")
   if !os.path.isdir(data) then os.makedirs(data)
   val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(data))
-
-  val inputHistory = workspace.relative("logs/inputs.txt")
-  val interact = new Console(stdout, inputHistory)
-
-  interact.init()
-
-  // Where this session's conversation is serialized; fixed at session start. Memory
-  // is saved beside it (`sessionLog.memoryPath`) for inspection — the CLI does not
-  // resume, so it is written but never loaded.
-  val sessionLog = SessionLog.newLog()
 
   while true do
     // `None` is end-of-input (Ctrl-D); a blank line or a Ctrl-C'd prompt is
@@ -85,8 +79,8 @@ private def runChat(): Unit receives stdout, workspace, logger =
       interact.agentResponse(text)
 
     else
-      if res is Interrupted then println "  ⎋ interrupted"
-      else println "  · request failed"
+      if res is Interrupted then println("  " + Style.warning("⎋ interrupted"))
+      else println("  " + Style.error("· request failed"))
 
     // Persist memory regardless of outcome (it is not rolled back with a turn).
     if !memory.isEmpty then Memory.save(sessionLog.memoryPath, memory)
@@ -94,5 +88,70 @@ private def runChat(): Unit receives stdout, workspace, logger =
 
   sessionLog.close()
 
-  println "Goodbye."
+  println("  " + Style.success("♪ Elise stopped."))
 end
+
+//[ Whether the user explicitly requested the session picker. The template's
+  ! `jo resume` command passes this internal application flag.
+//]
+private def resumeRequested(): Bool =
+  for argDyn in py.module("sys").argv.cast[py.List] do
+    if argDyn.asString == "--resume" then return true
+  false
+
+section Session
+  //[ A new CLI session log, named from its start time. //]
+  def newLog(): SessionLog receives workspace =
+    val path =
+      workspace.relative(time.strftime("logs/sessions/%Y/%m/%d/%H-%M-%S") + ".jsonl")
+    new SessionLog(path)
+
+  //[ Up to `limit` CLI session logs, newest first. //]
+  def recentFiles(limit: Int): List[String] receives workspace =
+    val root = workspace.relative("logs/sessions")
+    if limit <= 0 || !os.path.isdir(root) then []
+    else
+      var paths: List[String] = []
+      for pathDyn in glob.glob(os.path.join(root, "**/*.jsonl"), recursive = true) do
+        paths = paths + pathDyn.asString
+
+      val ordered = paths.sortBy(path => path)
+      var recent: List[String] = []
+      var i = ordered.size - 1
+      while i >= 0 && recent.size < limit do
+        recent = recent + ordered.get(i)
+        i = i - 1
+      end
+      recent
+end
+
+//[ Let an interactive user continue one of the five newest sessions. The normal
+  ! startup path creates a fresh session without another prompt.
+//]
+private def chooseSession(resume: Bool): SessionLog receives stdout, workspace =
+  val recent = Session.recentFiles(5)
+  val interactive = py.module("sys").stdin.isatty().asBool
+
+  if !resume || recent.isEmpty || !interactive then Session.newLog()
+  else
+    println Style.accent("Recent sessions")
+    var i = 0
+    for path in recent do
+      val relative = os.path.relpath(path, os.path.abspath("."))
+      println("  " + Style.note("\{i + 1}.") + " " + Style.muted(relative))
+      i = i + 1
+
+    println ""
+    val answer =
+      match py.try(py.input("Resume a session number, or press Enter for a new session ▸ "))
+      case Ok(value) => value.trim
+      case Err(_)    => ""
+
+    val selected = Int.parse(answer) rescue None => 0
+    if selected >= 1 && selected <= recent.size then
+      val path = recent.get(selected - 1)
+      val relative = os.path.relpath(path, os.path.abspath("."))
+      println(Style.success("Resuming") + " " + relative)
+      new SessionLog(path)
+    else
+      Session.newLog()

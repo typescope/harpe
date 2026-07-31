@@ -6,7 +6,7 @@
   ! / `skillsSearch` tools, which let the model READ its reference material
   ! without writing Jo — it still ACTS only through `runCode`.
   !
-  ! Path reads are confined to the skills directory and best-effort UTF-8, so a
+  ! File reads are confined to the skills directory and best-effort UTF-8, so a
   ! binary or out-of-tree path can never crash a search.
 //]
 
@@ -80,14 +80,14 @@ private def skillsReadOutcome(skillsDir: String, name: String): Tool.RunOutcome 
     else false
 
   if !isSafe then
-    return new Tool.RunOutcome("Access denied: path outside skills directory", "denied · \{name}")
+    return new Tool.RunOutcome("Access denied: path outside skills directory", "denied · \{name}", [])
 
   if os.path.isfile(absPath) then
     match py.try(py.open(absPath, "r").read())
-      case Ok(c)  => new Tool.RunOutcome(c.asString, "read · \{name}")
-      case Err(_) => new Tool.RunOutcome("Skill \{name} could not be read as text.", "unreadable · \{name}")
+      case Ok(c)  => new Tool.RunOutcome(c.asString, "read · \{name}", [])
+      case Err(_) => new Tool.RunOutcome("Skill \{name} could not be read as text.", "unreadable · \{name}", [])
   else
-    new Tool.RunOutcome("Skill not found: \{name}", "not found · \{name}")
+    new Tool.RunOutcome("Skill not found: \{name}", "not found · \{name}", [])
 
 private def skillsSearchText(skillsDir: String, query: String): String receives logger =
   logger.log:
@@ -123,7 +123,7 @@ def skillTools(skillsDir: String): List[Tool] =
     "skillsList"
     "List the names of all available skill files (read-only reference docs). Each name includes its file extension (e.g. .md, .jo)."
     []
-    input => new Tool.RunOutcome(skillsListText(skillsDir), "listed skills")
+    input => new Tool.RunOutcome(skillsListText(skillsDir), "listed skills", [])
 
   val readTool = Tool:
     "skillsRead"
@@ -135,6 +135,6 @@ def skillTools(skillsDir: String): List[Tool] =
     "skillsSearch"
     "Case-insensitive search across all skill files. Returns matching lines as 'name:lineNumber: text'."
     [Tool.strParam("query", "Substring to search for (case-insensitive)")]
-    input => new Tool.RunOutcome(skillsSearchText(skillsDir, input.string("query")), "searched · \{input.string("query")}")
+    input => new Tool.RunOutcome(skillsSearchText(skillsDir, input.string("query")), "searched · \{input.string("query")}", [])
 
   [listTool, readTool, searchTool]

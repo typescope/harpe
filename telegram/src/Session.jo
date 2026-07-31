@@ -47,7 +47,7 @@ class FileSpec(fileId: String, name: String, mime: String)
   ! enqueues and the worker drains — replacing the bare text string, so a message
   ! can now carry attachments.
 //]
-class Incoming(text: String, files: List[FileSpec])
+class Incoming(text: String, files: List[FileSpec], senderId: String)
 
 
 //[ One live conversation: its chat id, its append log, its agent (which owns
@@ -66,10 +66,16 @@ private class Session(id: String, log: SessionLog, agent: Agent, memory: Memory,
     ! directory (so the agent can read them with `fs`), run the turn, then deliver
     ! its answer — the text reply plus any files the agent `sendFile`d back.
   //]
-  def runTurn(incoming: Incoming, client: TelegramClient, maxToolRounds: Int, maxRetries: Int): Unit receives logger =
+  def runTurn(
+      incoming: Incoming,
+      client: TelegramClient,
+      approvalHandler: TelegramApprovalHandler,
+      maxToolRounds: Int,
+      maxRetries: Int)
+  : Unit receives logger =
     val attachments = materialize(incoming, client)
     val userMsg = UserText(incoming.text, attachments)
-    val interact = new TelegramInteract(client, this.id)
+    val interact = new TelegramInteract(client, this.id, approvalHandler)
 
     with callContext = callCtx in
       match agent.runTurn(userMsg, interact, maxToolRounds, maxRetries)

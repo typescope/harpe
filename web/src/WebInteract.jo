@@ -17,6 +17,8 @@
 namespace harpe.web
 
 import harpe.Interact
+import harpe.ApprovalRequest
+import harpe.ApprovalDecision
 import harpe.turns.TurnEvent
 import harpe.turns.ModelRequestStarted
 import harpe.turns.ModelRequestEnded
@@ -37,13 +39,17 @@ import harpe.Tool
   ! server serializes and writes as a line of the NDJSON response stream.
 //]
 type Sink = py.Dict => Unit
+type ApprovalHandler = (String, ApprovalRequest) => ApprovalDecision
 
-private class WebInteract(sink: Sink, stop: py.Dynamic)
+private class WebInteract(sink: Sink, stop: py.Dynamic, approvalHandler: ApprovalHandler)
   view Interact
 
   def cancelled: Bool = stop.is_set().asBool
 
   def pause(seconds: Float): Bool = stop.wait(seconds).asBool
+
+  def approve(id: String, request: ApprovalRequest): ApprovalDecision =
+    approvalHandler(id, request)
 
   //[ Translate one engine event into a UI event on the stream. `ModelRequestEnded`
     ! carries no UI meaning on its own — the next `status`/`answer` supersedes it.

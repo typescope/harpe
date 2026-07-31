@@ -1,0 +1,50 @@
+//[ InlineMediaTest.jo
+  !
+  ! Tests for the shared inline-attachment helpers (`harpe.models.InlineMedia`):
+  ! the mime gate (`isInlineImage`/`isInlinePdf`) and reading an attachment's
+  ! bytes as base64 off disk (`readInlineBase64`), including its silent-`None`
+  ! failure modes (no data dir, missing file).
+//]
+
+namespace harpe.test.InlineMediaTest
+
+import harpe.ffi.os
+import harpe.ffi.tempfile
+import harpe.ffi.file
+
+import jo.IO.stdout
+import harpe.models.*
+
+private def check(label: String, cond: Bool): Unit receives stdout =
+  assert: cond, "\{label} failed"
+  println "  ok \{label}"
+
+def run(): Unit receives stdout =
+  // --- mime gate ---
+  check("jpeg is an inline image", isInlineImage("image/jpeg"))
+  check("png is an inline image", isInlineImage("image/png"))
+  check("gif is an inline image", isInlineImage("image/gif"))
+  check("webp is an inline image", isInlineImage("image/webp"))
+  check("pdf is not an inline image", !isInlineImage("application/pdf"))
+  check("text is not an inline image", !isInlineImage("text/plain"))
+
+  check("application/pdf is an inline pdf", isInlinePdf("application/pdf"))
+  check("image/png is not an inline pdf", !isInlinePdf("image/png"))
+
+  // --- readInlineBase64: happy path ---
+  val dir = tempfile.mkdtemp()
+  file.writeBytes(os.path.join(dir, "hi.bin"), py.dynamic("hi").callDynamic("encode", "utf-8"))
+
+  match readInlineBase64(dir, "hi.bin")
+  case Some(b64) => check("reads and base64-encodes", b64 == "aGk=")
+  case None      => check("reads and base64-encodes", false)
+
+  // --- readInlineBase64: no data directory ---
+  match readInlineBase64("", "hi.bin")
+  case Some(_) => check("empty dataDir is None", false)
+  case None    => check("empty dataDir is None", true)
+
+  // --- readInlineBase64: file does not exist ---
+  match readInlineBase64(dir, "missing.bin")
+  case Some(_) => check("missing file is None", false)
+  case None    => check("missing file is None", true)

@@ -14,6 +14,7 @@
 namespace harpe
 
 import harpe.Tool.*
+import harpe.Model.Attachment
 import harpe.logging.logger
 
 //[ A tool call's driver-supplied context: a flat key/value bag the driver
@@ -54,7 +55,7 @@ class Tool(
   // logger and driver `CallContext` at the call site (the turn loop), so the
   // current turn's logging context (see `Logging.withContext`) and config reach it
   // — rather than freezing what the tool was built with.
-  run: ToolInput => RunOutcome receives logger, callContext
+  run: ToolInput => RunOutcome receives logger, callContext, currentInteract
 )
 
 section Tool
@@ -62,8 +63,12 @@ section Tool
     !
     ! - `result` is the text fed back to the model
     ! - `summary` is the one-line status shown in the console
+    ! - `media` is any attachment the tool wants to show the model directly (not
+    !   just reference by name) — e.g. `uploadMedia` marking a file `inline` so
+    !   the render layer can send it as a real image/document content block.
+    !   `[]` for the ordinary, text-only case.
   //]
-  class RunOutcome(result: String, summary: String)
+  class RunOutcome(result: String, summary: String, media: List[Attachment])
 
   //[ Tool parameter type
     !
@@ -95,8 +100,12 @@ section Tool
   //]
   class ToolCall(id: String, name: String, input: ToolInput)
 
-  //[ The result of running a tool call, fed back to the model next turn. //]
-  class ToolResult(id: String, content: String)
+  //[ The result of running a tool call, fed back to the model next turn.
+    !
+    ! `media` mirrors `RunOutcome.media` — carried through so the provider render
+    ! layer can decide whether to inline it (see `RunOutcome`).
+  //]
+  class ToolResult(id: String, content: String, media: List[Attachment])
 
   //[ Input in a tool call
     !
@@ -124,14 +133,15 @@ section Tool
     ! back to the model as a tool result — so the model can react — rather than
     ! crashing the turn (or the driver).
   //]
-  def runSafely(tool: Tool, input: ToolInput): RunOutcome receives logger, callContext =
+  def runSafely(tool: Tool, input: ToolInput): RunOutcome receives logger, callContext, currentInteract =
     match py.try(tool.run(input))
     case Ok(outcome) => outcome
 
     case Err(e) =>
       new RunOutcome(
         "The tool '\{tool.name}' failed: \{e.message}",
-        "error · \{tool.name}")
+        "error · \{tool.name}",
+        [])
 
   //[ A required string parameter — the common case when defining a tool. //]
   def strParam(name: String, description: String): ToolParam =

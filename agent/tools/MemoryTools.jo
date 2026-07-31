@@ -24,7 +24,7 @@ def memoryTools(memory: Memory): List[Tool] =
     input =>
       val key = input.string("key")
       memory.set(key, input.string("value"))
-      new Tool.RunOutcome("Updated memory[\{key}].", "memory ← \{key}")
+      new Tool.RunOutcome("Updated memory[\{key}].", "memory ← \{key}", [])
 
   val read = Tool:
     "readMemory"
@@ -34,7 +34,7 @@ def memoryTools(memory: Memory): List[Tool] =
       val key = input.string("key")
       val value = memory.get(key)
       val body = if value == "" then "(memory[\{key}] is empty)" else value
-      new Tool.RunOutcome(body, "memory → \{key}")
+      new Tool.RunOutcome(body, "memory → \{key}", [])
 
   val list = Tool:
     "listMemory"
@@ -43,6 +43,6 @@ def memoryTools(memory: Memory): List[Tool] =
     input =>
       val ks = memory.keys()
       val body = if ks.isEmpty then "(memory is empty)" else ks.join("\n")
-      new Tool.RunOutcome(body, "memory keys")
+      new Tool.RunOutcome(body, "memory keys", [])
 
   [update, read, list]

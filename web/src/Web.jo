@@ -46,7 +46,7 @@ private def serve(): Unit receives stdout, workspace, logger =
 
   val brain = Defaults.model()
 
-  val server = new ChatServer(brain, "Chord", workspace, logger)
+  val server = new ChatServer(brain, "Clair", workspace, logger)
 
   val host = os.getenv("HOST", "127.0.0.1")
   val port = Int.parse(os.getenv("PORT", "8765")) rescue None => 8765
@@ -70,9 +70,21 @@ private def serve(): Unit receives stdout, workspace, logger =
 
   val httpd = wsgi.make_server(host, port, app, server_class = threadedServer)
 
-  println "Chord is live at http://\{host}:\{port}  (Ctrl-C to stop)"
+  println """
+
+              ♪           ♫
+        ──────●───────────
+        ───────────●──────
+           C L A I R
+
+           Harpe · Web
+
+    """
+
+  println "  Live at http://\{host}:\{port}"
+  println "  Ctrl-C to stop"
 
   // Stop cleanly on Ctrl-C instead of dumping a traceback from serve_forever.
-  signal.shutdownOnSigint("\nShutting down.")
+  signal.shutdownOnSigint("\n  ♪ Clair stopped.")
 
   httpd.serve_forever()

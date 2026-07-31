@@ -1,0 +1,60 @@
+//[ UploadMedia.jo
+  !
+  ! The `uploadMedia` tool: the model's channel for asking to actually SEE a file
+  ! in its data directory — a photo, a chart, a scan with no legible text —
+  ! rather than only reading text out of it. Marking the returned `Attachment`
+  ! `inline` tells the provider render layer (`agent/models/Anthropic.jo`,
+  ! `OpenAI.jo`) to send the file's bytes as a real image/document content block
+  ! on the model's very next request. See `docs/content/concepts/media.md`.
+  !
+  ! Gated to the mime types the vision APIs actually accept
+  ! (`harpe.models.InlineMedia`) — anything else comes back as a clear error
+  ! naming the right tool instead of a silent no-op, so the model can correct
+  ! course (most files should go through `fs`/`ocr`/`pdf`, not this).
+//]
+
+namespace harpe.tools
+
+import harpe.ffi.os
+import harpe.ffi.mimetypes
+
+import harpe.Tool
+import harpe.Model.Attachment
+import harpe.callContext
+import harpe.models.*
+
+//[ Resolves `fileName` in the session's data directory and, if its type is
+  ! inlinable, returns it as `media` so the render layer shows it to the model
+  ! directly. Mirrors `sendFile`'s name handling (basename only, no `..`/`.`).
+//]
+def uploadMediaTool(): Tool = new Tool:
+  name = "uploadMedia"
+  description = "Show an image or PDF from your data directory to yourself, as a real picture — not just its text. Use this only when you need to actually SEE it (colors, layout, a chart, a diagram, a scan with no legible text); for reading text out of a file, prefer `ocr`/`pdf`/`fs` — cheaper, and usually enough. Write the file to the data directory first if you haven't already."
+  params = [Tool.strParam("fileName", "The name of the image or PDF file in your data directory to view")]
+  run = input =>
+    val fileName = input.string("fileName")
+    val dir = callContext.getOrElse("HARPE_DATA_DIR", "")
+    val name = os.path.basename(fileName.replace("\\", "/"))
+
+    if dir == "" then
+      new Tool.RunOutcome("No data directory is available to upload from.", "uploadMedia · no data dir", [])
+
+    else if name == "" || name == "." || name == ".." || !os.path.isfile(os.path.join(dir, name)) then
+      new Tool.RunOutcome(
+        "No such file: '\{fileName}'. Write it to your data directory first, then upload it.",
+        "uploadMedia · no such file", [])
+
+    else
+      val mime = mimetypes.guessType(name).getOrElse("application/octet-stream")
+
+      if !isInlineImage(mime) && !isInlinePdf(mime) then
+        new Tool.RunOutcome(
+          "'\{name}' is \{mime}, which cannot be shown directly — only JPEG/PNG/GIF/WebP images and PDFs can. Use `ocr`/`pdf`/`fs` to read it instead.",
+          "uploadMedia · unsupported · \{mime}", [])
+
+      else
+        val size = os.path.getsize(os.path.join(dir, name))
+        new Tool.RunOutcome(
+          "'\{name}' is attached below — look at it directly in your next reply.",
+          "uploadMedia · \{name}",
+          [Attachment(name, size, mime, true)])

@@ -21,6 +21,10 @@ import harpe.ffi.file
 import harpe.ffi.mimetypes
 
 import harpe.Agent
+import harpe.ApprovalRequest
+import harpe.ApprovalDecision
+import harpe.ApprovalTimedOut
+import harpe.ApprovalCancelled
 import harpe.CallContext
 import harpe.callContext
 import harpe.Memory
@@ -49,6 +53,11 @@ union SessionState = Idle | Active(input: UserText)
   ! can detach it when its subscription ends.
 //]
 class Subscriber(id: Int, sink: Sink)
+
+private class PendingApproval(id: String, request: ApprovalRequest)
+  val ready = threading.event()
+  var decision = ""
+end
 
 //[ One live conversation: its id, its append log, its agent (which owns the
   ! context and therefore the running transcript window), and its working memory.
@@ -80,6 +89,8 @@ class Session(id: String, log: SessionLog, agent: Agent, memory: Memory, callCtx
   private val sinksLock = threading.lock()
   private var subs: List[Subscriber] = []
   private var nextSubId: Int = 0
+  private val approvalLock = threading.lock()
+  private var pendingApproval: Option[PendingApproval] = None
 
   //[ Attach `sink` to the running turn, returning its id for later detach. //]
   def addSink(sink: Sink): Int =
@@ -88,6 +99,13 @@ class Session(id: String, log: SessionLog, agent: Agent, memory: Memory, callCtx
     nextSubId = nextSubId + 1
     subs = subs + new Subscriber(id, sink)
     sinksLock.release()
+
+    approvalLock.acquire()
+    val pending = pendingApproval
+    approvalLock.release()
+    match pending
+    case Some(item) => sink(approvalEvent(item))
+    case None       => pass
     id
 
   //[ Detach the sink with this id (idempotent). //]
@@ -109,6 +127,59 @@ class Session(id: String, log: SessionLog, agent: Agent, memory: Memory, callCtx
     for s in current do
       val _ = py.try(s.sink(obj))
 
+  private def approvalEvent(item: PendingApproval): py.Dict =
+    py.dict(
+      "type" ~ "approval",
+      "id" ~ item.id,
+      "title" ~ item.request.title,
+      "detail" ~ item.request.detail
+    )
+
+  //[ Ask the connected session user and wait for an approval decision. //]
+  private def requestApproval(id: String, request: ApprovalRequest): ApprovalDecision =
+    val item = new PendingApproval(id, request)
+
+    approvalLock.acquire()
+    pendingApproval = Some(item)
+    approvalLock.release()
+    broadcast(approvalEvent(item))
+
+    val deadline = time.now() + 600.0
+    var decision: ApprovalDecision = ApprovalTimedOut
+    var waiting = true
+
+    while waiting do
+      if stop.is_set().asBool then
+        decision = ApprovalCancelled
+        waiting = false
+      else if time.now() >= deadline then
+        decision = ApprovalTimedOut
+        waiting = false
+      else if item.ready.wait(0.1).asBool then
+        decision = ApprovalDecision.fromWire(item.decision)
+        waiting = false
+
+    approvalLock.acquire()
+    if pendingApproval is Some(current) && current.id == id then pendingApproval = None
+    approvalLock.release()
+    broadcast(py.dict("type" ~ "approval-ended", "id" ~ id, "decision" ~ ApprovalDecision.wire(decision)))
+    decision
+
+  //[ Resolve the current request. Stale or duplicate decisions are ignored. //]
+  def decideApproval(id: String, decision: String): Bool =
+    approvalLock.acquire()
+    val accepted =
+      match pendingApproval
+      case Some(item) =>
+        if item.id == id && (decision == "approved" || decision == "rejected") then
+          item.decision = decision
+          item.ready.set()
+          true
+        else false
+      case None => false
+    approvalLock.release()
+    accepted
+
   //[ Run one user turn, fanning its events out to every attached sink.
     !
     ! `initiatorSink` is the sink of the request that started the turn; it is
@@ -127,7 +198,7 @@ class Session(id: String, log: SessionLog, agent: Agent, memory: Memory, callCtx
     val subId = addSink(initiatorSink)
 
     val emit: Sink = obj => this.broadcast(obj)
-    val interact = new WebInteract(emit, this.stop)
+    val interact = new WebInteract(emit, this.stop, (id, request) => requestApproval(id, request))
 
     with callContext = callCtx in
       match agent.runTurn(input, interact, maxToolRounds, maxRetries)

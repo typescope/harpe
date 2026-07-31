@@ -5,6 +5,8 @@ import harpe.logging.*
 import harpe.ffi.os
 import harpe.media.*
 import harpe.caps.*
+import harpe.interact.BrokerApprovals
+import harpe.approvals
 import sandbox.api
 
 // The agent's per-turn entry. The guest links jo.main = sandbox.runtime.main. It
@@ -19,10 +21,11 @@ import sandbox.api
 // run sub-agents). OS-level confinement is NOT applied here — it lives outside the
 // process, in an optional `sandbox/run.sh` wrapper (see docs/concepts/sandbox.md).
 def main(): Unit receives stdout =
-  Logging.withLogger: auditLogger(), () => run()
+  with approvals = BrokerApprovals.connect() in
+    Logging.withLogger: auditLogger(), () => run()
 
 // Grant the capabilities, all rooted at the chat's data directory — always granted
-// by the driver as HARPE_DATA_DIR. One root for every capability, so a `Path` means
+// by the driver as HARPE_DATA_DIR. One root for every capability, so a relative path means
 // the same file to all of them: `fs` is how the agent reads files the user sent and
 // writes files to send back, and the document backends let it parse rich uploads
 // (a PDF, a spreadsheet, a scanned image) rather than only read their bytes. Their

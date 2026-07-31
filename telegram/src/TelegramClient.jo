@@ -98,6 +98,44 @@ private class TelegramClient(token: String)
       if !resp.get("ok", false).asBool then
         val _ = apiCall("sendMessage", py.dict("chat_id" ~ chatId, "text" ~ piece), 30.0)
 
+  //[ Send one instant approval request with inline decision buttons. //]
+  def sendApproval(chatId: String, id: String, title: String, detail: String): Option[Int] =
+    val source = "**Approval required**\n\n### " + title +
+      (if detail.trim == "" then "" else "\n\n" + detail)
+    val body = Markdown.toHtml(source)
+    val keyboard = py.dict("inline_keyboard" ~ py.list(
+      py.list(
+        py.dict("text" ~ "Reject", "callback_data" ~ ("reject:" + id)),
+        py.dict("text" ~ "Approve", "callback_data" ~ ("approve:" + id))
+      )
+    ))
+    val resp = apiCall("sendMessage", py.dict(
+      "chat_id" ~ chatId,
+      "text" ~ body,
+      "parse_mode" ~ "HTML",
+      "reply_markup" ~ keyboard
+    ), 30.0)
+
+    if resp.get("ok", false).asBool then
+      Some(resp.get("result").cast[py.Dict].get("message_id").asInt)
+    else
+      None
+
+  //[ Acknowledge a callback so Telegram stops the button spinner. //]
+  def answerCallback(id: String, text: String): Unit =
+    val _ = apiCall("answerCallbackQuery", py.dict(
+      "callback_query_id" ~ id,
+      "text" ~ text
+    ), 15.0)
+
+  //[ Disable the decision buttons after the request ends. //]
+  def clearApprovalButtons(chatId: String, messageId: Int): Unit =
+    val _ = apiCall("editMessageReplyMarkup", py.dict(
+      "chat_id" ~ chatId,
+      "message_id" ~ messageId,
+      "reply_markup" ~ py.dict("inline_keyboard" ~ py.list())
+    ), 15.0)
+
   //[ Show a transient status in the chat (e.g. "typing"); best-effort. //]
   def sendChatAction(chatId: String, action: String): Unit =
     val _ = apiCall("sendChatAction", py.dict("chat_id" ~ chatId, "action" ~ action), 15.0)

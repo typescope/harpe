@@ -1,10 +1,9 @@
 +++
 title = "Memory"
-weight = 8
 +++
 Memory is the agent's **working scratchpad** — a small key→value store the model
 maintains itself, shown back to it every turn and saved across sessions. It is the
-*durable* half of the loop's state; the transcript is the *ephemeral* half. When
+*durable* half of the loop's state. The transcript is the *ephemeral* half. When
 the [Context](/concepts/context/) windows or summarizes old turns away, whatever the agent
 wrote to memory stays.
 
@@ -33,7 +32,7 @@ You don't write memory in code — the model does. Your job is to tell it *what 
 keep*, in `AGENT.md`:
 
 > Maintain your working context in memory. Keep a `goal` and a `plan` of remaining
-> steps, and update them as you make progress; record durable `facts` you learn.
+> steps, and update them as you make progress. Record durable `facts` you learn.
 
 Everything in memory is rendered back to the agent each turn — a **Working memory**
 block placed after the transcript — so it always sees, and can revise, its own
@@ -43,7 +42,7 @@ notes.
 
 Memory is per session and survives restarts. After each committed turn the driver
 writes a snapshot to `<session>.memory.json` (the current state, not an event log,
-written atomically); resuming that session loads it back. An interrupted or failed
+written atomically). Resuming that session loads it back. An interrupted or failed
 turn does **not** roll memory back — an `updateMemory` is an intentional act,
 independent of how the turn ends.
 

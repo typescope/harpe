@@ -2,7 +2,7 @@
   !
   ! A concrete `Image` capability backed by Pillow: pixel dimensions, metadata, and
   ! derived images (resize / crop / convert), each written to a `target` the caller
-  ! names. It resolves a `Path` against its root and reads the file directly. Needs
+  ! names. It resolves a relative path against its root and reads the file directly. Needs
   ! the `pillow` Python package. Reading text out of an image is the separate `OCR`
   ! capability (see Tesseract.jo, RapidOcr.jo).
   !
@@ -19,30 +19,30 @@ import harpe.ffi.builtins
 
 private def pilMod: py.Dynamic = py.module("PIL.Image")
 
-//[ A Pillow-backed image reader and transformer, resolving a `Path` against `root`. //]
+//[ A Pillow-backed image reader and transformer, resolving a relative path against `root`. //]
 class PillowImage(root: String)
   view Image
 
-  def dimensions(src: Path): Result[ImageSize, String] =
+  def dimensions(src: String): Result[ImageSize, String] =
     orMessage: py.try(dimensionsOf(src))
 
-  def metadata(src: Path): Result[Map[String, String], String] =
+  def metadata(src: String): Result[Map[String, String], String] =
     orMessage: py.try(metadataOf(src))
 
-  def resize(src: Path, width: Int, height: Int, target: Path): Result[ImageSize, String] =
+  def resize(src: String, width: Int, height: Int, target: String): Result[ImageSize, String] =
     orMessage: py.try(resizeTo(src, width, height, target))
 
-  def crop(src: Path, x: Int, y: Int, width: Int, height: Int, target: Path): Result[ImageSize, String] =
+  def crop(src: String, x: Int, y: Int, width: Int, height: Int, target: String): Result[ImageSize, String] =
     orMessage: py.try(cropTo(src, x, y, width, height, target))
 
-  def convert(src: Path, target: Path): Result[ImageSize, String] =
+  def convert(src: String, target: String): Result[ImageSize, String] =
     orMessage: py.try(convertTo(src, target))
 
-  private def dimensionsOf(src: Path): ImageSize =
+  private def dimensionsOf(src: String): ImageSize =
     val img = pilMod.open(resolvePath(root, src))
     new ImageSize(img.width.asInt, img.height.asInt)
 
-  private def metadataOf(src: Path): Map[String, String] =
+  private def metadataOf(src: String): Map[String, String] =
     val img = pilMod.open(resolvePath(root, src))
 
     var result = Map.empty[String, String]
@@ -67,18 +67,18 @@ class PillowImage(root: String)
 
     result
 
-  private def resizeTo(src: Path, width: Int, height: Int, target: Path): ImageSize =
+  private def resizeTo(src: String, width: Int, height: Int, target: String): ImageSize =
     val img = pilMod.open(resolvePath(root, src))
     img.thumbnail(py.tuple(width, height))
     save(img, target)
 
-  private def cropTo(src: Path, x: Int, y: Int, width: Int, height: Int, target: Path): ImageSize =
+  private def cropTo(src: String, x: Int, y: Int, width: Int, height: Int, target: String): ImageSize =
     val img = pilMod.open(resolvePath(root, src))
     save:
       img.crop: py.tuple(x, y, x + width, y + height)
       target
 
-  private def convertTo(src: Path, target: Path): ImageSize =
+  private def convertTo(src: String, target: String): ImageSize =
     val img = pilMod.open(resolvePath(root, src))
     save(img, target)
 
@@ -86,7 +86,7 @@ class PillowImage(root: String)
     !
     ! A mode the format cannot hold (RGBA → JPEG, say) is retried as RGB.
   //]
-  private def save(img: py.Dynamic, target: Path): ImageSize =
+  private def save(img: py.Dynamic, target: String): ImageSize =
     val realTarget = resolvePath(root, target)
     os.makedirs(os.path.dirname(realTarget))
 

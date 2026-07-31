@@ -119,13 +119,13 @@ section Agent
 
             val outcome =
               if tools.find(t => t.name == toolName) is Some(t) then
-                runSafely(t, call.input)
+                with currentInteract = interact in runSafely(t, call.input)
               else
-                RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}")
+                RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}", [])
 
             interact.emit: ToolCallEnded(toolName, outcome.summary)
 
-            toolResults = toolResults + ToolResult(call.id, outcome.result)
+            toolResults = toolResults + ToolResult(call.id, outcome.result, outcome.media)
           end
 
           if cancelled || interact.cancelled then

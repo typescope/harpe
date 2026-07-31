@@ -29,4 +29,37 @@ interface Interact
 
   //[ Handle a turn event   //]
   def emit(event: TurnEvent): Unit
+
+  //[ Ask the current session user to approve an action.
+    !
+    ! This is an out-of-band runtime interaction. It is not a turn event and does
+    ! not enter the model transcript. `id` identifies this request within the
+    ! active run so a stale response cannot approve a later action.
+  //]
+  def approve(id: String, request: ApprovalRequest): ApprovalDecision
+end
+
+//[ The current turn's interaction channel.
+  !
+  ! Tool handlers read this context parameter when they need an out-of-band
+  ! interaction such as sandbox approval. `Agent.runTurn` binds it immediately
+  ! around each tool call.
+//]
+param currentInteract: Interact
+
+section Interact
+  //[ An interaction channel for work performed outside an active user turn.
+    !
+    ! Approval is unavailable and therefore cancelled.
+  //]
+  def unattended: Interact = new UnattendedInteract
+end
+
+private class UnattendedInteract
+  view Interact
+
+  def cancelled: Bool = false
+  def pause(seconds: Float): Bool = false
+  def emit(event: TurnEvent): Unit = pass
+  def approve(id: String, request: ApprovalRequest): ApprovalDecision = ApprovalCancelled
 end

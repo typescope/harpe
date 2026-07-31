@@ -1,0 +1,30 @@
+//[ Terminal styling for Elise. Color is presentation only and disappears when
+  ! output is redirected, the terminal is dumb, or NO_COLOR is present.
+//]
+
+namespace harpe.cli
+import harpe.ffi.os
+import harpe.ffi.builtins
+
+section Style
+  private def enabled(): Bool =
+    py.module("sys").stdout.isatty().asBool &&
+    os.getenv("TERM", "") != "dumb" &&
+    !os.environ.contains("NO_COLOR")
+
+  private def paint(code: String, text: String): String =
+    if enabled() then builtins.chr(27) + "[" + code + "m" + text + builtins.chr(27) + "[0m"
+    else text
+
+  def accent(text: String): String = paint("1;38;5;147", text)
+  def note(text: String): String = paint("38;5;80", text)
+  def muted(text: String): String = paint("38;5;245", text)
+  def success(text: String): String = paint("38;5;114", text)
+  def warning(text: String): String = paint("38;5;214", text)
+  def error(text: String): String = paint("38;5;203", text)
+  def strong(text: String): String = paint("1", text)
+  def emphasis(text: String): String = paint("3", text)
+  def strike(text: String): String = paint("9", text)
+  def code(text: String): String = paint("38;5;223;48;5;236", text)
+  def link(text: String): String = paint("4;38;5;80", text)
+end

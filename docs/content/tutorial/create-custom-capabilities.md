@@ -1,175 +1,188 @@
 +++
 title = "Create a Custom Capability"
-weight = 5
 +++
-When the registry doesn't have what you need — an internal API, a private database, your
-billing system — you write the capability yourself. For most agents this is **inline**: an
-`interface` in the `api` module and an implementation in the `runtime` module. No separate
-project, no `capabilities/` directory. Authoring one is the only time you write Jo to build
-an agent.
+A capability is a typed path from model-written code into trusted application
+code. Its interface defines what generated programs may request. Its runtime
+implementation decides how those requests reach the outside world.
 
-This guide builds an **`email`** capability end to end. For where capabilities fit overall,
-see [Concepts](/concepts/agent/).
+This tutorial adds a read-only clock to the
+[`hello` project](/tutorial/build-your-first-agent/). The finished example
+compiles and runs without an external service or secret.
 
-## Step 1 — The interface (this *is* the grant)
-
-Write the narrowest interface that does the job, in the `api` module. Every method here is
-something the agent can do; anything you leave out, it cannot.
-
-```jo
-// sandbox/Email.jo (api module)
-namespace EmailAPI
-
-class Message(to: String, subject: String, body: String)
-class Sent(id: String)
-
-interface Email
-  def send(msg: Message): Sent
-end
-
-param email: Email          // how a turn receives the capability
-```
-
-Then add it to the entry point so the model may receive it:
-
-```jo
-// sandbox/Entry.jo (api module)
-defer def runTask(): Unit receives stdout, email
-```
-
-The runtime shows this interface to the model and the model receives `email` in `runTask`,
-so it writes `email.send(...)` against these exact signatures — and the interface is the
-only thing it can call.
-
-**The craft is narrowing.** The boundary is the *type*, so push limits into it: if the
-agent should only mail your own staff, make the recipient a `StaffId`, not a free `String`;
-if attachments are off-limits, there's simply no parameter for them. A confused or
-malicious turn cannot reach past what the interface allows.
-
-## Step 2 — The implementation
-
-Implement the interface in the `runtime` module — the trusted code. A class provides the
-interface via `view`; secrets come from `.env`, never a build file.
-
-```jo
-// sandbox/EmailImpl.jo (runtime module)
-namespace EmailRuntime
-
-import EmailAPI.*
-
-class EmailImpl(apiKey: String)
-  def send(msg: Message): Sent =
-    val id = Provider.post(apiKey, msg.to, msg.subject, msg.body)
-    Sent(id)
-  view Email                 // EmailImpl provides the Email interface
-end
-
-// the runtime injects this as the `email` param each turn
-def provideEmail(): Email = EmailImpl(env("EMAIL_KEY"))
-```
+## Start from `hello`
 
 ```sh
-# .env
-EMAIL_KEY=...
+jo new clock-agent --template typescope/harpe:hello
+cd clock-agent
+pip install -r requirements.txt
+cp .env.example .env
 ```
 
-> The `provideEmail` factory, `view`, and `env(...)` show the *shape* of the wiring; the
-> exact provider hooks are runtime-specific. The point that matters: the key lives in
-> `.env`, and the implementation is the only place it's read. Because `runtime` is trusted
-> code that the model never writes, this is also the only place that touches Python or a
-> provider SDK.
+Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in `.env`.
 
-If a capability must scope to *who* the turn is for — a user or tenant id — it reads that
-**sandbox runtime context** the same way, from the per-turn environment the runtime sets,
-never from an argument the guest passes (which the model could forge). See
-[the compile-time sandbox](/concepts/agent/#the-compile-time-sandbox).
+The initial sandbox grants only `stdout`. We will add `clock` in three places:
+the public contract, the trusted runtime, and the build-time placeholder.
 
-## Step 3 — Irreversible actions: ask first
+## 1. Define the contract
 
-If an action can't be undone — sending the email, charging a card, placing an order — a type
-can't make it safe on its own. The capability asks a human, using the framework's `Confirm`
-service. **`confirm` is a runtime-only service: it is injected into capability
-implementations and is never part of `runTask`'s `receives`**, so the model's generated code
-can neither call it nor skip it:
+Replace `sandbox/SandboxAPI.jo` with:
 
 ```jo
-class EmailImpl(apiKey: String)
-  def send(msg: Message): Sent receives confirm =
-    if confirm.request(ActionSummary("Email \{msg.to} — \{msg.subject}")) is Rejected then
-      Sent("cancelled")
-    else
-      Sent(Provider.post(apiKey, msg.to, msg.subject, msg.body))
-  view Email
+namespace sandbox.api
+
+import jo.IO.stdout
+
+interface Clock
+  def today(): String
 end
+
+param clock: Clock
+
+defer def runTask(): Unit receives stdout, clock
 ```
 
-The framework renders that request on whatever channel is active — a terminal prompt, a
-WhatsApp message, or the `OPERATOR` for an unattended agent — so the capability writes no
-channel code, and a misled model can't skip it (the call lives in the vetted runtime, not
-the guest program).
+This interface is the entire grant. Generated code may ask for today’s date,
+but it cannot choose a timezone, read arbitrary system state, or mutate the
+clock. Anything absent from this interface remains unreachable.
 
-## Step 4 — Check it
+## 2. Supply the trusted implementation
 
-The interface and implementation are in `api` and `runtime`; type-check the agent end to
-end to confirm the capability resolves and the model can call it:
+Replace `sandbox/SandboxRuntime.jo` with:
 
-```sh
-jo check --spec sandbox/jo.toml api       # the interface + entry point compile
-jo build --spec sandbox/jo.toml guest     # the whole agent, including runtime, links
+```jo
+namespace sandbox.runtime
+
+import jo.IO.stdout
+import sandbox.api.*
+
+class SystemClock()
+  def today(): String =
+    py.module("datetime").date.today().isoformat().asString
+
+  view Clock
+end
+
+def main(): Unit receives stdout =
+  with clock = new SystemClock in
+    runTask()
 ```
 
-Then run the agent (`jo run`). A turn that calls `email.send(...)` compiles; a turn that
-tries anything the interface doesn't declare fails to compile — the boundary you designed in
-Step 1.
+The implementation is trusted code, so it may use Python interoperability.
+The generated guest never sees `py`, the `datetime` module, or any other host
+authority—it receives only the `Clock` view.
 
-## Optional — make it reusable
-
-The inline capability lives in one agent. To share it across agents, lift it into its own
-**package** — the same interface/implementation split, as two standalone projects:
-
-```
-capabilities/
-  email/
-    api/      jo.toml + src/   # check library — the interface
-    runtime/  jo.toml + src/   # link library — the implementation (depends on ../api)
-```
-
-The `api` project is a pure [check library](https://jo-lang.org/usage/concepts/packages); the `runtime`
-project is a [link library](https://jo-lang.org/usage/concepts/packages) that depends on it. An agent then
-*grants* the capability by depending on both — its interface in the `api` module, its
-implementation in the `runtime` module:
+Enable Python interoperability for the runtime module in
+`sandbox/jo.toml`:
 
 ```toml
-# sandbox/jo.toml
-[module.api]      # the runtime module also depends on email-runtime with link = true
-modules = [{ id = "email", path = "../capabilities/email/api" }]   # a local path while developing
-# once published, depend on the package instead:
-#   packages = [{ name = "email", version = "1.0" }]
+[module.runtime]
+kind = "lib"
+platform = "python"
+enable-ffi = true
+src = ["SandboxRuntime.jo"]
+modules = ["api"]
 ```
 
-Publish it and the source dependency becomes a registry package — the reference moves from
-`modules` to `packages`, nothing else:
+Do not enable FFI on the `guest` module. That would give generated programs an
+ambient path around your capability interfaces.
+
+## 3. Update the placeholder
+
+`sandbox/Task.jo` is compiled when the sandbox is prepared. Update its signature
+to match the expanded contract:
+
+```jo
+namespace sandbox.guest
+
+import jo.IO.stdout
+import sandbox.api.*
+
+def runTask(): Unit receives stdout, clock =
+  println clock.today()
+```
+
+During a real tool call, `runCode` compiles the model’s program in a temporary
+run directory. It does not modify this project file. The placeholder simply
+proves that the API and runtime link correctly before the agent starts.
+
+## 4. Build the boundary
 
 ```sh
-jo package --spec capabilities/email/api/jo.toml
-jo package --spec capabilities/email/runtime/jo.toml
+jo build --spec sandbox/jo.toml guest
 ```
 
-See [Publishing](https://jo-lang.org/usage/guides/publishing). Start inline; promote to a package only when
-a second agent needs the same capability.
+The build checks all three sides together:
 
-## Design checklist
+- the guest implements the declared `runTask`.
+- `SystemClock` provides the `Clock` interface.
+- the runtime supplies `clock` when it calls `runTask`.
 
-- **One capability, one coherent authority.** Don't bundle "read inventory" with "place
-  orders" — split them so each can be granted on its own.
-- **Narrow with types, not docs.** A `maxAmount`, a fixed recipient domain, a read-only
-  interface — bounds the compiler enforces beat rules the model is asked to follow.
-- **Reserve `confirm` for the irreversible.** Reversible actions run freely and are reviewed
-  in the audit log; only the un-undoable ones should pause for a human.
+Now start the agent:
 
-## Next steps
+```sh
+jo start
+```
 
-- [Concepts](/concepts/agent/) — how a turn works and why the capability grant is the whole
-  security boundary.
-- [Monitoring agent](/tutorial/monitoring-agent/) — writes two inline capabilities (`inventory`,
-  `reorder`) in a working agent.
+Ask:
+
+```text
+You ▸ What is today's date? Use the clock.
+```
+
+The model can write:
+
+```jo
+namespace sandbox.guest
+
+import jo.IO.stdout
+import sandbox.api.*
+
+def runTask(): Unit receives stdout, clock =
+  println clock.today()
+```
+
+A program that tries `py.module("datetime")`, reads a file, or calls an
+undeclared method fails to compile in the guest.
+
+## Designing real capabilities
+
+The clock is intentionally small, but the same boundary applies to databases,
+internal APIs, ticket systems, and payment providers:
+
+- Put only the operations the agent needs in the interface.
+- Prefer domain types over unconstrained strings.
+- Keep credentials and provider SDKs in the runtime implementation.
+- Derive user or tenant scope from trusted runtime context, not from an ID the
+  generated program can forge.
+- Separate read authority from write authority so they can be granted
+  independently.
+
+For example, prefer:
+
+```jo
+interface CustomerDirectory
+  def findByEmail(email: CompanyEmail): Option[Customer]
+end
+```
+
+over a generic SQL or shell capability. The narrow interface is useful
+documentation, but more importantly it is a boundary the compiler enforces.
+
+## Irreversible actions
+
+A type can constrain an action, but it cannot decide whether a particular
+charge, deletion, or message should happen now. Harpe supports
+[human approval](/concepts/approvals/) during an active agent run. Put the
+approval requirement inside the trusted capability implementation so generated
+code can request the operation but cannot bypass or approve it.
+
+## Checklist
+
+- Does the interface expose only one coherent authority?
+- Can a domain type replace a free-form `String` or `Int`?
+- Is FFI enabled only for trusted runtime modules?
+- Are credentials absent from guest-visible parameters and return values?
+- Does the default placeholder still build?
+- Does every irreversible effect require approval in trusted capability code?
+
+Next: read [the compile-time sandbox](/concepts/sandbox/) in detail.

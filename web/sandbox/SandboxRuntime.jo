@@ -5,6 +5,8 @@ import harpe.logging.*
 import harpe.ffi.os
 import harpe.media.*
 import harpe.caps.*
+import harpe.interact.BrokerApprovals
+import harpe.approvals
 import sandbox.api
 
 // The agent's per-turn entry. The guest links jo.main = sandbox.runtime.main. It
@@ -19,11 +21,12 @@ import sandbox.api
 // run sub-agents). OS-level confinement is NOT applied here — it lives outside the
 // process, in an optional `sandbox/run.sh` wrapper (see docs/concepts/sandbox.md).
 def main(): Unit receives stdout =
-  Logging.withLogger: auditLogger(), () => run()
+  with approvals = BrokerApprovals.connect() in
+    Logging.withLogger: auditLogger(), () => run()
 
 // Grant the capabilities, all rooted at the agent's data/ directory — always
 // granted by the driver as HARPE_DATA_DIR. One root for every capability, so a
-// `Path` means the same file to all of them. Swap `TesseractOcr` for `RapidOcr`
+// A relative path means the same file to all of them. Swap `TesseractOcr` for `RapidOcr`
 // to change the OCR engine.
 private def run(): Unit receives stdout =
   val root = os.getenv("HARPE_DATA_DIR", "")

@@ -31,7 +31,7 @@ private def rep(c: String, n: Int): String =
 private def toolNamed(ts: List[Tool], name: String): Tool =
   ts.find(t => t.name == name) rescue None => abort "no tool named \{name}"
 
-def run(): Unit receives stdout, logger, callContext =
+def run(): Unit receives stdout, logger, callContext, currentInteract =
   // --- typed ToolInput accessors read values of each schema type ---
   val full = ToolInput(py.dict("s" ~ "hi", "n" ~ 42, "b" ~ true, "f" ~ 3.5))
   check("string reads a string", full.string("s") == "hi")
@@ -62,7 +62,7 @@ def run(): Unit receives stdout, logger, callContext =
   check("constructed params are required", sp.required && ip.required && bp.required && np.required)
 
   // --- runSafely: a normal tool's outcome passes through unchanged ---
-  val okTool = Tool("ok", "ok tool", [], input => new RunOutcome("done", "ran"))
+  val okTool = Tool("ok", "ok tool", [], input => new RunOutcome("done", "ran", []))
   val okOut = runSafely(okTool, empty)
   check("runSafely passes success through", okOut.result == "done" && okOut.summary == "ran")
 

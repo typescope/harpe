@@ -25,7 +25,11 @@ import harpe.logging.logger
 
 private def callResult(tools: List[Tool], toolName: String, args: py.Dict): String =
   // A no-op logger for the tool run; these tests assert on results, not logs.
-  with logger = Logging.discard, callContext = CallContext.empty in
+  with
+    logger = Logging.discard,
+    callContext = CallContext.empty,
+    currentInteract = Interact.unattended
+  in
     if tools.find(t => t.name == toolName) is Some(t) then t.run(ToolInput(args)).result
     else "no-such-tool"
 

@@ -22,6 +22,7 @@ import harpe.Model.*
 import harpe.Tool
 import harpe.Tool.*
 import harpe.logging.logger
+import harpe.callContext
 
 //[ Responses-API encodings. //]
 private section OpenAIResponses
@@ -41,20 +42,61 @@ private section OpenAIResponses
     py.dict("type" ~ "function", "name" ~ t.name, "description" ~ t.description,
             "parameters" ~ parameters, "strict" ~ false)
 
+  //[ Inline content items (`input_image`/`input_file`) for `attachments` marked
+    ! `inline`, reading each one's bytes from `dataDir`. Mirrors
+    ! `Anthropic.anthropicMediaBlocks` — see its doc for the skip conditions.
+  //]
+  def openaiMediaBlocks(attachments: List[Attachment], dataDir: String): py.List =
+    val blocks = py.list()
+
+    for a in attachments if a.inline do
+      if isInlineImage(a.mime) then
+        match readInlineBase64(dataDir, a.name)
+        case Some(data) =>
+          blocks.append: py.dict("type" ~ "input_image", "image_url" ~ "data:\{a.mime};base64,\{data}")
+        case None => pass
+
+      else if isInlinePdf(a.mime) then
+        match readInlineBase64(dataDir, a.name)
+        case Some(data) =>
+          blocks.append: py.dict("type" ~ "input_file", "filename" ~ a.name, "file_data" ~ "data:\{a.mime};base64,\{data}")
+        case None => pass
+
+    blocks
+
   //[ The conversation as the Responses API `input` array.
     !
     ! The system prompt is NOT included here — it rides the request's
     ! `instructions` field. An assistant's tool calls become standalone
     ! `function_call` items, and each tool result a `function_call_output` item
     ! keyed by the same `call_id`.
+    !
+    ! An inline attachment only becomes a real `input_image`/`input_file` item
+    ! when its `UserText` is the NEWEST message in `history` (`i == lastIdx`) —
+    ! same reasoning as `Anthropic.toMessages`: an older one's `inline` is inert,
+    ! so a past image is never resent (and re-billed) once a later turn rebuilds
+    ! this same history from scratch. `dataDir` is the session's data directory
+    ! (`""` if none), resolved once by the caller.
   //]
-  def toInput(history: List[Message]): py.List =
+  def toInput(history: List[Message], dataDir: String): py.List =
     val items = py.list()
+    val lastIdx = history.size - 1
+    var i = 0
 
     for m in history do
       match m
       case UserText(text, attachments) =>
-        items.append(py.dict("role" ~ "user", "content" ~ Model.userContent(text, attachments)))
+        val media = if i == lastIdx then openaiMediaBlocks(attachments, dataDir) else py.list()
+
+        if media.size == 0 then
+          items.append:
+            py.dict("role" ~ "user", "content" ~ Model.userContent(text, attachments))
+        else
+          val blocks = py.list()
+          blocks.append:
+            py.dict("type" ~ "input_text", "text" ~ Model.userContent(text, attachments))
+          for b in media do blocks.append(b)
+          items.append(py.dict("role" ~ "user", "content" ~ blocks))
 
       case Assistant(text, calls) =>
         if text != "" then
@@ -72,6 +114,8 @@ private section OpenAIResponses
         for r in results do
           items.append(py.dict("type" ~ "function_call_output", "call_id" ~ r.id, "output" ~ r.content))
       end // match
+
+      i = i + 1
     end // for
 
     items
@@ -105,8 +149,8 @@ end
 private class OpenAIResponsesModel(client: py.Dynamic, model: String, effort: String)
   view Model
 
-  def startTurn(base: Rendered): Turn =
-    new OpenAIResponsesTurn(client, model, effort, base)
+  def startTurn(base: Rendered): Turn receives callContext =
+    new OpenAIResponsesTurn(client, model, effort, base, callContext.getOrElse("HARPE_DATA_DIR", ""))
 end
 
 //[ A reasoning-preserving turn on the Responses API.
@@ -118,14 +162,14 @@ end
   ! default server-side `store`; it is the native Responses path for reasoning +
   ! tools.
 //]
-private class OpenAIResponsesTurn(client: py.Dynamic, model: String, effort: String, base: Rendered)
+private class OpenAIResponsesTurn(client: py.Dynamic, model: String, effort: String, base: Rendered, dataDir: String)
   view Turn
 
   // "" until the first successful reply, then the id to chain the next request
   // from. Committed only on success, so a retry re-sends the same round.
   private var prevId: String = ""
 
-  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
+  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger, callContext =
     val toolSpecs = py.list()
     for t in tools do toolSpecs.append(OpenAIResponses.toolSpec(t))
 
@@ -134,7 +178,7 @@ private class OpenAIResponsesTurn(client: py.Dynamic, model: String, effort: Str
     // rides along via `previous_response_id`.
     val input =
       if prevId == "" then
-        val items = OpenAIResponses.toInput(base.messages)
+        val items = OpenAIResponses.toInput(base.messages, dataDir)
 
         if base.transient != "" then
           items.append(py.dict("role" ~ "user", "content" ~ base.transient))
@@ -144,8 +188,17 @@ private class OpenAIResponsesTurn(client: py.Dynamic, model: String, effort: Str
       else
         py.list()
 
+    // A fresh tool result's media inlines unconditionally (unlike a `UserText`'s
+    // attachments) — a tool result exists only for the round it was produced in,
+    // and `OpenAIResponses.toInput` never re-derives an item from a PAST
+    // `ToolResults` message's `media`, so no positional guard is needed here.
+    // `function_call_output.output` is text-only, so any media rides as a
+    // follow-up user-role message right after it, in the same request.
     for r in results do
       input.append(py.dict("type" ~ "function_call_output", "call_id" ~ r.id, "output" ~ r.content))
+      val media = OpenAIResponses.openaiMediaBlocks(r.media, dataDir)
+      if media.size > 0 then
+        input.append(py.dict("role" ~ "user", "content" ~ media))
 
     val attempt = openaiCreate(client, model, effort, base.system, input, toolSpecs, prevId)
 

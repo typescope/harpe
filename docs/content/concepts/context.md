@@ -1,12 +1,11 @@
 +++
 title = "Context management"
-weight = 9
 +++
 A model's input is bounded, but a session can run indefinitely. So on every
 request *something* must decide what the model sees — the instructions, how much
 of the conversation, and the agent's working memory. That decision is the
 **Context**: a per-session strategy you configure or replace. Implementing it is
-the whole customization surface for context engineering; there is no second hook.
+the whole customization surface for context engineering. There is no second hook.
 
 ## What the model sees each request
 
@@ -23,7 +22,7 @@ class Rendered(system: String, messages: List[Message], transient: String)
   memory.
 
 The split is deliberate and cache-friendly. `system` is the long-lived prefix a
-provider caches; `transient` sits *past* that prefix, so the agent editing its
+provider caches. `transient` sits *past* that prefix, so the agent editing its
 memory never invalidates the cached conversation.
 
 ## The two built-in strategies
@@ -45,7 +44,7 @@ target.
 
 | | old turns become | extra model calls | best for |
 |---|---|---|---|
-| `WindowedContext` | dropped | none | short sessions; memory holds what matters |
+| `WindowedContext` | dropped | none | short sessions where memory holds what matters |
 | `SummarizingContext` | a rolling summary | one per compaction | long sessions that must recall early detail |
 
 ## Choosing and configuring
@@ -69,7 +68,7 @@ new SummarizingContext:
   distill = distiller
 ```
 
-- `baseSystem` is your `AGENT.md`; `history` seeds the window (a resumed session's
+- `baseSystem` is your `AGENT.md`. `history` seeds the window (a resumed session's
   transcript, or `[]` for a fresh one).
 - `distiller` is any `Model` — the agent's brain, or a cheaper model reserved for
   summaries.
@@ -78,7 +77,7 @@ new SummarizingContext:
   holding down cost/latency. It's measured against the provider's exact reported
   count, so it's model-accurate.
 - `lowWaterChars` is how much recent transcript to keep (in characters — the
-  truncation unit; ~4 chars per token, which is why this figure isn't directly
+  truncation unit. About four characters per token is why this figure isn't directly
   comparable to the token high-water). Keep it well below the high-water mark so
   compactions stay rare and the cached prefix survives.
 
@@ -120,7 +119,7 @@ end
   engine rolls your state back, so a half-finished turn leaves no trace. Restore
   everything a turn may have changed (transcript, any summary, counters).
 
-`WindowedContext` and `SummarizingContext` are two points in this space; a
+`WindowedContext` and `SummarizingContext` are two points in this space. A
 different need — semantic retrieval, a hard token cap, per-tool pruning — is a new
 `Context` you use when constructing the agent. Their sources (`agent/context/`)
 are the reference to copy from.

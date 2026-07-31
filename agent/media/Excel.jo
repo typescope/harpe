@@ -14,13 +14,13 @@ import harpe.ffi.builtins
 
 private def openpyxlMod: py.Dynamic = py.module("openpyxl")
 
-//[ The openpyxl `ExcelReader` backend, resolving a `Path` against `root`.
+//[ The openpyxl `ExcelReader` backend, resolving a relative path against `root`.
   ! Parses once; `Err` for a missing or corrupt file.
 //]
 class OpenpyxlExcel(root: String)
   view ExcelReader
 
-  def open(src: Path): Result[Workbook, String] =
+  def open(src: String): Result[Workbook, String] =
     val real = resolvePath(root, src)
     orMessage(py.try(openpyxlMod.load_workbook(real, read_only = true, data_only = true))).map: wb =>
       new WorkbookImpl(wb)

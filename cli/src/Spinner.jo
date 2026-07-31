@@ -31,7 +31,9 @@ class Spinner
       while !event.is_set().asBool do
         val frame = frames.get(i % 10).asString
         val secs  = builtins.round(time.now() - started, 1)
-        sys.stdoutWrite("\r  " + frame + " " + message + " " + secs.toString + "s ")
+        sys.stdoutWrite:
+          "\r  " + Style.note(frame) + " " + message + " " +
+          Style.muted(secs.toString + "s") + " "
         sys.stdoutFlush()
         i = i + 1
         event.wait(0.1)

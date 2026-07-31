@@ -1,0 +1,68 @@
+// A deliberately small Harpe application. The complete CLI template adds
+// history, cancellation, progress rendering, memory, and structured logs.
+namespace hello
+
+import jo.IO.stdout
+import harpe.*
+import harpe.Model.UserText
+import harpe.context.FullContext
+import harpe.ffi.dotenv
+import harpe.ffi.os
+import harpe.logging.Logging
+import harpe.logging.logger
+import harpe.tools.runCodeTool
+import harpe.turns.Answered
+
+def main(): Unit receives stdout =
+  dotenv.load(".env")
+
+  val workspace = new Workspace(os.path.abspath("."))
+  with harpe.workspace = workspace in
+    Logging.withLogger(Logging.discard, () => chat())
+
+private def chat(): Unit receives stdout, harpe.workspace, logger =
+  val memory = new Memory
+  val agent = new Agent:
+    brain = Defaults.model()
+    tools = [runCodeTool(workspace.sandboxDir, 610.0)]
+    context = new FullContext:
+      baseSystem = workspace.read("AGENT.md").getOrElse("")
+      memory = memory
+      initial = []
+
+  val data = workspace.relative("data")
+  os.makedirs(data)
+  val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(data))
+  val interact = new SimpleInteract
+
+  println "Ask the agent something. Type 'quit' to stop."
+
+  while true do
+    val input = py.input("\nYou ▸ ").trim
+    if input == "quit" then break
+    if input == "" then continue
+
+    val result =
+      with callContext = callCtx in
+        agent.runTurn(UserText(input, []), interact, maxToolRounds = 10, maxRetries = 2)
+
+    match result
+    case Answered(_, text) => println "\nAgent ▸ \{text}"
+    case _                 => println "\nThe turn failed. Try again."
+  end
+end
+
+private class SimpleInteract()
+  view Interact
+
+  def cancelled: Bool = false
+
+  def pause(seconds: Float): Bool =
+    py.module("time").sleep(py.dynamic(seconds))
+    false
+
+  def approve(id: String, request: ApprovalRequest): ApprovalDecision =
+    ApprovalCancelled
+
+  def emit(event: harpe.turns.TurnEvent): Unit = pass
+end

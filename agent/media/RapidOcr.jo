@@ -2,7 +2,7 @@
   !
   ! A concrete `OCR` capability backed by RapidOCR — PaddleOCR's models run through
   ! ONNX runtime. Pure pip (`rapidocr-onnxruntime`), no system binary, and stronger
-  ! than Tesseract on photos and rotated text. It resolves a `Path` against its root
+  ! than Tesseract on photos and rotated text. It resolves a relative path against its root
   ! and reads the file directly.
   !
   ! The engine loads its models on first use and is kept for the reader's lifetime.
@@ -15,7 +15,7 @@ import harpe.caps.*
 
 import harpe.ffi.builtins
 
-//[ A RapidOCR-backed OCR reader, resolving a `Path` against `root`. //]
+//[ A RapidOCR-backed OCR reader, resolving a relative path against `root`. //]
 class RapidOcr
   val root: String
   var engineRef: py.Dynamic
@@ -26,7 +26,7 @@ class RapidOcr
 
   view OCR
 
-  def text(src: Path): Result[String, String] =
+  def text(src: String): Result[String, String] =
     orMessage: py.try(recognize(resolvePath(root, src)))
 
   //[ Run the engine.

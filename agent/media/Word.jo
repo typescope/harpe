@@ -12,11 +12,11 @@ import harpe.ffi.builtins
 
 private def docxMod: py.Dynamic = py.module("docx")
 
-//[ The python-docx `WordReader` backend, resolving a `Path` against `root`. //]
+//[ The python-docx `WordReader` backend, resolving a relative path against `root`. //]
 class DocxReader(root: String)
   view WordReader
 
-  def open(src: Path): Result[Word, String] =
+  def open(src: String): Result[Word, String] =
     orMessage(py.try(docxMod.Document(resolvePath(root, src)))).map: doc =>
       new WordImpl(builtins.list(doc.paragraphs))
 end

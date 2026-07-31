@@ -5,16 +5,33 @@ import harpe.logging.*
 import harpe.ffi.os
 import harpe.media.*
 import harpe.caps.*
+import harpe.*
+import harpe.interact.BrokerApprovals
 import sandbox.api
 
 // Runtime for the runCode integration tests: install the audit channel (a JSONL
 // file the host names via HARPE_AUDIT_LOG and reads back), emit one record, then
 // run the guest.
 def main(): Unit receives stdout =
-  Logging.withLogger(auditLogger(), () => run())
+  with approvals = BrokerApprovals.connect() in
+    Logging.withLogger(auditLogger(), () => run())
 
-private def run(): Unit receives stdout, logger =
+private def run(): Unit receives stdout, logger, approvals =
   logger.info("harpe.sandbox.runtime", "runtime ready")
+
+  // The integration suite enables this probe to exercise the real
+  // sandbox → broker → Interact → broker → sandbox approval path.
+  if os.getenv("HARPE_TEST_APPROVAL", "") == "1" then
+    val decision = approvals.request(ApprovalRequest(
+      "Publish report",
+      "Publish **quarterly-report.pdf** to the customer portal."
+    ))
+    println "approval=\{ApprovalDecision.wire(decision)}"
+    val second = approvals.request(ApprovalRequest(
+      "Notify customer",
+      "Send the publication notice after the report is available."
+    ))
+    println "approval2=\{ApprovalDecision.wire(second)}"
 
   // Grant the guest a FileSystem rooted at its own run dir (its working directory,
   // where the host runs it — so `.` is that isolated dir, holding out.py).

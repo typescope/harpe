@@ -15,9 +15,14 @@ import harpe.tools.*
 import harpe.ffi.os
 
 section Defaults
-  //[ The base toolset: `runCode` plus the read-only skill tools over the agent's
-    ! `skills/`. The per-session memory tools are added by the drivers, since they
-    ! capture session state.
+  //[ The base toolset: `runCode`, the read-only skill tools over the agent's
+    ! `skills/`, and `uploadMedia`. The per-session memory tools and any
+    ! delivery tool needing driver-specific action (`sendFile`) are added by the
+    ! drivers instead — `uploadMedia` belongs here because, unlike `sendFile`, it
+    ! has no driver-specific step: it only needs `HARPE_DATA_DIR` (ambient
+    ! `callContext`), and the render layer (`agent/models/Anthropic.jo`,
+    ! `OpenAI.jo`) does the rest generically, the same way `runCode` and the
+    ! skill tools need nothing driver-specific either.
     !
     ! Building tools needs no `logger`: a tool reads the ambient logging channel at
     ! call time, not build time (see `Tool.run`), so the driver installs the
@@ -28,9 +33,9 @@ section Defaults
     ! OS-level confinement for `runCode` is external and opt-in: an executable
     ! `sandbox/run.sh` wrapper, if present, owns it (see `docs/concepts/sandbox.md`).
   //]
-  def tools(): List[Tool] receives workspace =
-    val runTool = runCodeTool(workspace.sandboxDir)
-    [runTool] ++ skillTools(workspace.skillsDir)
+  def tools(approvalDeadline: Float): List[Tool] receives workspace =
+    val runTool = runCodeTool(workspace.sandboxDir, approvalDeadline)
+    [runTool, uploadMediaTool()] ++ skillTools(workspace.skillsDir)
 
   //[ The chat model, selected by env vars:
     !
