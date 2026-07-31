@@ -171,13 +171,10 @@ documentation, but more importantly it is a boundary the compiler enforces.
 ## Irreversible actions
 
 A type can constrain an action, but it cannot decide whether a particular
-charge, deletion, or message should happen now. Harpe does not yet ship a
-general pause/approve/resume mechanism.
-
-Until it does, do not expose an irreversible operation merely because its
-arguments are typed. Put the approval or queuing policy inside trusted runtime
-code, use a provider workflow that already requires approval, or keep the
-capability read-only.
+charge, deletion, or message should happen now. Harpe supports
+[human approval](/concepts/approvals/) during an active agent run. Put the
+approval requirement inside the trusted capability implementation so generated
+code can request the operation but cannot bypass or approve it.
 
 ## Checklist
 
@@ -186,7 +183,6 @@ capability read-only.
 - Is FFI enabled only for trusted runtime modules?
 - Are credentials absent from guest-visible parameters and return values?
 - Does the default placeholder still build?
-- Is every irreversible effect approved or safely queued outside generated
-  code?
+- Does every irreversible effect require approval in trusted capability code?
 
 Next: read [the compile-time sandbox](/concepts/sandbox/) in detail.
