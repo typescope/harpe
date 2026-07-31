@@ -7,9 +7,6 @@ through typed capabilities. However, compile-time sandboxing does not limit CPU
 and memory usage. You can enforce those limits with OS-level mechanisms. You
 may also add file and network rules for defense in depth.
 
-This guide configures the `sandbox/run.sh` wrapper shipped by the CLI, web,
-and Telegram templates.
-
 ## What Harpe already applies
 
 `runCode` always:
@@ -18,15 +15,9 @@ and Telegram templates.
 - enforces wall-clock timeouts
 - kills the whole process group on timeout
 - limits captured output
-- gives the guest `PATH`, its audit-log path, and the key/value pairs the
-  application explicitly provides to the sandbox runtime
-
-The trusted compile step keeps the toolchain environment. The guest does not
-inherit other host variables. Treat every explicitly provided value as visible
-to guest code.
-
-These protections do not restrict filesystem or network access. Add those
-restrictions in `run.sh`.
+- starts the guest with a minimal environment containing only the executable
+  search path, audit-log path, and variables explicitly supplied by the
+  application
 
 ## Enable the wrapper
 
@@ -59,13 +50,14 @@ exec python3 "$@"
 The wall-clock timeout catches hangs. These limits constrain memory, CPU time,
 and CPU consumption.
 
-For accounted limits shared by a process tree, use cgroups, a systemd scope, or
-container limits instead. Use those mechanisms to limit process creation too.
-
 ## 2. Restrict the filesystem
 
-The generated program only needs its run directory and the system files needed
-to start Python. Use one of the following allowlists.
+Give the process read access to its runtime dependencies. These may include the
+Python interpreter, standard library, installed packages, shared libraries, and
+files required by trusted capability implementations. Give it write access only
+to the run directory and locations explicitly managed by capabilities.
+
+The following allowlists are starting points for a system Python installation.
 
 With [landrun](https://github.com/Zouuup/landrun):
 
@@ -91,12 +83,10 @@ exec bwrap \
   -- python3 "$@"
 ```
 
-Paths differ across Linux distributions. Add only the runtime paths your Python
-installation needs. Do not bind the project directory, `.env`, SSH keys, or
-another session's data.
-
-Test the boundary with an agent program that tries to read a known file outside
-the allowlist. The call should fail while an ordinary calculation still works.
+Paths differ across deployments. Add the specific package, virtual-environment,
+and capability data paths your application needs. Do not expose the whole
+project directory as a shortcut. Keep `.env`, SSH keys, and other sessions' data
+outside the allowlist.
 
 ## 3. Restrict the network
 
@@ -121,7 +111,7 @@ runtime code. Do not give the generated guest general network access merely
 because one capability calls an API.
 
 For host-level filtering, run guests under a dedicated account and apply
-nftables or your platform's equivalent to that account. Switching users
+`nftables` rules or your platform's equivalent to that account. Switching users
 requires carefully scoped operator privileges. Configure it in the service
 manager rather than giving the agent unrestricted `sudo`.
 
@@ -156,9 +146,3 @@ Exercise each boundary explicitly:
 5. Confirm the guest environment contains only `PATH`, the audit path, and the
    values your application intentionally grants.
 6. Review `logs/agent.jsonl` for the recorded tool result.
-
-Do not treat the wrapper as enabled merely because `run.sh.example` exists.
-Harpe uses it only when the file is named `run.sh` and is executable.
-
-The [compile-time sandbox concept](/concepts/sandbox/) explains the primary
-capability boundary that these OS controls reinforce.
