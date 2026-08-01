@@ -54,7 +54,7 @@ namespace sandbox.runtime
 import jo.IO.stdout
 import sandbox.api.*
 
-class SystemClock()
+class SystemClock
   def now: String =
     py.module("datetime").datetime.now().isoformat().asString
 

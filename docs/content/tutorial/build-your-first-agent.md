@@ -74,7 +74,7 @@ prints the answer.
 events and asks whether a turn was cancelled:
 
 ```jo
-private class SimpleInteract()
+private class SimpleInteract
   view Interact
 
   def cancelled: Bool = false

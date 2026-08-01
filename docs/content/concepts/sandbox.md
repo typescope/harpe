@@ -45,7 +45,7 @@ A trusted runtime implements capability interfaces and binds them before
 entering generated code:
 
 ```jo
-class SystemClock()
+class SystemClock
   def now: String = ...
   view Clock
 end
