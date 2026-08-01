@@ -39,16 +39,16 @@ section Defaults
 
   //[ The chat model, selected by env vars:
     !
-    !   The provider is chosen by which API key is set — OPENAI_API_KEY selects
-    !   OpenAI, otherwise ANTHROPIC_API_KEY selects Anthropic (OpenAI wins if both
-    !   are set).
+    !   The provider is chosen by which API key is set. OpenAI takes precedence,
+    !   followed by OpenRouter and Anthropic.
     !
-    !   OPENAI_API_KEY    selects + authenticates OpenAI
-    !   ANTHROPIC_API_KEY selects + authenticates Anthropic
+    !   OPENAI_API_KEY     selects + authenticates OpenAI
+    !   OPENROUTER_API_KEY selects + authenticates OpenRouter
+    !   ANTHROPIC_API_KEY  selects + authenticates Anthropic
     !   MODEL             model id — defaults to "claude-opus-4-6" for Anthropic,
-    !                     "gpt-5.6" for OpenAI
-    !   REASONING_EFFORT  OpenAI reasoning effort: "medium" (default), "low",
-    !                     "high", or "none" to disable reasoning (e.g. for gpt-4o)
+    !                     "gpt-5.6" for OpenAI, and is required for OpenRouter
+    !   REASONING_EFFORT  OpenAI/OpenRouter reasoning effort. OpenAI defaults to
+    !                     "medium"; OpenRouter defaults to "none".
     !   OPENAI_BASE_URL   optional; OpenAI uses the Responses API, so set this only
     !                     for another Responses-API endpoint (Azure, a proxy).
     !                     Third-party chat/completions endpoints are not supported.
@@ -58,15 +58,24 @@ section Defaults
   //]
   def model(): Model receives IO.stdout =
     val openAiKey = os.getenv("OPENAI_API_KEY", "")
+    val openRouterKey = os.getenv("OPENROUTER_API_KEY", "")
     val anthropicKey = os.getenv("ANTHROPIC_API_KEY", "")
     if openAiKey != "" then
       openai(openAiKey, os.getenv("MODEL", "gpt-5.6"), os.getenv("OPENAI_BASE_URL", ""))
+
+    else if openRouterKey != "" then
+      val modelId = os.getenv("MODEL", "")
+      if modelId == "" then
+        println "Error: MODEL is required when OPENROUTER_API_KEY is set."
+        sys.exit(1)
+        abort "Not reachable"
+      openrouter(openRouterKey, modelId)
 
     else if anthropicKey != "" then
       anthropic(anthropicKey, os.getenv("MODEL", "claude-opus-4-6"), cachePolicy())
 
     else
-      println "Error: neither ANTHROPIC_API_KEY nor OPENAI_API_KEY is not set (put it in .env or the environment)."
+      println "Error: set OPENAI_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY (in .env or the environment)."
       sys.exit(1)
       abort "Not reachable"
 
