@@ -48,29 +48,52 @@ available to context strategies.
 
 ## Built-in models
 
-Harpe includes Anthropic, OpenAI Responses API, and a keyless `echo` model for
+Harpe includes Anthropic, OpenAI, OpenRouter, and a keyless `echo` model for
 testing. `Defaults.model()` selects and constructs a provider from environment
-variables:
+variables. OpenAI takes precedence, followed by OpenRouter and Anthropic.
 
 | Variable | Purpose |
 |---|---|
 | `ANTHROPIC_API_KEY` | Select and authenticate Anthropic |
-| `OPENAI_API_KEY` | Select and authenticate OpenAI. Takes precedence when both keys are set |
+| `OPENAI_API_KEY` | Select and authenticate OpenAI |
+| `OPENROUTER_API_KEY` | Select and authenticate OpenRouter |
 | `MODEL` | Override the provider's default model ID |
-| `REASONING_EFFORT` | Set OpenAI reasoning effort to `low`, `medium`, `high`, or `none` |
+| `REASONING_EFFORT` | Set OpenAI or OpenRouter reasoning effort to `low`, `medium`, `high`, or `none` |
 | `PROMPT_CACHE` | Set Anthropic prompt caching to `5m`, `1h`, or `off` |
 | `OPENAI_BASE_URL` | Use another Responses API endpoint, such as Azure OpenAI or a proxy |
 
 The default model IDs are `claude-opus-4-6` for Anthropic and `gpt-5.6` for
-OpenAI. If neither API key is set, startup fails.
+OpenAI. OpenRouter requires an explicit `MODEL`. If no API key is set, startup
+fails.
 
 ```sh
 MODEL=claude-opus-4-6
 ANTHROPIC_API_KEY=sk-…
 ```
 
-Third-party chat-completions endpoints are not compatible with the built-in
-OpenAI implementation. Provide a custom `Model` for a different protocol.
+### Open-weight models
+
+OpenRouter gives Harpe access to open-weight models from multiple providers. Set
+one OpenRouter API key and choose a model from its
+[model catalog](https://openrouter.ai/models):
+
+```sh
+OPENROUTER_API_KEY=sk-or-…
+MODEL=provider/model-name
+```
+
+The OpenRouter adapter uses its stateless Responses API. It preserves raw
+reasoning and tool-call items locally, then resends the complete turn on each
+tool round.
+
+Harpe can also use a locally deployed open-weight model through a custom `Model`
+adapter. The adapter can target llama.cpp, vLLM, Ollama, or another inference
+server without changing the agent core.
+
+Do not assume that an OpenAI-compatible endpoint works with Harpe's built-in
+OpenAI adapter. It relies on Responses API tool calls, token usage, and
+stateful continuation through `previous_response_id`. Some servers implement
+only part of that contract.
 
 ## Selecting a model in code
 
@@ -86,6 +109,7 @@ key:
 ```jo
 val brain = anthropic(apiKey, "claude-opus-4-6", FiveMinutes)
 val brain = openai(apiKey, "gpt-5.6", "")
+val brain = openrouter(apiKey, "provider/model-name")
 val brain = echo()
 ```
 

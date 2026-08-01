@@ -17,7 +17,8 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in `.env`.
+Set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY` in `.env`.
+OpenRouter also requires `MODEL`.
 
 The initial sandbox grants only `stdout`. We will add `clock` in three places:
 the public contract, the trusted runtime, and the build-time placeholder.

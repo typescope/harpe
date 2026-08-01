@@ -24,6 +24,9 @@ TELEGRAM_ALLOWED_SENDERS=12345678
 ANTHROPIC_API_KEY=...
 ```
 
+You can set `OPENAI_API_KEY` instead. To use OpenRouter, set
+`OPENROUTER_API_KEY` and `MODEL`.
+
 The assistant is called **Carmen**. Use that name when registering the bot if
 you want its Telegram profile and replies to match. You can rename it later in
 Telegram and `AGENT.md`.

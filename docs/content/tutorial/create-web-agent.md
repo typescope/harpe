@@ -14,7 +14,8 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in `.env`. You can also change the
+Set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY` in `.env`.
+OpenRouter also requires `MODEL`. You can also change the
 listening address:
 
 ```sh
