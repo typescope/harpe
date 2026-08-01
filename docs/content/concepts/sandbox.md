@@ -16,6 +16,11 @@ host application.
 
 ![The untrusted guest uses the API contract. The trusted runtime implements the contract and links the guest entry point.](/img/project-deps.svg)
 
+This separation applies Jo's
+[two-world architecture](https://jo-lang.org/security/two-worlds.html). Untrusted
+code is checked in the confined world, then linked with implementations from the
+trusted world.
+
 The API declares the guest entry point and the capabilities available to it:
 
 ```jo
