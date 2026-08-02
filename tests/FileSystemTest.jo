@@ -1,7 +1,7 @@
 //[ FileSystemTest.jo
   !
   ! Unit test for `harpe.media.FileSystem`: a `FileSystemImpl` rooted at a temp dir —
-  ! `exists`/`isFile`/`stat`/`list`, one-shot reads and writes (`writeTextFile`,
+  ! `exists`/`isFile`/`stat`/`list`, one-shot reads and writes (`writeText`,
   ! `createBinaryFile`), and open files: `TextFile` (whole, head/tail, lazy line reads)
   ! and `BinaryFile` (as `Bytes`, including in-place write), all over relative paths.
 //]
@@ -19,6 +19,11 @@ import jo.IO.stdout
 private def check(label: String, cond: Bool): Unit receives stdout =
   assert: cond, "\{label} failed"
   println "  ok \{label}"
+
+private def isOk[T, E](result: Result[T, E]): Bool =
+  match result
+  case Ok(_)  => true
+  case Err(_) => false
 
 private def isErr(build: () => FileSystem): Bool =
   match py.try(build())
@@ -115,9 +120,10 @@ def run(): Unit receives stdout =
   check("binary size on handle", bin.size == 2)
   bin.close()
 
-  // writeTextFile: overwrite an existing file (UTF-8) in one shot, replacing content.
-  fs.writeTextFile("notes.txt", "updated\n")
-  check("writeTextFile overwrites", fs.readText("notes.txt").success == "updated\n")
+  // writeText: overwrite an existing file (UTF-8) in one shot, replacing content.
+  check("writeText succeeds", isOk(fs.writeText("notes.txt", "updated\n")))
+  check("writeText overwrites", fs.readText("notes.txt").success == "updated\n")
+  check("writeText reports errors", !isOk(fs.writeText("", "not a directory")))
 
   // Binary write: patch one byte in place, without truncation.
   val binEdit = fs.openBinaryFile("sub/a.txt").success
@@ -133,9 +139,9 @@ def run(): Unit receives stdout =
   check("list sorted", entries.get(0).path == "big.txt" && entries.get(3).path == "sub")
   check("list entry kinds", !entries.get(0).isDirectory && entries.get(3).isDirectory)
 
-  // writeTextFile / createBinaryFile create the file and any missing parent directory.
-  fs.writeTextFile("gen/note.txt", "hello")
-  check("writeTextFile creates a new file + parent", fs.readText("gen/note.txt").success == "hello")
+  // writeText / createBinaryFile create the file and any missing parent directory.
+  check("writeText creates a new file + parent",
+        isOk(fs.writeText("gen/note.txt", "hello")) && fs.readText("gen/note.txt").success == "hello")
 
   val blob = fs.createBinaryFile("gen/out.bin")
   blob.write(0, fs.readBytes("sub/a.txt").success)   // "hh" from the binary-write patch above
@@ -144,6 +150,6 @@ def run(): Unit receives stdout =
 
   check("rejects a nonexistent root", isErr(() => FileSystemImpl.local(os.path.join(dir, "no-such-subdir"))))
 
-  // writeTextFile: non-ASCII text round-trips correctly in text mode.
-  fs.writeTextFile("unicode.txt", "caf\u{E9}\n")
-  check("writeTextFile round-trips unicode", fs.readText("unicode.txt").success == "caf\u{E9}\n")
+  // writeText: non-ASCII text round-trips correctly in text mode.
+  check("writeText unicode succeeds", isOk(fs.writeText("unicode.txt", "caf\u{E9}\n")))
+  check("writeText round-trips unicode", fs.readText("unicode.txt").success == "caf\u{E9}\n")

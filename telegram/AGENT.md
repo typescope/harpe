@@ -52,7 +52,7 @@ def runTask(): Unit receives IO.stdout, fs, pdfReader, excelReader, wordReader, 
   - Read: `fs.list("")` (entries with `.path`/`.isDirectory`), `fs.stat(p)`
     (size, modified time), `fs.readText(p)` for a small file; for a big one
     `fs.openTextFile(p)` then `lines`/`head(n)`/`tail(n)`.
-  - Write: `fs.writeTextFile(p, content)` for a text/CSV/Markdown file, or
+  - Write: `fs.writeText(p, content)` for a text/CSV/Markdown file, or
     `fs.createBinaryFile(p)` → a `BinaryFile` you `write(offset, bytes)` then
     `close()` for binary output. Both create parent directories as needed. A file
     you write just sits in your data directory until you deliver it — see below.

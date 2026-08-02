@@ -37,13 +37,15 @@ match fs.readText("notes.txt")
 case Ok(text)   => println: text
 case Err(error) => println: error
 
-fs.writeTextFile("summary.txt", "Finished")
+match fs.writeText("summary.txt", "Finished")
+case Ok(_)     => println: "Saved"
+case Err(error) => println: error
 ```
 
 `readText` supports `"utf-8"` and `"windows-1252"`. Undecodable bytes become
 U+FFFD rather than crashing the run.
 
-`readBytes` reads a whole binary file. `writeTextFile` replaces or creates a
+`readBytes` reads a whole binary file. `writeText` replaces or creates a
 UTF-8 file and creates missing parent directories.
 
 ## Large files
@@ -93,7 +95,7 @@ interface FileSystem
 
   def readText(path: String, encoding: String = "utf-8"): Result[String, String]
   def readBytes(path: String): Result[Bytes, String]
-  def writeTextFile(file: String, content: String): Unit
+  def writeText(path: String, content: String): Result[Unit, String]
   def createBinaryFile(path: String): BinaryFile
 end
 

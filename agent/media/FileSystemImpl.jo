@@ -91,10 +91,12 @@ class FileSystemImpl
   def openBinaryFile(path: String): Result[BinaryFile, String] =
     openHandle(path).map: handle => new BinaryFileImpl(handle)
 
-  def writeTextFile(file: String, content: String): Unit =
-    val real = resolvePath(realRoot, file)
-    ensureParent(real)
+  def writeText(path: String, content: String): Result[Unit, String] =
+    orMessage: py.try(writeTextUnchecked(path, content))
 
+  private def writeTextUnchecked(path: String, content: String): Unit =
+    val real = resolvePath(realRoot, path)
+    ensureParent(real)
     val handle = py.open(real, "w")
     handle.write(content)
     handle.close()

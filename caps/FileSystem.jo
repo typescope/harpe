@@ -109,11 +109,11 @@ interface FileSystem
     ! file (and any missing parent directories) if needed. The write counterpart of
     ! `readText`: a one-shot for producing a text artifact.
   //]
-  def writeTextFile(file: String, content: String): Unit
+  def writeText(path: String, content: String): Result[Unit, String]
 
   //[ Create (or truncate) the file at `path` and return it open for binary writing;
     ! any missing parent directories are created. Build the bytes with
-    ! `BinaryFile.write`, then `close`. For text output, prefer `writeTextFile`.
+    ! `BinaryFile.write`, then `close`. For text output, prefer `writeText`.
   //]
   def createBinaryFile(path: String): BinaryFile
 end
