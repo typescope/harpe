@@ -51,7 +51,7 @@ def runTask(): Unit receives IO.stdout, fs, pdfReader, excelReader, wordReader, 
     (size, modified time), `fs.readText(p)` for a small file; for a big one
     `fs.openTextFile(p)` then `lines`/`head(n)`/`tail(n)`.
   - Write: `fs.writeText(p, content)` for a text/CSV/Markdown file, or
-    `fs.createBinaryFile(p)` → a `BinaryFile` you `write(offset, bytes)` then
+    `fs.createBinaryFile(p)` → a `Result` containing a `BinaryFile` you `write(offset, bytes)` then
     `close()` for binary output. Both create parent directories as needed, and a
     file you write lands in the session, where the user sees and can download it.
 

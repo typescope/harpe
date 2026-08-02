@@ -12,7 +12,8 @@ bind it to the current session's data directory.
 
 All paths are portable and relative. `""` names the root. Absolute paths,
 parent traversal, backslashes, drive prefixes, and empty path segments are
-rejected.
+rejected. `exists` and `isFile` return `false` for an invalid path. Operations
+that provide diagnostics return `Err`.
 
 ## Inspect the tree
 
@@ -20,7 +21,7 @@ rejected.
 def runTask(): Unit receives stdout, fs =
   match fs.list("")
   case Err(error) => println: error
-case Ok(entries) =>
+  case Ok(entries) =>
     for entry in entries do
       println: entry.path
 ```
@@ -38,7 +39,7 @@ case Ok(text)   => println: text
 case Err(error) => println: error
 
 match fs.writeText("summary.txt", "Finished")
-case Ok(_)     => println: "Saved"
+case Ok(_)      => println: "Saved"
 case Err(error) => println: error
 ```
 
@@ -63,7 +64,7 @@ case Ok(log) =>
   log.close()
 ```
 
-Environment failures are returned as `Result` or `Option`. Contract violations,
+Invalid paths and environment failures are returned as `Result`. Contract violations,
 such as a negative offset or reading a closed handle, abort the generated
 program.
 
@@ -84,7 +85,7 @@ class DirEntry(path: String, isDirectory: Bool)
 interface FileSystem
   def exists(path: String): Bool
   def isFile(path: String): Bool
-  def stat(path: String): Option[FileInfo]
+  def stat(path: String): Result[Option[FileInfo], String]
   def list(dir: String): Result[List[DirEntry], String]
 
   def openTextFile(path: String, encoding: String = "utf-8"): Result[TextFile, String]
@@ -96,7 +97,7 @@ interface FileSystem
   def readText(path: String, encoding: String = "utf-8"): Result[String, String]
   def readBytes(path: String): Result[Bytes, String]
   def writeText(path: String, content: String): Result[Unit, String]
-  def createBinaryFile(path: String): BinaryFile
+  def createBinaryFile(path: String): Result[BinaryFile, String]
 end
 
 interface TextFile

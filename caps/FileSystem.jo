@@ -34,14 +34,18 @@ class DirEntry(path: String, isDirectory: Bool)
   ! an unrecoverable I/O fault, and both abort the run.
 //]
 interface FileSystem
-  //[ Whether a file or directory exists at `path`. //]
+  //[ Whether `path` names an existing file or directory.
+    ! Returns `false` when the path is invalid.
+  //]
   def exists(path: String): Bool
 
-  //[ Whether `path` is an existing file. //]
+  //[ Whether `path` names an existing file.
+    ! Returns `false` when the path is invalid.
+  //]
   def isFile(path: String): Bool
 
-  //[ The metadata record for `path`; `None` when nothing exists there. //]
-  def stat(path: String): Option[FileInfo]
+  //[ The metadata record for `path`; `Ok(None)` when nothing exists there. //]
+  def stat(path: String): Result[Option[FileInfo], String]
 
   //[ The entries directly under `dir`, sorted by name. Pass `""` for the root.
     !
@@ -112,10 +116,11 @@ interface FileSystem
   def writeText(path: String, content: String): Result[Unit, String]
 
   //[ Create (or truncate) the file at `path` and return it open for binary writing;
-    ! any missing parent directories are created. Build the bytes with
-    ! `BinaryFile.write`, then `close`. For text output, prefer `writeText`.
+    ! `Err` when the path or I/O operation fails. Any missing parent directories
+    ! are created. Build the bytes with `BinaryFile.write`, then `close`. For text
+    ! output, prefer `writeText`.
   //]
-  def createBinaryFile(path: String): BinaryFile
+  def createBinaryFile(path: String): Result[BinaryFile, String]
 end
 
 section FileSystem

@@ -17,7 +17,11 @@ class DocxReader(root: String)
   view WordReader
 
   def open(src: String): Result[Word, String] =
-    orMessage(py.try(docxMod.Document(resolvePath(root, src)))).map: doc =>
+    val real = resolvePath(root, src) rescue err: Err[String] => return err
+    val opened = orMessage:
+      py.try:
+        docxMod.Document(real)
+    opened.map: doc =>
       new WordImpl(builtins.list(doc.paragraphs))
 end
 

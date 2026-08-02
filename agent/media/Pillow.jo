@@ -24,26 +24,44 @@ class PillowImage(root: String)
   view Image
 
   def dimensions(src: String): Result[ImageSize, String] =
-    orMessage: py.try(dimensionsOf(src))
+    val real = resolvePath(root, src) rescue err: Err[String] => return err
+    orMessage:
+      py.try:
+        dimensionsOf(real)
 
   def metadata(src: String): Result[Map[String, String], String] =
-    orMessage: py.try(metadataOf(src))
+    val real = resolvePath(root, src) rescue err: Err[String] => return err
+    orMessage:
+      py.try:
+        metadataOf(real)
 
   def resize(src: String, width: Int, height: Int, target: String): Result[ImageSize, String] =
-    orMessage: py.try(resizeTo(src, width, height, target))
+    val realSrc = resolvePath(root, src) rescue err: Err[String] => return err
+    val realTarget = resolvePath(root, target) rescue err: Err[String] => return err
+    orMessage:
+      py.try:
+        resizeTo(realSrc, width, height, realTarget)
 
   def crop(src: String, x: Int, y: Int, width: Int, height: Int, target: String): Result[ImageSize, String] =
-    orMessage: py.try(cropTo(src, x, y, width, height, target))
+    val realSrc = resolvePath(root, src) rescue err: Err[String] => return err
+    val realTarget = resolvePath(root, target) rescue err: Err[String] => return err
+    orMessage:
+      py.try:
+        cropTo(realSrc, x, y, width, height, realTarget)
 
   def convert(src: String, target: String): Result[ImageSize, String] =
-    orMessage: py.try(convertTo(src, target))
+    val realSrc = resolvePath(root, src) rescue err: Err[String] => return err
+    val realTarget = resolvePath(root, target) rescue err: Err[String] => return err
+    orMessage:
+      py.try:
+        convertTo(realSrc, realTarget)
 
-  private def dimensionsOf(src: String): ImageSize =
-    val img = pilMod.open(resolvePath(root, src))
+  private def dimensionsOf(realSrc: String): ImageSize =
+    val img = pilMod.open(realSrc)
     new ImageSize(img.width.asInt, img.height.asInt)
 
-  private def metadataOf(src: String): Map[String, String] =
-    val img = pilMod.open(resolvePath(root, src))
+  private def metadataOf(realSrc: String): Map[String, String] =
+    val img = pilMod.open(realSrc)
 
     var result = Map.empty[String, String]
     result = result.add("format", img.format.toString)
@@ -67,27 +85,26 @@ class PillowImage(root: String)
 
     result
 
-  private def resizeTo(src: String, width: Int, height: Int, target: String): ImageSize =
-    val img = pilMod.open(resolvePath(root, src))
+  private def resizeTo(realSrc: String, width: Int, height: Int, realTarget: String): ImageSize =
+    val img = pilMod.open(realSrc)
     img.thumbnail(py.tuple(width, height))
-    save(img, target)
+    save(img, realTarget)
 
-  private def cropTo(src: String, x: Int, y: Int, width: Int, height: Int, target: String): ImageSize =
-    val img = pilMod.open(resolvePath(root, src))
+  private def cropTo(realSrc: String, x: Int, y: Int, width: Int, height: Int, realTarget: String): ImageSize =
+    val img = pilMod.open(realSrc)
     save:
       img.crop: py.tuple(x, y, x + width, y + height)
-      target
+      realTarget
 
-  private def convertTo(src: String, target: String): ImageSize =
-    val img = pilMod.open(resolvePath(root, src))
-    save(img, target)
+  private def convertTo(realSrc: String, realTarget: String): ImageSize =
+    val img = pilMod.open(realSrc)
+    save(img, realTarget)
 
   //[ Save `img` at `target` (format from the extension), returning its size.
     !
     ! A mode the format cannot hold (RGBA → JPEG, say) is retried as RGB.
   //]
-  private def save(img: py.Dynamic, target: String): ImageSize =
-    val realTarget = resolvePath(root, target)
+  private def save(img: py.Dynamic, realTarget: String): ImageSize =
     os.makedirs(os.path.dirname(realTarget))
 
     match py.try(img.save(realTarget))

@@ -38,10 +38,14 @@ class TesseractOcr
     case Err(e)     => Err(e.message)
 
   private def recognize(src: String): Result[String, String] =
+    val real = resolvePath(root, src) rescue err: Err[String] => return err
+    recognizeResolved(real)
+
+  private def recognizeResolved(real: String): Result[String, String] =
     val out = subprocess.runCapped:
       py.list:
         "tesseract"
-        resolvePath(root, src)
+        real
         "stdout"
         "-l"
         language

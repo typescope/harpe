@@ -25,15 +25,18 @@ private def isOk[T, E](result: Result[T, E]): Bool =
   case Ok(_)  => true
   case Err(_) => false
 
+private def errorOf[T](result: Result[T, String]): String =
+  match result
+  case Ok(_)      => ""
+  case Err(error) => error
+
 private def isErr(build: () => FileSystem): Bool =
   match py.try(build())
   case Ok(_)  => false
   case Err(_) => true
 
 private def rejectsPath(fs: FileSystem, path: String): Bool =
-  match py.try(fs.exists(path))
-  case Ok(_)  => false
-  case Err(_) => true
+  !fs.exists(path)
 
 // Drain a file's lines into "a|b|c", closing it.
 private def joinLines(f: TextFile): String =
@@ -54,6 +57,8 @@ def run(): Unit receives stdout =
 
   check("rejects parent traversal", rejectsPath(fs, "../notes.txt"))
   check("rejects absolute paths", rejectsPath(fs, "/notes.txt"))
+  check("write returns path error",
+        errorOf(fs.writeText("../notes.txt", "no")) == "invalid path '../notes.txt': path must not contain '..' segments")
 
   check("exists", fs.exists("notes.txt"))
   check("missing", !fs.exists("nope.txt"))
@@ -102,12 +107,12 @@ def run(): Unit receives stdout =
   check("outside the encoding set is Err", fs.openTextFile("legacy.txt", "utf-16").isErr)
 
   // stat: the single metadata record.
-  val info = fs.stat("notes.txt").getOrElse(new FileInfo(false, 0, 0))
+  val info = fs.stat("notes.txt").success.getOrElse(new FileInfo(false, 0, 0))
   check("stat is file", info.isFile)
   check("stat size", info.sizeBytes == 18)
   check("stat mtime", info.modifiedAt > 0)
-  check("stat dir", !fs.stat("sub").getOrElse(new FileInfo(true, 0, 0)).isFile)
-  check("stat missing is None", fs.stat("nope.txt") is None)
+  check("stat dir", !fs.stat("sub").success.getOrElse(new FileInfo(true, 0, 0)).isFile)
+  check("stat missing is None", fs.stat("nope.txt").success is None)
 
   check("isFile file", fs.isFile("notes.txt"))
   check("isFile dir", !fs.isFile("sub"))
@@ -143,10 +148,11 @@ def run(): Unit receives stdout =
   check("writeText creates a new file + parent",
         isOk(fs.writeText("gen/note.txt", "hello")) && fs.readText("gen/note.txt").success == "hello")
 
-  val blob = fs.createBinaryFile("gen/out.bin")
+  val blob = fs.createBinaryFile("gen/out.bin").success
   blob.write(0, fs.readBytes("sub/a.txt").success)   // "hh" from the binary-write patch above
   blob.close()
   check("createBinaryFile round-trips bytes", fs.readBytes("gen/out.bin").success.toBase64 == "aGg=")
+  check("createBinaryFile returns path error", fs.createBinaryFile("../out.bin") is Err(_))
 
   check("rejects a nonexistent root", isErr(() => FileSystemImpl.local(os.path.join(dir, "no-such-subdir"))))
 
