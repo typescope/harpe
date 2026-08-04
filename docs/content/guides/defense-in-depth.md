@@ -145,4 +145,4 @@ Exercise each boundary explicitly:
 4. Try an outbound connection when networking should be disabled.
 5. Confirm the guest environment contains only `PATH`, the audit path, and the
    values your application intentionally grants.
-6. Review `logs/agent.jsonl` for the recorded tool result.
+6. Review the session log for the recorded tool result.

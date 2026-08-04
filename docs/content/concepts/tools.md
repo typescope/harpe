@@ -114,7 +114,7 @@ class RunOutcome(result, summary, media)
 `elide(text, maxChars)` trims to a head-plus-tail excerpt with the middle marked.
 The rule is **reference, don't inline**: return a bounded excerpt to the model and
 log the full artifact, so nothing is lost (this is what `runCode` does — the elided
-result to the model and the whole output to `logs/agent.jsonl`. See
+result to the model and the whole output to the session's structured log. See
 [logging.md](/concepts/logging/)).
 
 ```jo

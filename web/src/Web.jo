@@ -23,9 +23,6 @@ import jo.IO.stdout
 import harpe.Workspace
 import harpe.Defaults
 import harpe.workspace
-import harpe.logging.Logging
-import harpe.logging.JsonlLogger
-import harpe.logging.logger
 import harpe.ffi.os
 
 //[ The entry point //]
@@ -33,10 +30,9 @@ def main(): Unit receives stdout =
   if Defaults.checkAgentDir() then
     dotenv.load(".env")
     val wspace = new Workspace(os.path.abspath("."))
-    with workspace = wspace in
-      Logging.withLogger(new JsonlLogger(wspace.relative("logs/agent.jsonl")), () => serve())
+    with workspace = wspace in serve()
 
-private def serve(): Unit receives stdout, workspace, logger =
+private def serve(): Unit receives stdout, workspace =
   // The chat page is the agent's own file, served from disk (see Server.route),
   // so the agent owns and customizes it. Fail fast with a pointer if it is missing.
   if !file.exists(workspace.relative("assets/index.html")) then
@@ -46,7 +42,7 @@ private def serve(): Unit receives stdout, workspace, logger =
 
   val brain = Defaults.model()
 
-  val server = new ChatServer(brain, "Clair", workspace, logger)
+  val server = new ChatServer(brain, "Clair", workspace)
 
   val host = os.getenv("HOST", "127.0.0.1")
   val port = Int.parse(os.getenv("PORT", "8765")) rescue None => 8765

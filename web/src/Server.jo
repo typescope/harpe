@@ -31,15 +31,13 @@ import harpe.ffi.mimetypes
 import harpe.ffi.builtins
 
 import harpe.Agent
+import harpe.callContext
 import harpe.Interact
 import harpe.currentInteract
-import harpe.CallContext
-import harpe.callContext
 import harpe.Defaults
 import harpe.Memory
 import harpe.Workspace
 import harpe.workspace
-import harpe.logging.Logger
 import harpe.logging.logger
 import harpe.Model
 import harpe.Model.Assistant
@@ -85,7 +83,7 @@ def sendFileTool(): Tool = new Tool:
     else
       new Tool.RunOutcome("Sent '\{name}' to the user.", "sendFile · \{name}", [])
 
-class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
+class ChatServer(brain: Model, name: String, wspace: Workspace)
   // Resident sessions, id -> Session. Persisted sessions not yet touched this
   // run are loaded from disk on first access. The server is threaded (each
   // request on its own thread), so registry access is guarded by registryLock;
@@ -100,14 +98,12 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
 
   //[ The WSGI application: establish the request context, then route. Each
     ! request runs on its own thread, which does not inherit the process's
-    ! context, so `workspace` and the `logger` are re-provided here from the
-    ! server's fields — the same `Logger` backend `Web.serve` installed for the
-    ! whole run.
+    ! context, so `workspace` is re-provided here from the server's field.
   //]
   def handle(environ: py.Dynamic, startResp: py.Dynamic): py.List =
-    with workspace = wspace, logger = backend in route(environ, startResp)
+    with workspace = wspace in route(environ, startResp)
 
-  private def route(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace, logger =
+  private def route(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
     val method = environ.get("REQUEST_METHOD", "GET").asString
     val path = environ.get("PATH_INFO", "/").asString
 
@@ -187,7 +183,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     ! browser can adopt the `/c/<id>` URL; a request that carries a `session`
     ! resumes it (from memory, or loaded from disk).
   //]
-  private def handleMessage(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace, logger =
+  private def handleMessage(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
     val body = json.loads(readBody(environ)).cast[py.Dict]
     val text = body.get("text", "").asString
     val reqId = body.get("session", "").asString
@@ -216,12 +212,8 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
       // This request's sink is attached inside `runTurn` (once the turn owns the
       // session lock), and the turn fans its events out to it and to any tab that
       // subscribes mid-turn. Tag every log entry with the session it belongs to; the
-      // thunk is annotated `receives logger` so it reads the (decorated) logger at
-      // call time rather than capturing the current one.
       val input = UserText(text, attachments)
-      val turn: () => Unit receives logger =
-        () => session.runTurn(input, sink, maxToolRounds = 50, maxRetries = 4)
-      turn()
+      session.runTurn(input, sink, maxToolRounds = 50, maxRetries = 4)
 
     py.list()
 
@@ -602,7 +594,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     ! the stored file's metadata. The name is sanitized and de-duplicated, so an
     ! upload can neither escape the session dir nor clobber an existing file.
   //]
-  private def handleUpload(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace, logger =
+  private def handleUpload(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
     val body = json.loads(readBody(environ)).cast[py.Dict]
     val reqId = body.get("session", "").asString
     val name = sanitizeName(body.get("name", "").asString)
@@ -664,20 +656,23 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     ! mints one (so a script written in a fresh chat gets a home), and the client
     ! adopts the returned id.
   //]
-  private def handleRun(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace, logger =
+  private def handleRun(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
     val body = json.loads(readBody(environ)).cast[py.Dict]
     val code = body.get("code", "").asString
     val reqId = body.get("session", "").asString
-    val sessionId = if reqId == "" then createSession().id else sanitizeName(reqId)
+    val requestedId = sanitizeName(reqId)
 
-    if code.trim == "" || sessionId == "" then
+    if code.trim == "" || (reqId != "" && requestedId == "") then
       respondJson: startResp, py.dict("error" ~ "empty program or session")
 
     else
-      val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(Session.dataDir(sessionId)))
+      val session = if reqId == "" then createSession() else openSession(requestedId)
+      val sessionId = session.id
       val outcome =
-        with callContext = callCtx, currentInteract = Interact.unattended in
-          runTool.run(ToolInput(py.dict("code" ~ code)))
+        with logger = session.log,
+             callContext = session.callCtx,
+             currentInteract = Interact.unattended
+        in runTool.run(ToolInput(py.dict("code" ~ code)))
       respondJson: startResp, py.dict("session" ~ sessionId, "result" ~ outcome.result, "summary" ~ outcome.summary)
 
   //[ Save a script into a session's files (overwriting a same-named one), so it can
