@@ -279,15 +279,16 @@ def openai(
     apiKey: String,
     model: String,
     baseUrl: String = "https://api.openai.com/v1",
-    compatible: Bool = false)
+    compatible: Bool = false,
+    timeoutSeconds: Int = 10)
 : Model =
-  if compatible then openaiCompatible(apiKey, model, baseUrl)
+  if compatible then openaiCompatible(apiKey, model, baseUrl, timeoutSeconds)
   else
     // Explicit request timeout; internal SDK retries disabled — the turn engine
     // owns the retry/backoff policy, and hidden SDK retries would multiply it.
     val client = py.module("openai").OpenAI:
       api_key = apiKey
       base_url = baseUrl
-      timeout = 600.0
+      timeout = timeoutSeconds
       max_retries = 0
     new OpenAIResponsesModel(client, model, os.getenv("REASONING_EFFORT", "medium"))

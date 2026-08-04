@@ -213,11 +213,12 @@ private def openRouterCreate(
 def openrouter(
     apiKey: String,
     model: String,
-    baseUrl: String = "https://openrouter.ai/api/v1")
+    baseUrl: String = "https://openrouter.ai/api/v1",
+    timeoutSeconds: Int = 10)
 : Model =
   val client = py.module("openai").OpenAI:
     api_key = apiKey
     base_url = baseUrl
-    timeout = 600.0
+    timeout = timeoutSeconds
     max_retries = 0
   new OpenRouterModel(client, model, os.getenv("REASONING_EFFORT", "none"))

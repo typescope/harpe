@@ -309,5 +309,14 @@ private def anthropicCreate(
   ! disabled (`max_retries = 0`): the turn engine owns the retry/backoff policy,
   ! and hidden SDK retries would silently multiply it.
 //]
-def anthropic(apiKey: String, model: String, cache: AnthropicCache): Model =
-  new AnthropicModel(py.module("anthropic").Anthropic(api_key = apiKey, timeout = 600.0, max_retries = 0), model, cache)
+def anthropic(
+    apiKey: String,
+    model: String,
+    cache: AnthropicCache,
+    timeoutSeconds: Int = 10)
+: Model =
+  val client = py.module("anthropic").Anthropic:
+    api_key = apiKey
+    timeout = timeoutSeconds
+    max_retries = 0
+  new AnthropicModel(client, model, cache)

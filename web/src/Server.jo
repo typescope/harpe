@@ -227,7 +227,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     val id = body.get("session", "").asString
 
     registryLock.acquire()
-    if registry.contains(id) then registry.get(id).cast[Session].stop.set()
+    if registry.contains(id) then registry.get(id).cast[Session].requestStop()
     registryLock.release()
 
     respondJson(startResp, py.dict("ok" ~ true))

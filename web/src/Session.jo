@@ -73,7 +73,7 @@ class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath:
 
   //[ Set (via `POST /api/stop`) to request cancellation of the running turn;
     ! the engine notices between model calls and tool executions. Cleared when
-    ! the next turn begins.
+    ! that turn becomes idle.
   //]
   val stop = threading.event()
 
@@ -193,7 +193,6 @@ class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath:
     ! turn finishes, `idle` is set, which releases every subscriber.
   //]
   def runTurn(input: UserText, initiatorSink: Sink, maxToolRounds: Int, maxRetries: Int): Unit =
-    stop.clear()
     lastActive = time.now()
 
     this.lock.acquire()
@@ -222,8 +221,15 @@ class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath:
 
     removeSink(subId)
     state = Idle
+    stop.clear()
     idle.set()
     this.lock.release()
+
+  //[ Request cancellation only when this session has a turn in flight. //]
+  def requestStop(): Unit =
+    match state
+    case Active(_) => stop.set()
+    case Idle      => pass
 
   //[ Commit a completed turn's working memory
     !

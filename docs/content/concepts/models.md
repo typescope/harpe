@@ -159,6 +159,9 @@ val brain = openai("", "org/model-name", "http://localhost:8000/v1", compatible 
 val brain = echo()
 ```
 
+Model constructors use a 10-second HTTP request timeout by default. Applications
+that expect longer generations can set `timeoutSeconds` explicitly.
+
 A model can be shared across sessions. Each call to `startTurn` creates the
 state isolated to one user turn.
 

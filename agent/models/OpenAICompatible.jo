@@ -145,11 +145,13 @@ private def send(client: py.Dynamic, model: String, rendered: Rendered, tools: L
   case Err(err) => classifyError(err)
 
 //[ Build a model using the portable OpenAI Chat Completions API. //]
-private[harpe] def openaiCompatible(apiKey: String, model: String, baseUrl: String): Model =
+private[harpe] def openaiCompatible(
+    apiKey: String, model: String, baseUrl: String, timeoutSeconds: Int)
+: Model =
   val key = if apiKey == "" then "not-needed" else apiKey
   val client = py.module("openai").OpenAI:
     api_key = key
     base_url = baseUrl
-    timeout = 600.0
+    timeout = timeoutSeconds
     max_retries = 0
   new CompatibleModel(client, model)

@@ -23,6 +23,10 @@ var NEW_SCRIPT = 'namespace sandbox.guest\n\ndef runTask(): Unit =\n  println "h
 var NL = String.fromCharCode(10);
 var busy = false;
 var currentSession = null;
+var activeTurnSession = null;
+var turnConnected = false;
+var stopRequested = false;
+var stopSent = false;
 var sessionList = [];
 var pending = [];   // File objects staged for the next message (not yet uploaded)
 var approvalCards = {};
@@ -854,6 +858,10 @@ function autoGrow() {
 
 function clearBusy() {
   busy = false;
+  activeTurnSession = null;
+  turnConnected = false;
+  stopRequested = false;
+  stopSent = false;
   sendBtn.classList.remove('stop');
   sendBtn.setAttribute('aria-label', 'Send');
 }
@@ -942,13 +950,18 @@ function readStream(resp, bubble, statusText, onDone) {
 // POST one message and render its progress/answer stream into `bubble`.
 function streamTurn(text, attachments, bubble, statusText, finish) {
   var body = { text: text, attachments: attachments || [] };
-  if (currentSession) body.session = currentSession;
+  if (currentSession) {
+    body.session = currentSession;
+    activeTurnSession = currentSession;
+  }
 
   return fetch('/api/message', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   }).then(function (resp) {
+    turnConnected = true;
+    sendStopIfReady();
     return readStream(resp, bubble, statusText, finish);
   }).catch(function () {
     statusText.textContent = 'connection error';
@@ -964,6 +977,7 @@ function reconnect(id, state, seq) {
   appendMessage('user', state.text || '', state.attachments);
 
   busy = true;
+  activeTurnSession = id;
   sendBtn.classList.add('stop');
   sendBtn.setAttribute('aria-label', 'Stop');
 
@@ -987,7 +1001,11 @@ function reconnect(id, state, seq) {
   }
 
   fetch('/api/subscribe?session=' + encodeURIComponent(id))
-    .then(function (resp) { return readStream(resp, bubble, statusText, finish); })
+    .then(function (resp) {
+      turnConnected = true;
+      sendStopIfReady();
+      return readStream(resp, bubble, statusText, finish);
+    })
     .catch(function () { status.remove(); clearBusy(); });
 }
 
@@ -998,7 +1016,9 @@ function reconnect(id, state, seq) {
 function handle(ev, bubble, statusText) {
   if (ev.type === 'session') {
     currentSession = ev.id;
+    activeTurnSession = ev.id;
     history.pushState({}, '', '/c/' + ev.id);
+    sendStopIfReady();
   } else if (ev.type === 'status') {
     statusText.textContent = ev.label;
   } else if (ev.type === 'tool') {
@@ -1115,11 +1135,17 @@ function finishApproval(id, decision) {
 // server to cancel the session's turn (takes effect at the next model/tool
 // boundary; the stream then ends with an "interrupted" event).
 function stopTurn() {
-  if (!currentSession) return;
+  stopRequested = true;
+  sendStopIfReady();
+}
+
+function sendStopIfReady() {
+  if (!stopRequested || stopSent || !turnConnected || !activeTurnSession) return;
+  stopSent = true;
   fetch('/api/stop', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session: currentSession })
+    body: JSON.stringify({ session: activeTurnSession })
   });
 }
 
