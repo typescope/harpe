@@ -191,7 +191,15 @@ function fileKind(mime, name) {
   if (m.indexOf('pdf') >= 0 || ext === 'pdf') return 'pdf';
   if (m.indexOf('word') >= 0 || m.indexOf('wordprocessing') >= 0 || ext === 'doc' || ext === 'docx') return 'word';
   if (m.indexOf('excel') >= 0 || m.indexOf('spreadsheet') >= 0 || ext === 'xls' || ext === 'xlsx' || ext === 'csv') return 'excel';
-  if (ext === 'jo') return 'code';
+  if (m.indexOf('powerpoint') >= 0 || m.indexOf('presentation') >= 0 || ext === 'ppt' || ext === 'pptx') return 'presentation';
+  if (m.indexOf('text/html') >= 0 || ext === 'html' || ext === 'htm') return 'html';
+  if (m.indexOf('markdown') >= 0 || ext === 'md' || ext === 'markdown') return 'markdown';
+  if (m.indexOf('json') >= 0 || ext === 'json' || ext === 'jsonl') return 'json';
+  if (m.indexOf('zip') >= 0 || m.indexOf('compressed') >= 0 || /^(zip|tar|gz|tgz|bz2|xz|7z|rar)$/.test(ext)) return 'archive';
+  if (m.indexOf('audio/') === 0 || /^(mp3|wav|m4a|aac|flac|ogg|opus)$/.test(ext)) return 'audio';
+  if (m.indexOf('video/') === 0 || /^(mp4|webm|mov|mkv|avi|m4v)$/.test(ext)) return 'video';
+  if (/^(jo|js|jsx|ts|tsx|py|rb|rs|go|java|c|cc|cpp|h|hpp|css|scss|sql|sh|toml|ya?ml|xml)$/.test(ext)) return 'code';
+  if (m.indexOf('text/plain') >= 0 || ext === 'txt' || ext === 'log') return 'text';
   return 'file';
 }
 
@@ -213,9 +221,17 @@ function docGlyph(label, color) {
 }
 
 // A per-format icon: a distinct picture glyph for images; a colored, labeled
-// page for PDF/Word/Excel; a plain page for anything else.
-var FILE_COLORS = { pdf: '#e5484d', word: '#2b6cb0', excel: '#2f855a' };
-var FILE_LABELS = { pdf: 'PDF', word: 'DOC', excel: 'XLS' };
+// page for recognized document formats; a plain page for anything else.
+var FILE_COLORS = {
+  pdf: '#e5484d', word: '#2b6cb0', excel: '#2f855a',
+  presentation: '#b7791f', html: '#0891b2', markdown: '#4a5568',
+  json: '#6b46c1', archive: '#718096', audio: '#b83280', video: '#5a67d8', text: '#4a5568'
+};
+var FILE_LABELS = {
+  pdf: 'PDF', word: 'DOC', excel: 'XLS', presentation: 'PPT',
+  html: 'HTML', markdown: 'MD', json: 'JSON', archive: 'ZIP',
+  audio: 'AUD', video: 'VID', text: 'TXT'
+};
 
 function fileIcon(mime, name) {
   var kind = fileKind(mime, name);
