@@ -146,11 +146,12 @@ private section OpenAIResponses
       new Assistant(text.trim, calls)
 end
 
-private class OpenAIResponsesModel(client: py.Dynamic, model: String, effort: String)
+private class OpenAIResponsesModel(
+    client: py.Dynamic, model: String, effort: String, extraBody: py.Dict)
   view Model
 
   def startTurn(base: Rendered): Session =
-    new OpenAIResponsesSession(client, model, effort, base)
+    new OpenAIResponsesSession(client, model, effort, extraBody, base)
 end
 
 //[ A reasoning-preserving turn on the Responses API.
@@ -162,7 +163,9 @@ end
   ! default server-side `store`; it is the native Responses path for reasoning +
   ! tools.
 //]
-private class OpenAIResponsesSession(client: py.Dynamic, model: String, effort: String, base: Rendered)
+private class OpenAIResponsesSession(
+    client: py.Dynamic, model: String, effort: String,
+    extraBody: py.Dict, base: Rendered)
   view Session
 
   // "" until the first successful reply, then the id to chain the next request
@@ -201,7 +204,15 @@ private class OpenAIResponsesSession(client: py.Dynamic, model: String, effort: 
       if media.size > 0 then
         input.append(py.dict("role" ~ "user", "content" ~ media))
 
-    val attempt = openaiCreate(client, model, effort, base.system, input, toolSpecs, prevId)
+    val attempt = openaiCreate:
+	client
+	model
+	effort
+	base.system
+	input
+	toolSpecs
+	prevId
+	extraBody
 
     match attempt
     case Ok(response) =>
@@ -225,7 +236,8 @@ end
 //]
 private def openaiCreate(
     client: py.Dynamic, model: String, effort: String,
-    system: String, input: py.List, toolSpecs: py.List, prevId: String)
+    system: String, input: py.List, toolSpecs: py.List, prevId: String,
+    extraBody: py.Dict)
 : Result[py.Dynamic, py.Error] =
   if effort == "none" then
     if prevId == "" then
@@ -236,6 +248,7 @@ private def openaiCreate(
           input = input
           tools = toolSpecs
           max_output_tokens = 8096
+          extra_body = extraBody
 
     else
       py.try:
@@ -246,6 +259,7 @@ private def openaiCreate(
           tools = toolSpecs
           max_output_tokens = 8096
           previous_response_id = prevId
+          extra_body = extraBody
 
   else
     if prevId == "" then
@@ -257,6 +271,7 @@ private def openaiCreate(
           tools = toolSpecs
           reasoning = py.dict("effort" ~ effort)
           max_output_tokens = 8096
+          extra_body = extraBody
 
     else
       py.try:
@@ -268,13 +283,14 @@ private def openaiCreate(
           reasoning = py.dict("effort" ~ effort)
           max_output_tokens = 8096
           previous_response_id = prevId
+          extra_body = extraBody
 
 //[ Build an OpenAI or OpenAI-compatible model
   !
   ! Responses API is the default. Set `compatible` for a server implementing the
   ! portable Chat Completions API. `REASONING_EFFORT` configures Responses API
   ! reasoning and is ignored in compatibility mode. `extraBody` carries optional
-  ! provider-specific Chat Completions fields in compatibility mode.
+  ! provider-specific fields for either API.
 //]
 def openai(
     apiKey: String,
@@ -284,8 +300,8 @@ def openai(
     timeoutSeconds: Int = 10,
     extraBody: py.Dict = py.none)
 : Model =
+  val body = if py.isNone(extraBody) then py.dict() else extraBody
   if compatible then
-    val body = if py.isNone(extraBody) then py.dict() else extraBody
     openaiCompatible(apiKey, model, baseUrl, timeoutSeconds, body)
   else
     // Explicit request timeout; internal SDK retries disabled — the turn engine
@@ -295,4 +311,4 @@ def openai(
       base_url = baseUrl
       timeout = timeoutSeconds
       max_retries = 0
-    new OpenAIResponsesModel(client, model, os.getenv("REASONING_EFFORT", "medium"))
+    new OpenAIResponsesModel(client, model, os.getenv("REASONING_EFFORT", "medium"), body)
