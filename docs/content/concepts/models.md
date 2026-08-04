@@ -73,7 +73,6 @@ by OpenRouter and Anthropic.
 | `OPENAI_API_KEY` | Select and authenticate OpenAI |
 | `OPENROUTER_API_KEY` | Select and authenticate OpenRouter |
 | `MODEL` | Override the provider's default model ID |
-| `REASONING_EFFORT` | Set OpenAI or OpenRouter reasoning effort to `low`, `medium`, `high`, or `none` |
 | `PROMPT_CACHE` | Set Anthropic prompt caching to `5m`, `1h`, or `off` |
 | `OPENAI_BASE_URL` | Use another Responses API endpoint, such as Azure OpenAI or a proxy |
 
@@ -175,8 +174,8 @@ key:
 
 ```jo
 val brain = anthropic(apiKey, "claude-opus-4-6", FiveMinutes)
-val brain = openai(apiKey, "gpt-5.6")
-val brain = openrouter(apiKey, "provider/model-name")
+val brain = openai(apiKey, "gpt-5.6", reasoningEffort = "high")
+val brain = openrouter(apiKey, "provider/model-name", reasoningEffort = "high")
 val brain = openai("", "org/model-name", "http://localhost:8000/v1", compatible = true)
 val brain = echo()
 ```

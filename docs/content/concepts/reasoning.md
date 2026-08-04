@@ -1,79 +1,90 @@
 +++
 title = "Reasoning"
 +++
-Modern models can **reason** before they answer — work through a problem
-step by step internally, then reply. On hard tasks this raises quality, and for
-an agent it matters most across a **tool loop**: the model reasons, calls a tool,
-reads the result, and keeps reasoning from where it left off instead of starting
-over each step.
+Reasoning lets a model spend time working through a request before it answers or
+chooses a tool. In an agent, that work may span several tool calls: the model
+decides what it needs, reads each result, and continues toward the final answer.
 
-Harpe turns reasoning on for you and preserves it across a turn's tool calls. In
-most cases you write no code — pick a reasoning-capable model and it just works.
+Harpe handles that continuity for you. Choose a reasoning-capable model and the
+agent can move through its tool loop without application code managing provider
+response IDs, thinking blocks, or other reasoning metadata.
 
-## It is on by default
+## The tool-loop boundary
 
-When the agent's model is OpenAI or Anthropic, reasoning is enabled out of the
-box (see [Models](/concepts/models/) for how the model is selected). You do not
-call a special API or set a flag to get it. A single user turn — the model
-thinking, calling tools, reading results, and thinking again until it answers —
-carries the model's train of thought the whole way through.
+Pure reasoning does not require a client-side loop. In one model request, the
+provider reasons and then returns final assistant text. The client participates
+only when the model requests an external action:
 
-## What you get back
+![A request enters provider reasoning. It can produce final text directly or pause at a tool call while the client runs the tool and returns its result for further reasoning.](/img/reasoning-tool-loop.svg)
 
-You get the model's **final answer** and its **tool calls** — the same shape as a
-non-reasoning reply. You do **not** get the reasoning itself: providers do not
-return the raw chain of thought, so there is no "thinking" text in the transcript
-or the [log](/concepts/logging/). Treat reasoning as something the model does,
-not something your code reads.
+When a tool is involved, Harpe preserves the model's reasoning context until the
+turn completes. A provider may require an opaque response ID, signed thinking
+blocks, reasoning items, or extension fields from its previous assistant
+message. Harpe keeps that wire state inside the turn's `Model.Session` and sends
+it back with the tool result.
 
-## Configuring it
+## What the built-in adapters preserve
 
-### OpenAI
+| Adapter | Continuation strategy |
+|---|---|
+| OpenAI Responses | Keeps the successful response ID and sends it as `previous_response_id` with later tool results |
+| OpenRouter Responses | Keeps every raw output item and replays the complete turn because requests use `store = false` |
+| OpenAI-compatible Chat Completions | Keeps the complete raw assistant message, including fields such as `reasoning`, `reasoning_content`, and `reasoning_details` |
+| Anthropic Messages | Keeps and replays the raw assistant content blocks, including thinking blocks and their signatures |
 
-Set how hard the model reasons with the **`REASONING_EFFORT`** environment
-variable:
+Only visible text and function calls are translated into Harpe's `Assistant`.
+The opaque state lives only until that user turn finishes.
 
-| Value | Effect |
-|-------|--------|
-| `medium` | Default — a balanced amount of reasoning. |
-| `low` | Less reasoning: faster and cheaper, for simple work. |
-| `high` | More reasoning: for the hardest tasks. |
-| `none` | Reasoning off. Required for a non-reasoning model such as `gpt-4o`. |
+## Configuration
 
-Under the hood this uses OpenAI's **Responses API**, which keeps the turn's
-reasoning on OpenAI's servers between tool calls. That means it depends on
-server-side storage being available for your account — if your organization has
-disabled response storage (e.g. a zero-retention policy), reasoning across tool
-calls will not work. Use `REASONING_EFFORT=none` or a different provider.
+Construct a provider explicitly when the agent needs a particular reasoning
+effort:
 
-### Anthropic
+```jo
+val brain = openai(apiKey, "gpt-5.6", reasoningEffort = "high")
+val brain = openrouter(apiKey, "provider/model", reasoningEffort = "low")
+```
 
-Anthropic uses **adaptive thinking**: the model itself decides when and how much
-to reason, per request. There is nothing to configure — and nothing to preserve
-on your side, Harpe handles it. This is deliberate: how a model reasons is the
-model's business, so each provider exposes only the controls that are meaningful
-for it rather than a lowest-common-denominator knob.
+OpenAI and OpenRouter accept these common values:
 
-## Model requirements
+| Value | Meaning |
+|---|---|
+| `none` | Omit the Responses API reasoning option |
+| `low` | Prefer lower latency and reasoning cost |
+| `medium` | Balanced reasoning, and the OpenAI default |
+| `high` | Spend more reasoning tokens on difficult work |
+| Other values | Passed through as written, if the selected provider and model support them |
 
-Reasoning needs a model that supports it:
+OpenAI defaults to `medium`. OpenRouter defaults to `none` because its catalog
+contains models with different reasoning capabilities. Anthropic uses adaptive
+thinking, so constructing it explicitly does not require an effort value:
 
-- **OpenAI** — a reasoning model (the `gpt-5` family, the `o` series). For a
-  non-reasoning model like `gpt-4o`, set `REASONING_EFFORT=none`.
-- **Anthropic** — Claude Opus 4.6 or newer, or a current Sonnet. The default
-  model reasons. An older `MODEL` override may not.
+```jo
+val brain = anthropic(apiKey, "claude-opus-4-6", FiveMinutes)
+```
 
-Point the agent at a model that can't reason without turning reasoning off and
-the request will fail — pick the model and the setting together.
+The `openai`, `openrouter`, and `anthropic` constructors accept `extraBody` for
+provider-specific controls that are not part of Harpe's small common interface:
 
-## Cost and truncation
+```jo
+val brain = openai:
+  apiKey
+  "provider/model"
+  baseUrl = "https://provider.example/v1"
+  compatible = true
+  extraBody = py.dict(
+    "reasoning_effort" ~ "high",
+    "reasoning_budget" ~ 16384
+  )
+```
 
-Reasoning is not free: the tokens the model spends thinking count against its
-**output budget** for that reply, even though you never see them. Two practical
-consequences:
+Use only fields supported by the selected server and model. An unsupported
+reasoning option is normally a fatal provider request error, not something Harpe
+can infer or correct.
 
-- Reasoning replies cost more and take longer than the visible output suggests.
-  Lower `REASONING_EFFORT` (OpenAI) when a task doesn't need deep thinking.
-- If a reply comes back cut off, a long reasoning burst likely crowded out the
-  answer. That surfaces as a truncated reply in the transcript — the signal to
-  either simplify the request or dial reasoning down.
+## Cost and limits
+
+Reasoning consumes time and output tokens even when it is not visible. More
+reasoning can therefore increase latency and cost, and can leave less output
+budget for the final answer or tool call. Tune effort against representative
+agent tasks rather than assuming the highest setting is always best.

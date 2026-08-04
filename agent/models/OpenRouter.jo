@@ -7,7 +7,6 @@
 
 namespace harpe.models
 import harpe.ffi.json
-import harpe.ffi.os
 import harpe.ffi.builtins
 
 import harpe.Model
@@ -219,6 +218,7 @@ def openrouter(
     apiKey: String,
     model: String,
     baseUrl: String = "https://openrouter.ai/api/v1",
+    reasoningEffort: String = "none",
     timeoutSeconds: Int = 10,
     extraBody: py.Dict = py.none)
 : Model =
@@ -228,4 +228,4 @@ def openrouter(
     base_url = baseUrl
     timeout = timeoutSeconds
     max_retries = 0
-  new OpenRouterModel(client, model, os.getenv("REASONING_EFFORT", "none"), body)
+  new OpenRouterModel(client, model, reasoningEffort, body)

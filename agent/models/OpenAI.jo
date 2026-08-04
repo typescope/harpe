@@ -3,8 +3,7 @@
   ! The OpenAI `Model`, on the **Responses API** (`responses.create`) — the only
   ! path that runs a reasoning model (gpt-5.x, o-series) *with* function tools, a
   ! combination chat/completions rejects. Reasoning effort is configurable, and
-  ! disabling it (`REASONING_EFFORT=none`) lets a non-reasoning model (gpt-4o)
-  ! use this endpoint too.
+  ! setting it to `none` lets a non-reasoning model use this endpoint too.
   !
   ! This targets OpenAI proper; it is not a generic OpenAI-compatible shim — the
   ! Responses API is OpenAI's own, not spoken by third-party endpoints. All
@@ -13,7 +12,6 @@
 
 namespace harpe.models
 import harpe.ffi.json
-import harpe.ffi.os
 import harpe.ffi.builtins
 
 
@@ -288,7 +286,7 @@ private def openaiCreate(
 //[ Build an OpenAI or OpenAI-compatible model
   !
   ! Responses API is the default. Set `compatible` for a server implementing the
-  ! portable Chat Completions API. `REASONING_EFFORT` configures Responses API
+  ! portable Chat Completions API. `reasoningEffort` configures Responses API
   ! reasoning and is ignored in compatibility mode. `extraBody` carries optional
   ! provider-specific fields for either API.
 //]
@@ -297,6 +295,7 @@ def openai(
     model: String,
     baseUrl: String = "https://api.openai.com/v1",
     compatible: Bool = false,
+    reasoningEffort: String = "medium",
     timeoutSeconds: Int = 10,
     extraBody: py.Dict = py.none)
 : Model =
@@ -311,4 +310,4 @@ def openai(
       base_url = baseUrl
       timeout = timeoutSeconds
       max_retries = 0
-    new OpenAIResponsesModel(client, model, os.getenv("REASONING_EFFORT", "medium"), body)
+    new OpenAIResponsesModel(client, model, reasoningEffort, body)
