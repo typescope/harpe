@@ -75,8 +75,8 @@ def run(): Unit receives stdout =
   check("result id", r0.get("id", "").asString == "c1")
   check("result content", r0.get("content", "").asString == "42")
 
-  // Failed and crash-truncated turns remain useful for debugging but never enter
-  // the reconstructed transcript. A later answered turn still commits normally.
+  // User messages are durable even when their turns fail or crash. Assistant
+  // messages remain provisional, while a later answered turn commits normally.
   with logger = sessionLog in
     Transcript.start(UserText("will fail", []))
     Transcript.append(Assistant("partial", []))
@@ -89,8 +89,10 @@ def run(): Unit receives stdout =
   var entries: List[harpe.logging.Entry] = []
   for record in readRecords(path) do entries = entries + entryFromDict(record)
   val loaded = Transcript.fromEntries(entries)
-  check("loader keeps answered turns only", loaded.size == 5)
-  check("loader keeps later answered turn", loaded.get(4) is Assistant("done", _))
+  check("loader keeps every user message", loaded.size == 7)
+  check("loader drops failed assistant message", loaded.get(4) is UserText("again", _))
+  check("loader keeps later answered turn", loaded.get(5) is Assistant("done", _))
+  check("loader keeps crash user message", loaded.get(6) is UserText("crashed", _))
 
   sessionLog.close()
   os.unlink(path)

@@ -232,9 +232,9 @@ class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath:
   private def commit(): Unit =
     saveMemory()
 
-  //[ Abandon a cancelled/failed turn: restore the context's pre-turn window.
+  //[ Finish a cancelled or failed turn
     ! Memory is still persisted — it is deliberate and not rolled back with the
-    ! transcript.
+    ! provisional assistant transcript. The engine retains the user message.
   //]
   private def rollback(): Unit =
     saveMemory()

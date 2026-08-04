@@ -45,7 +45,8 @@ section Agent
     ! before every model request. The caller appends the turn's `UserText` (after
     ! `context.mark()`) before calling. Structured transcript events use the
     ! ambient logger.
-    ! On interruption/failure the context is rolled back.
+    ! On interruption/failure the provisional assistant/tool tail is rolled back,
+    ! while the user's message remains in the context.
     !
     ! A turn is bounded to `maxToolRounds` tool-call rounds. Once spent the model
     ! is asked once more with no tools, forcing a final answer. `maxRetries` is
@@ -76,6 +77,7 @@ section Agent
       if interact.cancelled then
         result = Interrupted
         context.rollback()
+        context.append(userMsg)
         Transcript.interrupted()
         break
 
@@ -90,12 +92,14 @@ section Agent
         case Stopped =>
           result = Interrupted
           context.rollback()
+          context.append(userMsg)
           Transcript.interrupted()
           break
 
         case GaveUp =>
           result = Failed
           context.rollback()
+          context.append(userMsg)
           Transcript.failed()
           break
 
@@ -133,6 +137,7 @@ section Agent
 
           if cancelled || interact.cancelled then
             context.rollback()
+            context.append(userMsg)
             result = Interrupted
             Transcript.interrupted()
             break
@@ -179,7 +184,7 @@ private def backoffSeconds(attempt: Int): Float =
 private def fetchReply(
     session: Session, results: List[ToolResult], tools: List[Tool],
     maxRetries: Int, interact: Interact)
-: Fetched =
+: Fetched receives logger, callContext =
 
   var attempt = 0
   var outcome: Fetched = GaveUp
@@ -207,6 +212,7 @@ private def fetchReply(
         break
 
       case Fatal(detail) =>
+        logger.error("harpe.model.request", detail)
         interact.emit: RequestFailed(detail)
         outcome = GaveUp
         break
@@ -214,12 +220,14 @@ private def fetchReply(
       case Transient(detail) =>
         attempt = attempt + 1
         if attempt > maxRetries then
+          logger.error("harpe.model.request", detail, "retries" ~ maxRetries)
           interact.emit: RetriesExhausted(detail, maxRetries)
           outcome = GaveUp
           break
 
         else
           val delay = backoffSeconds(attempt)
+          logger.warn("harpe.model.request", detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
           interact.emit: TransientError(detail, delay)
           // pause returns true if cancellation fired during the backoff.
           if interact.pause(delay) then

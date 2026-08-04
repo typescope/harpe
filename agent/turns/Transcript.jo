@@ -30,22 +30,28 @@ section Transcript
 
   //[ Project decoded log entries into committed conversation messages
     !
-    ! Unknown categories are ignored. An open turn is provisional until
-    ! `answered`.
+    ! A started turn commits its user message immediately. Assistant and tool
+    ! messages remain provisional until the turn is answered. Unknown categories
+    ! are ignored.
   //]
   def fromEntries(entries: List[Entry]): List[Message] =
     var messages: List[Message] = []
     var pending: List[Message] = []
+    var open = false
     for entry in entries do
       if entry.category == "harpe.turn.started" then
-        pending = [messageFromDict(entryDict(entry))]
-      else if entry.category == "harpe.turn.message" && !pending.isEmpty then
+        pending = []
+        messages = messages + messageFromDict(entryDict(entry))
+        open = true
+      else if entry.category == "harpe.turn.message" && open then
         pending = pending + messageFromDict(entryDict(entry))
-      else if entry.category == "harpe.turn.answered" && !pending.isEmpty then
+      else if entry.category == "harpe.turn.answered" && open then
         messages = messages ++ pending
         pending = []
+        open = false
       else if entry.category == "harpe.turn.failed" || entry.category == "harpe.turn.interrupted" then
         pending = []
+        open = false
     truncate(messages, maxResumeChars)
 
   private def messageFields(message: Message): Map[String, Value] =

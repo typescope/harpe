@@ -94,7 +94,10 @@ private class Session(id: String, log: Logger, agent: Agent, memory: Memory, mem
 
     case Failed =>
       rollback()
-      client.sendMessage(this.id, "Sorry — the request failed. Please try again.")
+      val message =
+        if interact.failureMessage == "" then "Request failed. Please try again."
+        else interact.failureMessage
+      client.sendMessage(this.id, message)
 
   //[ Download this turn's attached files into the session's data directory,
     ! returning them as `Attachment` metadata for the `UserText`. The bytes land on
@@ -135,9 +138,9 @@ private class Session(id: String, log: Logger, agent: Agent, memory: Memory, mem
   private def commit(): Unit =
     saveMemory()
 
-  //[ Abandon a cancelled/failed turn: restore the context's pre-turn window.
+  //[ Finish a cancelled or failed turn
     ! Memory is still persisted — it is deliberate and not rolled back with the
-    ! transcript.
+    ! provisional assistant transcript. The engine retains the user message.
   //]
   private def rollback(): Unit =
     saveMemory()

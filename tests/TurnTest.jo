@@ -201,6 +201,18 @@ def run(): Unit receives stdout, logger, callContext =
       state = live
     expected = "Failed | start,end,failed"
 
+  // A failed turn retains its user message in the live context. Only the
+  // provisional assistant/tool tail is rolled back.
+  val failedContext = new WindowedContext("", new Memory, [])
+  val failedAgent = new Agent(base => (results, tools) => Fatal("bad key"), tools, failedContext)
+  val failedInteract = new TestInteract(live)
+  val failedResult = failedAgent.runTurn(UserText("keep me", []), failedInteract, 50, 4)
+  val failedMessages = failedContext.render(failedInteract).messages
+  check:
+    "D failed user retained"
+    "\{resultTag(failedResult)} | \{failedMessages.size} | \{msgTag(failedMessages.get(0))}"
+    "Failed | 1 | user"
+
   // Transient with no retry budget (maxRetries=0) gives up immediately — no
   // backoff wait.
   check:

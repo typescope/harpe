@@ -875,8 +875,10 @@ function send() {
     input.focus();
     loadSessions();
     refreshFiles(false);   // update the list + badge; don't change open state
-    // Re-render this turn from the transcript so its code trace folds in.
-    if (currentSession) loadHistory(currentSession, true); else scrollDown();
+    // Re-render successful turns so their code trace folds in. A failed turn has
+    // no assistant transcript message, so keep its streamed error visible.
+    if (currentSession && !bubble.classList.contains('error')) loadHistory(currentSession, true);
+    else scrollDown();
   }
 
   uploadAll(files).then(function (uploaded) {
@@ -958,9 +960,9 @@ function reconnect(id, state, seq) {
   function finish() {
     status.remove();
     clearBusy();
-    // Render the committed result (with its code trace, or drop a turn that ended
-    // interrupted); if the user navigated elsewhere meanwhile, leave their view.
-    if (seq === loadSeq) loadHistory(id, true);
+    // Preserve a streamed failure. It has no assistant transcript message and
+    // would otherwise disappear as soon as history is reloaded.
+    if (seq === loadSeq && !bubble.classList.contains('error')) loadHistory(id, true);
     loadSessions();
     refreshFiles(false);   // a reconnected turn may have produced files
   }
@@ -997,8 +999,12 @@ function handle(ev, bubble, statusText) {
     bubble.classList.add('notice');
     bubble.textContent = 'Stopped.';
   } else if (ev.type === 'failed') {
-    bubble.classList.add('error');
-    bubble.textContent = 'request failed';
+    // `RequestFailed` and `RetriesExhausted` arrive first with useful detail.
+    // Keep that detail, using this terminal event only as a fallback.
+    if (!bubble.classList.contains('error')) {
+      bubble.classList.add('error');
+      bubble.textContent = 'Request failed. Please try again.';
+    }
   }
   scrollDown();
 }
