@@ -136,9 +136,27 @@ The first argument is an API key. Pass an empty string when the server does not
 require authentication.
 
 The adapter supports messages, images, function tools, tool results, and token
-usage. It ignores nonstandard response fields such as `reasoning_content`.
-Models can still reason and use tools, but Harpe does not preserve a local
-model's reasoning trace between calls.
+usage. Within a turn it preserves the provider's complete raw assistant messages,
+so extension fields such as `reasoning`, `reasoning_content`, and
+`reasoning_details` survive tool calls without entering Harpe's transcript.
+
+Use `extraBody` for provider-specific Chat Completions request fields. For
+example, NVIDIA Nemotron reasoning can be configured with:
+
+```jo
+val brain = openai:
+  nvidiaApiKey
+  "nvidia/nemotron-3-ultra-550b-a55b"
+  baseUrl = "https://integrate.api.nvidia.com/v1"
+  compatible = true
+  timeoutSeconds = 120
+  extraBody = py.dict:
+    "reasoning_effort" ~ "high"
+    "reasoning_budget" ~ 16384
+    "chat_template_kwargs" ~ py.dict(
+      "enable_thinking" ~ true,
+      "force_nonempty_content" ~ true
+    )
 
 ## Selecting a model in code
 

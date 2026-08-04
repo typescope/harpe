@@ -2,8 +2,8 @@
   !
   ! A model adapter for servers that implement the OpenAI Chat Completions API.
   ! This is the common interface exposed by local serving stacks such as vLLM,
-  ! SGLang, llama.cpp, and Ollama. It deliberately uses only the portable core:
-  ! messages, function tools, tool results, images, and token usage.
+  ! SGLang, llama.cpp, and Ollama. Provider-specific assistant fields remain
+  ! opaque and are replayed unchanged across tool rounds.
 //]
 
 namespace harpe.models
@@ -113,40 +113,94 @@ private section CompatibleChat
       new Assistant((text + "\n\n[Reply truncated: token limit reached.]").trim, [])
     else
       new Assistant(text.trim, calls)
+
+  def appendResults(messages: py.List, results: List[ToolResult], dataDir: String): Unit =
+    val media = py.list()
+    for r in results do
+      messages.append:
+        py.dict("role" ~ "tool", "tool_call_id" ~ r.id, "content" ~ r.content)
+
+      val resultMedia = imageBlocks(r.media, dataDir)
+      for block in resultMedia do media.append(block)
+
+    if media.size > 0 then messages.append(py.dict("role" ~ "user", "content" ~ media))
 end
 
-private class CompatibleModel(client: py.Dynamic, model: String)
+private class CompatibleModel(client: py.Dynamic, model: String, extraBody: py.Dict)
   view Model
 
   def startTurn(base: Rendered): Session =
-    new SimpleSession(base, (rendered, tools) => send(client, model, rendered, tools))
+    new CompatibleSession(client, model, extraBody, base)
 end
 
-private def send(client: py.Dynamic, model: String, rendered: Rendered, tools: List[Tool])
-: ReplyResult receives logger, callContext =
-  val dataDir = callContext.getOrElse("HARPE_DATA_DIR", "")
-  val messages = CompatibleChat.toMessages(rendered, dataDir)
-  val specs = py.list()
-  for t in tools do specs.append(CompatibleChat.toolSpec(t))
+private class CompatibleSession(
+    client: py.Dynamic, model: String, extraBody: py.Dict, base: Rendered)
+  view Session
 
-  val attempted =
-    if specs.size == 0 then
-      py.try: client.chat.completions.create(model = model, messages = messages, max_tokens = 8096)
-    else
-      py.try: client.chat.completions.create(model = model, messages = messages, tools = specs, max_tokens = 8096)
+  //[ Complete Chat Completions messages accepted so far
+    !
+    ! Raw assistant messages are retained so provider extensions such as
+    ! `reasoning`, `reasoning_content`, and `reasoning_details` survive tool
+    ! rounds without entering Harpe's provider-independent transcript.
+  //]
+  private var committed: Option[py.List] = None
 
-  match attempted
-  case Ok(response) =>
-    val usage = response.usage
-    val inTok = if usage.isNone then 0 else usage.prompt_tokens.asInt
-    val outTok = if usage.isNone then 0 else usage.completion_tokens.asInt
-    logUsage("openai-compatible", model, inTok, outTok)
-    Model.Reply(CompatibleChat.parseResponse(response), new Usage(inTok, outTok))
-  case Err(err) => classifyError(err)
+  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger, callContext =
+    val dataDir = callContext.getOrElse("HARPE_DATA_DIR", "")
+    val messages = py.list()
+
+    match committed
+    case Some(items) => for item in items do messages.append(item)
+    case None =>
+      val initial = CompatibleChat.toMessages(base, dataDir)
+      for item in initial do messages.append(item)
+
+    CompatibleChat.appendResults(messages, results, dataDir)
+
+    val specs = py.list()
+    for t in tools do specs.append(CompatibleChat.toolSpec(t))
+
+    match compatibleCreate(client, model, messages, specs, extraBody)
+    case Ok(response) =>
+      val usage = response.usage
+      val inTok = if usage.isNone then 0 else usage.prompt_tokens.asInt
+      val outTok = if usage.isNone then 0 else usage.completion_tokens.asInt
+      logUsage("openai-compatible", model, inTok, outTok)
+
+      // Preserve the provider's complete assistant message, including unknown
+      // extension fields. Failed requests never mutate `committed`.
+      val raw = response.choices.get(0).message.model_dump(exclude_none = true).cast[py.Dict]
+      messages.append(raw)
+      committed = Some(messages)
+
+      Model.Reply(CompatibleChat.parseResponse(response), new Usage(inTok, outTok))
+    case Err(err) => classifyError(err)
+end
+
+private def compatibleCreate(
+    client: py.Dynamic, model: String, messages: py.List,
+    tools: py.List, extraBody: py.Dict)
+: Result[py.Dynamic, py.Error] =
+  if tools.size == 0 then
+    py.try:
+      client.chat.completions.create:
+        model = model
+        messages = messages
+        max_tokens = 8096
+        extra_body = extraBody
+  else
+    py.try:
+      client.chat.completions.create:
+        model = model
+        messages = messages
+        tools = tools
+        max_tokens = 8096
+        extra_body = extraBody
 
 //[ Build a model using the portable OpenAI Chat Completions API. //]
 private[harpe] def openaiCompatible(
-    apiKey: String, model: String, baseUrl: String, timeoutSeconds: Int)
+    apiKey: String, model: String, baseUrl: String,
+    timeoutSeconds: Int, extraBody: py.Dict)
 : Model =
   val key = if apiKey == "" then "not-needed" else apiKey
   val client = py.module("openai").OpenAI:
@@ -154,4 +208,4 @@ private[harpe] def openaiCompatible(
     base_url = baseUrl
     timeout = timeoutSeconds
     max_retries = 0
-  new CompatibleModel(client, model)
+  new CompatibleModel(client, model, extraBody)

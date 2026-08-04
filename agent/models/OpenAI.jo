@@ -273,16 +273,20 @@ private def openaiCreate(
   !
   ! Responses API is the default. Set `compatible` for a server implementing the
   ! portable Chat Completions API. `REASONING_EFFORT` configures Responses API
-  ! reasoning and is ignored in compatibility mode.
+  ! reasoning and is ignored in compatibility mode. `extraBody` carries optional
+  ! provider-specific Chat Completions fields in compatibility mode.
 //]
 def openai(
     apiKey: String,
     model: String,
     baseUrl: String = "https://api.openai.com/v1",
     compatible: Bool = false,
-    timeoutSeconds: Int = 10)
+    timeoutSeconds: Int = 10,
+    extraBody: py.Dict = py.none)
 : Model =
-  if compatible then openaiCompatible(apiKey, model, baseUrl, timeoutSeconds)
+  if compatible then
+    val body = if py.isNone(extraBody) then py.dict() else extraBody
+    openaiCompatible(apiKey, model, baseUrl, timeoutSeconds, body)
   else
     // Explicit request timeout; internal SDK retries disabled — the turn engine
     // owns the retry/backoff policy, and hidden SDK retries would multiply it.
