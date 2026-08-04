@@ -21,9 +21,11 @@ class OpenpyxlExcel(root: String)
   view ExcelReader
 
   def open(src: String): Result[Workbook, String] =
-    val real = resolvePath(root, src)
-    orMessage(py.try(openpyxlMod.load_workbook(real, read_only = true, data_only = true))).map: wb =>
-      new WorkbookImpl(wb)
+    val real = resolvePath(root, src) rescue err: Err[String] => return err
+    val opened = orMessage:
+      py.try:
+        openpyxlMod.load_workbook(real, read_only = true, data_only = true)
+    opened.map: wb => new WorkbookImpl(wb)
 end
 
 //[ The open workbook over an openpyxl read-only workbook object. //]

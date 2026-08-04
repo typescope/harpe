@@ -11,6 +11,18 @@ private def module: py.Dynamic = py.module("time")
 //[ Seconds since the epoch, as a float (Python `time.time`). //]
 def now(): Float = module.time().asFloat
 
+//[ Format epoch seconds as an RFC 3339 UTC timestamp with microseconds. //]
+def toRfc3339(seconds: Float): String =
+  val datetime = py.module("datetime")
+  val instant = datetime.datetime.fromtimestamp:
+    seconds
+    tz = datetime.timezone.utc
+  instant.isoformat(timespec = "microseconds").asString.replace("+00:00", "Z")
+
+//[ Parse an RFC 3339 timestamp into epoch seconds. //]
+def fromRfc3339(value: String): Float =
+  py.module("datetime").datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp().asFloat
+
 //[ Format the current local time with a Python `strftime` pattern.
   !
   ! One call captures a single instant, so a pattern that spans both directory

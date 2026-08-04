@@ -15,7 +15,7 @@
   ! Sessions are the conversation's unit: a `POST /api/message` with no `session`
   ! mints a new id (emitted as the first stream event), and the browser puts it in
   ! the URL (`/c/<id>`). A turn runs under that session's lock, and its history is
-  ! persisted via `SessionLog`, so a session resumes by id — even across restarts,
+  ! persisted as structured session logs, so a session resumes by id across restarts,
   ! by loading from disk.
   !
 //]
@@ -31,17 +31,14 @@ import harpe.ffi.mimetypes
 import harpe.ffi.builtins
 
 import harpe.Agent
+import harpe.callContext
 import harpe.Interact
 import harpe.currentInteract
-import harpe.CallContext
-import harpe.callContext
 import harpe.Defaults
 import harpe.Memory
 import harpe.Workspace
 import harpe.workspace
-import harpe.logging.Logger
 import harpe.logging.logger
-import harpe.logging.Logging
 import harpe.Model
 import harpe.Model.Assistant
 import harpe.Model.Message
@@ -53,6 +50,7 @@ import harpe.tools.runCodeTool
 import harpe.context.WindowedContext
 import harpe.Tool
 import harpe.Tool.ToolInput
+import harpe.turns.Failed
 
 //[ The `sendFile` tool — the agent's channel for delivering a file to the user.
   !
@@ -86,7 +84,7 @@ def sendFileTool(): Tool = new Tool:
     else
       new Tool.RunOutcome("Sent '\{name}' to the user.", "sendFile · \{name}", [])
 
-class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
+class ChatServer(brain: Model, name: String, wspace: Workspace)
   // Resident sessions, id -> Session. Persisted sessions not yet touched this
   // run are loaded from disk on first access. The server is threaded (each
   // request on its own thread), so registry access is guarded by registryLock;
@@ -101,14 +99,12 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
 
   //[ The WSGI application: establish the request context, then route. Each
     ! request runs on its own thread, which does not inherit the process's
-    ! context, so `workspace` and the `logger` are re-provided here from the
-    ! server's fields — the same `Logger` backend `Web.serve` installed for the
-    ! whole run.
+    ! context, so `workspace` is re-provided here from the server's field.
   //]
   def handle(environ: py.Dynamic, startResp: py.Dynamic): py.List =
-    with workspace = wspace, logger = backend in route(environ, startResp)
+    with workspace = wspace in route(environ, startResp)
 
-  private def route(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace, logger =
+  private def route(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
     val method = environ.get("REQUEST_METHOD", "GET").asString
     val path = environ.get("PATH_INFO", "/").asString
 
@@ -188,7 +184,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     ! browser can adopt the `/c/<id>` URL; a request that carries a `session`
     ! resumes it (from memory, or loaded from disk).
   //]
-  private def handleMessage(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace, logger =
+  private def handleMessage(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
     val body = json.loads(readBody(environ)).cast[py.Dict]
     val text = body.get("text", "").asString
     val reqId = body.get("session", "").asString
@@ -217,12 +213,8 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
       // This request's sink is attached inside `runTurn` (once the turn owns the
       // session lock), and the turn fans its events out to it and to any tab that
       // subscribes mid-turn. Tag every log entry with the session it belongs to; the
-      // thunk is annotated `receives logger` so it reads the (decorated) logger at
-      // call time rather than capturing the current one.
       val input = UserText(text, attachments)
-      val turn: () => Unit receives logger =
-        () => session.runTurn(input, sink, maxToolRounds = 50, maxRetries = 4)
-      Logging.withContext("context", Map("session" ~ session.id), turn)
+      session.runTurn(input, sink, maxToolRounds = 50, maxRetries = 4)
 
     py.list()
 
@@ -235,7 +227,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     val id = body.get("session", "").asString
 
     registryLock.acquire()
-    if registry.contains(id) then registry.get(id).cast[Session].stop.set()
+    if registry.contains(id) then registry.get(id).cast[Session].requestStop()
     registryLock.release()
 
     respondJson(startResp, py.dict("ok" ~ true))
@@ -316,7 +308,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     // document readers) are rooted per session. Uploads land there; agent output
     // surfaces there.
     val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(Session.dataDir(id)))
-    val session = new Session(id, Session.forSession(id), agent, memory, callCtx)
+    val session = new Session(id, Session.forSession(id), agent, memory, Session.memoryPath(id), callCtx)
 
     registryLock.acquire()
     registry.set(id, session)
@@ -339,7 +331,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
 
     case None =>
       val log = Session.forSession(id)
-      val memory = Memory.load(log.memoryPath)
+      val memory = Memory.load(Session.memoryPath(id))
       // `Session.load` caps the replayed transcript (a RAM backstop); the full
       // transcript stays on disk.
       val agent = new Agent:
@@ -351,7 +343,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
           initial = Session.load(id)
 
       val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(Session.dataDir(id)))
-      val session = new Session(id, log, agent, memory, callCtx)
+      val session = new Session(id, log, agent, memory, Session.memoryPath(id), callCtx)
 
       registryLock.acquire()
       val winner =
@@ -399,49 +391,46 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
   //]
   private def handleHistory(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
     val id = queryParam(environ, "session")
-    // Display reads the transcript archive (capped to the RAM backstop by
-    // `Session.load`; showing less than the full history is an accepted constraint),
-    // current since `commit` appends after each turn.
-    val msgs = Session.load(id)
+    val turns = Session.loadTurns(id)
     val dataDir = existingDataDir(id)
 
     val arr = py.list()
-    var steps = py.list()       // the current turn's {code, output} runCode steps
-    var pending = py.dict()     // runCode call id -> program, awaiting its result
-    var sent = py.list()        // the current turn's sendFile deliveries
-
-    for m in msgs do
-      if m is UserText(t, attachments) then
-        steps = py.list()       // a new turn begins
-        pending = py.dict()
-        sent = py.list()
+    for turn in turns do
+      if turn.user is UserText(t, attachments) then
         arr.append: py.dict("role" ~ "user", "text" ~ t, "attachments" ~ attachmentsToJson(attachments))
 
-      else if m is Assistant(t, calls) then
-        for c in calls if c.name == "runCode" do
-          pending.set(c.id, c.input.string("code"))
+      var steps = py.list()       // this turn's {code, output} runCode steps
+      var pending = py.dict()     // runCode call id -> program, awaiting its result
+      var sent = py.list()        // this turn's sendFile deliveries
+      var visibleText = ""         // assistant text across this turn's tool rounds
 
-        // Each `sendFile` the agent made becomes an attachment on the reply. A file
-        // that no longer resolves (bad name, or since removed) is still shown — as a
-        // `missing` card — because the delivery happened and is part of the dialog.
-        for c in calls if c.name == "sendFile" do
-          sent.append: sentFileJson(dataDir, c.input.string("fileName"))
+      for m in turn.messages do
+        if m is Assistant(t, calls) then
+          if t != "" then
+            if visibleText != "" then visibleText = visibleText + "\n\n"
+            visibleText = visibleText + t
 
-        // The turn's final reply (no tool calls) carries the steps run and the files
-        // delivered to produce it.
-        if calls.isEmpty && t != "" then
-          arr.append: py.dict("role" ~ "agent", "text" ~ t, "steps" ~ steps, "files" ~ sent)
-          steps = py.list()
-          sent = py.list()
+          for c in calls if c.name == "runCode" do
+            pending.set(c.id, c.input.string("code"))
 
-      else if m is ToolResults(results) then
-        for r in results if pending.contains(r.id) do
-          steps.append: py.dict("code" ~ pending.get(r.id).asString, "output" ~ r.content)
+          // Each `sendFile` the agent made becomes an attachment on the reply. A file
+          // that no longer resolves is still shown because the delivery happened.
+          for c in calls if c.name == "sendFile" do
+            sent.append: sentFileJson(dataDir, c.input.string("fileName"))
 
-    // The live turn state alongside the committed history: if a turn is in flight,
-    // the client renders its pending input and subscribes to follow it (a reconnect
-    // after refresh). The pending user message is not in the transcript yet — it is
-    // committed only when the turn completes.
+          if calls.isEmpty && visibleText != "" then
+            arr.append: py.dict("role" ~ "agent", "text" ~ visibleText, "steps" ~ steps, "files" ~ sent)
+
+        else if m is ToolResults(results) then
+          for r in results if pending.contains(r.id) do
+            steps.append: py.dict("code" ~ pending.get(r.id).asString, "output" ~ r.content)
+
+      if turn.result is Failed(detail) then
+        val message = if detail == "" then "Please try again." else detail
+        arr.append: py.dict("role" ~ "error", "text" ~ message)
+
+    // The live turn state alongside persisted history lets a reconnect subscribe
+    // to a turn that is still running.
     respondJson: startResp, py.dict("messages" ~ arr, "state" ~ stateToJson(residentState(id)))
 
   //[ The live turn state as JSON: `{active: false}` when idle, or `{active: true,
@@ -603,7 +592,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     ! the stored file's metadata. The name is sanitized and de-duplicated, so an
     ! upload can neither escape the session dir nor clobber an existing file.
   //]
-  private def handleUpload(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace, logger =
+  private def handleUpload(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
     val body = json.loads(readBody(environ)).cast[py.Dict]
     val reqId = body.get("session", "").asString
     val name = sanitizeName(body.get("name", "").asString)
@@ -665,20 +654,23 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     ! mints one (so a script written in a fresh chat gets a home), and the client
     ! adopts the returned id.
   //]
-  private def handleRun(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace, logger =
+  private def handleRun(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
     val body = json.loads(readBody(environ)).cast[py.Dict]
     val code = body.get("code", "").asString
     val reqId = body.get("session", "").asString
-    val sessionId = if reqId == "" then createSession().id else sanitizeName(reqId)
+    val requestedId = sanitizeName(reqId)
 
-    if code.trim == "" || sessionId == "" then
+    if code.trim == "" || (reqId != "" && requestedId == "") then
       respondJson: startResp, py.dict("error" ~ "empty program or session")
 
     else
-      val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(Session.dataDir(sessionId)))
+      val session = if reqId == "" then createSession() else openSession(requestedId)
+      val sessionId = session.id
       val outcome =
-        with callContext = callCtx, currentInteract = Interact.unattended in
-          runTool.run(ToolInput(py.dict("code" ~ code)))
+        with logger = session.log,
+             callContext = session.callCtx,
+             currentInteract = Interact.unattended
+        in runTool.run(ToolInput(py.dict("code" ~ code)))
       respondJson: startResp, py.dict("session" ~ sessionId, "result" ~ outcome.result, "summary" ~ outcome.summary)
 
   //[ Save a script into a session's files (overwriting a same-named one), so it can

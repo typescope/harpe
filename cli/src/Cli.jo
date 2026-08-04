@@ -17,18 +17,23 @@ namespace harpe.cli
 import harpe.ffi.glob
 import harpe.ffi.os
 import harpe.ffi.time
+import harpe.ffi.file
+import harpe.ffi.json
 
 import harpe.ffi.dotenv
 
 import jo.IO.stdout
 import harpe.*
-import harpe.logging.Logging
 import harpe.logging.JsonlLogger
+import harpe.logging.Entry
+import harpe.logging.entryFromDict
 import harpe.logging.logger
 import harpe.Model.UserText
+import harpe.Model.Message
 import harpe.tools.memoryTools
 import harpe.context.WindowedContext
 import harpe.turns.Answered
+import harpe.turns.Failed
 import harpe.turns.Interrupted
 
 //[ The entry point   //]
@@ -36,23 +41,24 @@ def main(): Unit receives stdout =
   if Defaults.checkAgentDir() then
     dotenv.load(".env")
     val wspace = new Workspace(os.path.abspath("."))
-    with workspace = wspace in
-      Logging.withLogger(new JsonlLogger(wspace.relative("logs/agent.jsonl")), () => runChat())
+    with workspace = wspace in runChat()
 
-private def runChat(): Unit receives stdout, workspace, logger =
+private def runChat(): Unit receives stdout, workspace =
   val inputHistory = workspace.relative("logs/inputs.txt")
   val interact = new Console(stdout, inputHistory)
   interact.init()
 
-  val sessionLog = chooseSession(resumeRequested())
-  val memory = Memory.load(sessionLog.memoryPath)
+  val sessionPath = chooseSession(resumeRequested())
+  val sessionLog = new JsonlLogger(sessionPath)
+  val memoryPath = Session.memoryPath(sessionPath)
+  val memory = Memory.load(memoryPath)
   val agent = new Agent:
     brain = Defaults.model()
     tools = Defaults.tools(610.0) ++ memoryTools(memory) ++ [runBashTool()]
     context = new WindowedContext:
       baseSystem = workspace.read("AGENT.md").getOrElse("")
       memory = memory
-      initial = SessionLog.loadFile(sessionLog.path)
+      initial = Session.load(sessionPath)
 
   // The per-turn tool context; constant for a CLI run (one local working dir).
   val data = workspace.relative("data")
@@ -69,21 +75,21 @@ private def runChat(): Unit receives stdout, workspace, logger =
     if userInput == "" then continue
 
     val userMsg = UserText(userInput, [])
-
     val res = interact.turn: (turnInteract: Interact) =>
-      with callContext = callCtx in
+      with logger = sessionLog, callContext = callCtx in
         agent.runTurn(userMsg, turnInteract, maxToolRounds = 50, maxRetries = 4)
 
-    if res is Answered(delta, text) then
-      sessionLog.append(time.now(), delta)
+    if res is Answered(text) then
       interact.agentResponse(text)
 
-    else
-      if res is Interrupted then println("  " + Style.warning("⎋ interrupted"))
-      else println("  " + Style.error("· request failed"))
+    else if res is Interrupted then
+      println("  " + Style.warning("⎋ interrupted"))
+    else if res is Failed(detail) then
+      val message = if detail == "" then "request failed" else "request failed: \{detail}"
+      println("  " + Style.error("· \{message}"))
 
     // Persist memory regardless of outcome (it is not rolled back with a turn).
-    if !memory.isEmpty then Memory.save(sessionLog.memoryPath, memory)
+    if !memory.isEmpty then Memory.save(memoryPath, memory)
   end
 
   sessionLog.close()
@@ -101,10 +107,19 @@ private def resumeRequested(): Bool =
 
 section Session
   //[ A new CLI session log, named from its start time. //]
-  def newLog(): SessionLog receives workspace =
-    val path =
-      workspace.relative(time.strftime("logs/sessions/%Y/%m/%d/%H-%M-%S") + ".jsonl")
-    new SessionLog(path)
+  def newLog(): String receives workspace =
+    workspace.relative(time.strftime("logs/sessions/%Y/%m/%d/%H-%M-%S") + ".jsonl")
+
+  def memoryPath(path: String): String =
+    path.substring(0, path.size - 6) + ".memory.json"
+
+  def load(path: String): List[Message] =
+    if !file.exists(path) then []
+    else
+      var entries: List[Entry] = []
+      for line in file.read(path).lines if line.trim != "" do
+        entries = entries + entryFromDict(json.loads(line).cast[py.Dict])
+      Transcript.fromEntries(entries)
 
   //[ Up to `limit` CLI session logs, newest first. //]
   def recentFiles(limit: Int): List[String] receives workspace =
@@ -128,7 +143,7 @@ end
 //[ Let an interactive user continue one of the five newest sessions. The normal
   ! startup path creates a fresh session without another prompt.
 //]
-private def chooseSession(resume: Bool): SessionLog receives stdout, workspace =
+private def chooseSession(resume: Bool): String receives stdout, workspace =
   val recent = Session.recentFiles(5)
   val interactive = py.module("sys").stdin.isatty().asBool
 
@@ -152,6 +167,6 @@ private def chooseSession(resume: Bool): SessionLog receives stdout, workspace =
       val path = recent.get(selected - 1)
       val relative = os.path.relpath(path, os.path.abspath("."))
       println(Style.success("Resuming") + " " + relative)
-      new SessionLog(path)
+      path
     else
       Session.newLog()

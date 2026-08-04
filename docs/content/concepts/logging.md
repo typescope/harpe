@@ -3,9 +3,8 @@ title = "Logging"
 +++
 Your agent keeps a **structured log**: one typed event per thing that happens —
 every `runCode` execution and every model call out of the box, plus anything you
-log from the tools you write. Each event is a record (typed fields, not free text)
-tagged with the session it came from, which makes it the raw material for usage
-reports, billing, and stats.
+log from the tools you write. Each event is a record with typed fields rather than
+free text, which makes it the raw material for usage reports, billing, and stats.
 
 *Where* those events go is not fixed. A `Logger` — the thing you install once —
 decides the format and the destination. The framework ships one that appends JSON
@@ -19,47 +18,51 @@ swap in your own `Logger` and the events are identical, only their storage chang
 The logging mechanism is built around three properties:
 
 - **Structural.** Every event is a typed record — a `category` and named fields,
-  not a formatted string. You *query and aggregate* it (per session, per category,
+  not a formatted string. Fields may contain scalars, arrays, or nested records.
+  You *query and aggregate* it (per session, per category,
   summing tokens) rather than grepping text.
 
 - **Extensible.** A new kind of event is a new category you emit. A new
   destination is a `Logger` you install. The two are independent and the wiring
   never grows — one channel carries everything, from `runCode` to your own tools.
 
-- **Contextual.** Every event is stamped automatically with the ambient context —
-  which session/chat produced it — so any slice ("this session's token usage")
-  falls straight out of the data.
+- **Contextual.** Applications using a shared destination can stamp events with
+  ambient context such as the session or chat that produced them. Applications
+  storing one file per session already carry that identity in the file path.
 
-## Where your events go (default)
+## Where your events go
 
-Out of the box the installed `Logger` is `JsonlLogger`, which appends every event
-as one JSON line to `logs/agent.jsonl` under your agent's working directory:
+The bundled drivers use `JsonlLogger` to append turn events to each session's log.
+The application owns the file layout. These examples use
+`logs/sessions/<session>.jsonl` as a representative path:
 
 ```json
-{"time":1720531200.4,"category":"harpe.tools.runCode","code":"…","compiled":true,"exitCode":0,"compileSeconds":1.2,"runSeconds":0.3,"output":"…","context":{"session":"20260709T101500-ab12"}}
+{"time":"2024-07-09T16:00:00.400000Z","category":"harpe.tools.runCode","code":"…","compiled":true,"exitCode":0,"compileSeconds":1.2,"runSeconds":0.3,"output":"…"}
 ```
 
 With events in a JSON file, read them with anything that speaks JSON — `jq` is quickest:
 
 ```sh
 # every runCode event, newest last
-jq 'select(.category=="harpe.tools.runCode")' logs/agent.jsonl
+jq 'select(.category=="harpe.tools.runCode")' logs/sessions/<session>.jsonl
 
 # just the failures
-jq 'select(.category=="harpe.tools.runCode" and .compiled==false)' logs/agent.jsonl
+jq 'select(.category=="harpe.tools.runCode" and .compiled==false)' logs/sessions/<session>.jsonl
 ```
 
-Wherever the events go, each has the same shape: a **`category`** (what kind
-of event), a **`time`**, the event's own fields, and a **`context`** identifying
-the session/chat it happened in. The two categories logged for you:
+Wherever the events go, each has the same shape: a **`category`**, a **`time`**,
+and the event's own fields. Shared destinations may additionally attach context.
+JSONL encodes `time` as an RFC 3339 UTC string. The backend-independent
+`Entry.time` remains epoch seconds, so database loggers can choose their native
+timestamp representation and indexes.
+The two categories logged for you:
 
 - **`harpe.tools.runCode`** — one per program the agent runs: `code`, `compiled`,
   `compileSeconds`, and — depending on the outcome — `runSeconds`, `exitCode`,
   `output`, or a `compileError`.
 - **`harpe.model`** — one per model call: `provider`, `model`, `inputTokens`,
   `outputTokens`. This is your token-usage feed for billing and auditing. It is
-  emitted by the built-in Anthropic/OpenAI models and tagged with the session that
-  made the call.
+  emitted by the built-in Anthropic/OpenAI models.
 
 ## Logging from your own tool
 
@@ -122,34 +125,26 @@ private def weatherCategory: String = "myagent.tools.weather"
 
 ## Reading and querying
 
-With the default JSON file, each event is one self-describing line, so ordinary
-tools answer most questions. (Point events at a database instead and you'd write
-the equivalent queries in SQL — same fields, same categories.) A few `jq` starting
-points:
+With JSONL storage, each event is one self-describing line, so ordinary tools
+answer most questions. A database backend supports equivalent queries over the
+same fields and categories. A few `jq` starting points:
 
 ```sh
-# tokens per session (the billing query)
+# token usage in one session
 jq -s 'map(select(.category=="harpe.model"))
-       | group_by(.context.session)
-       | map({session: .[0].context.session,
-              inTokens:  (map(.inputTokens)  | add),
-              outTokens: (map(.outputTokens) | add)})' logs/agent.jsonl
-
-# how many runs per session
-jq -s 'group_by(.context.session) | map({session: .[0].context.session, runs: length})' logs/agent.jsonl
+       | {inTokens: (map(.inputTokens) | add),
+          outTokens: (map(.outputTokens) | add)}' logs/sessions/<session>.jsonl
 
 # all warnings and errors, across every category
-jq 'select(has("warning") or has("error"))' logs/agent.jsonl
+jq 'select(has("warning") or has("error"))' logs/sessions/<session>.jsonl
 ```
 
 ## Sending logs somewhere else
 
-By default your driver installs `JsonlLogger`. To change where events go, edit the
-one line in your driver's entry point (`Cli.jo` / `Web.jo` / `Telegram.jo`) that
-constructs it:
+To change where session events go, change the logger selected by the driver:
 
 ```jo
-Logging.withLogger(new JsonlLogger(wspace.relative("logs/agent.jsonl")), () => serve())
+val sessionLog = new JsonlLogger(sessionPath)
 ```
 
 Swap `JsonlLogger` for any `Logger` — including one you write. A `Logger` implements
@@ -174,12 +169,12 @@ how to turn `entry.fields` (including nested maps) into JSON. You can also **wra
 
 ## Building usage, billing, and stats
 
-The log is a stream of typed events keyed by category and tagged with the session.
-Build reporting on it in one of two places.
+The log is a stream of typed events keyed by category. A shared log can additionally
+carry session context. Build reporting on it in one of two places.
 
-**Offline, over the stored events.** For dashboards, invoices, or audits, run `jq`
-(or any script) over `logs/agent.jsonl` — the queries above are the starting shapes.
-Group by `.context.session`, filter by `.category`, sum the fields you care about.
+**Offline, over the stored events.** For dashboards, invoices, or audits, process
+the stored session events with `jq` or another reporting tool. Filter by category
+and aggregate the fields you care about.
 
 **Live, as a wrapping `Logger`.** For real-time metering, wrap `JsonlLogger` in a
 `Logger` that tallies as events flow through, then delegates so they're still
@@ -235,8 +230,19 @@ end
 class Entry(time: Float, category: String, fields: Map[String, Value])
 ```
 
-Field values are `String`, `Int`, `Float`, `Bool`, or a nested `Map` of them — all
-written bare at the call site.
+Field values are `String`, `Int`, `Float`, `Bool`, `List[Value]`, or a nested
+`Map`. Scalars are written bare at the call site.
 
-The framework tags each turn's events with their session automatically (via
-`Logging.withContext`). You only need this if you write your own driver loop.
+Use `Logging.withContext` when several sessions share one logging destination.
+Per-session destinations do not need that redundant field.
+
+## Turn history and transcript loading
+
+Turn execution uses this same channel. There is no second session-journal API.
+The framework emits stable `harpe.turn.started`, `harpe.turn.message`, and
+terminal `harpe.turn.answered` / `interrupted` / `failed` categories.
+
+Applications decide how session events are stored and correlated. Producers emit
+through `logger` without depending on that policy. `Transcript.turns` projects an
+ordered event stream into structured turns and outcomes. `Transcript.fromEntries`
+derives the model's conversation history from that projection.

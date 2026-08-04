@@ -27,7 +27,10 @@ class RapidOcr
   view OCR
 
   def text(src: String): Result[String, String] =
-    orMessage: py.try(recognize(resolvePath(root, src)))
+    val real = resolvePath(root, src) rescue err: Err[String] => return err
+    orMessage:
+      py.try:
+        recognize(real)
 
   //[ Run the engine.
     !

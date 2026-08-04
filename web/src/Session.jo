@@ -5,11 +5,10 @@
   ! the workspace, one file per session, keyed by the id that also appears in its
   ! `/c/<id>` URL.
   !
-  ! This layout is a *driver* decision, kept out of the shared `harpe.SessionLog`
-  ! (which only owns the per-message record schema). The section maps an id to its
-  ! file (`forSession` to append, `load` to read back via `SessionLog.loadFile`) and
-  ! scans the directory to list past sessions for the picker. Ids are time-sortable,
-  ! so newest-first is just a reverse id sort.
+  ! This layout is a *driver* decision. The section maps an id to its structured
+  ! per-session log (`forSession`, while `load` and `loadTurns` derive its views)
+  ! and scans the directory to list past sessions for the picker. Ids are
+  ! time-sortable, so newest-first is just a reverse id sort.
 //]
 
 namespace harpe.web
@@ -28,9 +27,14 @@ import harpe.ApprovalCancelled
 import harpe.CallContext
 import harpe.callContext
 import harpe.Memory
-import harpe.SessionLog
+import harpe.Transcript
+import harpe.TurnData
 import harpe.workspace
+import harpe.logging.JsonlLogger
+import harpe.logging.Logger
 import harpe.logging.logger
+import harpe.logging.Entry
+import harpe.logging.entryFromDict
 import harpe.Model
 import harpe.Model.Message
 import harpe.Model.UserText
@@ -64,12 +68,12 @@ end
   ! A lock serializes turns within the session so its state stays consistent
   ! under concurrent requests.
 //]
-class Session(id: String, log: SessionLog, agent: Agent, memory: Memory, callCtx: CallContext)
+class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath: String, callCtx: CallContext)
   val lock = threading.lock()
 
   //[ Set (via `POST /api/stop`) to request cancellation of the running turn;
     ! the engine notices between model calls and tool executions. Cleared when
-    ! the next turn begins.
+    ! that turn becomes idle.
   //]
   val stop = threading.event()
 
@@ -188,8 +192,7 @@ class Session(id: String, log: SessionLog, agent: Agent, memory: Memory, callCtx
     ! other tabs may attach via `addSink`; all of them see the same stream. When the
     ! turn finishes, `idle` is set, which releases every subscriber.
   //]
-  def runTurn(input: UserText, initiatorSink: Sink, maxToolRounds: Int, maxRetries: Int): Unit receives logger =
-    stop.clear()
+  def runTurn(input: UserText, initiatorSink: Sink, maxToolRounds: Int, maxRetries: Int): Unit =
     lastActive = time.now()
 
     this.lock.acquire()
@@ -200,42 +203,52 @@ class Session(id: String, log: SessionLog, agent: Agent, memory: Memory, callCtx
     val emit: Sink = obj => this.broadcast(obj)
     val interact = new WebInteract(emit, this.stop, (id, request) => requestApproval(id, request))
 
-    with callContext = callCtx in
-      match agent.runTurn(input, interact, maxToolRounds, maxRetries)
-      case Answered(delta, answer) =>
-        this.commit(delta)
-        broadcast(py.dict("type" ~ "answer", "text" ~ answer))
+    val result = with logger = log, callContext = callCtx in
+      agent.runTurn(input, interact, maxToolRounds, maxRetries)
 
-      case Interrupted =>
-        this.rollback()
-        broadcast(py.dict("type" ~ "interrupted"))
+    match result
+    case Answered(answer) =>
+      this.commit()
+      broadcast(py.dict("type" ~ "answer", "text" ~ answer))
 
-      case Failed =>
-        this.rollback()
-        broadcast(py.dict("type" ~ "failed"))
+    case Interrupted =>
+      this.rollback()
+      broadcast(py.dict("type" ~ "interrupted"))
+
+    case Failed(detail) =>
+      this.rollback()
+      broadcast(py.dict("type" ~ "failed", "detail" ~ detail))
 
     removeSink(subId)
     state = Idle
+    stop.clear()
     idle.set()
     this.lock.release()
 
-  //[ Commit a completed turn: append the user message plus the turn's delta (the
-    ! engine-produced messages) to the transcript archive, and persist memory.
+  //[ Request cancellation only when this session has a turn in flight. //]
+  def requestStop(): Unit =
+    match state
+    case Active(_) => stop.set()
+    case Idle      => pass
+
+  //[ Commit a completed turn's working memory
+    !
+    ! Transcript entries have already flowed through the structured logger
+    ! channel.
   //]
-  private def commit(delta: List[Message]): Unit =
-    log.append(time.now(), delta)
+  private def commit(): Unit =
     saveMemory()
 
-  //[ Abandon a cancelled/failed turn: restore the context's pre-turn window.
+  //[ Finish a cancelled or failed turn
     ! Memory is still persisted — it is deliberate and not rolled back with the
-    ! transcript.
+    ! provisional assistant transcript. The engine retains the user message.
   //]
   private def rollback(): Unit =
     saveMemory()
 
   //[ Persist the working memory beside the transcript archive. //]
   private def saveMemory(): Unit =
-    if !memory.isEmpty then Memory.save(log.memoryPath, memory)
+    if !memory.isEmpty then Memory.save(memoryPath, memory)
 end
 
 //[ Lightweight metadata for one persisted session, used to populate the session
@@ -288,14 +301,32 @@ section Session
       files.sortBy(f => f.modified).reverse
 
   //[ An append log for this id's session (its file is created lazily). //]
-  def forSession(id: String): SessionLog receives workspace =
-    new SessionLog(sessionPath(id))
+  def forSession(id: String): Logger receives workspace =
+    new JsonlLogger(sessionPath(id))
+
+  def memoryPath(id: String): String receives workspace =
+    val path = sessionPath(id)
+    path.substring(0, path.size - 6) + ".memory.json"
 
   //[ Reconstruct this id's conversation from disk; `[]` if it has no file yet,
     ! so a freshly-minted (or unknown) id loads as an empty conversation.
   //]
   def load(id: String): List[Message] receives workspace =
-    SessionLog.loadFile(sessionPath(id))
+    Transcript.fromEntries(loadEntries(id))
+
+  //[ Reconstruct structured turns for application history. //]
+  def loadTurns(id: String): List[TurnData] receives workspace =
+    Transcript.turns(loadEntries(id))
+
+  //[ Decode this driver's per-session JSONL file. //]
+  private def loadEntries(id: String): List[Entry] receives workspace =
+    val path = sessionPath(id)
+    if !file.exists(path) then []
+    else
+      var entries: List[Entry] = []
+      for line in file.read(path).lines if line.trim != "" do
+        entries = entries + entryFromDict(json.loads(line).cast[py.Dict])
+      entries
 
   //[ The persisted sessions, newest first — id, title, and start time.
     !
@@ -325,7 +356,7 @@ section Session
       if s != "" then
         val d = json.loads(s).cast[py.Dict]
         if !sawFirst then
-          startTime = d.get("time", 0.0).asFloat
+          startTime = time.fromRfc3339(d.get("time", "").asString)
           sawFirst = true
 
         if title == "" && d.get("role", "").asString == "user" then

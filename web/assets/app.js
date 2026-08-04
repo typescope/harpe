@@ -23,6 +23,10 @@ var NEW_SCRIPT = 'namespace sandbox.guest\n\ndef runTask(): Unit =\n  println "h
 var NL = String.fromCharCode(10);
 var busy = false;
 var currentSession = null;
+var activeTurnSession = null;
+var turnConnected = false;
+var stopRequested = false;
+var stopSent = false;
 var sessionList = [];
 var pending = [];   // File objects staged for the next message (not yet uploaded)
 var approvalCards = {};
@@ -191,7 +195,15 @@ function fileKind(mime, name) {
   if (m.indexOf('pdf') >= 0 || ext === 'pdf') return 'pdf';
   if (m.indexOf('word') >= 0 || m.indexOf('wordprocessing') >= 0 || ext === 'doc' || ext === 'docx') return 'word';
   if (m.indexOf('excel') >= 0 || m.indexOf('spreadsheet') >= 0 || ext === 'xls' || ext === 'xlsx' || ext === 'csv') return 'excel';
-  if (ext === 'jo') return 'code';
+  if (m.indexOf('powerpoint') >= 0 || m.indexOf('presentation') >= 0 || ext === 'ppt' || ext === 'pptx') return 'presentation';
+  if (m.indexOf('text/html') >= 0 || ext === 'html' || ext === 'htm') return 'html';
+  if (m.indexOf('markdown') >= 0 || ext === 'md' || ext === 'markdown') return 'markdown';
+  if (m.indexOf('json') >= 0 || ext === 'json' || ext === 'jsonl') return 'json';
+  if (m.indexOf('zip') >= 0 || m.indexOf('compressed') >= 0 || /^(zip|tar|gz|tgz|bz2|xz|7z|rar)$/.test(ext)) return 'archive';
+  if (m.indexOf('audio/') === 0 || /^(mp3|wav|m4a|aac|flac|ogg|opus)$/.test(ext)) return 'audio';
+  if (m.indexOf('video/') === 0 || /^(mp4|webm|mov|mkv|avi|m4v)$/.test(ext)) return 'video';
+  if (/^(jo|js|jsx|ts|tsx|py|rb|rs|go|java|c|cc|cpp|h|hpp|css|scss|sql|sh|toml|ya?ml|xml)$/.test(ext)) return 'code';
+  if (m.indexOf('text/plain') >= 0 || ext === 'txt' || ext === 'log') return 'text';
   return 'file';
 }
 
@@ -213,9 +225,17 @@ function docGlyph(label, color) {
 }
 
 // A per-format icon: a distinct picture glyph for images; a colored, labeled
-// page for PDF/Word/Excel; a plain page for anything else.
-var FILE_COLORS = { pdf: '#e5484d', word: '#2b6cb0', excel: '#2f855a' };
-var FILE_LABELS = { pdf: 'PDF', word: 'DOC', excel: 'XLS' };
+// page for recognized document formats; a plain page for anything else.
+var FILE_COLORS = {
+  pdf: '#e5484d', word: '#2b6cb0', excel: '#2f855a',
+  presentation: '#b7791f', html: '#0891b2', markdown: '#4a5568',
+  json: '#6b46c1', archive: '#718096', audio: '#b83280', video: '#5a67d8', text: '#4a5568'
+};
+var FILE_LABELS = {
+  pdf: 'PDF', word: 'DOC', excel: 'XLS', presentation: 'PPT',
+  html: 'HTML', markdown: 'MD', json: 'JSON', archive: 'ZIP',
+  audio: 'AUD', video: 'VID', text: 'TXT'
+};
 
 function fileIcon(mime, name) {
   var kind = fileKind(mime, name);
@@ -716,9 +736,12 @@ function loadInfo() {
 // --- sessions: URL <-> conversation ---
 
 function appendMessage(role, text, attachments, steps, files) {
-  var row = addMessage(role, '');
+  var displayRole = role === 'error' ? 'agent' : role;
+  var row = addMessage(displayRole, '');
   var bubble = row.querySelector('.bubble');
-  if (role === 'agent') {
+  if (role === 'error') {
+    showTurnError(bubble, text);
+  } else if (role === 'agent') {
     var html = renderMarkdown(text);
     if (html === null) bubble.textContent = text; else bubble.innerHTML = html;
   } else {
@@ -835,6 +858,10 @@ function autoGrow() {
 
 function clearBusy() {
   busy = false;
+  activeTurnSession = null;
+  turnConnected = false;
+  stopRequested = false;
+  stopSent = false;
   sendBtn.classList.remove('stop');
   sendBtn.setAttribute('aria-label', 'Send');
 }
@@ -875,8 +902,10 @@ function send() {
     input.focus();
     loadSessions();
     refreshFiles(false);   // update the list + badge; don't change open state
-    // Re-render this turn from the transcript so its code trace folds in.
-    if (currentSession) loadHistory(currentSession, true); else scrollDown();
+    // Re-render successful turns so their code trace folds in. A failed turn has
+    // no assistant transcript message, so keep its streamed error visible.
+    if (currentSession && !bubble.classList.contains('error')) loadHistory(currentSession, true);
+    else scrollDown();
   }
 
   uploadAll(files).then(function (uploaded) {
@@ -921,13 +950,18 @@ function readStream(resp, bubble, statusText, onDone) {
 // POST one message and render its progress/answer stream into `bubble`.
 function streamTurn(text, attachments, bubble, statusText, finish) {
   var body = { text: text, attachments: attachments || [] };
-  if (currentSession) body.session = currentSession;
+  if (currentSession) {
+    body.session = currentSession;
+    activeTurnSession = currentSession;
+  }
 
   return fetch('/api/message', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   }).then(function (resp) {
+    turnConnected = true;
+    sendStopIfReady();
     return readStream(resp, bubble, statusText, finish);
   }).catch(function () {
     statusText.textContent = 'connection error';
@@ -943,6 +977,7 @@ function reconnect(id, state, seq) {
   appendMessage('user', state.text || '', state.attachments);
 
   busy = true;
+  activeTurnSession = id;
   sendBtn.classList.add('stop');
   sendBtn.setAttribute('aria-label', 'Stop');
 
@@ -958,15 +993,19 @@ function reconnect(id, state, seq) {
   function finish() {
     status.remove();
     clearBusy();
-    // Render the committed result (with its code trace, or drop a turn that ended
-    // interrupted); if the user navigated elsewhere meanwhile, leave their view.
-    if (seq === loadSeq) loadHistory(id, true);
+    // Preserve a streamed failure. It has no assistant transcript message and
+    // would otherwise disappear as soon as history is reloaded.
+    if (seq === loadSeq && !bubble.classList.contains('error')) loadHistory(id, true);
     loadSessions();
     refreshFiles(false);   // a reconnected turn may have produced files
   }
 
   fetch('/api/subscribe?session=' + encodeURIComponent(id))
-    .then(function (resp) { return readStream(resp, bubble, statusText, finish); })
+    .then(function (resp) {
+      turnConnected = true;
+      sendStopIfReady();
+      return readStream(resp, bubble, statusText, finish);
+    })
     .catch(function () { status.remove(); clearBusy(); });
 }
 
@@ -977,7 +1016,9 @@ function reconnect(id, state, seq) {
 function handle(ev, bubble, statusText) {
   if (ev.type === 'session') {
     currentSession = ev.id;
+    activeTurnSession = ev.id;
     history.pushState({}, '', '/c/' + ev.id);
+    sendStopIfReady();
   } else if (ev.type === 'status') {
     statusText.textContent = ev.label;
   } else if (ev.type === 'tool') {
@@ -986,21 +1027,38 @@ function handle(ev, bubble, statusText) {
     showApproval(ev, bubble, statusText);
   } else if (ev.type === 'approval-ended') {
     finishApproval(ev.id, ev.decision);
+  } else if (ev.type === 'assistant-message') {
+    appendAgentText(bubble, ev.text);
   } else if (ev.type === 'answer') {
-    var html = renderMarkdown(ev.text);
-    if (html === null) bubble.textContent = ev.text;
-    else bubble.innerHTML = html;
+    appendAgentText(bubble, ev.text);
   } else if (ev.type === 'error') {
-    bubble.classList.add('error');
-    bubble.textContent = ev.detail;
+    showTurnError(bubble, ev.detail);
   } else if (ev.type === 'interrupted') {
     bubble.classList.add('notice');
     bubble.textContent = 'Stopped.';
   } else if (ev.type === 'failed') {
-    bubble.classList.add('error');
-    bubble.textContent = 'request failed';
+    showTurnError(bubble, ev.detail || 'Please try again.');
   }
   scrollDown();
+}
+
+function appendAgentText(bubble, text) {
+  if (!text) return;
+  var previous = bubble.dataset.agentText || '';
+  var combined = previous ? previous + '\n\n' + text : text;
+  bubble.dataset.agentText = combined;
+  var html = renderMarkdown(combined);
+  if (html === null) bubble.textContent = combined;
+  else bubble.innerHTML = html;
+}
+
+function showTurnError(bubble, detail) {
+  bubble.classList.add('error');
+  bubble.innerHTML = '';
+  var disclosure = el('details', 'turn-error');
+  disclosure.appendChild(el('summary', 'error-title', 'Request failed'));
+  disclosure.appendChild(el('div', 'error-detail', detail));
+  bubble.appendChild(disclosure);
 }
 
 function showApproval(ev, bubble, statusText) {
@@ -1077,11 +1135,17 @@ function finishApproval(id, decision) {
 // server to cancel the session's turn (takes effect at the next model/tool
 // boundary; the stream then ends with an "interrupted" event).
 function stopTurn() {
-  if (!currentSession) return;
+  stopRequested = true;
+  sendStopIfReady();
+}
+
+function sendStopIfReady() {
+  if (!stopRequested || stopSent || !turnConnected || !activeTurnSession) return;
+  stopSent = true;
   fetch('/api/stop', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session: currentSession })
+    body: JSON.stringify({ session: activeTurnSession })
   });
 }
 

@@ -10,13 +10,14 @@
 namespace harpe.logging
 
 import harpe.ffi.builtins
+import harpe.ffi.time
 
 //[ An entry as a JSON-able dict: `time`, `category`, then its fields (each `Value`
   ! unwrapped to its underlying host value; a nested map becomes a nested object).
 //]
 def entryDict(entry: Entry): py.Dict =
-  val d = py.dict("time" ~ entry.time, "category" ~ entry.category)
-  for k ~ v in entry.fields.toList do d.set(k, unwrap(v))
+  val d = py.dict("time" ~ time.toRfc3339(entry.time), "category" ~ entry.category)
+  for k ~ v in entry.fields.toList do d.set(k, valueToJson(v))
   d
 
 //[ The inverse of `entryDict`: rebuild an `Entry` from a decoded JSON dict, its
@@ -24,45 +25,54 @@ def entryDict(entry: Entry): py.Dict =
   ! records on the host.
 //]
 def entryFromDict(d: py.Dict): Entry =
-  val time     = d.get("time", 0.0).asFloat
+  val timestamp = time.fromRfc3339(d.get("time", "").asString)
   val category = d.get("category", "").asString
 
   var fields = Map.empty[String, Value]
   for k in py.iter(d.keys()) do
     val key = k.asString
     if key != "time" && key != "category" then
-      fields = fields.add(key, jsonToValue(d.get(key)))
+      fields = fields.add(key, valueFromJson(d.get(key)))
 
-  new Entry(time, category, fields)
+  new Entry(timestamp, category, fields)
 
 //[ A field value as its underlying host value — the inverse of the `Value`
   ! adapters. A nested map becomes a nested JSON object.
 //]
-private def unwrap(v: Value): Any =
+def valueToJson(v: Value): Any =
   match v
   case s: String  => s
   case f: Float   => f
   case IntVal(n)  => n
   case BoolVal(b) => b
 
+  case xs: List[Value] =>
+    val list = py.list()
+    for x in xs do list.append(valueToJson(x))
+    list
+
   case m: Map[String, Value] =>
     val d = py.dict()
-    for k ~ vv in m.toList do d.set(k, unwrap(vv))
+    for k ~ vv in m.toList do d.set(k, valueToJson(vv))
     d
 
 //[ A decoded JSON value as a `Value`. `bool` is checked before `int` (Python's
   ! `bool` is an `int` subclass), so `true`/`false` never decode as `1`/`0`.
 //]
-private def jsonToValue(obj: py.Dynamic): Value =
+def valueFromJson(obj: py.Dynamic): Value =
   match builtins.typeName(obj)
   case "bool"  => BoolVal(obj.asBool)
   case "int"   => IntVal(obj.asInt)
   case "float" => obj.asFloat
+  case "list"  =>
+    var list: List[Value] = []
+    for x in obj.cast[py.List] do list = list + valueFromJson(x)
+    list
 
   case "dict"  =>
     var m = Map.empty[String, Value]
     val d = obj.cast[py.Dict]
-    for k in py.iter(d.keys()) do m = m.add(k.asString, jsonToValue(d.get(k)))
+    for k in py.iter(d.keys()) do m = m.add(k.asString, valueFromJson(d.get(k)))
     m
 
   case _ => obj.asString

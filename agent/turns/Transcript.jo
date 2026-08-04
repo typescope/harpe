@@ -1,0 +1,159 @@
+//[ Transcript.jo
+  !
+  ! The backend-independent representation of a conversation in the structured
+  ! event stream. Writers emit through the ambient `Logger`. Readers fold decoded
+  ! `Entry` values into structured turns, then derive model history from them.
+//]
+
+namespace harpe
+import harpe.ffi.time
+import harpe.util.truncate
+import harpe.Model.*
+import harpe.Tool.*
+import harpe.logging.*
+import harpe.turns.*
+
+class TurnData(user: Message, messages: List[Message], result: TurnResult | None)
+
+section Transcript
+  def maxResumeChars: Int = 1000000
+
+  def start(message: Message): Unit receives logger =
+    emit("harpe.turn.started", message)
+
+  def append(message: Message): Unit receives logger =
+    emit("harpe.turn.message", message)
+
+  def commit(): Unit receives logger = logger.log("harpe.turn.answered")
+  def interrupted(): Unit receives logger = logger.log("harpe.turn.interrupted")
+  def failed(detail: String = ""): Unit receives logger =
+    if detail == "" then logger.log("harpe.turn.failed")
+    else logger.error("harpe.turn.failed", detail)
+
+  private def emit(category: String, message: Message): Unit receives logger =
+    logger.logEntry(new Entry(time.now(), category, messageFields(message)))
+
+  //[ Project decoded entries into turns
+    !
+    ! Each turn keeps its user message and terminal outcome. Assistant and tool
+    ! messages are retained only for answered turns. Unknown categories are
+    ! ignored, and a start without a terminal event has no result.
+  //]
+  def turns(entries: List[Entry]): List[TurnData] =
+    var turns: List[TurnData] = []
+    var user: Option[Message] = None
+    var pending: List[Message] = []
+
+    for entry in entries do
+      if entry.category == "harpe.turn.started" then
+        match user
+        case Some(message) => turns = turns + TurnData(message, [], None)
+        case None          => pass
+
+        user = Some(messageFromDict(entryDict(entry)))
+        pending = []
+
+      else if entry.category == "harpe.turn.message" && user is Some(_) then
+        pending = pending + messageFromDict(entryDict(entry))
+
+      else if entry.category == "harpe.turn.answered" then
+        var answer = ""
+        for message in pending do
+          if message is Assistant(text, calls) && calls.isEmpty then answer = text.trim
+        match user
+        case Some(message) => turns = turns + TurnData(message, pending, Answered(answer))
+        case None          => pass
+        user = None
+        pending = []
+
+      else if entry.category == "harpe.turn.failed" then
+        val detail = entryDict(entry).get("error", "").asString
+        match user
+        case Some(message) => turns = turns + TurnData(message, [], Failed(detail))
+        case None          => pass
+        user = None
+        pending = []
+
+      else if entry.category == "harpe.turn.interrupted" then
+        match user
+        case Some(message) => turns = turns + TurnData(message, [], Interrupted)
+        case None          => pass
+        user = None
+        pending = []
+
+    match user
+    case Some(message) => turns = turns + TurnData(message, [], None)
+    case None          => pass
+
+    turns
+
+  //[ Derive model history from structured turns
+    !
+    ! User messages survive every outcome. Only answered turns contribute their
+    ! assistant and tool messages. The resume cap drops whole oldest turns.
+  //]
+  def fromEntries(entries: List[Entry]): List[Message] =
+    var messages: List[Message] = []
+    for turn in turns(entries) do
+      messages = messages + turn.user
+      if turn.result is Answered(_) then messages = messages ++ turn.messages
+    truncate(messages, maxResumeChars)
+
+  private def messageFields(message: Message): Map[String, Value] =
+    val d = messageDict(message)
+    var fields = Map.empty[String, Value]
+    for k in py.iter(d.keys()) do fields = fields.add(k.asString, valueFromJson(d.get(k)))
+    fields
+
+  private def messageDict(message: Message): py.Dict =
+    match message
+    case UserText(text, attachments) =>
+      py.dict("role" ~ "user", "text" ~ text, "attachments" ~ attachmentsDict(attachments))
+    case Assistant(text, calls) =>
+      val list = py.list()
+      for call in calls do
+        list.append(py.dict("id" ~ call.id, "name" ~ call.name, "input" ~ call.input.raw))
+      py.dict("role" ~ "assistant", "text" ~ text, "calls" ~ list)
+    case ToolResults(results) =>
+      val list = py.list()
+      for result in results do
+        list.append(py.dict("id" ~ result.id, "content" ~ result.content,
+                            "media" ~ attachmentsDict(result.media)))
+      py.dict("role" ~ "tool_results", "results" ~ list)
+
+  private def attachmentsDict(attachments: List[Attachment]): py.List =
+    val list = py.list()
+    for a in attachments do
+      list.append(py.dict("name" ~ a.name, "size" ~ a.size, "mime" ~ a.mime, "inline" ~ a.inline))
+    list
+
+  private def attachmentsFrom(list: py.List): List[Attachment] =
+    var attachments: List[Attachment] = []
+    for item in list do
+      val a = item.cast[py.Dict]
+      attachments = attachments + Attachment(a.get("name", "").asString, a.get("size", 0).asInt,
+                                               a.get("mime", "").asString, a.get("inline", false).asBool)
+    attachments
+
+  private def messageFromDict(d: py.Dict): Message =
+    val role = d.get("role", "").asString
+    if role == "user" then
+      UserText(d.get("text", "").asString, attachmentsFrom(d.get("attachments", py.list()).cast[py.List]))
+    else if role == "assistant" then
+      var calls: List[ToolCall] = []
+      for item in d.get("calls", py.list()).cast[py.List] do
+        val c = item.cast[py.Dict]
+        calls = calls + ToolCall(c.get("id", "").asString, c.get("name", "").asString,
+                                ToolInput(c.get("input", py.dict()).cast[py.Dict]))
+      Assistant(d.get("text", "").asString, calls)
+    else
+      var results: List[ToolResult] = []
+      for item in d.get("results", py.list()).cast[py.List] do
+        val r = item.cast[py.Dict]
+        val toolResult = ToolResult:
+          r.get("id", "").asString
+          r.get("content", "").asString
+          attachmentsFrom(r.get("media", py.list()).cast[py.List])
+        results = results + toolResult
+      ToolResults(results)
+end

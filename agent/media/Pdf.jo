@@ -25,8 +25,11 @@ class PdfiumReader(root: String)
   view PdfReader
 
   def open(src: String): Result[PDF, String] =
-    orMessage(py.try(pdfiumMod.PdfDocument(resolvePath(root, src)))).map: doc =>
-      new PdfImpl(doc, root)
+    val real = resolvePath(root, src) rescue err: Err[String] => return err
+    val opened = orMessage:
+      py.try:
+        pdfiumMod.PdfDocument(real)
+    opened.map: doc => new PdfImpl(doc, root)
 end
 
 //[ The open document: a parsed pypdfium2 `PdfDocument` plus the root for
@@ -92,17 +95,18 @@ private class PdfImpl(doc: py.Dynamic, root: String)
 
   def pageImage(page: Int, target: String, scale: Int = 2): Result[ImageSize, String] =
     checkPage(page)
-    orMessage: py.try(render(page, target, scale))
+    val real = resolvePath(root, target) rescue err: Err[String] => return err
+    orMessage:
+      py.try:
+        render(page, real, scale)
 
   def close(): Unit =
     match py.try(doc.close())
     case Ok(_)  => pass
     case Err(_) => pass
 
-  private def render(page: Int, target: String, scale: Int): ImageSize =
+  private def render(page: Int, realTarget: String, scale: Int): ImageSize =
     val image = doc.get_page(page - 1).render(scale).to_pil()
-
-    val realTarget = resolvePath(root, target)
     os.makedirs(os.path.dirname(realTarget))
     image.save(realTarget)
     new ImageSize(image.width.asInt, image.height.asInt)

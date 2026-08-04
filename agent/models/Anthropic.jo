@@ -179,11 +179,12 @@ private def parseReply(response: py.Dynamic): Assistant =
   else
     new Assistant(text.trim, calls)
 
-private class AnthropicModel(client: py.Dynamic, model: String, cache: AnthropicCache)
+private class AnthropicModel(
+    client: py.Dynamic, model: String, cache: AnthropicCache, extraBody: py.Dict)
   view Model
 
-  def startTurn(base: Rendered): Turn receives callContext =
-    new AnthropicTurn(client, model, cache, base, callContext.getOrElse("HARPE_DATA_DIR", ""))
+  def startTurn(base: Rendered): Session =
+    new AnthropicSession(client, model, cache, extraBody, base)
 end
 
 //[ A reasoning-preserving turn on the Messages API.
@@ -195,15 +196,23 @@ end
   ! rejected. `parseReply` still extracts only text + tool calls for the engine —
   ! the reasoning rides in the wire history, never in the semantic `Message`.
 //]
-private class AnthropicTurn(client: py.Dynamic, model: String, cache: AnthropicCache, base: Rendered, dataDir: String)
-  view Turn
+private class AnthropicSession(
+    client: py.Dynamic, model: String, cache: AnthropicCache,
+    extraBody: py.Dict, base: Rendered)
+  view Session
 
-  // The wire messages, accumulated across the turn: seeded from the base
-  // transcript (cache-annotated), then grown with raw tool_result and assistant
-  // turns. Reassigned only on success, so a retry re-sends the same round.
-  private var messages: py.List = toMessages(base.messages, cache, dataDir)
+  // The wire messages, accumulated across the turn. They are seeded lazily on
+  // the first reply, when the session's data directory is available, then grown
+  // with raw tool_result and assistant turns.
+  private var messages: py.List = py.list()
+  private var initialized: Bool = false
 
   def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger, callContext =
+    val dataDir = callContext.getOrElse("HARPE_DATA_DIR", "")
+    if !initialized then
+      messages = toMessages(base.messages, cache, dataDir)
+      initialized = true
+
     val toolSpecs = py.list()
     for t in tools do toolSpecs.append(toolSpec(t))
 
@@ -223,7 +232,14 @@ private class AnthropicTurn(client: py.Dynamic, model: String, cache: AnthropicC
     if base.transient != "" then
       outgoing.append(py.dict("role" ~ "user", "content" ~ base.transient))
 
-    val attempt = anthropicCreate(client, model, cache, base.system, outgoing, toolSpecs)
+    val attempt = anthropicCreate:
+      client
+      model
+      cache
+      base.system
+      outgoing
+      toolSpecs
+      extraBody
 
     match attempt
     case Ok(response) =>
@@ -275,7 +291,7 @@ private def toolResultMessage(results: List[ToolResult], dataDir: String): py.Di
 //]
 private def anthropicCreate(
     client: py.Dynamic, model: String, cache: AnthropicCache,
-    system: String, messages: py.List, toolSpecs: py.List)
+    system: String, messages: py.List, toolSpecs: py.List, extraBody: py.Dict)
 : Result[py.Dynamic, py.Error] =
   if cache is NoCache then
     py.try:
@@ -286,6 +302,7 @@ private def anthropicCreate(
         system = system
         messages = messages
         tools = toolSpecs
+        extra_body = extraBody
   else
     py.try:
       client.messages.create:
@@ -295,6 +312,7 @@ private def anthropicCreate(
         system = py.list(py.dict("type" ~ "text", "text" ~ system, "cache_control" ~ cache.toDict))
         messages = messages
         tools = toolSpecs
+        extra_body = extraBody
 
 
 //[ Build an Anthropic-backed model from an API key, model id, and cache policy.
@@ -303,5 +321,16 @@ private def anthropicCreate(
   ! disabled (`max_retries = 0`): the turn engine owns the retry/backoff policy,
   ! and hidden SDK retries would silently multiply it.
 //]
-def anthropic(apiKey: String, model: String, cache: AnthropicCache): Model =
-  new AnthropicModel(py.module("anthropic").Anthropic(api_key = apiKey, timeout = 600.0, max_retries = 0), model, cache)
+def anthropic(
+    apiKey: String,
+    model: String,
+    cache: AnthropicCache,
+    timeoutSeconds: Int = 10,
+    extraBody: py.Dict = py.none)
+: Model =
+  val body = if py.isNone(extraBody) then py.dict() else extraBody
+  val client = py.module("anthropic").Anthropic:
+    api_key = apiKey
+    timeout = timeoutSeconds
+    max_retries = 0
+  new AnthropicModel(client, model, cache, body)

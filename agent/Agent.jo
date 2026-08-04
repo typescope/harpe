@@ -6,12 +6,10 @@
   ! transcript policy — see `harpe.context`), and its **turn policy** (the
   ! tool-round budget).
   !
-  ! What is deliberately NOT the agent: session lifecycle (persistence, locks,
-  ! delta archiving) and presentation (spinners, streams, chat actions) — those
-  ! belong to the drivers. The engine performs no I/O of its own and is provider-
-  ! and UI-agnostic: every user-visible moment is reported through the injected
-  ! `interact` handler, and the model call itself is issued through
-  ! `interact.ask`, so cancellation machinery stays with the driver.
+  ! What is deliberately NOT the agent: session storage layout, locks, and
+  ! presentation (spinners, streams, chat actions) — those belong to the drivers.
+  ! The engine emits lifecycle/transcript entries through the ordinary logger
+  ! channel, but knows nothing about their destination.
 //]
 
 namespace harpe
@@ -45,10 +43,12 @@ section Agent
     ! The `context` owns the transcript: the engine appends each assistant reply
     ! and tool-result batch to it, and asks it to compose `(system, messages)`
     ! before every model request. The caller appends the turn's `UserText` (after
-    ! `context.mark()`) before calling; on `Answered` it receives the turn's
-    ! delta to archive, on interruption/failure it calls `context.rollback()`.
+    ! `context.mark()`) before calling. Structured transcript events use the
+    ! ambient logger.
+    ! On interruption/failure the provisional assistant/tool tail is rolled back,
+    ! while the user's message remains in the context.
     !
-    ! A turn is bounded to `maxToolRounds` tool-call rounds; once spent the model
+    ! A turn is bounded to `maxToolRounds` tool-call rounds. Once spent the model
     ! is asked once more with no tools, forcing a final answer. `maxRetries` is
     ! transport policy — how often a transient model error is retried — so it is
     ! an argument, not part of the agent.
@@ -58,17 +58,17 @@ section Agent
       interact: Interact, maxToolRounds: Int, maxRetries: Int)
   : TurnResult receives logger, callContext =
 
-    var delta: List[Message] = [userMsg]
     var rounds = 0
-    var result: TurnResult = Failed
+    var result: TurnResult = Failed("")
 
     context.mark()
     context.append(userMsg)
+    Transcript.start(userMsg)
 
-    // Compose what the model sees ONCE, at the turn's start. The Turn then owns
+    // Compose what the model sees ONCE, at the turn's start. The Session then owns
     // the intra-turn tail; the engine feeds it tool results and never re-renders.
     val rendered = context.render(interact)
-    val turn = brain.startTurn(rendered)
+    val session = brain.startTurn(rendered)
 
     // Tool results to hand the model on the next round ([] for the first request).
     var pending: List[ToolResult] = []
@@ -77,6 +77,8 @@ section Agent
       if interact.cancelled then
         result = Interrupted
         context.rollback()
+        context.append(userMsg)
+        Transcript.interrupted()
         break
 
       // Once the tool budget is spent, offer no tools so the model must reply with
@@ -86,25 +88,33 @@ section Agent
       if rounds == maxToolRounds then
         interact.emit: ToolBudgetReached(maxToolRounds)
 
-      match fetchReply(turn, pending, offer, maxRetries, interact)
+      match fetchReply(session, pending, offer, maxRetries, interact)
         case Stopped =>
           result = Interrupted
           context.rollback()
+          context.append(userMsg)
+          Transcript.interrupted()
           break
 
-        case GaveUp =>
-          result = Failed
+        case GaveUp(detail) =>
+          result = Failed(detail)
           context.rollback()
+          context.append(userMsg)
+          Transcript.failed(detail)
           break
 
         case Got(reply, usage) =>
           context.observe(usage)
           context.append(reply)
-          delta = delta + reply
+          Transcript.append(reply)
 
           if reply.calls.isEmpty then
-            result = Answered(delta, reply.text.trim)
+            result = Answered(reply.text.trim)
+            Transcript.commit()
             break
+
+          if reply.text.trim != "" then
+            interact.emit: AssistantMessage(reply.text.trim)
 
           var toolResults: List[ToolResult] = []
           var cancelled = false
@@ -130,13 +140,15 @@ section Agent
 
           if cancelled || interact.cancelled then
             context.rollback()
+            context.append(userMsg)
             result = Interrupted
+            Transcript.interrupted()
             break
 
           else
             val results = ToolResults(toolResults)
             context.append(results)
-            delta = delta + results
+            Transcript.append(results)
             pending = toolResults
             rounds = rounds + 1
     end // while
@@ -150,7 +162,7 @@ end
 //]
 private union Fetched =
     Got(message: Assistant, usage: Usage)
-  | GaveUp
+  | GaveUp(detail: String)
   | Stopped
 
 //[ Exponential backoff between retries: 1s, 2s, 4s, … capped at 30s.  //]
@@ -170,15 +182,16 @@ private def backoffSeconds(attempt: Int): Float =
   ! A `None` from `ask` (a cancelled request), or interrupt firing during a
   ! backoff wait, ends the attempt.
   !
-  ! Progress and errors are reported through `interact.emit`.
+  ! Progress is reported through `interact.emit`. A terminal error is returned as
+  ! `Failed(detail)`.
 //]
 private def fetchReply(
-    turn: Turn, results: List[ToolResult], tools: List[Tool],
+    session: Session, results: List[ToolResult], tools: List[Tool],
     maxRetries: Int, interact: Interact)
-: Fetched =
+: Fetched receives logger, callContext =
 
   var attempt = 0
-  var outcome: Fetched = GaveUp
+  var outcome: Fetched = GaveUp("")
 
   while true do
     if interact.cancelled then
@@ -187,9 +200,9 @@ private def fetchReply(
 
     interact.emit: ModelRequestStarted(attempt, maxRetries)
 
-    // `reply` is idempotent — the Turn commits `results` only on success, so
+    // `reply` is idempotent — the Session commits `results` only on success, so
     // every attempt (including retries) passes the same `results`.
-    val res = turn.reply(results, tools)
+    val res = session.reply(results, tools)
 
     interact.emit: ModelRequestEnded
 
@@ -203,19 +216,20 @@ private def fetchReply(
         break
 
       case Fatal(detail) =>
-        interact.emit: RequestFailed(detail)
-        outcome = GaveUp
+        logger.error("harpe.model.request", detail)
+        outcome = GaveUp(detail)
         break
 
       case Transient(detail) =>
         attempt = attempt + 1
         if attempt > maxRetries then
-          interact.emit: RetriesExhausted(detail, maxRetries)
-          outcome = GaveUp
+          logger.error("harpe.model.request", detail, "retries" ~ maxRetries)
+          outcome = GaveUp(detail)
           break
 
         else
           val delay = backoffSeconds(attempt)
+          logger.warn("harpe.model.request", detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
           interact.emit: TransientError(detail, delay)
           // pause returns true if cancellation fired during the backoff.
           if interact.pause(delay) then

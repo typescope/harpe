@@ -12,7 +12,7 @@ namespace harpe
 import harpe.Model.Message
 import harpe.Model.Rendered
 import harpe.Model.ReplyResult
-import harpe.Model.Turn
+import harpe.Model.Session
 import harpe.Tool
 import harpe.Tool.ToolResult
 import harpe.Tool.ToolCall
@@ -22,27 +22,24 @@ import harpe.logging.logger
   !
   ! The agent's brain. `startTurn` begins one user turn, seeded ONCE with the
   ! `base` context (system prompt + transcript + transient tail) the `Context`
-  ! composed for the user's message. The returned `Turn` drives that turn's tool
+  ! composed for the user's message. The returned `Session` drives that turn's tool
   ! loop; the engine never re-renders `base` for it.
   !
   ! Why a per-turn object rather than a stateless `reply`: a reasoning model must
   ! carry provider-specific state — thinking-block handles, a server-side response
   ! id — ACROSS the turn's tool round-trips, but that state is opaque, non-portable,
-  ! and load-bearing only within the turn. Keeping it in the `Turn` means `Message`,
+  ! and load-bearing only within the turn. Keeping it in the `Session` means `Message`,
   ! `Context`, and the audit log stay uniform and never learn reasoning exists.
-  !
-  ! `receives callContext`: a provider render needs the session's data directory
-  ! (`HARPE_DATA_DIR`) to resolve an inline attachment's bytes (see `Attachment`).
 //]
 interface Model
-  def startTurn(base: Rendered): Turn receives callContext
+  def startTurn(base: Rendered): Session
 end
 
 section Model
   //[ Message
     !
     ! One entry in the conversation, as the loop sees it — independent of any
-    ! provider's wire format. `Assistant` is also what a `Turn.reply` returns.
+    ! provider's wire format. `Assistant` is also what a `Session.reply` returns.
     !
     ! A `UserText` carries `attachments`: files the user shared this turn, which
     ! live in the agent's data directory. Their bytes are NOT in the transcript —
@@ -123,38 +120,38 @@ section Model
     | Transient(detail: String)
     | Fatal(detail: String)
 
-  //[ Turn
+  //[ Session
     !
-    ! One user turn in progress — the model's stateful driver for it. The engine
-    ! calls `reply` once per model round: first with no tool results (the initial
-    ! request), then with the results of the tools the previous reply requested.
-    ! The Turn owns the intra-turn tail (the growing assistant/tool-result
+    ! The model-side session for one user turn in progress. The engine
+    ! first calls `reply` with no tool results, then calls it again with the
+    ! results of any tools requested by the previous reply.
+    ! The session owns the intra-turn tail (the growing assistant/tool-result
     ! sequence and any provider reasoning state); the engine feeds it results and
     ! reads back the reply, but never re-composes the base.
     !
     ! `reply` `receives logger` — read at call time — so a provider can emit its
     ! token usage to the turn's logging context (see `harpe.models.logUsage`).
-    ! `receives callContext` for the same reason `Model.startTurn` does — resolving
-    ! an inline attachment's bytes.
+    ! `receives callContext` lets the provider resolve inline attachment bytes
+    ! from the session's data directory.
     !
     ! Retry contract: `reply` is IDEMPOTENT. `results` are committed to the tail
     ! only on a successful `Reply` (atomically with the assistant message), so a
     ! transport retry passes the SAME `results` again and simply re-sends — a
     ! failed attempt mutates nothing. The caller never tracks what it committed.
   //]
-  interface Turn
+  interface Session
     def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger, callContext
 
-  //[ SimpleTurn
+  //[ SimpleSession
     !
-    ! A `Turn` for providers with no intra-turn state to preserve: it accumulates
+    ! A `Session` for providers with no intra-turn state to preserve: it accumulates
     ! the turn's tail as plain `Message`s and re-sends the whole conversation on
     ! every reply. `send` does the provider's wire encoding and the actual call.
     ! Providers that carry intra-turn state (e.g. reasoning handles) implement
-    ! `Turn` directly instead.
+    ! `Session` directly instead.
   //]
-  class SimpleTurn(base: Rendered, send: (Rendered, List[Tool]) => ReplyResult receives logger, callContext)
-    view Turn
+  class SimpleSession(base: Rendered, send: (Rendered, List[Tool]) => ReplyResult receives logger, callContext)
+    view Session
 
     private var messages: List[Message] = base.messages
 

@@ -2,7 +2,7 @@
 title = "Build Your First Agent"
 +++
 Harpe agents act by writing typed Jo programs. The `hello` template strips that
-idea down to the smallest useful application so you can inspect the whole path
+idea down to the smallest program so you can inspect the whole path
 from a message to compiled code.
 
 ## Create the project
@@ -14,9 +14,10 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Set either `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in `.env`.
+Set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY` in `.env`.
+OpenRouter also requires `MODEL`.
 
-The project is intentionally small:
+The project contains only:
 
 ```text
 my-agent/
@@ -32,8 +33,7 @@ my-agent/
 ```
 
 The interaction is intentionally primitive—no spinner, cancellation, sessions,
-or media—so you can see the essential agent loop in `Main.jo`. Use the CLI,
-web, or Telegram template as the starting point for a more user-friendly agent.
+or media—so you can see the essential agent loop in `Main.jo`.
 
 ## Run it
 
@@ -61,21 +61,38 @@ Open `src/Main.jo`. It assembles the entire agent:
 ```jo
 val agent = new Agent:
   brain = Defaults.model()
-  tools = [runCodeTool(workspace.sandboxDir, 610.0)]
+  tools = [runCodeTool(workspace.sandboxDir, approvalDeadline = 610.0)]
   context = new FullContext:
     baseSystem = workspace.read("AGENT.md").getOrElse("")
-    memory = memory
+    memory = new Memory
     initial = []
 ```
 
 The rest of the file reads terminal input, passes it to `agent.runTurn`, and
-prints the answer. `SimpleInteract` implements the small interface through
-which the engine reports turn events and asks whether a turn was cancelled.
-The learning template ignores events and always answers “not cancelled.” The
-CLI template provides the full terminal behavior.
+prints the answer.
 
-Nothing in this application is special configuration. It is Jo source copied
-into your project, and you are expected to change it.
+`SimpleInteract` implements the interface through which the engine reports turn
+events and asks whether a turn was cancelled:
+
+```jo
+private class SimpleInteract
+  view Interact
+
+  def cancelled: Bool = false
+
+  def pause(seconds: Float): Bool =
+    py.module("time").sleep(py.dynamic(seconds))
+    false
+
+  def approve(id: String, request: ApprovalRequest): ApprovalDecision =
+    ApprovalCancelled
+
+  def emit(event: harpe.turns.TurnEvent): Unit = pass
+end
+```
+
+This implementation ignores events, never cancels a turn, and does not approve
+consequential operations.
 
 ## Inspect the sandbox
 
@@ -91,44 +108,18 @@ defer def runTask(): Unit receives stdout
 ```
 
 The only granted capability is `stdout`. A generated program can calculate and
-print, but it cannot access ambient files, the network, a shell, or your model
-key. If it names an unavailable capability, compilation fails before anything
-runs.
+print, but it cannot access ambient files, the network, or a shell. If it names
+an unavailable capability, compilation fails before anything runs.
 
 `SandboxRuntime.jo` is trusted application code. It supplies the capabilities
-declared by the API and calls the generated implementation. `Task.jo` is the
-build-time placeholder that proves the sandbox links. For each real tool call,
-`runCode` compiles the model's program in a temporary directory without
-modifying your project file.
+declared by the API. `Task.jo` is the build-time placeholder that proves the
+sandbox links. For each real tool call, `runCode` compiles the LLM-generated
+program in a temporary directory without modifying your project file.
 
 This API/runtime/guest dependency boundary is Harpe's core security mechanism.
 The [sandbox concept guide](/concepts/sandbox/) explains the compiler guarantee.
-The [defense-in-depth guide](/guides/defense-in-depth/) adds OS-level
-confinement.
-
-## Change its behavior
-
-Edit `AGENT.md`:
-
-```markdown
-# Hello
-
-You are a cheerful mathematics tutor.
-Explain the result in one or two sentences.
-Use `runCode` whenever a calculation would make the answer more reliable.
-```
-
-Restart `jo start`. The application code and authority are unchanged, but the
-agent now has different standing instructions.
-
-When you add a real capability, you widen `SandboxAPI.jo` deliberately and
-supply its implementation in `SandboxRuntime.jo`. The compiler then makes that
-new boundary apply to every program the model writes.
 
 ## Build a complete application
-
-The other templates use the same engine and sandbox, with production-oriented
-application code around them:
 
 - [Create a CLI agent](/tutorial/create-cli-agent/) — terminal history,
   cancellation, memory, skills, and audit logs.

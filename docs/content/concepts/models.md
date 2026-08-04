@@ -1,143 +1,209 @@
 +++
 title = "Models"
 +++
-A model is the agent's brain — the LLM that drives each user turn. It is a thin,
-provider-agnostic interface: given the composed prompt and the tools on offer, it
-produces the assistant's next message (or a typed error), round after round, until
-the turn is done. The loop owns the conversation history across turns. A model only
-drives **one turn at a time**. That's why Anthropic, OpenAI, and a keyless dummy all
-sit behind the same `Model`.
+The model is the agent's brain. It interprets context, chooses tools, and
+produces answers. Harpe exposes models through a provider-independent interface,
+so the rest of the agent does not depend on a provider's wire protocol.
 
-## Configuring the built-in model
+Harpe separates a reusable `Model` from the model-side state of an active user
+turn. `startTurn` creates that state from rendered context and returns it as a
+`Model.Session`. The object exists only to continue model requests across tool
+calls. It does not run the turn, own the conversation, or persist its history.
+The agent runs the turn. Conversation history across turns remains in its
+[Context](/concepts/context/).
 
-The usual case needs no code — the shipped model is selected by environment
-variables (put them in your agent's `.env`):
+## Model and per-turn state
 
-- **`ANTHROPIC_API_KEY`** / **`OPENAI_API_KEY`** — sets *and* selects the provider:
-  `OPENAI_API_KEY` selects OpenAI, otherwise `ANTHROPIC_API_KEY` selects Anthropic
-  (OpenAI wins if both are set). Setting neither fails fast at startup.
-- **`MODEL`** — the model id. Defaults to `claude-opus-4-6` (Anthropic) or `gpt-5.6`
-  (OpenAI).
-- **`OPENAI_BASE_URL`** — optional. OpenAI uses the Responses API. Set this only to
-  reach another Responses-API endpoint (Azure OpenAI, a proxy). Third-party
-  chat/completions endpoints (Groq, Together, llama.cpp) are not supported.
-- **`REASONING_EFFORT`** — reasoning effort: `medium` (default), `low`, `high`, or
-  `none` to disable reasoning (needed for a non-reasoning model like `gpt-4o`).
-- **`PROMPT_CACHE`** — Anthropic prompt caching: `5m` (default), `1h`, or `off`.
-  (OpenAI caches long prefixes on its own. This is ignored there.)
+```jo
+interface Model
+  def startTurn(base: Rendered): Model.Session
 
-So a `.env` of
+section Model
+  interface Session
+    def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult
+        receives logger, callContext
+  end
+end
+```
+
+Here, a **user turn** means the complete exchange from one user message to the
+agent's final answer, including any tool calls. `Model.Session` is the model
+adapter's state during that exchange, not an application or conversation
+session. It may make several model API calls while the agent uses tools.
+
+`startTurn` is called once with the system prompt, conversation history, and
+transient context. The agent calls `reply` again whenever it has tool results to
+return to the model. Each call receives those results and the tools available
+for the next response.
+
+A `Model.Session` may keep provider-specific continuation state such as reasoning
+handles or a server-side response ID. That state lasts only for the current
+user turn and does not leak into the provider-independent transcript.
+
+The result of each `reply` call is explicit:
+
+```jo
+union ReplyResult =
+    Reply(message: Assistant, usage: Usage)
+  | Transient(detail: String)
+  | Fatal(detail: String)
+```
+
+The model classifies failures. The core decides whether and when to retry them.
+`reply` is idempotent, so a failed attempt does not commit tool results or mutate
+the turn.
+
+Each successful reply includes provider-reported input and output token counts.
+Harpe emits them through the [Logger](/concepts/logging/) and makes the usage
+available to context strategies.
+
+## Built-in models
+
+Harpe includes Anthropic, OpenAI, OpenRouter, OpenAI-compatible servers, and a
+keyless `echo` model for testing. `Defaults.model()` selects and constructs a
+hosted provider from environment variables. OpenAI takes precedence, followed
+by OpenRouter and Anthropic.
+
+> **Local models:** Call `openai(...)` with `compatible = true` for servers such
+> as vLLM, SGLang, llama.cpp, and Ollama.
+
+| Variable | Purpose |
+|---|---|
+| `ANTHROPIC_API_KEY` | Select and authenticate Anthropic |
+| `OPENAI_API_KEY` | Select and authenticate OpenAI |
+| `OPENROUTER_API_KEY` | Select and authenticate OpenRouter |
+| `MODEL` | Override the provider's default model ID |
+| `PROMPT_CACHE` | Set Anthropic prompt caching to `5m`, `1h`, or `off` |
+| `OPENAI_BASE_URL` | Use another Responses API endpoint, such as Azure OpenAI or a proxy |
+
+The default model IDs are `claude-opus-4-6` for Anthropic and `gpt-5.6` for
+OpenAI. OpenRouter requires an explicit `MODEL`. If no API key is set, startup
+fails.
 
 ```sh
 MODEL=claude-opus-4-6
 ANTHROPIC_API_KEY=sk-…
 ```
 
-is a complete model configuration.
+### Open-weight models
 
-## Overriding it in code
+OpenRouter gives Harpe access to open-weight models from multiple providers. Set
+one OpenRouter API key and choose a model from its
+[model catalog](https://openrouter.ai/models):
 
-The model is chosen once, at startup, in your driver:
-
-```jo
-val brain = Defaults.model()   // env-selected (above)
+```sh
+OPENROUTER_API_KEY=sk-or-…
+MODEL=provider/model-name
 ```
 
-Replace that with any `Model`. Build one explicitly, or use the keyless
-`echo()` to exercise the loop without an API key:
+The OpenRouter adapter uses its stateless Responses API. It preserves raw
+reasoning and tool-call items locally, then resends the complete turn whenever
+it returns tool results to the model.
+
+### Local inference servers
+
+Open-weight models can run behind a local inference server. The main choices
+serve different deployment scales:
+
+| Server | Best fit | API and agent features |
+|---|---|---|
+| [vLLM](https://docs.vllm.ai/en/stable/serving/online_serving/) | High-throughput GPU serving, from one GPU to distributed deployments | Chat Completions and Responses APIs, structured output, tool calling, reasoning parsers, prefix caching, speculative decoding, and tensor, pipeline, data, or expert parallelism |
+| [SGLang](https://docs.sglang.ai/basic_usage/openai_api_completions.html) | High-throughput GPU serving with aggressive prefix reuse and distributed execution | Chat Completions API, structured output, model-specific tool and reasoning parsers, speculative decoding, and tensor, data, or expert parallelism |
+| [llama.cpp](https://github.com/ggml-org/llama.cpp/tree/master/tools/server) | Laptops, workstations, edge devices, and CPU or mixed CPU/GPU inference | Quantized GGUF models, Chat Completions and Responses APIs, tool calling, structured output, speculative decoding, and parallel requests |
+| [Ollama](https://docs.ollama.com/api/openai-compatibility) | Simple local installation and model management | Chat Completions and a stateless Responses API with tools and reasoning summaries |
+
+For a GPU service handling concurrent users, start with vLLM or SGLang and
+benchmark both on the target model and hardware. Their performance depends on
+the model architecture, request lengths, concurrency, quantization, and
+parallelism settings. For a developer workstation or CPU-heavy deployment,
+llama.cpp is usually the more direct serving layer. Ollama adds convenient
+model download and lifecycle management around local inference.
+
+Compatibility mode supports servers that expose an OpenAI-compatible Chat
+Completions API. Pass the server's base URL. The adapter keeps accepted messages
+and tool results in `Model.Session`:
 
 ```jo
-import harpe.models.echo
-import harpe.models.anthropic
-import harpe.models.FiveMinutes
+val brain = openai:
+  ""
+  "org/model-name"
+  baseUrl = "http://localhost:8000/v1"
+  compatible = true
+```
 
+The first argument is an API key. Pass an empty string when the server does not
+require authentication.
+
+The adapter supports messages, images, function tools, tool results, and token
+usage. Within a turn it preserves the provider's complete raw assistant messages,
+so extension fields such as `reasoning`, `reasoning_content`, and
+`reasoning_details` survive tool calls without entering Harpe's transcript.
+
+The `openai`, `openrouter`, and `anthropic` constructors accept `extraBody` for
+provider-specific request fields. Each adapter forwards it through its native
+SDK on every request path. For `openai`, this works in both Responses and
+compatible Chat Completions modes. For example, NVIDIA Nemotron reasoning can
+be configured with:
+
+```jo
+val brain = openai:
+  nvidiaApiKey
+  "nvidia/nemotron-3-ultra-550b-a55b"
+  baseUrl = "https://integrate.api.nvidia.com/v1"
+  compatible = true
+  timeoutSeconds = 120
+  extraBody = py.dict:
+    "reasoning_effort" ~ "high"
+    "reasoning_budget" ~ 16384
+    "chat_template_kwargs" ~ py.dict(
+      "enable_thinking" ~ true,
+      "force_nonempty_content" ~ true
+    )
+```
+
+## Selecting a model in code
+
+The shipped applications construct the model at startup:
+
+```jo
+val brain = Defaults.model()
+```
+
+You can instead construct a provider explicitly or use `echo()` without an API
+key:
+
+```jo
+val brain = anthropic(apiKey, "claude-opus-4-6", FiveMinutes)
+val brain = openai(apiKey, "gpt-5.6", reasoningEffort = "high")
+val brain = openrouter(apiKey, "provider/model-name", reasoningEffort = "high")
+val brain = openai("", "org/model-name", "http://localhost:8000/v1", compatible = true)
 val brain = echo()
-
-// or a fixed provider/model, bypassing the env selection:
-val brain = anthropic(getenv("ANTHROPIC_API_KEY", ""), "claude-opus-4-6", FiveMinutes)
 ```
 
-The builders are `anthropic(apiKey, model, cache)`, `openai(apiKey, model, baseUrl)`
-(pass `""` for the default endpoint), and `echo()`. `Defaults.model()` is
-`receives IO.stdout` because it may print and exit on a missing key — that check
-belongs at startup, not inside a request.
+Model constructors use a 10-second HTTP request timeout by default. Applications
+that expect longer generations can set `timeoutSeconds` explicitly.
 
-## The turn contract
+A model can be shared across sessions. Each call to `startTurn` creates the
+state isolated to one user turn.
 
-A model drives one turn in two steps: the loop composes the request once with
-`startTurn`, then asks the returned `Turn` for a reply each round.
+## Custom models
 
-```jo
-interface Model
-  def startTurn(base: Rendered): Turn
-
-interface Turn
-  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger
-```
-
-- **`startTurn(base)`** — called once, at the turn's start. `base` is a `Rendered`
-  (`system` prompt, the transcript `messages`, and a `transient` tail — composed by
-  the [Context](/concepts/context/)). The returned `Turn` drives this turn.
-- **`reply(results, tools)`** — called once per model round: first with no tool
-  results, then with the results of the tools the previous reply requested, plus the
-  tools on offer this round. It returns a `ReplyResult`:
-
-  ```jo
-  union ReplyResult =
-      Reply(message: Assistant, usage: Usage)   // the next message + token counts
-    | Transient(detail: String)                 // retryable: rate limit, 5xx, blip
-    | Fatal(detail: String)                      // not retryable: auth, bad request
-  ```
-
-`reply` is **idempotent**: results are committed only on a successful `Reply`, so
-the loop safely retries a failed round without duplicating them. The model
-**classifies** a failure. The loop owns the **policy**. `Transient` is retried with
-exponential backoff (up to the configured limit), `Fatal` gives up the turn. A model
-never retries internally.
-
-`Usage(inputTokens, outputTokens)` rides on every `Reply`. The loop logs it as the
-`harpe.model` event (see [logging](/concepts/logging/)) and feeds `inputTokens` to the
-Context, so a token-budget strategy sizes on the provider's exact count.
-
-## Writing your own model
-
-Most providers have no state to carry between rounds — they just re-send the
-conversation each time. For those, return the built-in **`SimpleTurn`** from
-`startTurn` and give it a `send` function that converts one request to your wire
-format, calls the API, and converts the reply back:
+Implement `Model` for another provider or a locally deployed model. Use
+`SimpleSession` when each `reply` call can resend the accumulated conversation
+without keeping additional provider state:
 
 ```jo
-class MyModel(client: py.Dynamic, model: String)
+class MyModel(client: Client)
   view Model
 
-  def startTurn(base: Rendered): Turn =
-    new SimpleTurn(base, (rendered, tools) => send(client, model, rendered, tools))
-
-private def send(
-    client: py.Dynamic, model: String, rendered: Rendered, tools: List[Tool])
-: ReplyResult receives logger =
-  match py.try(callProvider(client, rendered, tools))
-  case Ok(response) =>
-    val u = response.usage
-    Reply(parse(response), new Usage(u.input.asInt, u.output.asInt))
-  case Err(err) =>
-    classify(err)   // → Transient or Fatal
+  def startTurn(base: Rendered): Model.Session =
+    new SimpleSession(base, (rendered, tools) => send(client, rendered, tools))
+end
 ```
 
-`SimpleTurn` accumulates the turn's tool results and re-sends the whole conversation
-each round, so `send` only ever handles a single request. If your provider must
-carry state across a turn's rounds — most commonly a **reasoning** model keeping its
-chain of thought through the tool loop (see [Reasoning](/concepts/reasoning/)) —
-implement `Turn` directly instead and hold that state in the `Turn` object.
+Implement `Model.Session` directly when the provider carries state between
+`reply` calls. The built-in Anthropic and OpenAI implementations do this to
+preserve [reasoning](/concepts/reasoning/) state.
 
-Things to get right:
-
-- **Classify failures** into `Transient` (worth a retry) vs `Fatal` (not), and let
-  the engine handle backoff — don't retry inside the model.
-- **Report usage** in the returned `Usage`. Call `logUsage(provider, model, in, out)`
-  if you want the `harpe.model` log event too.
-- **Read `logger` live** — `reply` is `receives logger` (not captured at
-  construction), so its logs land in the current turn's context.
-
-`Echo.jo` is the minimal reference (a `SimpleTurn`). `Anthropic.jo` and `OpenAI.jo`
-implement `Turn` directly to preserve reasoning across the tool loop.
+A custom implementation must translate Harpe messages and tools to the provider
+protocol, classify failures as `Transient` or `Fatal`, and report token usage.

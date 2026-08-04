@@ -20,6 +20,9 @@ import harpe.models.echo
 import harpe.Model.*
 import harpe.Tool.*
 import harpe.logging.logger
+import harpe.logging.Logger
+import harpe.logging.Entry
+import harpe.logging.entryDict
 
 
 // A reply carrying only text (no tool calls).
@@ -36,8 +39,7 @@ private def eventTag(e: TurnEvent): String =
   case ModelRequestStarted(_, _) => "start"
   case ModelRequestEnded         => "end"
   case TransientError(_, _)      => "transient"
-  case RequestFailed(_)          => "failed"
-  case RetriesExhausted(_, _)    => "exhausted"
+  case AssistantMessage(text)    => "assistant:\{text}"
   case ToolBudgetReached(_)      => "budget"
   case ToolCallStarted(n)        => "tool+\{n}"
   case ToolCallEnded(n, _)       => "tool-\{n}"
@@ -45,9 +47,9 @@ private def eventTag(e: TurnEvent): String =
 
 private def resultTag(r: TurnResult): String =
   match r
-  case Answered(_, text) => "Answered(\{text})"
+  case Answered(text) => "Answered(\{text})"
   case Interrupted       => "Interrupted"
-  case Failed            => "Failed"
+  case Failed(detail)    => "Failed(\{detail})"
 
 private def joinPy(xs: py.List): String =
   var s = ""
@@ -66,6 +68,45 @@ private def echoTool(): Tool =
 // `runSafely` and keep the turn going.
 private def boomTool(): Tool =
   Tool("boom", "always throws", [], input => abort "kaboom")
+
+private class CaptureLogger
+  view Logger
+
+  var events: List[String] = []
+
+  def logEntry(entry: Entry): Unit =
+    if entry.category == "harpe.turn.message" then
+      val d = entryDict(entry)
+      val role = d.get("role", "").asString
+      if role == "assistant" && d.get("calls", py.list()).cast[py.List].size > 0 then
+        events = events + "assistant-calls"
+      else if role == "assistant" then
+        events = events + "assistant-text"
+      else
+        events = events + role
+    else
+      events = events + entry.category
+
+  def close(): Unit = pass
+end
+
+private def loggingTool(): Tool =
+  Tool:
+    "logged"
+    "logs when invoked"
+    []
+    input =>
+      logger.log("tool-invoked")
+      new RunOutcome("done", "logged · ran", [])
+
+private def failingLoggingTool(): Tool =
+  Tool:
+    "logged"
+    "logs and then fails"
+    []
+    input =>
+      logger.log("tool-failed")
+      abort "tool failure"
 
 // Interrupt fakes — no threads, no real sleeping, so the engine's cancellation
 // paths are testable deterministically.
@@ -157,7 +198,19 @@ def run(): Unit receives stdout, logger, callContext =
       maxRetries = 4
       model = base => (results, tools) => Fatal("bad key")
       state = live
-    expected = "Failed | start,end,failed"
+    expected = "Failed(bad key) | start,end"
+
+  // A failed turn retains its user message in the live context. Only the
+  // provisional assistant/tool tail is rolled back.
+  val failedContext = new WindowedContext("", new Memory, [])
+  val failedAgent = new Agent(base => (results, tools) => Fatal("bad key"), tools, failedContext)
+  val failedInteract = new TestInteract(live)
+  val failedResult = failedAgent.runTurn(UserText("keep me", []), failedInteract, 50, 4)
+  val failedMessages = failedContext.render(failedInteract).messages
+  check:
+    "D failed user retained"
+    "\{resultTag(failedResult)} | \{failedMessages.size} | \{msgTag(failedMessages.get(0))}"
+    "Failed(bad key) | 1 | user"
 
   // Transient with no retry budget (maxRetries=0) gives up immediately — no
   // backoff wait.
@@ -169,7 +222,7 @@ def run(): Unit receives stdout, logger, callContext =
       maxRetries = 0
       model = base => (results, tools) => Transient("rate limited")
       state = live
-    expected = "Failed | start,end,exhausted"
+    expected = "Failed(rate limited) | start,end"
 
   // Transient once, then success: exercises the backoff + retry path. With a
   // fake Interrupt, `pause` returns instantly — no real 1s wait.
@@ -223,27 +276,51 @@ def run(): Unit receives stdout, logger, callContext =
     scenario: [boomTool()], 50, 4, askJ, live
     expected = "Answered(recovered) | start,end,tool+boom,tool-boom,start,end"
 
-  // The turn's delta carries exactly the engine-produced messages, in order:
-  // assistant tool-call, tool results, final assistant text.
+  // The assistant message containing a tool call must be durable before the tool
+  // begins. The tool marker and transcript records share one logger, making their
+  // order observable without relying on wall-clock time.
   val askK: Model = base =>
-    val stepK = py.list(0)
+    val step = py.list(0)
     (results, tools) =>
-      val n = stepK.get(0).asInt
-      stepK.set(0, n + 1)
-      if n == 0 then toolReply("echo") else textReply("done")
+      val n = step.get(0).asInt
+      step.set(0, n + 1)
+      if n == 0 then toolReply("logged") else textReply("done")
 
-  val ctxK = new WindowedContext("", new Memory, [])
-  val agentK = new Agent(askK, tools, ctxK)
-  val resK = agentK.runTurn(UserText("dummy text", []), new TestInteract(live), 50, 4)
-
-  var deltaShape = ""
-
-  if resK is Answered(delta, _) then
-    for m in delta do
-      if deltaShape != "" then deltaShape = deltaShape + ","
-      deltaShape = deltaShape + msgTag(m)
+  val capture = new CaptureLogger
+  val agentK = new Agent(askK, [loggingTool()], new WindowedContext("", new Memory, []))
+  with logger = capture in
+    val _ = agentK.runTurn(UserText("dummy text", []), new TestInteract(live), 50, 4)
 
   check:
-    "K delta-shape"
-    deltaShape
-    expected = "user,calls,results,text"
+    "K message-logged-before-tool"
+    capture.events.join(",")
+    expected = "harpe.turn.started,assistant-calls,tool-invoked,tool_results,assistant-text,harpe.turn.answered"
+
+  // A tool exception must not erase the assistant message that requested it.
+  // `runSafely` converts the exception into tool results and the turn continues.
+  val captureFailure = new CaptureLogger
+  val agentL = new Agent(askK, [failingLoggingTool()], new WindowedContext("", new Memory, []))
+  with logger = captureFailure in
+    val _ = agentL.runTurn(UserText("dummy text", []), new TestInteract(live), 50, 4)
+
+  check:
+    "L message-kept-when-tool-fails"
+    captureFailure.events.join(",")
+    expected = "harpe.turn.started,assistant-calls,tool-failed,tool_results,assistant-text,harpe.turn.answered"
+
+  // Visible assistant text accompanying a tool request reaches the interaction
+  // before the tool starts.
+  val askM: Model = base =>
+    val step = py.list(0)
+    (results, tools) =>
+      val n = step.get(0).asInt
+      step.set(0, n + 1)
+      if n == 0 then
+        val call = ToolCall("id", "echo", ToolInput(py.dict()))
+        Reply(Assistant("I will check.", [call]), new Usage(0, 0))
+      else textReply("Done.")
+
+  check:
+    "M assistant-text-before-tool"
+    scenario: tools, 50, 4, askM, live
+    expected = "Answered(Done.) | start,end,assistant:I will check.,tool+echo,tool-echo,start,end"

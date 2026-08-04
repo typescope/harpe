@@ -15,7 +15,8 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in `.env`, then start it:
+Set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY` in `.env`,
+then start it. OpenRouter also requires `MODEL`:
 
 ```sh
 jo start
@@ -33,30 +34,9 @@ jo resume
 The CLI lists the five newest sessions. Enter a number to restore its
 conversation and memory. Press Enter to start a new session.
 
-## Make the first change
-
-Replace the first paragraph of `AGENT.md` with:
-
-```markdown
-# Release Assistant
-
-You help developers prepare software releases. Keep answers concise and always
-end with the next concrete action.
-```
-
-Restart `jo start` and ask:
-
-```text
-You ▸ I need to release version 1.2.0.
-```
-
-The reply should now follow the role and response style you wrote. This is the
-fastest customization loop: edit the instructions, restart, and try a real
-request.
-
 ## What to customize
 
-The generated project is ordinary Jo source:
+The project structure:
 
 ```text
 my-agent/

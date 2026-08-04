@@ -15,11 +15,13 @@ import harpe.ffi.builtins
 //[ Validate and resolve a relative path against the real `root`.
   !
   ! This is the single trusted I/O gate used by every local media implementation.
+  ! An invalid guest path is returned as `Err` and propagated by the capability
+  ! operation. It never aborts the generated program.
 //]
-def resolvePath(root: String, path: String): String =
+def resolvePath(root: String, path: String): Result[String, String] =
   match FileSystem.validate(path)
-  case None        => if path == "" then root else os.path.join(root, path)
-  case Some(error) => abort "invalid path '\{path}': \{error}"
+  case None        => Ok(if path == "" then root else os.path.join(root, path))
+  case Some(error) => Err("invalid path '\{path}': \{error}")
 
 //[ Map a caught Python error to its message.
   !
@@ -53,21 +55,26 @@ class FileSystemImpl
 
   view FileSystem
 
-  def exists(path: String): Bool = os.path.exists(resolvePath(realRoot, path))
+  def exists(path: String): Bool =
+    val real = resolvePath(realRoot, path) rescue Err(_) => return false
+    os.path.exists(real)
 
-  def isFile(path: String): Bool = os.path.isfile(resolvePath(realRoot, path))
+  def isFile(path: String): Bool =
+    val real = resolvePath(realRoot, path) rescue Err(_) => return false
+    os.path.isfile(real)
 
-  def stat(path: String): Option[FileInfo] =
-    val real = resolvePath(realRoot, path)
-
-    if !os.path.exists(real) then None
-    else
-      val info = new FileInfo(os.path.isfile(real), os.path.getsize(real), os.path.getmtime(real).toInt)
-      Some(info)
+  def stat(path: String): Result[Option[FileInfo], String] =
+    resolvePath(realRoot, path).map: real =>
+      if !os.path.exists(real) then None
+      else
+        val info = new FileInfo(os.path.isfile(real), os.path.getsize(real), os.path.getmtime(real).toInt)
+        Some(info)
 
   def list(dir: String): Result[List[DirEntry], String] =
-    val real = resolvePath(realRoot, dir)
+    val real = resolvePath(realRoot, dir) rescue err: Err[String] => return err
+    listResolved(dir, real)
 
+  private def listResolved(dir: String, real: String): Result[List[DirEntry], String] =
     if !os.path.isdir(real) then Err("not a directory: '\{dir}'")
     else
       val names: py.List = os.listdir(real)
@@ -79,7 +86,8 @@ class FileSystemImpl
       while i >= 0 do
         val name = names.get(i).asString
         val child = if dir == "" then name else dir + "/" + name
-        result = result.prepend(new DirEntry(child, os.path.isdir(resolvePath(realRoot, child))))
+        val realChild = if dir == "" then os.path.join(realRoot, name) else os.path.join(real, name)
+        result = result.prepend(new DirEntry(child, os.path.isdir(realChild)))
         i = i - 1
 
       Ok(result)
@@ -91,16 +99,25 @@ class FileSystemImpl
   def openBinaryFile(path: String): Result[BinaryFile, String] =
     openHandle(path).map: handle => new BinaryFileImpl(handle)
 
-  def writeTextFile(file: String, content: String): Unit =
-    val real = resolvePath(realRoot, file)
-    ensureParent(real)
+  def writeText(path: String, content: String): Result[Unit, String] =
+    val real = resolvePath(realRoot, path) rescue err: Err[String] => return err
+    orMessage:
+      py.try:
+        writeTextResolved(real, content)
 
+  private def writeTextResolved(real: String, content: String): Unit =
+    ensureParent(real)
     val handle = py.open(real, "w")
     handle.write(content)
     handle.close()
 
-  def createBinaryFile(path: String): BinaryFile =
-    val real = resolvePath(realRoot, path)
+  def createBinaryFile(path: String): Result[BinaryFile, String] =
+    val real = resolvePath(realRoot, path) rescue err: Err[String] => return err
+    orMessage:
+      py.try:
+        createBinaryResolved(real)
+
+  private def createBinaryResolved(real: String): BinaryFile =
     ensureParent(real)
     new BinaryFileImpl(py.open(real, "w+b"))
 
@@ -110,10 +127,12 @@ class FileSystemImpl
     ! catches the rest (permissions, races).
   //]
   private def openHandle(path: String): Result[py.Dynamic, String] =
-    val real = resolvePath(realRoot, path)
-
+    val real = resolvePath(realRoot, path) rescue err: Err[String] => return err
     if !os.path.isfile(real) then Err("no such file: '\{path}'")
-    else orMessage: py.try(py.open(real, "r+b"))
+    else
+      orMessage:
+        py.try:
+          py.open(real, "r+b")
 
   //[ Create `real`'s parent directory if it is missing, so a write into a fresh
     ! subdirectory (`"out/chart.png"`) just works.

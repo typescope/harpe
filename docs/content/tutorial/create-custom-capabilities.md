@@ -1,9 +1,8 @@
 +++
 title = "Create a Custom Capability"
 +++
-A capability is a typed path from model-written code into trusted application
-code. Its interface defines what generated programs may request. Its runtime
-implementation decides how those requests reach the outside world.
+A capability interface defines what LLM-generated programs may request. Its
+trusted implementation decides how those requests reach the outside world.
 
 This tutorial adds a read-only clock to the
 [`hello` project](/tutorial/build-your-first-agent/). The finished example
@@ -18,7 +17,8 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in `.env`.
+Set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY` in `.env`.
+OpenRouter also requires `MODEL`.
 
 The initial sandbox grants only `stdout`. We will add `clock` in three places:
 the public contract, the trusted runtime, and the build-time placeholder.
@@ -33,7 +33,7 @@ namespace sandbox.api
 import jo.IO.stdout
 
 interface Clock
-  def today(): String
+  def now: String
 end
 
 param clock: Clock
@@ -41,7 +41,7 @@ param clock: Clock
 defer def runTask(): Unit receives stdout, clock
 ```
 
-This interface is the entire grant. Generated code may ask for today’s date,
+This interface is the entire grant. Generated code may ask for the current time,
 but it cannot choose a timezone, read arbitrary system state, or mutate the
 clock. Anything absent from this interface remains unreachable.
 
@@ -55,9 +55,9 @@ namespace sandbox.runtime
 import jo.IO.stdout
 import sandbox.api.*
 
-class SystemClock()
-  def today(): String =
-    py.module("datetime").date.today().isoformat().asString
+class SystemClock
+  def now: String =
+    py.module("datetime").datetime.now().isoformat().asString
 
   view Clock
 end
@@ -67,9 +67,9 @@ def main(): Unit receives stdout =
     runTask()
 ```
 
-The implementation is trusted code, so it may use Python interoperability.
+The implementation is trusted code, so it may use Python interoperability APIs.
 The generated guest never sees `py`, the `datetime` module, or any other host
-authority—it receives only the `Clock` view.
+authority—it receives only the `clock` capability.
 
 Enable Python interoperability for the runtime module in
 `sandbox/jo.toml`:
@@ -98,7 +98,7 @@ import jo.IO.stdout
 import sandbox.api.*
 
 def runTask(): Unit receives stdout, clock =
-  println clock.today()
+  println clock.now
 ```
 
 During a real tool call, `runCode` compiles the model’s program in a temporary
@@ -126,10 +126,10 @@ jo start
 Ask:
 
 ```text
-You ▸ What is today's date? Use the clock.
+You ▸ What time is it?
 ```
 
-The model can write:
+The model can write code like the following to get the current time:
 
 ```jo
 namespace sandbox.guest
@@ -138,11 +138,11 @@ import jo.IO.stdout
 import sandbox.api.*
 
 def runTask(): Unit receives stdout, clock =
-  println clock.today()
+  println clock.now
 ```
 
 A program that tries `py.module("datetime")`, reads a file, or calls an
-undeclared method fails to compile in the guest.
+undeclared method fails to compile.
 
 ## Designing real capabilities
 
@@ -175,14 +175,5 @@ charge, deletion, or message should happen now. Harpe supports
 [human approval](/concepts/approvals/) during an active agent run. Put the
 approval requirement inside the trusted capability implementation so generated
 code can request the operation but cannot bypass or approve it.
-
-## Checklist
-
-- Does the interface expose only one coherent authority?
-- Can a domain type replace a free-form `String` or `Int`?
-- Is FFI enabled only for trusted runtime modules?
-- Are credentials absent from guest-visible parameters and return values?
-- Does the default placeholder still build?
-- Does every irreversible effect require approval in trusted capability code?
 
 Next: read [the compile-time sandbox](/concepts/sandbox/) in detail.
