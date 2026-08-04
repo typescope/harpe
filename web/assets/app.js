@@ -775,10 +775,49 @@ function renderSessions() {
   var c = document.getElementById('sessions');
   c.innerHTML = '';
   sessionList.forEach(function (s) {
-    var item = el('div', 'session-item' + (s.id === currentSession ? ' active' : ''), s.title || 'New chat');
+    var item = el('div', 'session-item' + (s.id === currentSession ? ' active' : ''));
+    var label = el('span', 'session-title', s.title || 'New chat');
+    var remove = el('button', 'session-delete');
+    remove.type = 'button';
+    remove.title = 'Delete session';
+    remove.setAttribute('aria-label', 'Delete ' + (s.title || 'session'));
+    remove.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v5"></path><path d="M14 11v5"></path></svg>';
     item.title = s.title || '';
     item.addEventListener('click', function () { openSession(s.id); });
+    remove.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      deleteSession(s);
+    });
+    item.appendChild(label);
+    item.appendChild(remove);
     c.appendChild(item);
+  });
+}
+
+function deleteSession(session) {
+  if (session.id === activeTurnSession) {
+    window.alert('Stop the running turn before deleting this session.');
+    return;
+  }
+
+  if (!window.confirm('Permanently delete “' + (session.title || 'New chat') + '” and its files?')) return;
+
+  fetch('/api/session', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session: session.id })
+  }).then(function (r) {
+    return r.json().then(function (d) { return { ok: r.ok, data: d }; });
+  }).then(function (result) {
+    if (!result.ok || !result.data.ok) {
+      window.alert(result.data.error || 'Could not delete the session.');
+      return;
+    }
+
+    sessionList = sessionList.filter(function (s) { return s.id !== session.id; });
+    if (currentSession === session.id) newChat(); else renderSessions();
+  }).catch(function () {
+    window.alert('Could not delete the session.');
   });
 }
 
