@@ -1,0 +1,155 @@
+//[ OpenAICompatible.jo
+  !
+  ! A model adapter for servers that implement the OpenAI Chat Completions API.
+  ! This is the common interface exposed by local serving stacks such as vLLM,
+  ! SGLang, llama.cpp, and Ollama. It deliberately uses only the portable core:
+  ! messages, function tools, tool results, images, and token usage.
+//]
+
+namespace harpe.models
+import harpe.ffi.json
+import harpe.ffi.builtins
+
+import harpe.Model
+import harpe.Model.*
+import harpe.Tool
+import harpe.Tool.*
+import harpe.logging.logger
+import harpe.callContext
+
+private section CompatibleChat
+  def toolSpec(t: Tool): py.Dict =
+    val properties = py.dict()
+    val required = py.list()
+    for p in t.params do
+      properties.set(p.name, py.dict("type" ~ p.paramType.jsonType, "description" ~ p.description))
+      if p.required then required.append(p.name)
+
+    val parameters = py.dict("type" ~ "object", "properties" ~ properties, "required" ~ required)
+    py.dict:
+      "type" ~ "function"
+      "function" ~ py.dict(
+        "name" ~ t.name,
+        "description" ~ t.description,
+        "parameters" ~ parameters)
+
+  def imageBlocks(attachments: List[Attachment], dataDir: String): py.List =
+    val blocks = py.list()
+    for a in attachments if a.inline && isInlineImage(a.mime) do
+      match readInlineBase64(dataDir, a.name)
+      case Some(data) =>
+        blocks.append:
+          py.dict:
+            "type" ~ "image_url"
+            "image_url" ~ py.dict("url" ~ "data:\{a.mime};base64,\{data}")
+      case None => pass
+    blocks
+
+  def toMessages(rendered: Rendered, dataDir: String): py.List =
+    val messages = py.list()
+    if rendered.system != "" then messages.append(py.dict("role" ~ "system", "content" ~ rendered.system))
+
+    val lastIdx = rendered.messages.size - 1
+    var i = 0
+    for m in rendered.messages do
+      match m
+      case UserText(text, attachments) =>
+        val media = if i == lastIdx then imageBlocks(attachments, dataDir) else py.list()
+        val content = Model.userContent(text, attachments)
+        if media.size == 0 then
+          messages.append(py.dict("role" ~ "user", "content" ~ content))
+        else
+          val blocks = py.list()
+          blocks.append(py.dict("type" ~ "text", "text" ~ content))
+          for block in media do blocks.append(block)
+          messages.append(py.dict("role" ~ "user", "content" ~ blocks))
+
+      case Assistant(text, calls) =>
+        val toolCalls = py.list()
+        for c in calls do
+          toolCalls.append:
+            py.dict:
+              "id" ~ c.id
+              "type" ~ "function"
+              "function" ~ py.dict("name" ~ c.name, "arguments" ~ json.dumps(c.input.raw))
+
+        val message = py.dict("role" ~ "assistant", "content" ~ text)
+        if toolCalls.size > 0 then message.set("tool_calls", toolCalls)
+        messages.append(message)
+
+      case ToolResults(results) =>
+        val media = py.list()
+        for r in results do
+          messages.append:
+            py.dict("role" ~ "tool", "tool_call_id" ~ r.id, "content" ~ r.content)
+
+          val resultMedia = imageBlocks(r.media, dataDir)
+          for block in resultMedia do media.append(block)
+
+        if media.size > 0 then messages.append(py.dict("role" ~ "user", "content" ~ media))
+      end
+      i = i + 1
+
+    if rendered.transient != "" then
+      messages.append(py.dict("role" ~ "user", "content" ~ rendered.transient))
+    messages
+
+  def parseResponse(response: py.Dynamic): Assistant =
+    val choice = response.choices.get(0)
+    val message = choice.message
+    val content = message.content
+    val text = if content.isNone then "" else content.asString
+    var calls: List[ToolCall] = []
+
+    val rawCalls = message.tool_calls
+    if !rawCalls.isNone then
+      for call in rawCalls.cast[py.List] do
+        val fn = builtins.attr(call, "function")
+        val args = json.loads(fn.arguments.asString).cast[py.Dict]
+        calls = calls + ToolCall(call.id.asString, fn.name.asString, ToolInput(args))
+
+    val reason = choice.finish_reason
+    if !reason.isNone && reason.asString == "length" then
+      new Assistant((text + "\n\n[Reply truncated: token limit reached.]").trim, [])
+    else
+      new Assistant(text.trim, calls)
+end
+
+private class CompatibleModel(client: py.Dynamic, model: String)
+  view Model
+
+  def startTurn(base: Rendered): Session =
+    new SimpleSession(base, (rendered, tools) => send(client, model, rendered, tools))
+end
+
+private def send(client: py.Dynamic, model: String, rendered: Rendered, tools: List[Tool])
+: ReplyResult receives logger, callContext =
+  val dataDir = callContext.getOrElse("HARPE_DATA_DIR", "")
+  val messages = CompatibleChat.toMessages(rendered, dataDir)
+  val specs = py.list()
+  for t in tools do specs.append(CompatibleChat.toolSpec(t))
+
+  val attempted =
+    if specs.size == 0 then
+      py.try: client.chat.completions.create(model = model, messages = messages, max_tokens = 8096)
+    else
+      py.try: client.chat.completions.create(model = model, messages = messages, tools = specs, max_tokens = 8096)
+
+  match attempted
+  case Ok(response) =>
+    val usage = response.usage
+    val inTok = if usage.isNone then 0 else usage.prompt_tokens.asInt
+    val outTok = if usage.isNone then 0 else usage.completion_tokens.asInt
+    logUsage("openai-compatible", model, inTok, outTok)
+    Model.Reply(CompatibleChat.parseResponse(response), new Usage(inTok, outTok))
+  case Err(err) => classifyError(err)
+
+//[ Connect to a local model through an OpenAI-compatible interface. //]
+def localModel(apiKey: String, model: String, baseUrl: String): Model =
+  val key = if apiKey == "" then "not-needed" else apiKey
+  val client = py.module("openai").OpenAI:
+    api_key = key
+    base_url = baseUrl
+    timeout = 600.0
+    max_retries = 0
+  new CompatibleModel(client, model)

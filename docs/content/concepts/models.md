@@ -59,9 +59,14 @@ available to context strategies.
 
 ## Built-in models
 
-Harpe includes Anthropic, OpenAI, OpenRouter, and a keyless `echo` model for
-testing. `Defaults.model()` selects and constructs a provider from environment
-variables. OpenAI takes precedence, followed by OpenRouter and Anthropic.
+Harpe includes Anthropic, OpenAI, OpenRouter, a local model adapter, and a
+keyless `echo` model for testing. `Defaults.model()` selects and constructs a
+hosted provider from environment variables. OpenAI takes precedence, followed
+by OpenRouter and Anthropic.
+
+> **Local models:** Do not use `openai(...)` for a local model server. It targets
+> OpenAI's stateful Responses API. Use `localModel(...)` for OpenAI-compatible
+> servers such as vLLM, SGLang, llama.cpp, and Ollama.
 
 | Variable | Purpose |
 |---|---|
@@ -97,14 +102,40 @@ The OpenRouter adapter uses its stateless Responses API. It preserves raw
 reasoning and tool-call items locally, then resends the complete turn whenever
 it returns tool results to the model.
 
-Harpe can also use a locally deployed open-weight model through a custom `Model`
-adapter. The adapter can target llama.cpp, vLLM, Ollama, or another inference
-server without changing the agent core.
+### Local inference servers
 
-Do not assume that an OpenAI-compatible endpoint works with Harpe's built-in
-OpenAI adapter. It relies on Responses API tool calls, token usage, and
-stateful continuation through `previous_response_id`. Some servers implement
-only part of that contract.
+Open-weight models can run behind a local inference server. The main choices
+serve different deployment scales:
+
+| Server | Best fit | API and agent features |
+|---|---|---|
+| [vLLM](https://docs.vllm.ai/en/stable/serving/online_serving/) | High-throughput GPU serving, from one GPU to distributed deployments | Chat Completions and Responses APIs, structured output, tool calling, reasoning parsers, prefix caching, speculative decoding, and tensor, pipeline, data, or expert parallelism |
+| [SGLang](https://docs.sglang.ai/basic_usage/openai_api_completions.html) | High-throughput GPU serving with aggressive prefix reuse and distributed execution | Chat Completions API, structured output, model-specific tool and reasoning parsers, speculative decoding, and tensor, data, or expert parallelism |
+| [llama.cpp](https://github.com/ggml-org/llama.cpp/tree/master/tools/server) | Laptops, workstations, edge devices, and CPU or mixed CPU/GPU inference | Quantized GGUF models, Chat Completions and Responses APIs, tool calling, structured output, speculative decoding, and parallel requests |
+| [Ollama](https://docs.ollama.com/api/openai-compatibility) | Simple local installation and model management | Chat Completions and a stateless Responses API with tools and reasoning summaries |
+
+For a GPU service handling concurrent users, start with vLLM or SGLang and
+benchmark both on the target model and hardware. Their performance depends on
+the model architecture, request lengths, concurrency, quantization, and
+parallelism settings. For a developer workstation or CPU-heavy deployment,
+llama.cpp is usually the more direct serving layer. Ollama adds convenient
+model download and lifecycle management around local inference.
+
+Harpe's local model adapter supports servers that expose an OpenAI-compatible
+Chat Completions API. Construct it directly with the server's base URL. The
+adapter keeps the accepted messages and tool results in `Model.Session`:
+
+```jo
+val brain = localModel("", "org/model-name", "http://localhost:8000/v1")
+```
+
+The first argument is an API key. Pass an empty string when the server does not
+require authentication.
+
+The adapter supports messages, images, function tools, tool results, and token
+usage. It ignores nonstandard response fields such as `reasoning_content`.
+Models can still reason and use tools, but Harpe does not preserve a local
+model's reasoning trace between calls.
 
 ## Selecting a model in code
 
@@ -121,6 +152,7 @@ key:
 val brain = anthropic(apiKey, "claude-opus-4-6", FiveMinutes)
 val brain = openai(apiKey, "gpt-5.6", "")
 val brain = openrouter(apiKey, "provider/model-name")
+val brain = localModel("", "org/model-name", "http://localhost:8000/v1")
 val brain = echo()
 ```
 
