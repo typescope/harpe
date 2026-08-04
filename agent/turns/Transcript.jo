@@ -2,7 +2,7 @@
   !
   ! The backend-independent representation of a conversation in the structured
   ! event stream. Writers emit through the ambient `Logger`. Readers fold decoded
-  ! `Entry` values into the transcript committed by answered turns.
+  ! `Entry` values into structured turns, then derive model history from them.
 //]
 
 namespace harpe
@@ -11,6 +11,9 @@ import harpe.util.truncate
 import harpe.Model.*
 import harpe.Tool.*
 import harpe.logging.*
+import harpe.turns.*
+
+class TurnData(user: Message, messages: List[Message], result: TurnResult | None)
 
 section Transcript
   def maxResumeChars: Int = 1000000
@@ -23,35 +26,77 @@ section Transcript
 
   def commit(): Unit receives logger = logger.log("harpe.turn.answered")
   def interrupted(): Unit receives logger = logger.log("harpe.turn.interrupted")
-  def failed(): Unit receives logger = logger.log("harpe.turn.failed")
+  def failed(detail: String = ""): Unit receives logger =
+    if detail == "" then logger.log("harpe.turn.failed")
+    else logger.error("harpe.turn.failed", detail)
 
   private def emit(category: String, message: Message): Unit receives logger =
     logger.logEntry(new Entry(time.now(), category, messageFields(message)))
 
-  //[ Project decoded log entries into committed conversation messages
+  //[ Project decoded entries into turns
     !
-    ! A started turn commits its user message immediately. Assistant and tool
-    ! messages remain provisional until the turn is answered. Unknown categories
-    ! are ignored.
+    ! Each turn keeps its user message and terminal outcome. Assistant and tool
+    ! messages are retained only for answered turns. Unknown categories are
+    ! ignored, and a start without a terminal event has no result.
+  //]
+  def turns(entries: List[Entry]): List[TurnData] =
+    var turns: List[TurnData] = []
+    var user: Option[Message] = None
+    var pending: List[Message] = []
+
+    for entry in entries do
+      if entry.category == "harpe.turn.started" then
+        match user
+        case Some(message) => turns = turns + TurnData(message, [], None)
+        case None          => pass
+
+        user = Some(messageFromDict(entryDict(entry)))
+        pending = []
+
+      else if entry.category == "harpe.turn.message" && user is Some(_) then
+        pending = pending + messageFromDict(entryDict(entry))
+
+      else if entry.category == "harpe.turn.answered" then
+        var answer = ""
+        for message in pending do
+          if message is Assistant(text, calls) && calls.isEmpty then answer = text.trim
+        match user
+        case Some(message) => turns = turns + TurnData(message, pending, Answered(answer))
+        case None          => pass
+        user = None
+        pending = []
+
+      else if entry.category == "harpe.turn.failed" then
+        val detail = entryDict(entry).get("error", "").asString
+        match user
+        case Some(message) => turns = turns + TurnData(message, [], Failed(detail))
+        case None          => pass
+        user = None
+        pending = []
+
+      else if entry.category == "harpe.turn.interrupted" then
+        match user
+        case Some(message) => turns = turns + TurnData(message, [], Interrupted)
+        case None          => pass
+        user = None
+        pending = []
+
+    match user
+    case Some(message) => turns = turns + TurnData(message, [], None)
+    case None          => pass
+
+    turns
+
+  //[ Derive model history from structured turns
+    !
+    ! User messages survive every outcome. Only answered turns contribute their
+    ! assistant and tool messages. The resume cap drops whole oldest turns.
   //]
   def fromEntries(entries: List[Entry]): List[Message] =
     var messages: List[Message] = []
-    var pending: List[Message] = []
-    var open = false
-    for entry in entries do
-      if entry.category == "harpe.turn.started" then
-        pending = []
-        messages = messages + messageFromDict(entryDict(entry))
-        open = true
-      else if entry.category == "harpe.turn.message" && open then
-        pending = pending + messageFromDict(entryDict(entry))
-      else if entry.category == "harpe.turn.answered" && open then
-        messages = messages ++ pending
-        pending = []
-        open = false
-      else if entry.category == "harpe.turn.failed" || entry.category == "harpe.turn.interrupted" then
-        pending = []
-        open = false
+    for turn in turns(entries) do
+      messages = messages + turn.user
+      if turn.result is Answered(_) then messages = messages ++ turn.messages
     truncate(messages, maxResumeChars)
 
   private def messageFields(message: Message): Map[String, Value] =

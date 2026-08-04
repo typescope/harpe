@@ -240,5 +240,6 @@ The framework emits stable `harpe.turn.started`, `harpe.turn.message`, and
 terminal `harpe.turn.answered` / `interrupted` / `failed` categories.
 
 Applications decide how session events are stored and correlated. Producers emit
-through `logger` without depending on that policy. `Transcript.fromEntries`
-projects an ordered event stream into its committed conversation messages.
+through `logger` without depending on that policy. `Transcript.turns` projects an
+ordered event stream into structured turns and outcomes. `Transcript.fromEntries`
+derives the model's conversation history from that projection.

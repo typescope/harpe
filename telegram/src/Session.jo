@@ -92,11 +92,11 @@ private class Session(id: String, log: Logger, agent: Agent, memory: Memory, mem
     case Interrupted =>
       rollback()
 
-    case Failed =>
+    case Failed(detail) =>
       rollback()
       val message =
-        if interact.failureMessage == "" then "Request failed. Please try again."
-        else interact.failureMessage
+        if detail == "" then "Request failed. Please try again."
+        else "Request failed: \{detail}"
       client.sendMessage(this.id, message)
 
   //[ Download this turn's attached files into the session's data directory,

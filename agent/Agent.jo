@@ -59,7 +59,7 @@ section Agent
   : TurnResult receives logger, callContext =
 
     var rounds = 0
-    var result: TurnResult = Failed
+    var result: TurnResult = Failed("")
 
     context.mark()
     context.append(userMsg)
@@ -96,11 +96,11 @@ section Agent
           Transcript.interrupted()
           break
 
-        case GaveUp =>
-          result = Failed
+        case GaveUp(detail) =>
+          result = Failed(detail)
           context.rollback()
           context.append(userMsg)
-          Transcript.failed()
+          Transcript.failed(detail)
           break
 
         case Got(reply, usage) =>
@@ -159,7 +159,7 @@ end
 //]
 private union Fetched =
     Got(message: Assistant, usage: Usage)
-  | GaveUp
+  | GaveUp(detail: String)
   | Stopped
 
 //[ Exponential backoff between retries: 1s, 2s, 4s, … capped at 30s.  //]
@@ -179,7 +179,8 @@ private def backoffSeconds(attempt: Int): Float =
   ! A `None` from `ask` (a cancelled request), or interrupt firing during a
   ! backoff wait, ends the attempt.
   !
-  ! Progress and errors are reported through `interact.emit`.
+  ! Progress is reported through `interact.emit`. A terminal error is returned as
+  ! `Failed(detail)`.
 //]
 private def fetchReply(
     session: Session, results: List[ToolResult], tools: List[Tool],
@@ -187,7 +188,7 @@ private def fetchReply(
 : Fetched receives logger, callContext =
 
   var attempt = 0
-  var outcome: Fetched = GaveUp
+  var outcome: Fetched = GaveUp("")
 
   while true do
     if interact.cancelled then
@@ -213,16 +214,14 @@ private def fetchReply(
 
       case Fatal(detail) =>
         logger.error("harpe.model.request", detail)
-        interact.emit: RequestFailed(detail)
-        outcome = GaveUp
+        outcome = GaveUp(detail)
         break
 
       case Transient(detail) =>
         attempt = attempt + 1
         if attempt > maxRetries then
           logger.error("harpe.model.request", detail, "retries" ~ maxRetries)
-          interact.emit: RetriesExhausted(detail, maxRetries)
-          outcome = GaveUp
+          outcome = GaveUp(detail)
           break
 
         else

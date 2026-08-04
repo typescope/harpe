@@ -39,8 +39,6 @@ private def eventTag(e: TurnEvent): String =
   case ModelRequestStarted(_, _) => "start"
   case ModelRequestEnded         => "end"
   case TransientError(_, _)      => "transient"
-  case RequestFailed(_)          => "failed"
-  case RetriesExhausted(_, _)    => "exhausted"
   case ToolBudgetReached(_)      => "budget"
   case ToolCallStarted(n)        => "tool+\{n}"
   case ToolCallEnded(n, _)       => "tool-\{n}"
@@ -50,7 +48,7 @@ private def resultTag(r: TurnResult): String =
   match r
   case Answered(text) => "Answered(\{text})"
   case Interrupted       => "Interrupted"
-  case Failed            => "Failed"
+  case Failed(detail)    => "Failed(\{detail})"
 
 private def joinPy(xs: py.List): String =
   var s = ""
@@ -199,7 +197,7 @@ def run(): Unit receives stdout, logger, callContext =
       maxRetries = 4
       model = base => (results, tools) => Fatal("bad key")
       state = live
-    expected = "Failed | start,end,failed"
+    expected = "Failed(bad key) | start,end"
 
   // A failed turn retains its user message in the live context. Only the
   // provisional assistant/tool tail is rolled back.
@@ -211,7 +209,7 @@ def run(): Unit receives stdout, logger, callContext =
   check:
     "D failed user retained"
     "\{resultTag(failedResult)} | \{failedMessages.size} | \{msgTag(failedMessages.get(0))}"
-    "Failed | 1 | user"
+    "Failed(bad key) | 1 | user"
 
   // Transient with no retry budget (maxRetries=0) gives up immediately — no
   // backoff wait.
@@ -223,7 +221,7 @@ def run(): Unit receives stdout, logger, callContext =
       maxRetries = 0
       model = base => (results, tools) => Transient("rate limited")
       state = live
-    expected = "Failed | start,end,exhausted"
+    expected = "Failed(rate limited) | start,end"
 
   // Transient once, then success: exercises the backoff + retry path. With a
   // fake Interrupt, `pause` returns instantly — no real 1s wait.

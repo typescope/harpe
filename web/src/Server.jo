@@ -50,6 +50,7 @@ import harpe.tools.runCodeTool
 import harpe.context.WindowedContext
 import harpe.Tool
 import harpe.Tool.ToolInput
+import harpe.turns.Failed
 
 //[ The `sendFile` tool — the agent's channel for delivering a file to the user.
   !
@@ -390,49 +391,41 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
   //]
   private def handleHistory(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
     val id = queryParam(environ, "session")
-    // Display reads the transcript archive (capped to the RAM backstop by
-    // `Session.load`; showing less than the full history is an accepted constraint),
-    // current since `commit` appends after each turn.
-    val msgs = Session.load(id)
+    val turns = Session.loadTurns(id)
     val dataDir = existingDataDir(id)
 
     val arr = py.list()
-    var steps = py.list()       // the current turn's {code, output} runCode steps
-    var pending = py.dict()     // runCode call id -> program, awaiting its result
-    var sent = py.list()        // the current turn's sendFile deliveries
-
-    for m in msgs do
-      if m is UserText(t, attachments) then
-        steps = py.list()       // a new turn begins
-        pending = py.dict()
-        sent = py.list()
+    for turn in turns do
+      if turn.user is UserText(t, attachments) then
         arr.append: py.dict("role" ~ "user", "text" ~ t, "attachments" ~ attachmentsToJson(attachments))
 
-      else if m is Assistant(t, calls) then
-        for c in calls if c.name == "runCode" do
-          pending.set(c.id, c.input.string("code"))
+      var steps = py.list()       // this turn's {code, output} runCode steps
+      var pending = py.dict()     // runCode call id -> program, awaiting its result
+      var sent = py.list()        // this turn's sendFile deliveries
 
-        // Each `sendFile` the agent made becomes an attachment on the reply. A file
-        // that no longer resolves (bad name, or since removed) is still shown — as a
-        // `missing` card — because the delivery happened and is part of the dialog.
-        for c in calls if c.name == "sendFile" do
-          sent.append: sentFileJson(dataDir, c.input.string("fileName"))
+      for m in turn.messages do
+        if m is Assistant(t, calls) then
+          for c in calls if c.name == "runCode" do
+            pending.set(c.id, c.input.string("code"))
 
-        // The turn's final reply (no tool calls) carries the steps run and the files
-        // delivered to produce it.
-        if calls.isEmpty && t != "" then
-          arr.append: py.dict("role" ~ "agent", "text" ~ t, "steps" ~ steps, "files" ~ sent)
-          steps = py.list()
-          sent = py.list()
+          // Each `sendFile` the agent made becomes an attachment on the reply. A file
+          // that no longer resolves is still shown because the delivery happened.
+          for c in calls if c.name == "sendFile" do
+            sent.append: sentFileJson(dataDir, c.input.string("fileName"))
 
-      else if m is ToolResults(results) then
-        for r in results if pending.contains(r.id) do
-          steps.append: py.dict("code" ~ pending.get(r.id).asString, "output" ~ r.content)
+          if calls.isEmpty && t != "" then
+            arr.append: py.dict("role" ~ "agent", "text" ~ t, "steps" ~ steps, "files" ~ sent)
 
-    // The live turn state alongside the committed history: if a turn is in flight,
-    // the client renders its pending input and subscribes to follow it (a reconnect
-    // after refresh). The pending user message is not in the transcript yet — it is
-    // committed only when the turn completes.
+        else if m is ToolResults(results) then
+          for r in results if pending.contains(r.id) do
+            steps.append: py.dict("code" ~ pending.get(r.id).asString, "output" ~ r.content)
+
+      if turn.result is Failed(detail) then
+        val message = if detail == "" then "Please try again." else detail
+        arr.append: py.dict("role" ~ "error", "text" ~ message)
+
+    // The live turn state alongside persisted history lets a reconnect subscribe
+    // to a turn that is still running.
     respondJson: startResp, py.dict("messages" ~ arr, "state" ~ stateToJson(residentState(id)))
 
   //[ The live turn state as JSON: `{active: false}` when idle, or `{active: true,

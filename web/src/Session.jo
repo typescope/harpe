@@ -6,9 +6,9 @@
   ! `/c/<id>` URL.
   !
   ! This layout is a *driver* decision. The section maps an id to its structured
-  ! per-session log (`forSession`, while `load` derives a transcript from it) and
-  ! scans the directory to list past sessions for the picker. Ids are time-sortable,
-  ! so newest-first is just a reverse id sort.
+  ! per-session log (`forSession`, while `load` and `loadTurns` derive its views)
+  ! and scans the directory to list past sessions for the picker. Ids are
+  ! time-sortable, so newest-first is just a reverse id sort.
 //]
 
 namespace harpe.web
@@ -28,6 +28,7 @@ import harpe.CallContext
 import harpe.callContext
 import harpe.Memory
 import harpe.Transcript
+import harpe.TurnData
 import harpe.workspace
 import harpe.logging.JsonlLogger
 import harpe.logging.Logger
@@ -215,9 +216,9 @@ class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath:
       this.rollback()
       broadcast(py.dict("type" ~ "interrupted"))
 
-    case Failed =>
+    case Failed(detail) =>
       this.rollback()
-      broadcast(py.dict("type" ~ "failed"))
+      broadcast(py.dict("type" ~ "failed", "detail" ~ detail))
 
     removeSink(subId)
     state = Idle
@@ -305,13 +306,21 @@ section Session
     ! so a freshly-minted (or unknown) id loads as an empty conversation.
   //]
   def load(id: String): List[Message] receives workspace =
+    Transcript.fromEntries(loadEntries(id))
+
+  //[ Reconstruct structured turns for application history. //]
+  def loadTurns(id: String): List[TurnData] receives workspace =
+    Transcript.turns(loadEntries(id))
+
+  //[ Decode this driver's per-session JSONL file. //]
+  private def loadEntries(id: String): List[Entry] receives workspace =
     val path = sessionPath(id)
     if !file.exists(path) then []
     else
       var entries: List[Entry] = []
       for line in file.read(path).lines if line.trim != "" do
         entries = entries + entryFromDict(json.loads(line).cast[py.Dict])
-      Transcript.fromEntries(entries)
+      entries
 
   //[ The persisted sessions, newest first — id, title, and start time.
     !

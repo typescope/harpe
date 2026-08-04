@@ -33,6 +33,7 @@ import harpe.Model.Message
 import harpe.tools.memoryTools
 import harpe.context.WindowedContext
 import harpe.turns.Answered
+import harpe.turns.Failed
 import harpe.turns.Interrupted
 
 //[ The entry point   //]
@@ -81,9 +82,11 @@ private def runChat(): Unit receives stdout, workspace =
     if res is Answered(text) then
       interact.agentResponse(text)
 
-    else
-      if res is Interrupted then println("  " + Style.warning("⎋ interrupted"))
-      else println("  " + Style.error("· request failed"))
+    else if res is Interrupted then
+      println("  " + Style.warning("⎋ interrupted"))
+    else if res is Failed(detail) then
+      val message = if detail == "" then "request failed" else "request failed: \{detail}"
+      println("  " + Style.error("· \{message}"))
 
     // Persist memory regardless of outcome (it is not rolled back with a turn).
     if !memory.isEmpty then Memory.save(memoryPath, memory)

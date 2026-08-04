@@ -121,7 +121,7 @@ private class Console(out: String => Unit, historyFile: String)
     match outcome
     case WorkerCompleted(res) => res
     case WorkerCancelled      => Interrupted
-    case WorkerCrashed(_)     => Failed
+    case WorkerCrashed(message) => Failed(message)
 
   def display(event: TurnEvent): Unit = with IO.stdout = out in
     match event
@@ -136,12 +136,6 @@ private class Console(out: String => Unit, historyFile: String)
 
     case TransientError(detail, delaySeconds) =>
       println("  " + Style.warning("· transient error") + " (\{detail}); retrying in \{delaySeconds}s")
-
-    case RequestFailed(detail) =>
-      println("  " + Style.error("· request failed:") + " \{detail}")
-
-    case RetriesExhausted(detail, attempts) =>
-      println("  " + Style.error("· giving up after \{attempts} retries:") + " \{detail}")
 
     case ToolBudgetReached(budget) =>
       println("  " + Style.warning("· tool budget reached") + " (\{budget}); requesting final answer")

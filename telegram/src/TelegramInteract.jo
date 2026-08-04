@@ -4,8 +4,7 @@
   ! turn engine and a Telegram chat. Telegram is a discrete-message channel with
   ! no live progress stream, so unlike the web driver (which streams every
   ! `TurnEvent` as NDJSON) this one surfaces only a "typing…" chat action while
-  ! the model or a tool is working. It captures fatal model details for the
-  ! session to send as one final failure message.
+  ! the model or a tool is working. The session reports the final turn result.
   !
   ! There is no cancellation: `cancelled` is always false and `pause` simply waits
   ! out a retry backoff. A later phase could wire a per-chat "stop" command.
@@ -24,8 +23,6 @@ import harpe.turns.TurnEvent
 import harpe.turns.ModelRequestStarted
 import harpe.turns.ModelRequestEnded
 import harpe.turns.TransientError
-import harpe.turns.RequestFailed
-import harpe.turns.RetriesExhausted
 import harpe.turns.ToolBudgetReached
 import harpe.turns.ToolCallStarted
 import harpe.turns.ToolCallEnded
@@ -39,8 +36,6 @@ private class TelegramInteract(
     approvalHandler: TelegramApprovalHandler)
   view Interact
 
-  var failureMessage = ""
-
   def cancelled: Bool = false
 
   def pause(seconds: Float): Bool =
@@ -52,7 +47,6 @@ private class TelegramInteract(
 
   //[ Reflect engine progress as a "typing" indicator
     !
-    ! Failure details are retained for the session to send once the turn ends.
     ! Other events remain silent because a Telegram chat cannot carry per-step
     ! status without spamming it.
   //]
@@ -66,12 +60,6 @@ private class TelegramInteract(
 
     case TransientError(detail, delaySeconds) =>
       pass
-
-    case RequestFailed(detail) =>
-      failureMessage = "Request failed: \{detail}"
-
-    case RetriesExhausted(detail, attempts) =>
-      failureMessage = "Request failed after \{attempts} retries: \{detail}"
 
     case ToolBudgetReached(budget) =>
       pass

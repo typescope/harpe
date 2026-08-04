@@ -13,6 +13,8 @@ import jo.IO.stdout
 import harpe.*
 import harpe.Model.*
 import harpe.Tool.*
+import harpe.turns.Answered
+import harpe.turns.Failed
 import harpe.logging.logger
 import harpe.logging.JsonlLogger
 import harpe.logging.entryFromDict
@@ -80,14 +82,26 @@ def run(): Unit receives stdout =
   with logger = sessionLog in
     Transcript.start(UserText("will fail", []))
     Transcript.append(Assistant("partial", []))
-    Transcript.failed()
+    Transcript.failed("bad model")
     Transcript.start(UserText("again", []))
     Transcript.append(Assistant("done", []))
     Transcript.commit()
     Transcript.start(UserText("crashed", []))
 
   var entries: List[harpe.logging.Entry] = []
-  for record in readRecords(path) do entries = entries + entryFromDict(record)
+  val records = readRecords(path)
+  for record in records do entries = entries + entryFromDict(record)
+
+  val failedRecord = records.get(7)
+  check("failed turn contains diagnostic", failedRecord.get("error", "").asString == "bad model")
+
+  val turns = Transcript.turns(entries)
+  check("turn projection size", turns.size == 4)
+  check("answered turn result", turns.get(0).result is Answered(_))
+  check("failed turn result", turns.get(1).result is Failed("bad model"))
+  check("failed turn drops provisional messages", turns.get(1).messages.isEmpty)
+  check("open turn has no result", turns.get(3).result is None)
+
   val loaded = Transcript.fromEntries(entries)
   check("loader keeps every user message", loaded.size == 7)
   check("loader drops failed assistant message", loaded.get(4) is UserText("again", _))
