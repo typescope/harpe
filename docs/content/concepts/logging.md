@@ -37,7 +37,7 @@ The application owns the file layout. These examples use
 `logs/sessions/<session>.jsonl` as a representative path:
 
 ```json
-{"time":1720531200.4,"category":"harpe.tools.runCode","code":"…","compiled":true,"exitCode":0,"compileSeconds":1.2,"runSeconds":0.3,"output":"…"}
+{"time":"2024-07-09T16:00:00.400000Z","category":"harpe.tools.runCode","code":"…","compiled":true,"exitCode":0,"compileSeconds":1.2,"runSeconds":0.3,"output":"…"}
 ```
 
 With events in a JSON file, read them with anything that speaks JSON — `jq` is quickest:
@@ -52,6 +52,9 @@ jq 'select(.category=="harpe.tools.runCode" and .compiled==false)' logs/sessions
 
 Wherever the events go, each has the same shape: a **`category`**, a **`time`**,
 and the event's own fields. Shared destinations may additionally attach context.
+JSONL encodes `time` as an RFC 3339 UTC string. The backend-independent
+`Entry.time` remains epoch seconds, so database loggers can choose their native
+timestamp representation and indexes.
 The two categories logged for you:
 
 - **`harpe.tools.runCode`** — one per program the agent runs: `code`, `compiled`,

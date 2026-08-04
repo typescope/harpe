@@ -55,7 +55,8 @@ def run(): Unit receives stdout =
   check("started category", user.get("category", "").asString == "harpe.turn.started")
   check("user role", user.get("role", "").asString == "user")
   check("user text", user.get("text", "").asString == "hi")
-  check("user has timestamp", user.get("time", 0.0).asFloat > 0.0)
+  val timestamp = user.get("time", "").asString
+  check("user has RFC 3339 timestamp", timestamp.contains("T") && timestamp.endsWith("Z"))
 
   val asst = first.get(1)
   check("assistant role", asst.get("role", "").asString == "assistant")

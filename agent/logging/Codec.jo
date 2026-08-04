@@ -10,12 +10,13 @@
 namespace harpe.logging
 
 import harpe.ffi.builtins
+import harpe.ffi.time
 
 //[ An entry as a JSON-able dict: `time`, `category`, then its fields (each `Value`
   ! unwrapped to its underlying host value; a nested map becomes a nested object).
 //]
 def entryDict(entry: Entry): py.Dict =
-  val d = py.dict("time" ~ entry.time, "category" ~ entry.category)
+  val d = py.dict("time" ~ time.toRfc3339(entry.time), "category" ~ entry.category)
   for k ~ v in entry.fields.toList do d.set(k, valueToJson(v))
   d
 
@@ -24,7 +25,7 @@ def entryDict(entry: Entry): py.Dict =
   ! records on the host.
 //]
 def entryFromDict(d: py.Dict): Entry =
-  val time     = d.get("time", 0.0).asFloat
+  val timestamp = time.fromRfc3339(d.get("time", "").asString)
   val category = d.get("category", "").asString
 
   var fields = Map.empty[String, Value]
@@ -33,7 +34,7 @@ def entryFromDict(d: py.Dict): Entry =
     if key != "time" && key != "category" then
       fields = fields.add(key, valueFromJson(d.get(key)))
 
-  new Entry(time, category, fields)
+  new Entry(timestamp, category, fields)
 
 //[ A field value as its underlying host value — the inverse of the `Value`
   ! adapters. A nested map becomes a nested JSON object.

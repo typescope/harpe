@@ -350,7 +350,7 @@ section Session
       if s != "" then
         val d = json.loads(s).cast[py.Dict]
         if !sawFirst then
-          startTime = d.get("time", 0.0).asFloat
+          startTime = time.fromRfc3339(d.get("time", "").asString)
           sawFirst = true
 
         if title == "" && d.get("role", "").asString == "user" then

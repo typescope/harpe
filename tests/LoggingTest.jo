@@ -72,7 +72,8 @@ def run(): Unit receives stdout =
   check("int field stays an int", first.get("exitCode", -1).asInt == 0)
   check("bool field stays a bool", first.get("ok", false).asBool)
   check("float field stays a float", first.get("secs", 0.0).asFloat == 1.5)
-  check("entry time serialized", first.get("time", 0.0).asFloat > 0.0)
+  val timestamp = first.get("time", "").asString
+  check("entry time serialized as RFC 3339", timestamp.contains("T") && timestamp.endsWith("Z"))
 
   // Categories coexist in the log, distinguished by the field (jq's job downstream).
   val toolsRec = all.get(2)
@@ -127,6 +128,7 @@ def run(): Unit receives stdout =
 
   val back = entryFromDict(readRecords(apath).get(0))
   check("codec preserves category", back.category == "harpe.sandbox.runtime")
+  check("codec parses RFC 3339 time", back.time > 0.0)
   check("codec preserves field count", back.fields.size == 5)
 
   match back.fields.getOpt("count")
