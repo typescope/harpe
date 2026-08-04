@@ -59,14 +59,13 @@ available to context strategies.
 
 ## Built-in models
 
-Harpe includes Anthropic, OpenAI, OpenRouter, a local model adapter, and a
+Harpe includes Anthropic, OpenAI, OpenRouter, OpenAI-compatible servers, and a
 keyless `echo` model for testing. `Defaults.model()` selects and constructs a
 hosted provider from environment variables. OpenAI takes precedence, followed
 by OpenRouter and Anthropic.
 
-> **Local models:** Do not use `openai(...)` for a local model server. It targets
-> OpenAI's stateful Responses API. Use `localModel(...)` for OpenAI-compatible
-> servers such as vLLM, SGLang, llama.cpp, and Ollama.
+> **Local models:** Call `openai(...)` with `compatible = true` for servers such
+> as vLLM, SGLang, llama.cpp, and Ollama.
 
 | Variable | Purpose |
 |---|---|
@@ -121,12 +120,16 @@ parallelism settings. For a developer workstation or CPU-heavy deployment,
 llama.cpp is usually the more direct serving layer. Ollama adds convenient
 model download and lifecycle management around local inference.
 
-Harpe's local model adapter supports servers that expose an OpenAI-compatible
-Chat Completions API. Construct it directly with the server's base URL. The
-adapter keeps the accepted messages and tool results in `Model.Session`:
+Compatibility mode supports servers that expose an OpenAI-compatible Chat
+Completions API. Pass the server's base URL. The adapter keeps accepted messages
+and tool results in `Model.Session`:
 
 ```jo
-val brain = localModel("", "org/model-name", "http://localhost:8000/v1")
+val brain = openai:
+  ""
+  "org/model-name"
+  baseUrl = "http://localhost:8000/v1"
+  compatible = true
 ```
 
 The first argument is an API key. Pass an empty string when the server does not
@@ -150,9 +153,9 @@ key:
 
 ```jo
 val brain = anthropic(apiKey, "claude-opus-4-6", FiveMinutes)
-val brain = openai(apiKey, "gpt-5.6", "")
+val brain = openai(apiKey, "gpt-5.6")
 val brain = openrouter(apiKey, "provider/model-name")
-val brain = localModel("", "org/model-name", "http://localhost:8000/v1")
+val brain = openai("", "org/model-name", "http://localhost:8000/v1", compatible = true)
 val brain = echo()
 ```
 

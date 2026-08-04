@@ -59,7 +59,8 @@ section Defaults
     val openRouterKey = os.getenv("OPENROUTER_API_KEY", "")
     val anthropicKey = os.getenv("ANTHROPIC_API_KEY", "")
     if openAiKey != "" then
-      openai(openAiKey, os.getenv("MODEL", "gpt-5.6"), os.getenv("OPENAI_BASE_URL", ""))
+      val baseUrl = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+      openai(openAiKey, os.getenv("MODEL", "gpt-5.6"), baseUrl)
 
     else if openRouterKey != "" then
       val modelId = os.getenv("MODEL", "")

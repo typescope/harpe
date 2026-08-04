@@ -269,20 +269,25 @@ private def openaiCreate(
           max_output_tokens = 8096
           previous_response_id = prevId
 
-//[ Build the OpenAI model (Responses API) from an API key, model id, and base URL.
+//[ Build an OpenAI or OpenAI-compatible model
   !
-  ! `REASONING_EFFORT` sets the reasoning effort (default "medium", "none" to
-  ! disable). `baseUrl` is normally "" for the default endpoint; pass one only for
-  ! an OpenAI Responses-API-speaking gateway (e.g. Azure OpenAI, a proxy) — not for
-  ! third-party chat/completions endpoints, which this no longer targets.
+  ! Responses API is the default. Set `compatible` for a server implementing the
+  ! portable Chat Completions API. `REASONING_EFFORT` configures Responses API
+  ! reasoning and is ignored in compatibility mode.
 //]
-def openai(apiKey: String, model: String, baseUrl: String): Model =
-  // Explicit request timeout; internal SDK retries disabled — the turn engine
-  // owns the retry/backoff policy, and hidden SDK retries would multiply it.
-  val client =
-    if baseUrl == "" then
-      py.module("openai").OpenAI(api_key = apiKey, timeout = 600.0, max_retries = 0)
-    else
-      py.module("openai").OpenAI(api_key = apiKey, base_url = baseUrl, timeout = 600.0, max_retries = 0)
-
-  new OpenAIResponsesModel(client, model, os.getenv("REASONING_EFFORT", "medium"))
+def openai(
+    apiKey: String,
+    model: String,
+    baseUrl: String = "https://api.openai.com/v1",
+    compatible: Bool = false)
+: Model =
+  if compatible then openaiCompatible(apiKey, model, baseUrl)
+  else
+    // Explicit request timeout; internal SDK retries disabled — the turn engine
+    // owns the retry/backoff policy, and hidden SDK retries would multiply it.
+    val client = py.module("openai").OpenAI:
+      api_key = apiKey
+      base_url = baseUrl
+      timeout = 600.0
+      max_retries = 0
+    new OpenAIResponsesModel(client, model, os.getenv("REASONING_EFFORT", "medium"))

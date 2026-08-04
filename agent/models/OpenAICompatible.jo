@@ -144,8 +144,8 @@ private def send(client: py.Dynamic, model: String, rendered: Rendered, tools: L
     Model.Reply(CompatibleChat.parseResponse(response), new Usage(inTok, outTok))
   case Err(err) => classifyError(err)
 
-//[ Connect to a local model through an OpenAI-compatible interface. //]
-def localModel(apiKey: String, model: String, baseUrl: String): Model =
+//[ Build a model using the portable OpenAI Chat Completions API. //]
+private[harpe] def openaiCompatible(apiKey: String, model: String, baseUrl: String): Model =
   val key = if apiKey == "" then "not-needed" else apiKey
   val client = py.module("openai").OpenAI:
     api_key = key
