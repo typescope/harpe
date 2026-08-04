@@ -115,14 +115,17 @@ private section OpenRouterResponses
       new Assistant(text.trim, calls)
 end
 
-private class OpenRouterModel(client: py.Dynamic, model: String, effort: String)
+private class OpenRouterModel(
+    client: py.Dynamic, model: String, effort: String, extraBody: py.Dict)
   view Model
 
   def startTurn(base: Rendered): Session =
-    new OpenRouterSession(client, model, effort, base)
+    new OpenRouterSession(client, model, effort, extraBody, base)
 end
 
-private class OpenRouterSession(client: py.Dynamic, model: String, effort: String, base: Rendered)
+private class OpenRouterSession(
+    client: py.Dynamic, model: String, effort: String,
+    extraBody: py.Dict, base: Rendered)
   view Session
 
   //[ The complete Responses `input` accepted so far.
@@ -166,7 +169,7 @@ private class OpenRouterSession(client: py.Dynamic, model: String, effort: Strin
     val specs = py.list()
     for t in tools do specs.append(OpenRouterResponses.toolSpec(t))
 
-    match openRouterCreate(client, model, effort, base.system, input, specs)
+    match openRouterCreate(client, model, effort, base.system, input, specs, extraBody)
     case Ok(response) =>
       // Preserve every raw output item, including reasoning, messages, and
       // function calls. OpenRouter requires these items unchanged and in order
@@ -184,7 +187,7 @@ end
 
 private def openRouterCreate(
     client: py.Dynamic, model: String, effort: String,
-    system: String, input: py.List, tools: py.List)
+    system: String, input: py.List, tools: py.List, extraBody: py.Dict)
 : Result[py.Dynamic, py.Error] =
   if effort == "none" then
     py.try:
@@ -195,6 +198,7 @@ private def openRouterCreate(
         tools = tools
         max_output_tokens = 8096
         store = false
+        extra_body = extraBody
   else
     py.try:
       client.responses.create:
@@ -205,6 +209,7 @@ private def openRouterCreate(
         reasoning = py.dict("effort" ~ effort)
         max_output_tokens = 8096
         store = false
+        extra_body = extraBody
 
 //[ Build an OpenRouter model
   !
@@ -214,11 +219,13 @@ def openrouter(
     apiKey: String,
     model: String,
     baseUrl: String = "https://openrouter.ai/api/v1",
-    timeoutSeconds: Int = 10)
+    timeoutSeconds: Int = 10,
+    extraBody: py.Dict = py.none)
 : Model =
+  val body = if py.isNone(extraBody) then py.dict() else extraBody
   val client = py.module("openai").OpenAI:
     api_key = apiKey
     base_url = baseUrl
     timeout = timeoutSeconds
     max_retries = 0
-  new OpenRouterModel(client, model, os.getenv("REASONING_EFFORT", "none"))
+  new OpenRouterModel(client, model, os.getenv("REASONING_EFFORT", "none"), body)

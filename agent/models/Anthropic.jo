@@ -179,11 +179,12 @@ private def parseReply(response: py.Dynamic): Assistant =
   else
     new Assistant(text.trim, calls)
 
-private class AnthropicModel(client: py.Dynamic, model: String, cache: AnthropicCache)
+private class AnthropicModel(
+    client: py.Dynamic, model: String, cache: AnthropicCache, extraBody: py.Dict)
   view Model
 
   def startTurn(base: Rendered): Session =
-    new AnthropicSession(client, model, cache, base)
+    new AnthropicSession(client, model, cache, extraBody, base)
 end
 
 //[ A reasoning-preserving turn on the Messages API.
@@ -195,7 +196,9 @@ end
   ! rejected. `parseReply` still extracts only text + tool calls for the engine —
   ! the reasoning rides in the wire history, never in the semantic `Message`.
 //]
-private class AnthropicSession(client: py.Dynamic, model: String, cache: AnthropicCache, base: Rendered)
+private class AnthropicSession(
+    client: py.Dynamic, model: String, cache: AnthropicCache,
+    extraBody: py.Dict, base: Rendered)
   view Session
 
   // The wire messages, accumulated across the turn. They are seeded lazily on
@@ -229,7 +232,14 @@ private class AnthropicSession(client: py.Dynamic, model: String, cache: Anthrop
     if base.transient != "" then
       outgoing.append(py.dict("role" ~ "user", "content" ~ base.transient))
 
-    val attempt = anthropicCreate(client, model, cache, base.system, outgoing, toolSpecs)
+    val attempt = anthropicCreate:
+      client
+      model
+      cache
+      base.system
+      outgoing
+      toolSpecs
+      extraBody
 
     match attempt
     case Ok(response) =>
@@ -281,7 +291,7 @@ private def toolResultMessage(results: List[ToolResult], dataDir: String): py.Di
 //]
 private def anthropicCreate(
     client: py.Dynamic, model: String, cache: AnthropicCache,
-    system: String, messages: py.List, toolSpecs: py.List)
+    system: String, messages: py.List, toolSpecs: py.List, extraBody: py.Dict)
 : Result[py.Dynamic, py.Error] =
   if cache is NoCache then
     py.try:
@@ -292,6 +302,7 @@ private def anthropicCreate(
         system = system
         messages = messages
         tools = toolSpecs
+        extra_body = extraBody
   else
     py.try:
       client.messages.create:
@@ -301,6 +312,7 @@ private def anthropicCreate(
         system = py.list(py.dict("type" ~ "text", "text" ~ system, "cache_control" ~ cache.toDict))
         messages = messages
         tools = toolSpecs
+        extra_body = extraBody
 
 
 //[ Build an Anthropic-backed model from an API key, model id, and cache policy.
@@ -313,10 +325,12 @@ def anthropic(
     apiKey: String,
     model: String,
     cache: AnthropicCache,
-    timeoutSeconds: Int = 10)
+    timeoutSeconds: Int = 10,
+    extraBody: py.Dict = py.none)
 : Model =
+  val body = if py.isNone(extraBody) then py.dict() else extraBody
   val client = py.module("anthropic").Anthropic:
     api_key = apiKey
     timeout = timeoutSeconds
     max_retries = 0
-  new AnthropicModel(client, model, cache)
+  new AnthropicModel(client, model, cache, body)

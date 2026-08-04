@@ -140,9 +140,11 @@ usage. Within a turn it preserves the provider's complete raw assistant messages
 so extension fields such as `reasoning`, `reasoning_content`, and
 `reasoning_details` survive tool calls without entering Harpe's transcript.
 
-Use `extraBody` for provider-specific request fields. It is forwarded by both
-Responses and compatible Chat Completions modes. For example, NVIDIA Nemotron
-reasoning can be configured with:
+The `openai`, `openrouter`, and `anthropic` constructors accept `extraBody` for
+provider-specific request fields. Each adapter forwards it through its native
+SDK on every request path. For `openai`, this works in both Responses and
+compatible Chat Completions modes. For example, NVIDIA Nemotron reasoning can
+be configured with:
 
 ```jo
 val brain = openai:
@@ -158,6 +160,7 @@ val brain = openai:
       "enable_thinking" ~ true,
       "force_nonempty_content" ~ true
     )
+```
 
 ## Selecting a model in code
 
