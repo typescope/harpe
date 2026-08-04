@@ -993,8 +993,7 @@ function handle(ev, bubble, statusText) {
     if (html === null) bubble.textContent = ev.text;
     else bubble.innerHTML = html;
   } else if (ev.type === 'error') {
-    bubble.classList.add('error');
-    bubble.textContent = ev.detail;
+    showTurnError(bubble, ev.detail);
   } else if (ev.type === 'interrupted') {
     bubble.classList.add('notice');
     bubble.textContent = 'Stopped.';
@@ -1002,11 +1001,17 @@ function handle(ev, bubble, statusText) {
     // `RequestFailed` and `RetriesExhausted` arrive first with useful detail.
     // Keep that detail, using this terminal event only as a fallback.
     if (!bubble.classList.contains('error')) {
-      bubble.classList.add('error');
-      bubble.textContent = 'Request failed. Please try again.';
+      showTurnError(bubble, 'Please try again.');
     }
   }
   scrollDown();
+}
+
+function showTurnError(bubble, detail) {
+  bubble.classList.add('error');
+  bubble.innerHTML = '';
+  bubble.appendChild(el('div', 'error-title', 'Request failed'));
+  bubble.appendChild(el('div', 'error-detail', detail));
 }
 
 function showApproval(ev, bubble, statusText) {
