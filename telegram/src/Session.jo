@@ -6,15 +6,15 @@
   ! chat id is the natural session key — it is stable across messages and survives
   ! restarts, so a chat resumes its history simply by reappearing.
   !
-  ! Like the web driver, this layout is a *driver* decision kept out of the shared
-  ! `harpe.SessionLog` (which owns only the per-message record schema): the section
-  ! maps a chat id to its file (`forSession` to append, `load` to read back).
+  ! Like the web driver, this layout is a *driver* decision: the section maps a
+  ! chat id to its structured log and derives its transcript when loading.
 //]
 
 namespace harpe.telegram
 import harpe.ffi.time
 import harpe.ffi.os
 import harpe.ffi.file
+import harpe.ffi.json
 import harpe.ffi.mimetypes
 import harpe.ffi.builtins
 
@@ -22,9 +22,13 @@ import harpe.Agent
 import harpe.CallContext
 import harpe.callContext
 import harpe.Memory
-import harpe.SessionLog
+import harpe.Transcript
 import harpe.workspace
 import harpe.logging.logger
+import harpe.logging.JsonlLogger
+import harpe.logging.Logger
+import harpe.logging.Entry
+import harpe.logging.entryFromDict
 import harpe.Model
 import harpe.Model.Message
 import harpe.Model.UserText
@@ -59,7 +63,7 @@ class Incoming(text: String, files: List[FileSpec], senderId: String)
   ! ordered and serialized. Only that worker touches the session's state, so no
   ! lock is needed around it.
 //]
-private class Session(id: String, log: SessionLog, agent: Agent, memory: Memory, callCtx: CallContext)
+private class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath: String, callCtx: CallContext)
   val queue = py.module("queue").Queue()
 
   //[ Begin a user turn: download any attached files into the session's data
@@ -77,20 +81,20 @@ private class Session(id: String, log: SessionLog, agent: Agent, memory: Memory,
     val userMsg = UserText(incoming.text, attachments)
     val interact = new TelegramInteract(client, this.id, approvalHandler)
 
-    with callContext = callCtx in
-      match agent.runTurn(userMsg, interact, maxToolRounds, maxRetries)
-      case Answered(delta, answer) =>
-        commit(delta)
-        if answer.trim != "" then client.sendMessage(this.id, answer)
-        val sent = deliverFiles(delta, client)
-        if answer.trim == "" && sent == 0 then client.sendMessage(this.id, answer)
+    val result = with logger = log, callContext = callCtx in
+      agent.runTurn(userMsg, interact, maxToolRounds, maxRetries)
 
-      case Interrupted =>
-        rollback()
+    match result
+    case Answered(answer) =>
+      commit()
+      if answer.trim != "" then client.sendMessage(this.id, answer)
 
-      case Failed =>
-        rollback()
-        client.sendMessage(this.id, "Sorry — the request failed. Please try again.")
+    case Interrupted =>
+      rollback()
+
+    case Failed =>
+      rollback()
+      client.sendMessage(this.id, "Sorry — the request failed. Please try again.")
 
   //[ Download this turn's attached files into the session's data directory,
     ! returning them as `Attachment` metadata for the `UserText`. The bytes land on
@@ -123,33 +127,12 @@ private class Session(id: String, log: SessionLog, agent: Agent, memory: Memory,
 
       atts
 
-  //[ Send each file the agent delivered this turn to the chat, as a document.
-    ! Returns how many were sent. The intent lives in the transcript as `sendFile`
-    ! tool calls (like the web driver); Telegram is push, not pull, so here we
-    ! actually upload the bytes. A name that no longer resolves is skipped.
+  //[ Commit a completed turn's working memory
+    !
+    ! Transcript entries have already flowed through the structured logger
+    ! channel.
   //]
-  private def deliverFiles(delta: List[Message], client: TelegramClient): Int =
-    val dir = callCtx.getOrElse("HARPE_DATA_DIR", "")
-
-    if dir == "" then 0
-    else
-      var sent = 0
-      for m in delta do
-        if m is Assistant(_, calls) then
-          for c in calls if c.name == "sendFile" do
-            val name = sanitizeName(c.input.string("fileName"))
-            val p = os.path.join(dir, name)
-            if name != "" && os.path.isfile(p) then
-              client.sendDocument(this.id, p, "")
-              sent = sent + 1
-
-      sent
-
-  //[ Commit a completed turn: append the user message plus the turn's delta (the
-    ! engine-produced messages) to the transcript archive, and persist memory.
-  //]
-  private def commit(delta: List[Message]): Unit =
-    log.append(time.now(), delta)
+  private def commit(): Unit =
     saveMemory()
 
   //[ Abandon a cancelled/failed turn: restore the context's pre-turn window.
@@ -160,11 +143,10 @@ private class Session(id: String, log: SessionLog, agent: Agent, memory: Memory,
     saveMemory()
 
   //[ Persist the working memory beside the transcript archive. Runs on the chat's
-    ! worker thread; `memoryPath` is a pure derivation, so no `workspace` capability
-    ! is needed.
+    ! worker thread. The resolved path is captured when the session is created.
   //]
   private def saveMemory(): Unit =
-    if !memory.isEmpty then Memory.save(log.memoryPath, memory)
+    if !memory.isEmpty then Memory.save(memoryPath, memory)
 end
 
 //[ Reduce a client-supplied name to a safe bare basename: drop any directory part
@@ -207,12 +189,22 @@ section Session
     dir
 
   //[ An append log for this chat's session (its file is created lazily). //]
-  def forSession(chatId: String): SessionLog receives workspace =
-    new SessionLog(sessionPath(chatId))
+  def forSession(chatId: String): Logger receives workspace =
+    new JsonlLogger(sessionPath(chatId))
+
+  def memoryPath(chatId: String): String receives workspace =
+    val path = sessionPath(chatId)
+    path.substring(0, path.size - 6) + ".memory.json"
 
   //[ Reconstruct this chat's conversation from disk; `[]` if it has no file yet,
     ! so a chat seen for the first time starts empty.
   //]
   def load(chatId: String): List[Message] receives workspace =
-    SessionLog.loadFile(sessionPath(chatId))
+    val path = sessionPath(chatId)
+    if !file.exists(path) then []
+    else
+      var entries: List[Entry] = []
+      for line in file.read(path).lines if line.trim != "" do
+        entries = entries + entryFromDict(json.loads(line).cast[py.Dict])
+      Transcript.fromEntries(entries)
 end

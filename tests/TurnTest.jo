@@ -45,7 +45,7 @@ private def eventTag(e: TurnEvent): String =
 
 private def resultTag(r: TurnResult): String =
   match r
-  case Answered(_, text) => "Answered(\{text})"
+  case Answered(text) => "Answered(\{text})"
   case Interrupted       => "Interrupted"
   case Failed            => "Failed"
 
@@ -222,28 +222,3 @@ def run(): Unit receives stdout, logger, callContext =
     "J tool-error-continues"
     scenario: [boomTool()], 50, 4, askJ, live
     expected = "Answered(recovered) | start,end,tool+boom,tool-boom,start,end"
-
-  // The turn's delta carries exactly the engine-produced messages, in order:
-  // assistant tool-call, tool results, final assistant text.
-  val askK: Model = base =>
-    val stepK = py.list(0)
-    (results, tools) =>
-      val n = stepK.get(0).asInt
-      stepK.set(0, n + 1)
-      if n == 0 then toolReply("echo") else textReply("done")
-
-  val ctxK = new WindowedContext("", new Memory, [])
-  val agentK = new Agent(askK, tools, ctxK)
-  val resK = agentK.runTurn(UserText("dummy text", []), new TestInteract(live), 50, 4)
-
-  var deltaShape = ""
-
-  if resK is Answered(delta, _) then
-    for m in delta do
-      if deltaShape != "" then deltaShape = deltaShape + ","
-      deltaShape = deltaShape + msgTag(m)
-
-  check:
-    "K delta-shape"
-    deltaShape
-    expected = "user,calls,results,text"

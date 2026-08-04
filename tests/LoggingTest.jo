@@ -118,12 +118,16 @@ def run(): Unit receives stdout =
   // rebuilt into an `Entry` (by `runCode`) with its typed fields intact.
   val apath = os.path.join(dir, "audit.jsonl")
   val alog = new JsonlLogger(apath)
-  alog.log("harpe.sandbox.runtime", "info" ~ "ready", "count" ~ 3, "secs" ~ 1.5, "ok" ~ true)
+  var items: List[Value] = []
+  items = items + "a"
+  items = items + IntVal(1)
+  alog.log("harpe.sandbox.runtime", "info" ~ "ready", "count" ~ 3, "secs" ~ 1.5,
+           "ok" ~ true, "items" ~ items)
   alog.close()
 
   val back = entryFromDict(readRecords(apath).get(0))
   check("codec preserves category", back.category == "harpe.sandbox.runtime")
-  check("codec preserves field count", back.fields.size == 4)
+  check("codec preserves field count", back.fields.size == 5)
 
   match back.fields.getOpt("count")
   case Some(IntVal(n)) => check("codec keeps int typed", n == 3)
@@ -132,6 +136,10 @@ def run(): Unit receives stdout =
   match back.fields.getOpt("ok")
   case Some(BoolVal(b)) => check("codec keeps bool typed", b)
   case _                => check("codec bool present", false)
+
+  match back.fields.getOpt("items")
+  case Some(xs: List[Value]) => check("codec keeps arrays typed", xs.size == 2)
+  case _                 => check("codec array present", false)
 
   py.module("shutil").rmtree(dir, ignore_errors = true)
 

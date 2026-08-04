@@ -6,12 +6,10 @@
   ! transcript policy — see `harpe.context`), and its **turn policy** (the
   ! tool-round budget).
   !
-  ! What is deliberately NOT the agent: session lifecycle (persistence, locks,
-  ! delta archiving) and presentation (spinners, streams, chat actions) — those
-  ! belong to the drivers. The engine performs no I/O of its own and is provider-
-  ! and UI-agnostic: every user-visible moment is reported through the injected
-  ! `interact` handler, and the model call itself is issued through
-  ! `interact.ask`, so cancellation machinery stays with the driver.
+  ! What is deliberately NOT the agent: session storage layout, locks, and
+  ! presentation (spinners, streams, chat actions) — those belong to the drivers.
+  ! The engine emits lifecycle/transcript entries through the ordinary logger
+  ! channel, but knows nothing about their destination.
 //]
 
 namespace harpe
@@ -45,10 +43,11 @@ section Agent
     ! The `context` owns the transcript: the engine appends each assistant reply
     ! and tool-result batch to it, and asks it to compose `(system, messages)`
     ! before every model request. The caller appends the turn's `UserText` (after
-    ! `context.mark()`) before calling; on `Answered` it receives the turn's
-    ! delta to archive, on interruption/failure it calls `context.rollback()`.
+    ! `context.mark()`) before calling. Structured transcript events use the
+    ! ambient logger.
+    ! On interruption/failure the context is rolled back.
     !
-    ! A turn is bounded to `maxToolRounds` tool-call rounds; once spent the model
+    ! A turn is bounded to `maxToolRounds` tool-call rounds. Once spent the model
     ! is asked once more with no tools, forcing a final answer. `maxRetries` is
     ! transport policy — how often a transient model error is retried — so it is
     ! an argument, not part of the agent.
@@ -58,12 +57,12 @@ section Agent
       interact: Interact, maxToolRounds: Int, maxRetries: Int)
   : TurnResult receives logger, callContext =
 
-    var delta: List[Message] = [userMsg]
     var rounds = 0
     var result: TurnResult = Failed
 
     context.mark()
     context.append(userMsg)
+    Transcript.start(userMsg)
 
     // Compose what the model sees ONCE, at the turn's start. The Session then owns
     // the intra-turn tail; the engine feeds it tool results and never re-renders.
@@ -77,6 +76,7 @@ section Agent
       if interact.cancelled then
         result = Interrupted
         context.rollback()
+        Transcript.interrupted()
         break
 
       // Once the tool budget is spent, offer no tools so the model must reply with
@@ -90,20 +90,23 @@ section Agent
         case Stopped =>
           result = Interrupted
           context.rollback()
+          Transcript.interrupted()
           break
 
         case GaveUp =>
           result = Failed
           context.rollback()
+          Transcript.failed()
           break
 
         case Got(reply, usage) =>
           context.observe(usage)
           context.append(reply)
-          delta = delta + reply
+          Transcript.append(reply)
 
           if reply.calls.isEmpty then
-            result = Answered(delta, reply.text.trim)
+            result = Answered(reply.text.trim)
+            Transcript.commit()
             break
 
           var toolResults: List[ToolResult] = []
@@ -131,12 +134,13 @@ section Agent
           if cancelled || interact.cancelled then
             context.rollback()
             result = Interrupted
+            Transcript.interrupted()
             break
 
           else
             val results = ToolResults(toolResults)
             context.append(results)
-            delta = delta + results
+            Transcript.append(results)
             pending = toolResults
             rounds = rounds + 1
     end // while

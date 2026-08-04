@@ -15,7 +15,7 @@
   ! Sessions are the conversation's unit: a `POST /api/message` with no `session`
   ! mints a new id (emitted as the first stream event), and the browser puts it in
   ! the URL (`/c/<id>`). A turn runs under that session's lock, and its history is
-  ! persisted via `SessionLog`, so a session resumes by id — even across restarts,
+  ! persisted as structured session logs, so a session resumes by id across restarts,
   ! by loading from disk.
   !
 //]
@@ -41,7 +41,6 @@ import harpe.Workspace
 import harpe.workspace
 import harpe.logging.Logger
 import harpe.logging.logger
-import harpe.logging.Logging
 import harpe.Model
 import harpe.Model.Assistant
 import harpe.Model.Message
@@ -222,7 +221,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
       val input = UserText(text, attachments)
       val turn: () => Unit receives logger =
         () => session.runTurn(input, sink, maxToolRounds = 50, maxRetries = 4)
-      Logging.withContext("context", Map("session" ~ session.id), turn)
+      turn()
 
     py.list()
 
@@ -316,7 +315,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
     // document readers) are rooted per session. Uploads land there; agent output
     // surfaces there.
     val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(Session.dataDir(id)))
-    val session = new Session(id, Session.forSession(id), agent, memory, callCtx)
+    val session = new Session(id, Session.forSession(id), agent, memory, Session.memoryPath(id), callCtx)
 
     registryLock.acquire()
     registry.set(id, session)
@@ -339,7 +338,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
 
     case None =>
       val log = Session.forSession(id)
-      val memory = Memory.load(log.memoryPath)
+      val memory = Memory.load(Session.memoryPath(id))
       // `Session.load` caps the replayed transcript (a RAM backstop); the full
       // transcript stays on disk.
       val agent = new Agent:
@@ -351,7 +350,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace, backend: Logger)
           initial = Session.load(id)
 
       val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(Session.dataDir(id)))
-      val session = new Session(id, log, agent, memory, callCtx)
+      val session = new Session(id, log, agent, memory, Session.memoryPath(id), callCtx)
 
       registryLock.acquire()
       val winner =

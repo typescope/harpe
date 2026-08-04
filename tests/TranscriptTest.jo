@@ -1,0 +1,96 @@
+//[ TranscriptTest.jo
+  !
+  ! Tests for the per-session structured logger and its transcript projection.
+//]
+
+namespace harpe.test.TranscriptTest
+import harpe.ffi.os
+import harpe.ffi.time
+import harpe.ffi.json
+import harpe.ffi.file
+
+import jo.IO.stdout
+import harpe.*
+import harpe.Model.*
+import harpe.Tool.*
+import harpe.logging.logger
+import harpe.logging.JsonlLogger
+import harpe.logging.entryFromDict
+
+private def check(label: String, cond: Bool): Unit receives stdout =
+  assert: cond, "\{label} failed"
+  println "  ok \{label}"
+
+// Read a session file back as one parsed dict per non-empty line.
+private def readRecords(path: String): List[py.Dict] =
+  var records: List[py.Dict] = []
+  for line in file.read(path).lines do
+    if line.trim != "" then records = records + json.loads(line).cast[py.Dict]
+
+  records
+
+def run(): Unit receives stdout =
+  val call = ToolCall("c1", "runCode", ToolInput(py.dict("code" ~ "println 1")))
+
+  // Write into a fresh nested path to also exercise on-demand dir creation.
+  val path = os.path.abspath(".build/session-log-test/sub/session.jsonl")
+  if os.path.exists(path) then os.unlink(path)
+
+  val sessionLog = new JsonlLogger(path)
+
+  // One answered turn, including an unrelated diagnostic entry.
+  with logger = sessionLog in
+    Transcript.start(UserText("hi", []))
+    Transcript.append(Assistant("on it", [call]))
+    logger.log("myagent.debug", "note" ~ "between messages")
+    Transcript.append(ToolResults([ToolResult("c1", "42", [])]))
+    Transcript.commit()
+
+  val first = readRecords(path)
+  check("turn and diagnostic records share one log", first.size == 5)
+
+  val user = first.get(0)
+  check("started category", user.get("category", "").asString == "harpe.turn.started")
+  check("user role", user.get("role", "").asString == "user")
+  check("user text", user.get("text", "").asString == "hi")
+  check("user has timestamp", user.get("time", 0.0).asFloat > 0.0)
+
+  val asst = first.get(1)
+  check("assistant role", asst.get("role", "").asString == "assistant")
+  check("assistant text", asst.get("text", "").asString == "on it")
+  val calls = asst.get("calls", py.list()).cast[py.List]
+  check("one call", calls.size == 1)
+  val c0 = calls.get(0).cast[py.Dict]
+  check("call name", c0.get("name", "").asString == "runCode")
+  check("call id", c0.get("id", "").asString == "c1")
+  check("call input", c0.get("input").cast[py.Dict].get("code", "").asString == "println 1")
+
+  check("diagnostic category retained", first.get(2).get("category", "").asString == "myagent.debug")
+
+  val tr = first.get(3)
+  check("tool_results role", tr.get("role", "").asString == "tool_results")
+  val results = tr.get("results", py.list()).cast[py.List]
+  check("one result", results.size == 1)
+  val r0 = results.get(0).cast[py.Dict]
+  check("result id", r0.get("id", "").asString == "c1")
+  check("result content", r0.get("content", "").asString == "42")
+
+  // Failed and crash-truncated turns remain useful for debugging but never enter
+  // the reconstructed transcript. A later answered turn still commits normally.
+  with logger = sessionLog in
+    Transcript.start(UserText("will fail", []))
+    Transcript.append(Assistant("partial", []))
+    Transcript.failed()
+    Transcript.start(UserText("again", []))
+    Transcript.append(Assistant("done", []))
+    Transcript.commit()
+    Transcript.start(UserText("crashed", []))
+
+  var entries: List[harpe.logging.Entry] = []
+  for record in readRecords(path) do entries = entries + entryFromDict(record)
+  val loaded = Transcript.fromEntries(entries)
+  check("loader keeps answered turns only", loaded.size == 5)
+  check("loader keeps later answered turn", loaded.get(4) is Assistant("done", _))
+
+  sessionLog.close()
+  os.unlink(path)

@@ -109,13 +109,11 @@ private def serve(): Unit receives stdout, workspace, logger =
 //[ The `sendFile` tool — the agent's channel for delivering a file to the user.
   !
   ! A file the agent produced already lives in the chat's data directory (it wrote
-  ! it with `fs`). This tool moves no bytes: it validates the name and records the
-  ! *intent* to send it, as a tool call in the transcript. The driver acts on that
-  ! record after the turn — `Session.deliverFiles` uploads each named file to the
-  ! chat with `sendDocument`. A clean error comes back if the name does not resolve,
+  ! it with `fs`). The tool validates the name and sends the document immediately.
+  ! A clean error comes back if the name does not resolve,
   ! so the model can correct it rather than silently failing.
 //]
-def sendFileTool(): Tool = new Tool:
+private def sendFileTool(client: TelegramClient, chatId: String): Tool = new Tool:
   name = "sendFile"
   description = "Deliver a file to the user — it is sent to the chat as a document. Write the file to the data directory first (e.g. with `fs`)."
   params = [Tool.strParam("fileName", "The name of the file in your data directory to send to the user")]
@@ -133,6 +131,7 @@ def sendFileTool(): Tool = new Tool:
         "sendFile · no such file", [])
 
     else
+      client.sendDocument(chatId, os.path.join(dir, name), "")
       new Tool.RunOutcome("Sent '\{name}' to the user.", "sendFile · \{name}", [])
 
 //[ The bot: holds the model, prompt, toolset, the network client, and the
@@ -422,12 +421,13 @@ private class TelegramBot(
 
     if !live then
       val log = Session.forSession(chatId)
-      val memory = Memory.load(log.memoryPath)
+      val memoryPath = Session.memoryPath(chatId)
+      val memory = Memory.load(memoryPath)
       // `Session.load` caps the replayed transcript (a RAM backstop); the full
       // transcript stays on disk.
       val agent = new Agent:
         brain = brain
-        tools = Defaults.tools(610.0) ++ memoryTools(memory) ++ [sendFileTool()]
+        tools = Defaults.tools(610.0) ++ memoryTools(memory) ++ [sendFileTool(client, chatId)]
         context = new WindowedContext:
           baseSystem = workspace.read("AGENT.md").getOrElse("")
           memory = memory
@@ -437,7 +437,7 @@ private class TelegramBot(
       // the sandbox as HARPE_DATA_DIR): downloaded files land there, and files the
       // agent writes and sends back surface there too.
       val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(Session.dataDir(chatId)))
-      val session = new Session(chatId, log, agent, memory, callCtx)
+      val session = new Session(chatId, log, agent, memory, memoryPath, callCtx)
       registryLock.acquire()
       registry.set(chatId, session)
       session.queue.put(incoming)
@@ -487,7 +487,7 @@ private class TelegramBot(
         maxToolRounds = 50,
         maxRetries = 4
       )
-    with logger = baseLogger in Logging.withContext("context", Map("chat" ~ chatId), turn)
+    with logger = baseLogger in turn()
 
   //[ Start a chat's dedicated worker on a daemon thread (dies with the process). //]
   private def startWorker(chatId: String, session: Session): Unit =

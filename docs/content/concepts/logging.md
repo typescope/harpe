@@ -3,9 +3,8 @@ title = "Logging"
 +++
 Your agent keeps a **structured log**: one typed event per thing that happens —
 every `runCode` execution and every model call out of the box, plus anything you
-log from the tools you write. Each event is a record (typed fields, not free text)
-tagged with the session it came from, which makes it the raw material for usage
-reports, billing, and stats.
+log from the tools you write. Each event is a record with typed fields rather than
+free text, which makes it the raw material for usage reports, billing, and stats.
 
 *Where* those events go is not fixed. A `Logger` — the thing you install once —
 decides the format and the destination. The framework ships one that appends JSON
@@ -19,16 +18,17 @@ swap in your own `Logger` and the events are identical, only their storage chang
 The logging mechanism is built around three properties:
 
 - **Structural.** Every event is a typed record — a `category` and named fields,
-  not a formatted string. You *query and aggregate* it (per session, per category,
+  not a formatted string. Fields may contain scalars, arrays, or nested records.
+  You *query and aggregate* it (per session, per category,
   summing tokens) rather than grepping text.
 
 - **Extensible.** A new kind of event is a new category you emit. A new
   destination is a `Logger` you install. The two are independent and the wiring
   never grows — one channel carries everything, from `runCode` to your own tools.
 
-- **Contextual.** Every event is stamped automatically with the ambient context —
-  which session/chat produced it — so any slice ("this session's token usage")
-  falls straight out of the data.
+- **Contextual.** Applications using a shared destination can stamp events with
+  ambient context such as the session or chat that produced them. Applications
+  storing one file per session already carry that identity in the file path.
 
 ## Where your events go (default)
 
@@ -58,8 +58,7 @@ the session/chat it happened in. The two categories logged for you:
   `output`, or a `compileError`.
 - **`harpe.model`** — one per model call: `provider`, `model`, `inputTokens`,
   `outputTokens`. This is your token-usage feed for billing and auditing. It is
-  emitted by the built-in Anthropic/OpenAI models and tagged with the session that
-  made the call.
+  emitted by the built-in Anthropic/OpenAI models.
 
 ## Logging from your own tool
 
@@ -174,8 +173,8 @@ how to turn `entry.fields` (including nested maps) into JSON. You can also **wra
 
 ## Building usage, billing, and stats
 
-The log is a stream of typed events keyed by category and tagged with the session.
-Build reporting on it in one of two places.
+The log is a stream of typed events keyed by category. A shared log can additionally
+carry session context. Build reporting on it in one of two places.
 
 **Offline, over the stored events.** For dashboards, invoices, or audits, run `jq`
 (or any script) over `logs/agent.jsonl` — the queries above are the starting shapes.
@@ -235,8 +234,18 @@ end
 class Entry(time: Float, category: String, fields: Map[String, Value])
 ```
 
-Field values are `String`, `Int`, `Float`, `Bool`, or a nested `Map` of them — all
-written bare at the call site.
+Field values are `String`, `Int`, `Float`, `Bool`, `List[Value]`, or a nested
+`Map`. Scalars are written bare at the call site.
 
-The framework tags each turn's events with their session automatically (via
-`Logging.withContext`). You only need this if you write your own driver loop.
+Use `Logging.withContext` when several sessions share one logging destination.
+Per-session destinations do not need that redundant field.
+
+## Turn history and transcript loading
+
+Turn execution uses this same channel. There is no second session-journal API.
+The framework emits stable `harpe.turn.started`, `harpe.turn.message`, and
+terminal `harpe.turn.answered` / `interrupted` / `failed` categories.
+
+Applications decide how session events are stored and correlated. Producers emit
+through `logger` without depending on that policy. `Transcript.fromEntries`
+projects an ordered event stream into its committed conversation messages.
