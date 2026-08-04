@@ -716,9 +716,12 @@ function loadInfo() {
 // --- sessions: URL <-> conversation ---
 
 function appendMessage(role, text, attachments, steps, files) {
-  var row = addMessage(role, '');
+  var displayRole = role === 'error' ? 'agent' : role;
+  var row = addMessage(displayRole, '');
   var bubble = row.querySelector('.bubble');
-  if (role === 'agent') {
+  if (role === 'error') {
+    showTurnError(bubble, text);
+  } else if (role === 'agent') {
     var html = renderMarkdown(text);
     if (html === null) bubble.textContent = text; else bubble.innerHTML = html;
   } else {
@@ -998,11 +1001,7 @@ function handle(ev, bubble, statusText) {
     bubble.classList.add('notice');
     bubble.textContent = 'Stopped.';
   } else if (ev.type === 'failed') {
-    // `RequestFailed` and `RetriesExhausted` arrive first with useful detail.
-    // Keep that detail, using this terminal event only as a fallback.
-    if (!bubble.classList.contains('error')) {
-      showTurnError(bubble, 'Please try again.');
-    }
+    showTurnError(bubble, ev.detail || 'Please try again.');
   }
   scrollDown();
 }
@@ -1010,8 +1009,10 @@ function handle(ev, bubble, statusText) {
 function showTurnError(bubble, detail) {
   bubble.classList.add('error');
   bubble.innerHTML = '';
-  bubble.appendChild(el('div', 'error-title', 'Request failed'));
-  bubble.appendChild(el('div', 'error-detail', detail));
+  var disclosure = el('details', 'turn-error');
+  disclosure.appendChild(el('summary', 'error-title', 'Request failed'));
+  disclosure.appendChild(el('div', 'error-detail', detail));
+  bubble.appendChild(disclosure);
 }
 
 function showApproval(ev, bubble, statusText) {
