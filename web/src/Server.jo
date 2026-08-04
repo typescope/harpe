@@ -402,9 +402,14 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       var steps = py.list()       // this turn's {code, output} runCode steps
       var pending = py.dict()     // runCode call id -> program, awaiting its result
       var sent = py.list()        // this turn's sendFile deliveries
+      var visibleText = ""         // assistant text across this turn's tool rounds
 
       for m in turn.messages do
         if m is Assistant(t, calls) then
+          if t != "" then
+            if visibleText != "" then visibleText = visibleText + "\n\n"
+            visibleText = visibleText + t
+
           for c in calls if c.name == "runCode" do
             pending.set(c.id, c.input.string("code"))
 
@@ -413,8 +418,8 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
           for c in calls if c.name == "sendFile" do
             sent.append: sentFileJson(dataDir, c.input.string("fileName"))
 
-          if calls.isEmpty && t != "" then
-            arr.append: py.dict("role" ~ "agent", "text" ~ t, "steps" ~ steps, "files" ~ sent)
+          if calls.isEmpty && visibleText != "" then
+            arr.append: py.dict("role" ~ "agent", "text" ~ visibleText, "steps" ~ steps, "files" ~ sent)
 
         else if m is ToolResults(results) then
           for r in results if pending.contains(r.id) do

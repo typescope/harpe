@@ -18,6 +18,7 @@ union TurnEvent =
     ModelRequestStarted(attempt: Int, maxAttempts: Int)   // attempt 0 = first try
   | ModelRequestEnded
   | TransientError(detail: String, delaySeconds: Float)   // about to wait, then retry
+  | AssistantMessage(text: String)                        // visible text before tool calls
   | ToolBudgetReached(budget: Int)                         // no tools offered; forcing a final answer
   | ToolCallStarted(name: String)
   | ToolCallEnded(name: String, summary: String)

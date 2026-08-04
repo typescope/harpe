@@ -23,6 +23,7 @@ import harpe.turns.TurnEvent
 import harpe.turns.ModelRequestStarted
 import harpe.turns.ModelRequestEnded
 import harpe.turns.TransientError
+import harpe.turns.AssistantMessage
 import harpe.turns.ToolBudgetReached
 import harpe.turns.ToolCallStarted
 import harpe.turns.ToolCallEnded
@@ -60,6 +61,9 @@ private class TelegramInteract(
 
     case TransientError(detail, delaySeconds) =>
       pass
+
+    case AssistantMessage(text) =>
+      client.sendMessage(chatId, text)
 
     case ToolBudgetReached(budget) =>
       pass

@@ -137,6 +137,9 @@ private class Console(out: String => Unit, historyFile: String)
     case TransientError(detail, delaySeconds) =>
       println("  " + Style.warning("· transient error") + " (\{detail}); retrying in \{delaySeconds}s")
 
+    case AssistantMessage(text) =>
+      agentResponse(text)
+
     case ToolBudgetReached(budget) =>
       println("  " + Style.warning("· tool budget reached") + " (\{budget}); requesting final answer")
 

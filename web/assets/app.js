@@ -1007,10 +1007,10 @@ function handle(ev, bubble, statusText) {
     showApproval(ev, bubble, statusText);
   } else if (ev.type === 'approval-ended') {
     finishApproval(ev.id, ev.decision);
+  } else if (ev.type === 'assistant-message') {
+    appendAgentText(bubble, ev.text);
   } else if (ev.type === 'answer') {
-    var html = renderMarkdown(ev.text);
-    if (html === null) bubble.textContent = ev.text;
-    else bubble.innerHTML = html;
+    appendAgentText(bubble, ev.text);
   } else if (ev.type === 'error') {
     showTurnError(bubble, ev.detail);
   } else if (ev.type === 'interrupted') {
@@ -1020,6 +1020,16 @@ function handle(ev, bubble, statusText) {
     showTurnError(bubble, ev.detail || 'Please try again.');
   }
   scrollDown();
+}
+
+function appendAgentText(bubble, text) {
+  if (!text) return;
+  var previous = bubble.dataset.agentText || '';
+  var combined = previous ? previous + '\n\n' + text : text;
+  bubble.dataset.agentText = combined;
+  var html = renderMarkdown(combined);
+  if (html === null) bubble.textContent = combined;
+  else bubble.innerHTML = html;
 }
 
 function showTurnError(bubble, detail) {

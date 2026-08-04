@@ -23,6 +23,7 @@ import harpe.turns.TurnEvent
 import harpe.turns.ModelRequestStarted
 import harpe.turns.ModelRequestEnded
 import harpe.turns.TransientError
+import harpe.turns.AssistantMessage
 import harpe.turns.ToolBudgetReached
 import harpe.turns.ToolCallStarted
 import harpe.turns.ToolCallEnded
@@ -63,6 +64,9 @@ private class WebInteract(sink: Sink, stop: py.Dynamic, approvalHandler: Approva
 
     case TransientError(detail, delaySeconds) =>
       sink(py.dict("type" ~ "status", "label" ~ "transient error; retrying in \{delaySeconds}s"))
+
+    case AssistantMessage(text) =>
+      sink(py.dict("type" ~ "assistant-message", "text" ~ text))
 
     case ToolBudgetReached(budget) =>
       sink(py.dict("type" ~ "status", "label" ~ "tool budget reached (\{budget})"))

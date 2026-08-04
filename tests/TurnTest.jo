@@ -39,6 +39,7 @@ private def eventTag(e: TurnEvent): String =
   case ModelRequestStarted(_, _) => "start"
   case ModelRequestEnded         => "end"
   case TransientError(_, _)      => "transient"
+  case AssistantMessage(text)    => "assistant:\{text}"
   case ToolBudgetReached(_)      => "budget"
   case ToolCallStarted(n)        => "tool+\{n}"
   case ToolCallEnded(n, _)       => "tool-\{n}"
@@ -306,3 +307,20 @@ def run(): Unit receives stdout, logger, callContext =
     "L message-kept-when-tool-fails"
     captureFailure.events.join(",")
     expected = "harpe.turn.started,assistant-calls,tool-failed,tool_results,assistant-text,harpe.turn.answered"
+
+  // Visible assistant text accompanying a tool request reaches the interaction
+  // before the tool starts.
+  val askM: Model = base =>
+    val step = py.list(0)
+    (results, tools) =>
+      val n = step.get(0).asInt
+      step.set(0, n + 1)
+      if n == 0 then
+        val call = ToolCall("id", "echo", ToolInput(py.dict()))
+        Reply(Assistant("I will check.", [call]), new Usage(0, 0))
+      else textReply("Done.")
+
+  check:
+    "M assistant-text-before-tool"
+    scenario: tools, 50, 4, askM, live
+    expected = "Answered(Done.) | start,end,assistant:I will check.,tool+echo,tool-echo,start,end"
