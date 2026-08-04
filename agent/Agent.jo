@@ -65,10 +65,10 @@ section Agent
     context.mark()
     context.append(userMsg)
 
-    // Compose what the model sees ONCE, at the turn's start. The Turn then owns
+    // Compose what the model sees ONCE, at the turn's start. The Session then owns
     // the intra-turn tail; the engine feeds it tool results and never re-renders.
     val rendered = context.render(interact)
-    val turn = brain.startTurn(rendered)
+    val session = brain.startTurn(rendered)
 
     // Tool results to hand the model on the next round ([] for the first request).
     var pending: List[ToolResult] = []
@@ -86,7 +86,7 @@ section Agent
       if rounds == maxToolRounds then
         interact.emit: ToolBudgetReached(maxToolRounds)
 
-      match fetchReply(turn, pending, offer, maxRetries, interact)
+      match fetchReply(session, pending, offer, maxRetries, interact)
         case Stopped =>
           result = Interrupted
           context.rollback()
@@ -173,7 +173,7 @@ private def backoffSeconds(attempt: Int): Float =
   ! Progress and errors are reported through `interact.emit`.
 //]
 private def fetchReply(
-    turn: Turn, results: List[ToolResult], tools: List[Tool],
+    session: Session, results: List[ToolResult], tools: List[Tool],
     maxRetries: Int, interact: Interact)
 : Fetched =
 
@@ -187,9 +187,9 @@ private def fetchReply(
 
     interact.emit: ModelRequestStarted(attempt, maxRetries)
 
-    // `reply` is idempotent — the Turn commits `results` only on success, so
+    // `reply` is idempotent — the Session commits `results` only on success, so
     // every attempt (including retries) passes the same `results`.
-    val res = turn.reply(results, tools)
+    val res = session.reply(results, tools)
 
     interact.emit: ModelRequestEnded
 

@@ -5,31 +5,42 @@ The model is the agent's brain. It interprets context, chooses tools, and
 produces answers. Harpe exposes models through a provider-independent interface,
 so the rest of the agent does not depend on a provider's wire protocol.
 
-Harpe separates a reusable `Model` from a `Turn`. The model starts one user turn
-from rendered context. The returned `Turn` carries any provider state needed
-across that turn's tool calls. Conversation history across user turns remains in
-the agent's [Context](/concepts/context/).
+Harpe separates a reusable `Model` from the model-side state of an active user
+turn. `startTurn` creates that state from rendered context and returns it as a
+`Model.Session`. The object exists only to continue model requests across tool
+calls. It does not run the turn, own the conversation, or persist its history.
+The agent runs the turn. Conversation history across turns remains in its
+[Context](/concepts/context/).
 
-## Model and Turn
+## Model and per-turn state
 
 ```jo
 interface Model
-  def startTurn(base: Rendered): Turn
+  def startTurn(base: Rendered): Model.Session
 
-interface Turn
-  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult
-      receives logger, callContext
+section Model
+  interface Session
+    def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult
+        receives logger, callContext
+  end
+end
 ```
 
+Here, a **user turn** means the complete exchange from one user message to the
+agent's final answer, including any tool calls. `Model.Session` is the model
+adapter's state during that exchange, not an application or conversation
+session. It may make several model API calls while the agent uses tools.
+
 `startTurn` is called once with the system prompt, conversation history, and
-transient context. `reply` is called for each model round. It receives results
-from the previous tool calls and the tools available for the next response.
+transient context. The agent calls `reply` again whenever it has tool results to
+return to the model. Each call receives those results and the tools available
+for the next response.
 
-A `Turn` may keep provider-specific state such as reasoning handles or a
-server-side response ID. That state lasts only for the current user turn and
-does not leak into the provider-independent transcript.
+A `Model.Session` may keep provider-specific continuation state such as reasoning
+handles or a server-side response ID. That state lasts only for the current
+user turn and does not leak into the provider-independent transcript.
 
-The result of a model round is explicit:
+The result of each `reply` call is explicit:
 
 ```jo
 union ReplyResult =
@@ -83,8 +94,8 @@ MODEL=provider/model-name
 ```
 
 The OpenRouter adapter uses its stateless Responses API. It preserves raw
-reasoning and tool-call items locally, then resends the complete turn on each
-tool round.
+reasoning and tool-call items locally, then resends the complete turn whenever
+it returns tool results to the model.
 
 Harpe can also use a locally deployed open-weight model through a custom `Model`
 adapter. The adapter can target llama.cpp, vLLM, Ollama, or another inference
@@ -119,21 +130,21 @@ state isolated to one user turn.
 ## Custom models
 
 Implement `Model` for another provider or a locally deployed model. Use
-`SimpleTurn` when each round can resend the accumulated conversation without
-keeping additional provider state:
+`SimpleSession` when each `reply` call can resend the accumulated conversation
+without keeping additional provider state:
 
 ```jo
 class MyModel(client: Client)
   view Model
 
-  def startTurn(base: Rendered): Turn =
-    new SimpleTurn(base, (rendered, tools) => send(client, rendered, tools))
+  def startTurn(base: Rendered): Model.Session =
+    new SimpleSession(base, (rendered, tools) => send(client, rendered, tools))
 end
 ```
 
-Implement `Turn` directly when the provider carries state across tool rounds.
-The built-in Anthropic and OpenAI implementations do this to preserve
-[reasoning](/concepts/reasoning/) state.
+Implement `Model.Session` directly when the provider carries state between
+`reply` calls. The built-in Anthropic and OpenAI implementations do this to
+preserve [reasoning](/concepts/reasoning/) state.
 
 A custom implementation must translate Harpe messages and tools to the provider
 protocol, classify failures as `Transient` or `Fatal`, and report token usage.

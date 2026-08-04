@@ -149,8 +149,8 @@ end
 private class OpenAIResponsesModel(client: py.Dynamic, model: String, effort: String)
   view Model
 
-  def startTurn(base: Rendered): Turn =
-    new OpenAIResponsesTurn(client, model, effort, base)
+  def startTurn(base: Rendered): Session =
+    new OpenAIResponsesSession(client, model, effort, base)
 end
 
 //[ A reasoning-preserving turn on the Responses API.
@@ -162,8 +162,8 @@ end
   ! default server-side `store`; it is the native Responses path for reasoning +
   ! tools.
 //]
-private class OpenAIResponsesTurn(client: py.Dynamic, model: String, effort: String, base: Rendered)
-  view Turn
+private class OpenAIResponsesSession(client: py.Dynamic, model: String, effort: String, base: Rendered)
+  view Session
 
   // "" until the first successful reply, then the id to chain the next request
   // from. Committed only on success, so a retry re-sends the same round.

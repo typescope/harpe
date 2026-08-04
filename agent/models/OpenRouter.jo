@@ -1,7 +1,7 @@
 //[ OpenRouter.jo
   !
   ! OpenRouter's stateless Responses API. Unlike OpenAI, OpenRouter does not
-  ! retain a response chain. This Turn therefore keeps the provider's raw output
+  ! retain a response chain. This Session therefore keeps the provider's raw output
   ! items and sends the complete intra-turn history with each tool result.
 //]
 
@@ -118,12 +118,12 @@ end
 private class OpenRouterModel(client: py.Dynamic, model: String, effort: String)
   view Model
 
-  def startTurn(base: Rendered): Turn =
-    new OpenRouterTurn(client, model, effort, base)
+  def startTurn(base: Rendered): Session =
+    new OpenRouterSession(client, model, effort, base)
 end
 
-private class OpenRouterTurn(client: py.Dynamic, model: String, effort: String, base: Rendered)
-  view Turn
+private class OpenRouterSession(client: py.Dynamic, model: String, effort: String, base: Rendered)
+  view Session
 
   //[ The complete Responses `input` accepted so far.
     !
@@ -134,7 +134,7 @@ private class OpenRouterTurn(client: py.Dynamic, model: String, effort: String, 
     ! request copies it and appends new tool results.
     !
     ! This is also how reasoning survives tool rounds. Reasoning items remain
-    ! opaque inside the `Turn` and are returned to OpenRouter unchanged. They do
+    ! opaque inside the `Session` and are returned to OpenRouter unchanged. They do
     ! not enter Harpe's provider-independent transcript. Only visible assistant
     ! text and function calls surface through `Assistant`.
     !

@@ -182,8 +182,8 @@ private def parseReply(response: py.Dynamic): Assistant =
 private class AnthropicModel(client: py.Dynamic, model: String, cache: AnthropicCache)
   view Model
 
-  def startTurn(base: Rendered): Turn =
-    new AnthropicTurn(client, model, cache, base)
+  def startTurn(base: Rendered): Session =
+    new AnthropicSession(client, model, cache, base)
 end
 
 //[ A reasoning-preserving turn on the Messages API.
@@ -195,8 +195,8 @@ end
   ! rejected. `parseReply` still extracts only text + tool calls for the engine —
   ! the reasoning rides in the wire history, never in the semantic `Message`.
 //]
-private class AnthropicTurn(client: py.Dynamic, model: String, cache: AnthropicCache, base: Rendered)
-  view Turn
+private class AnthropicSession(client: py.Dynamic, model: String, cache: AnthropicCache, base: Rendered)
+  view Session
 
   // The wire messages, accumulated across the turn. They are seeded lazily on
   // the first reply, when the session's data directory is available, then grown
