@@ -65,11 +65,21 @@ body.collapsed #sidebar { display: none; }
 .newchat svg { width: 17px; height: 17px; flex: none; color: var(--muted); }
 .sessions { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 .session-item {
-  padding: 7px 8px; border-radius: var(--radius); cursor: pointer; color: var(--ink);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px;
+  padding: 7px 5px 7px 8px; border-radius: var(--radius); cursor: pointer; color: var(--ink);
+  display: flex; align-items: center; gap: 4px; font-size: 14px;
 }
 .session-item:hover { background: var(--agent); }
 .session-item.active { background: var(--agent); font-weight: 600; }
+.session-title { min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.session-delete {
+  width: 26px; height: 26px; flex: none; display: grid; place-items: center;
+  padding: 0; border: none; border-radius: 6px; background: transparent;
+  color: var(--muted); cursor: pointer; opacity: 0;
+}
+.session-item:hover .session-delete, .session-delete:focus-visible { opacity: 1; }
+.session-delete:hover { color: var(--error); background: rgba(192, 57, 43, .08); }
+.session-delete svg { width: 15px; height: 15px; }
+@media (pointer: coarse) { .session-delete { opacity: 1; } }
 .icon-btn {
   width: 32px; height: 32px; display: grid; place-items: center; padding: 0;
   border: none; background: transparent; color: var(--muted);

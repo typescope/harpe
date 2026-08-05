@@ -249,6 +249,9 @@ class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath:
   //[ Persist the working memory beside the transcript archive. //]
   private def saveMemory(): Unit =
     if !memory.isEmpty then Memory.save(memoryPath, memory)
+
+  //[ Release the session's open journal before its stored files are removed. //]
+  def close(): Unit = log.close()
 end
 
 //[ Lightweight metadata for one persisted session, used to populate the session
@@ -307,6 +310,16 @@ section Session
   def memoryPath(id: String): String receives workspace =
     val path = sessionPath(id)
     path.substring(0, path.size - 6) + ".memory.json"
+
+  //[ Permanently remove a session's transcript, memory, and data directory. //]
+  def removeStored(id: String): Unit receives workspace =
+    val transcript = sessionPath(id)
+    val memory = memoryPath(id)
+    val data = workspace.relative("data/" + id)
+
+    if os.path.isfile(transcript) then os.unlink(transcript)
+    if os.path.isfile(memory) then os.unlink(memory)
+    if os.path.isdir(data) then py.module("shutil").rmtree(data)
 
   //[ Reconstruct this id's conversation from disk; `[]` if it has no file yet,
     ! so a freshly-minted (or unknown) id loads as an empty conversation.

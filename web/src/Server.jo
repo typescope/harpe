@@ -8,6 +8,7 @@
   !   GET  /c/<id>          the chat page for an existing session (the JS loads it)
   !   GET  /api/info        the agent's name
   !   GET  /api/sessions    the persisted sessions, newest first (for the picker)
+  !   DELETE /api/session   remove one idle session and its files
   !   GET  /api/history     one session's messages (to render on load)
   !   POST /api/message     run one turn, STREAMING progress then the answer (NDJSON)
   !   POST /api/stop        request cancellation of a session's running turn
@@ -119,6 +120,9 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
     else if path == "/api/sessions" then
       handleSessions(startResp)
+
+    else if path == "/api/session" && method == "DELETE" then
+      handleDeleteSession(environ, startResp)
 
     else if path == "/api/history" then
       handleHistory(environ, startResp)
@@ -380,6 +384,41 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       arr.append(py.dict("id" ~ m.id, "title" ~ m.title, "time" ~ m.time))
     respondJson(startResp, py.dict("sessions" ~ arr))
 
+  //[ Permanently remove one idle session and all of its stored files. //]
+  private def handleDeleteSession(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
+    val body = json.loads(readBody(environ)).cast[py.Dict]
+    val requested = body.get("session", "").asString
+    val id = sanitizeName(requested)
+
+    if id == "" || id != requested then
+      respondJsonStatus(startResp, "400 Bad Request", py.dict("ok" ~ false, "error" ~ "invalid session"))
+
+    else
+      registryLock.acquire()
+      val resident: Option[Session] =
+        if registry.contains(id) then Some(registry.get(id).cast[Session]) else None
+
+      val active =
+        match resident
+        case Some(session) => session.state is Active(_)
+        case None          => false
+
+      if !active && registry.contains(id) then
+        val _ = registry.pop(id)
+      registryLock.release()
+
+      if active then
+        respondJsonStatus(
+          startResp,
+          "409 Conflict",
+          py.dict("ok" ~ false, "error" ~ "stop the running turn before deleting this session"))
+      else
+        match resident
+        case Some(session) => session.close()
+        case None          => pass
+        Session.removeStored(id)
+        respondJson(startResp, py.dict("ok" ~ true))
+
   //[ One session's user/agent messages, for rendering on load.
     !
     ! Each user message and each turn's FINAL reply are shown as bubbles. The turn's
@@ -454,6 +493,9 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
   private def respondJson(startResp: py.Dynamic, dict: py.Dict): py.List =
     respond(startResp, "200 OK", "application/json", json.dumps(dict))
+
+  private def respondJsonStatus(startResp: py.Dynamic, status: String, dict: py.Dict): py.List =
+    respond(startResp, status, "application/json", json.dumps(dict))
 
   //[ A complete, non-streamed response from a string body. //]
   private def respond(startResp: py.Dynamic, status: String, ctype: String, body: String): py.List =

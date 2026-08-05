@@ -95,7 +95,7 @@ private section CompatibleChat
     messages
 
   def parseResponse(response: py.Dynamic): Assistant =
-    val choice = response.choices.get(0)
+    val choice = response.choices[0]
     val message = choice.message
     val content = message.content
     val text = if content.isNone then "" else content.asString
@@ -169,7 +169,8 @@ private class CompatibleSession(
 
       // Preserve the provider's complete assistant message, including unknown
       // extension fields. Failed requests never mutate `committed`.
-      val raw = response.choices.get(0).message.model_dump(exclude_none = true).cast[py.Dict]
+      val choice = response.choices[0]
+      val raw = choice.message.model_dump(exclude_none = true).cast[py.Dict]
       messages.append(raw)
       committed = Some(messages)
 
