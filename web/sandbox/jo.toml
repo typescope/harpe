@@ -18,12 +18,18 @@ src = ["SandboxRuntime.jo"]
 depth = 2
 
 modules = ["api"]
-packages = [{ name = "harpe", version = "0.1" }]
+packages = [
+  { name = "harpe", version = "0.1" },
+  # Temporary workaround for Jo 0.12.3 not exposing transitive packages to
+  # library compilation. Remove after the build-tool fix is released.
+  { name = "harpe-caps", version = "0.1" },
+]
 
 [module.guest]
 kind = "app"
 platform = "python"
 src = ["Task.jo"]
+depth = 2
 
 modules = ["api", { id = "runtime", link = true }]
 packages = [{ name = "harpe-caps", version = "0.1" }]
