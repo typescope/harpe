@@ -13,12 +13,14 @@ not need Cloudflare credentials.
 
 Create a branch from the latest `origin/main`. In the pull request:
 
-1. Set `[module.caps.package].version` and `[module.harpe.package].version` in
-   `jo.toml` to the intended versions.
-2. Add the release notes to `CHANGELOG.md`.
-3. Update the release badge in `README.md`.
-4. Confirm package dependency constraints still describe the intended minimum
-   compatible versions.
+- [ ] Set `[module.caps.package].version` in `jo.toml` to the intended
+      `harpe-caps` version.
+- [ ] Set `[module.harpe.package].version` in `jo.toml` to the intended `harpe`
+      version.
+- [ ] Add the release notes to `CHANGELOG.md`.
+- [ ] Update the version and link in the release badge in `README.md`.
+- [ ] Confirm package dependency constraints still describe the intended minimum
+      compatible versions.
 
 Do not tag or package the release from the pull-request branch. Wait for all
 required CI checks to pass and merge the pull request into `main`.
