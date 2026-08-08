@@ -13,6 +13,7 @@
 namespace harpe.models
 import harpe.ffi.json
 import harpe.ffi.builtins
+import harpe.ffi.hashlib
 
 
 import harpe.Model
@@ -160,6 +161,13 @@ end
   ! calls (rather than re-reasoning from scratch each round). This relies on the
   ! default server-side `store`; it is the native Responses path for reasoning +
   ! tools.
+  !
+  ! Prompt caching needs no opt-in — OpenAI caches eligible prefixes on its own,
+  ! and the default `implicit` mode places a breakpoint on the latest message.
+  ! What it does need on gpt-5.6 and later is a `prompt_cache_key`: without one,
+  ! those models fall back off the reliable-matching path. The key is the digest
+  ! of the system prompt, so requests sharing a long common prefix share a key —
+  ! OpenAI's own rule for choosing one — while unrelated agents stay apart.
 //]
 private class OpenAIResponsesSession(
     client: py.Dynamic, model: String, effort: String,
@@ -169,6 +177,9 @@ private class OpenAIResponsesSession(
   // "" until the first successful reply, then the id to chain the next request
   // from. Committed only on success, so a retry re-sends the same round.
   private var prevId: String = ""
+
+  // Stable for the turn, and across every turn built on the same system prompt.
+  private val cacheKey: String = "harpe:" + hashlib.sha256Hex(base.system).substring(0, 16)
 
   def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger, callContext =
     val dataDir = callContext.getOrElse("HARPE_DATA_DIR", "")
@@ -210,6 +221,7 @@ private class OpenAIResponsesSession(
       input
       toolSpecs
       prevId
+      cacheKey
       extraBody
 
     match attempt
@@ -230,12 +242,13 @@ end
   ! `reasoning` is sent unless the effort is "none" — omitting it keeps a
   ! non-reasoning model (e.g. gpt-4o) working on this endpoint, since those reject
   ! a `reasoning` parameter. `previous_response_id` is sent only for a continuation
-  ! (`prevId != ""`).
+  ! (`prevId != ""`). `prompt_cache_key` rides on every request — see the session's
+  ! note on why caching itself needs no other field.
 //]
 private def openaiCreate(
     client: py.Dynamic, model: String, effort: String,
     system: String, input: py.List, toolSpecs: py.List, prevId: String,
-    extraBody: py.Dict)
+    cacheKey: String, extraBody: py.Dict)
 : Result[py.Dynamic, py.Error] =
   if effort == "none" then
     if prevId == "" then
@@ -246,6 +259,7 @@ private def openaiCreate(
           input = input
           tools = toolSpecs
           max_output_tokens = 8096
+          prompt_cache_key = cacheKey
           extra_body = extraBody
 
     else
@@ -257,6 +271,7 @@ private def openaiCreate(
           tools = toolSpecs
           max_output_tokens = 8096
           previous_response_id = prevId
+          prompt_cache_key = cacheKey
           extra_body = extraBody
 
   else
@@ -269,6 +284,7 @@ private def openaiCreate(
           tools = toolSpecs
           reasoning = py.dict("effort" ~ effort)
           max_output_tokens = 8096
+          prompt_cache_key = cacheKey
           extra_body = extraBody
 
     else
@@ -281,6 +297,7 @@ private def openaiCreate(
           reasoning = py.dict("effort" ~ effort)
           max_output_tokens = 8096
           previous_response_id = prevId
+          prompt_cache_key = cacheKey
           extra_body = extraBody
 
 //[ Build an OpenAI or OpenAI-compatible model
