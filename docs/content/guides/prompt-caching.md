@@ -27,11 +27,13 @@ puts the most stable content first:
 | 2 | Conversation transcript | Grows, append-only |
 | 3 | Transient tail | Every turn |
 
-A *breakpoint* marks where a cacheable prefix ends. Providers cap how many a
-request may write, so they are placed where the prefix is stable: at the end of
-the tool list and system prompt, and at the end of the transcript. The transient
-tail stays uncached, because caching content that changes every turn only pays
-the write cost and never earns a read.
+A *breakpoint* marks where a cacheable prefix ends. Both
+[Anthropic](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
+and [OpenAI](https://developers.openai.com/api/docs/guides/prompt-caching) cap a
+request at four cache writes, so breakpoints go where the prefix is stable: at
+the end of the tool list and system prompt, and at the end of the transcript. The
+transient tail stays uncached, because caching content that changes every turn
+only pays the write cost and never earns a read.
 
 An append-only transcript is what makes the second breakpoint worthwhile. Harpe
 never rewrites history mid-turn, so each request in a tool loop extends the
@@ -45,18 +47,25 @@ previous prefix rather than invalidating it.
 
 ## Anthropic
 
-Anthropic caching is explicit: the request carries cache breakpoints, and the
-policy chooses their lifetime.
+[Anthropic caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
+is explicit: the request carries cache breakpoints, and the policy chooses their
+lifetime.
 
 ```jo
 union AnthropicCache = NoCache | FiveMinutes | OneHour
 ```
 
-`FiveMinutes` is the default ephemeral lifetime. `OneHour` costs more to write
-and survives longer idle gaps, which suits an agent whose user pauses between
-turns. `NoCache` sends no breakpoints at all, and the system prompt reverts to a
-plain string, byte-identical to a request from an agent that never enabled
-caching.
+`FiveMinutes` is the default ephemeral lifetime. `OneHour` survives longer idle
+gaps, which suits an agent whose user pauses between turns, but its writes are
+billed at 2x the base input rate against 1.25x for the five-minute cache, so it
+only pays off if the gap it covers is real. `NoCache` sends no breakpoints at
+all, and the system prompt reverts to a plain string, byte-identical to a request
+from an agent that never enabled caching.
+
+Anthropic's minimum cacheable prompt varies by model — shorter prompts are simply
+processed uncached, with no error — so check the
+[current thresholds](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
+if a small agent shows no cache reads at all.
 
 The policy is an argument to the constructor:
 
@@ -72,9 +81,10 @@ only one provider would honor.
 
 ## OpenAI
 
-OpenAI caching needs no opt-in. The provider caches eligible prefixes on its
-own, for prompts of 1024 tokens or more, and the default `implicit` mode places
-a breakpoint on the latest message. There is no field that turns it on.
+[OpenAI caching](https://developers.openai.com/api/docs/guides/prompt-caching)
+needs no opt-in. The provider caches eligible prefixes on its own, for prompts of
+1024 tokens or more, and the default `implicit` mode places a breakpoint on the
+latest message. There is no field that turns it on.
 
 There is, however, a field that makes it reliable. On `gpt-5.6` and later
 families, OpenAI requires a `prompt_cache_key` to use its more reliable matching
@@ -99,9 +109,10 @@ along with it. See [Reasoning](/concepts/reasoning/).
 ## Other providers
 
 OpenRouter and OpenAI-compatible servers send no cache-control fields. Whether a
-prefix is cached is up to the endpoint: many local inference servers, including
-vLLM and SGLang, do automatic prefix caching, and their reuse is a property of
-the server rather than of the request.
+prefix is cached is up to the endpoint: many local inference servers do automatic
+prefix caching — [vLLM](https://docs.vllm.ai/en/stable/design/prefix_caching.html)
+and SGLang's RadixAttention among them — and their reuse is a property of the
+server rather than of the request.
 
 ## Reading the effect
 

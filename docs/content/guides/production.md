@@ -1,5 +1,5 @@
 +++
-title = "Production Considerations"
+title = "Deployment Checklist"
 aliases = ["/concepts/production/"]
 +++
 Compile-time sandboxing constrains generated programs. A production deployment

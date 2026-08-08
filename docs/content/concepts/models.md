@@ -83,7 +83,7 @@ fails.
 such as Anthropic's prompt-cache policy, stays with the provider constructor:
 `Defaults.model()` uses the default 5-minute cache, and an agent needing another
 policy calls `anthropic(...)` itself. See
-[Prompt Caching](/concepts/prompt-caching/).
+[Prompt Caching](/guides/prompt-caching/).
 
 ```sh
 MODEL=claude-opus-4-6
