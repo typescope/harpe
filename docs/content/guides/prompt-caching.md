@@ -86,10 +86,12 @@ needs no opt-in. The provider caches eligible prefixes on its own, for prompts o
 1024 tokens or more, and the default `implicit` mode places a breakpoint on the
 latest message. There is no field that turns it on.
 
-There is, however, a field that makes it reliable. On `gpt-5.6` and later
-families, OpenAI requires a `prompt_cache_key` to use its more reliable matching
-path — the key is a routing hint that steers requests sharing a long common
-prefix to the same cache. Harpe sends one on every Responses request, derived
+There is, however, a field that makes it hit more often. On `gpt-5.6` and later
+families, only requests carrying a `prompt_cache_key` get OpenAI's improved
+matching; the key is a routing hint that steers requests sharing a long common
+prefix to the same cache. Omitting it degrades the hit rate rather than breaking
+anything — such requests still cache, falling back to prefix hashing alone, and
+never fail for want of a key. Harpe sends one on every Responses request, derived
 from the digest of the system prompt:
 
 ```
