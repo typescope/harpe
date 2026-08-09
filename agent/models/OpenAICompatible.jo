@@ -165,7 +165,15 @@ private class CompatibleSession(
       val usage = response.usage
       val inTok = if usage.isNone then 0 else usage.prompt_tokens.asInt
       val outTok = if usage.isNone then 0 else usage.completion_tokens.asInt
-      logUsage("openai-compatible", model, inTok, outTok)
+      // Chat Completions spells the breakdown `prompt_tokens_details`. Local
+      // servers doing automatic prefix caching often omit it entirely, so a real
+      // cache hit can still report 0 here.
+      val details =
+        if usage.isNone then py.none
+        else builtins.attrOr(usage, "prompt_tokens_details", py.none)
+
+      val cacheRead = if details.isNone then 0 else usageInt(details, "cached_tokens")
+      logUsage("openai-compatible", model, inTok, outTok, cacheRead)
 
       // Preserve the provider's complete assistant message, including unknown
       // extension fields. Failed requests never mutate `committed`.

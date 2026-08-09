@@ -73,12 +73,17 @@ by OpenRouter and Anthropic.
 | `OPENAI_API_KEY` | Select and authenticate OpenAI |
 | `OPENROUTER_API_KEY` | Select and authenticate OpenRouter |
 | `MODEL` | Override the provider's default model ID |
-| `PROMPT_CACHE` | Set Anthropic prompt caching to `5m`, `1h`, or `off` |
 | `OPENAI_BASE_URL` | Use another Responses API endpoint, such as Azure OpenAI or a proxy |
 
 The default model IDs are `claude-opus-4-6` for Anthropic and `gpt-5.6` for
 OpenAI. OpenRouter requires an explicit `MODEL`. If no API key is set, startup
 fails.
+
+`Defaults.model()` covers provider selection only. Provider-specific tuning,
+such as Anthropic's prompt-cache policy, stays with the provider constructor:
+`Defaults.model()` uses the default 5-minute cache, and an agent needing another
+policy calls `anthropic(...)` itself. See
+[Prompt Caching](/guides/prompt-caching/).
 
 ```sh
 MODEL=claude-opus-4-6

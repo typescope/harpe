@@ -1,0 +1,13 @@
+//[ hashlib.jo
+  !
+  ! Cryptographic digests, wrapping Python's `hashlib` — mirrors `secrets` and
+  ! `os`. Used for content-derived identifiers, not for secrets.
+//]
+
+namespace harpe.ffi.hashlib
+
+private def module: py.Dynamic = py.module("hashlib")
+
+//[ The SHA-256 digest of `s` (UTF-8 encoded) as a lowercase hex string. //]
+def sha256Hex(s: String): String =
+  module.sha256(py.dynamic(s).encode("utf-8")).hexdigest().asString

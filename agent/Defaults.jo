@@ -48,9 +48,10 @@ section Defaults
     !   MODEL             model id — defaults to "claude-opus-4-6" for Anthropic,
     !                     "gpt-5.6" for OpenAI, and is required for OpenRouter
     !   OPENAI_BASE_URL   optional OpenAI Responses API endpoint (Azure, a proxy)
-    !   PROMPT_CACHE      Anthropic prompt caching: "5m" (default), "1h", or
-    !                     "off". Ignored by OpenAI (it caches long prefixes on
-    !                     its own).
+    !
+    ! Provider-specific tuning is deliberately out of scope here — Anthropic's
+    ! prompt cache is fixed to the default 5-minute policy. An agent wanting
+    ! another policy calls `anthropic(...)` (or `openai(...)`) itself.
   //]
   def model(): Model receives IO.stdout =
     val openAiKey = os.getenv("OPENAI_API_KEY", "")
@@ -69,19 +70,12 @@ section Defaults
       openrouter(openRouterKey, modelId)
 
     else if anthropicKey != "" then
-      anthropic(anthropicKey, os.getenv("MODEL", "claude-opus-4-6"), cachePolicy())
+      anthropic(anthropicKey, os.getenv("MODEL", "claude-opus-4-6"), cache = FiveMinutes)
 
     else
       println "Error: set OPENAI_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY (in .env or the environment)."
       sys.exit(1)
       abort "Not reachable"
-
-  //[ The Anthropic prompt-cache policy from PROMPT_CACHE (default "5m"). //]
-  private def cachePolicy(): AnthropicCache =
-    match os.getenv("PROMPT_CACHE", "5m")
-    case "off" => NoCache
-    case "1h"  => OneHour
-    case _     => FiveMinutes
 
   //[ Preflight: an agent must run from its working directory — the folder holding
     ! its `jo.toml` and a `sandbox/` — so the tools resolve paths against it.

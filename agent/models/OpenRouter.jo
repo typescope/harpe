@@ -179,7 +179,15 @@ private class OpenRouterSession(
       val usage = response.usage
       val inTok = if usage.isNone then 0 else usage.input_tokens.asInt
       val outTok = if usage.isNone then 0 else usage.output_tokens.asInt
-      logUsage("openrouter", model, inTok, outTok)
+      // OpenRouter fronts many providers, so cache detail appears only when the
+      // one behind this model reports it — and it follows OpenAI's convention of
+      // a breakdown of `input_tokens`, not an addition to it.
+      val details =
+        if usage.isNone then py.none
+        else builtins.attrOr(usage, "input_tokens_details", py.none)
+
+      val cacheRead = if details.isNone then 0 else usageInt(details, "cached_tokens")
+      logUsage("openrouter", model, inTok, outTok, cacheRead)
       Model.Reply(OpenRouterResponses.parseResponse(response), new Usage(inTok, outTok))
     case Err(err) => classifyError(err)
 end

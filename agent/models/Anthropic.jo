@@ -248,9 +248,16 @@ private class AnthropicSession(
       committed.append(py.dict("role" ~ "assistant", "content" ~ response.content))
       messages = committed
       val u = response.usage
-      val inTok = u.input_tokens.asInt
+      // Anthropic's `input_tokens` counts ONLY the tokens after the last cache
+      // breakpoint, so the cached halves must be added back to recover the total
+      // the request actually processed. Reporting the bare field would undercount
+      // a cache hit by the whole prefix — the usual case here, since the default
+      // policy caches — starving both billing and the token-budget `Context`.
+      val cacheRead = usageInt(u, "cache_read_input_tokens")
+      val cacheWrite = usageInt(u, "cache_creation_input_tokens")
+      val inTok = usageInt(u, "input_tokens") + cacheRead + cacheWrite
       val outTok = u.output_tokens.asInt
-      logUsage("anthropic", model, inTok, outTok)
+      logUsage("anthropic", model, inTok, outTok, cacheRead, cacheWrite)
       Reply(parseReply(response), new Usage(inTok, outTok))
 
     case Err(err) => classifyError(err)

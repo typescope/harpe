@@ -11,14 +11,40 @@
 namespace harpe.models
 
 import harpe.logging.logger
+import harpe.ffi.builtins
 
 //[ Emit one `harpe.model` usage event for a completed model call.
   !
+  ! `inputTokens` is the TOTAL input the provider processed, cached tokens
+  ! included, so it means the same thing on every provider and sums across them.
+  ! Providers do not agree on this: OpenAI's `input_tokens` is already the total,
+  ! while Anthropic's counts only the tokens after the last cache breakpoint. An
+  ! adapter whose provider reports the split must add it back before calling here.
+  !
+  ! `cacheReadTokens` and `cacheWriteTokens` break that total down — read from a
+  ! cache (cheap) versus written to one (a premium over ordinary input). Both are
+  ! 0 on a provider that reports no cache detail. That is not the same as a
+  ! provider that cached nothing, but the two look alike in this event. Since the
+  ! three are all parts of `inputTokens`, a price table applies the discounted
+  ! rate to the cache fields and the base rate to the remainder.
 //]
-private[harpe] def logUsage(provider: String, model: String, inputTokens: Int, outputTokens: Int): Unit receives logger =
+private[harpe] def logUsage(
+    provider: String, model: String, inputTokens: Int, outputTokens: Int,
+    cacheReadTokens: Int = 0, cacheWriteTokens: Int = 0)
+: Unit receives logger =
   logger.log:
     "harpe.model"
-    "provider"     ~ provider
-    "model"        ~ model
-    "inputTokens"  ~ inputTokens
-    "outputTokens" ~ outputTokens
+    "provider"         ~ provider
+    "model"            ~ model
+    "inputTokens"      ~ inputTokens
+    "outputTokens"     ~ outputTokens
+    "cacheReadTokens"  ~ cacheReadTokens
+    "cacheWriteTokens" ~ cacheWriteTokens
+
+//[ An optional integer counter off a provider's `usage` object — 0 when the
+  ! provider omits the field or reports it as null, so a missing counter reads as
+  ! "nothing to report" rather than raising.
+//]
+private[harpe] def usageInt(usage: py.Dynamic, name: String): Int =
+  val raw = builtins.attrOr(usage, name, py.none)
+  if raw.isNone then 0 else raw.asInt
