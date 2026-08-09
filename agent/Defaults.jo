@@ -15,23 +15,25 @@ import harpe.tools.*
 import harpe.ffi.os
 
 section Defaults
-  //[ The base toolset: `runCode`, the read-only skill tools over the agent's
-    ! `skills/`, and `uploadMedia`. The per-session memory tools and any
-    ! delivery tool needing driver-specific action (`sendFile`) are added by the
-    ! drivers instead — `uploadMedia` belongs here because, unlike `sendFile`, it
-    ! has no driver-specific step: it only needs `HARPE_DATA_DIR` (ambient
-    ! `callContext`), and the render layer (`agent/models/Anthropic.jo`,
-    ! `OpenAI.jo`) does the rest generically, the same way `runCode` and the
-    ! skill tools need nothing driver-specific either.
+  //[ The base toolset: `runCode`, the read-only skill tools over the agent's `skills/`, and `uploadMedia`
     !
-    ! Building tools needs no `logger`: a tool reads the ambient logging channel at
-    ! call time, not build time (see `Tool.run`), so the driver installs the
+    ! The per-session memory tools and any delivery tool needing driver-specific
+    ! action (`sendFile`) are added by the drivers instead — `uploadMedia`
+    ! belongs here because, unlike `sendFile`, it has no driver-specific step:
+    ! it only needs `HARPE_DATA_DIR` (ambient `callContext`), and the render
+    ! layer (`agent/models/Anthropic.jo`, `OpenAI.jo`) does the rest
+    ! generically, the same way `runCode` and the skill tools need nothing
+    ! driver-specific either.
+    !
+    ! Building tools needs no `logger`: a tool reads the ambient logging channel
+    ! at call time, not build time (see `Tool.run`), so the driver installs the
     ! backend once with `Logging.withLogger` and tags each turn with
-    ! `Logging.withContext`. `runCode`'s entries land wherever the chosen `Logger`
-    ! puts them, e.g. `logs/agent.jsonl`.
+    ! `Logging.withContext`. `runCode`'s entries land wherever the chosen
+    ! `Logger` puts them, e.g. `logs/agent.jsonl`.
     !
     ! OS-level confinement for `runCode` is external and opt-in: an executable
-    ! `sandbox/run.sh` wrapper, if present, owns it (see `docs/concepts/sandbox.md`).
+    ! `sandbox/run.sh` wrapper, if present, owns it (see
+    ! `docs/concepts/sandbox.md`).
   //]
   def tools(approvalDeadline: Float): List[Tool] receives workspace =
     val runTool = runCodeTool(workspace.sandboxDir, approvalDeadline)
@@ -77,9 +79,10 @@ section Defaults
       sys.exit(1)
       abort "Not reachable"
 
-  //[ Preflight: an agent must run from its working directory — the folder holding
-    ! its `jo.toml` and a `sandbox/` — so the tools resolve paths against it.
-    ! Prints a clear error and returns false on a mislaunch.
+  //[ Preflight: an agent must run from its working directory
+    !
+    ! The folder holding its `jo.toml` and a `sandbox/` — so the tools resolve
+    ! paths against it. Prints a clear error and returns false on a mislaunch.
   //]
   def checkAgentDir(): Bool receives IO.stdout =
     if file.exists("jo.toml") && os.path.isdir("sandbox") then

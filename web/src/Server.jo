@@ -95,8 +95,8 @@ def sendFileTool(): Tool = new Tool:
 class ChatServer(brain: Model, name: String, wspace: Workspace)
   // Resident sessions, id -> Session. Persisted sessions not yet touched this
   // run are loaded from disk on first access. The server is threaded (each
-  // request on its own thread), so registry access is guarded by registryLock;
-  // turns within one session are serialized by the session's own lock.
+  // request on its own thread), so registry access is guarded by registryLock.
+  // Turns within one session are serialized by the session's own lock.
   private val registry = py.dict()
   private val registryLock = threading.lock()
 
@@ -105,8 +105,9 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
   // as the agent's would, with the session's data dir as its `fs` root.
   private val runTool: Tool = runCodeTool(wspace.sandboxDir, 610.0)
 
-  //[ The WSGI application: establish the request context, then route. Each
-    ! request runs on its own thread, which does not inherit the process's
+  //[ The WSGI application: establish the request context, then route
+    !
+    ! Each request runs on its own thread, which does not inherit the process's
     ! context, so `workspace` is re-provided here from the server's field.
   //]
   def handle(environ: py.Dynamic, startResp: py.Dynamic): py.List =
@@ -164,17 +165,19 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     else
       respond(startResp, "404 Not Found", "text/plain", "not found")
 
-  //[ The chat page is the agent's own `assets/index.html` (its presence is
-    ! checked at startup, see `Web.serve`). Read from disk on every request, so
-    ! editing the page needs no rebuild or restart.
+  //[ The chat page is the agent's own `assets/index.html` (its presence is checked at startup, see `Web.serve`)
+    !
+    ! Read from disk on every request, so editing the page needs no rebuild or
+    ! restart.
   //]
   private def indexPath(): String receives workspace =
     workspace.relative("assets/index.html")
 
-  //[ Serve the page's split stylesheet/script (`/app.css`, `/app.js`) from the
-    ! agent's `assets/` directory — read from disk per request, like the page, so
-    ! editing them needs no rebuild. The name is reduced to a basename, so the path
-    ! can never escape `assets/`; a missing file is a 404.
+  //[ Serve the page's split stylesheet/script (`/app.css`, `/app.js`)
+    !
+    ! From the agent's `assets/` directory — read from disk per request, like
+    ! the page, so editing them needs no rebuild. The name is reduced to a
+    ! basename, so the path can never escape `assets/`. A missing file is a 404.
   //]
   private def handleStatic(path: String, startResp: py.Dynamic): py.List receives workspace =
     val name = sanitizeName(path)   // basename → strips the leading "/" and any traversal
@@ -191,9 +194,9 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
   //[ Run one turn, streaming its progress and final answer as NDJSON.
     !
-    ! A request with no `session` starts a new one and emits its id first, so the
-    ! browser can adopt the `/c/<id>` URL; a request that carries a `session`
-    ! resumes it (from memory, or loaded from disk).
+    ! A request with no `session` starts a new one and emits its id first, so
+    ! the browser can adopt the `/c/<id>` URL. A request that carries a
+    ! `session` resumes it (from memory, or loaded from disk).
   //]
   private def handleMessage(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
     val body = json.loads(readBody(environ)).cast[py.Dict]
@@ -221,17 +224,20 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
       if minted then sink(py.dict("type" ~ "session", "id" ~ session.id))
 
-      // This request's sink is attached inside `runTurn` (once the turn owns the
-      // session lock), and the turn fans its events out to it and to any tab that
-      // subscribes mid-turn. Tag every log entry with the session it belongs to; the
+      // This request's sink is attached inside `runTurn` (once the turn owns
+      // the session lock), and the turn fans its events out to it and to any
+      // tab that subscribes mid-turn. Tag every log entry with the session it
+      // belongs to. The
       val input = UserText(text, attachments)
       session.runTurn(input, sink, maxToolRounds = 50, maxRetries = 4)
 
     py.list()
 
-  //[ Request cancellation of a session's running turn: set its stop event; the
-    ! engine notices between model calls and tool executions and rolls the turn
-    ! back. Unknown or idle sessions are a no-op — stopping is idempotent.
+  //[ Request cancellation of a session's running turn
+    !
+    ! Set its stop event. The engine notices between model calls and tool
+    ! executions and rolls the turn back. Unknown or idle sessions are a no-op —
+    ! stopping is idempotent.
   //]
   private def handleStop(environ: py.Dynamic, startResp: py.Dynamic): py.List =
     val body = json.loads(readBody(environ)).cast[py.Dict]
@@ -257,14 +263,16 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
     respondJson(startResp, py.dict("ok" ~ accepted))
 
-  //[ Subscribe to a session's in-flight turn: attach a sink and stream the turn's
-    ! events until it finishes, then close. This is how a tab reconnects to a running
-    ! turn after a page refresh (and how a second tab loaded mid-turn follows along):
-    ! the client, seeing `state.active` on load, opens this and renders the events.
+  //[ Subscribe to a session's in-flight turn
     !
-    ! Only a *resident, active* session has a live turn to follow — an unknown, idle,
-    ! or already-finished one gets an immediate empty stream, so the client falls
-    ! back to the committed history for the final answer.
+    ! Attach a sink and stream the turn's events until it finishes, then close.
+    ! This is how a tab reconnects to a running turn after a page refresh (and
+    ! how a second tab loaded mid-turn follows along): the client, seeing
+    ! `state.active` on load, opens this and renders the events.
+    !
+    ! Only a *resident, active* session has a live turn to follow — an unknown,
+    ! idle, or already-finished one gets an immediate empty stream, so the
+    ! client falls back to the committed history for the final answer.
   //]
   private def handleSubscribe(environ: py.Dynamic, startResp: py.Dynamic): py.List =
     match residentSession(queryParam(environ, "session"))
@@ -278,8 +286,8 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
         py.call(write, py.dynamic(json.dumps(obj) + "\n").encode())
 
       val subId = session.addSink(sink)
-      // Block for exactly the turn's remaining duration; `runTurn` sets `idle` when
-      // it ends, releasing this subscriber.
+      // Block for exactly the turn's remaining duration. `runTurn` sets `idle`
+      // when it ends, releasing this subscriber.
       val _ = session.idle.wait()
       session.removeSink(subId)
       py.list()
@@ -287,8 +295,9 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     case _ =>
       respond(startResp, "200 OK", "application/x-ndjson", "")
 
-  //[ The resident session for `id` (registry only — never loads from disk), or
-    ! None. Used to read live turn state without materializing an idle session.
+  //[ The resident session for `id` (registry only — never loads from disk), or None
+    !
+    ! Used to read live turn state without materializing an idle session.
   //]
   private def residentSession(id: String): Option[Session] =
     registryLock.acquire()
@@ -314,10 +323,10 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
         memory = memory
         initial = []
 
-    // Grant this session its own data directory as HARPE_DATA_DIR — a multi-session
-    // server must not hand one shared directory to every session, so `fs` (and the
-    // document readers) are rooted per session. Uploads land there; agent output
-    // surfaces there.
+    // Grant this session its own data directory as HARPE_DATA_DIR — a
+    // multi-session server must not hand one shared directory to every session,
+    // so `fs` (and the document readers) are rooted per session. Uploads land
+    // there. Agent output surfaces there.
     val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(Session.dataDir(id)))
     val session = new Session(id, Session.forSession(id), agent, memory, Session.memoryPath(id), callCtx)
 
@@ -327,10 +336,12 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
     session
 
-  //[ The session for `id` — resident if seen this run, otherwise loaded from disk
-    ! (an unknown id loads as an empty conversation keyed to that id). Two
-    ! concurrent first touches of the same id both load; the second registration
-    ! wins — harmless, since the loser is dropped before running a turn.
+  //[ The session for `id`
+    !
+    ! Resident if seen this run, otherwise loaded from disk (an unknown id loads
+    ! as an empty conversation keyed to that id). Two concurrent first touches
+    ! of the same id both load. The second registration wins — harmless, since
+    ! the loser is dropped before running a turn.
   //]
   private def openSession(id: String): Session receives workspace =
     registryLock.acquire()
@@ -343,7 +354,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     case None =>
       val log = Session.forSession(id)
       val memory = Memory.load(Session.memoryPath(id))
-      // `Session.load` caps the replayed transcript (a RAM backstop); the full
+      // `Session.load` caps the replayed transcript (a RAM backstop). The full
       // transcript stays on disk.
       val agent = new Agent:
         brain = brain
@@ -366,10 +377,11 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
       winner
 
-  //[ Drop sessions idle longer than 30 minutes from the resident
-    ! registry; they reload from disk on next access. Bounds memory on a
-    ! long-running server. A session evicted while its turn still runs is
-    ! harmless: the running turn holds its own reference and commits to disk.
+  //[ Drop sessions idle longer than 30 minutes from the resident registry. They reload from disk on next access
+    !
+    ! Bounds memory on a long-running server. A session evicted while its turn
+    ! still runs is harmless: the running turn holds its own reference and
+    ! commits to disk.
   //]
   private def evictIdle(): Unit =
     val cutoff = time.now() - 1800.0
@@ -453,8 +465,10 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     // to a turn that is still running.
     respondJson: startResp, py.dict("messages" ~ arr, "state" ~ stateToJson(residentState(id)))
 
-  //[ The live turn state as JSON: `{active: false}` when idle, or `{active: true,
-    ! text, attachments}` carrying the in-flight turn's pending user input.
+  //[ The live turn state as JSON
+    !
+    ! `{active: false}` when idle, or `{active: true, text, attachments}`
+    ! carrying the in-flight turn's pending user input.
   //]
   private def stateToJson(state: SessionState): py.Dict =
     match state
@@ -483,8 +497,9 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     val _ = py.call(startResp, status, py.list(py.tuple("Content-Type", ctype)))
     py.list(py.dynamic(body).encode())
 
-  //[ A complete binary response: the bytes plus a `Content-Disposition` naming the
-    ! file. `inline` lets a browser preview images/PDFs; a download still works.
+  //[ A complete binary response: the bytes plus a `Content-Disposition` naming the file
+    !
+    ! `inline` lets a browser preview images/PDFs. A download still works.
   //]
   private def respondBytes(startResp: py.Dynamic, ctype: String, filename: String, data: py.Dynamic): py.List =
     val headers = py.list(
@@ -502,30 +517,37 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! session from touching another's files, or the host's.
   //]
 
-  //[ The largest single upload accepted (bytes). A guard against a runaway body,
-    ! not a tuned limit.
+  //[ The largest single upload accepted (bytes)
+    !
+    ! A guard against a runaway body, not a tuned limit.
   //]
   private def maxUploadBytes: Int = 26214400   // 25 MiB
 
-  //[ Reduce a client-supplied name to a safe bare basename: drop any directory
-    ! part (both separators) and reject the traversal names, so a stored or served
-    ! file can never escape the session's data directory. "" if nothing safe remains.
+  //[ Reduce a client-supplied name to a safe bare basename
+    !
+    ! Drop any directory part (both separators) and reject the traversal names,
+    ! so a stored or served file can never escape the session's data directory.
+    ! "" if nothing safe remains.
   //]
   private def sanitizeName(raw: String): String =
     val base = os.path.basename(raw.replace("\\", "/"))
     if base == "" || base == "." || base == ".." then "" else base
 
-  //[ Is `p` contained within `dir`? Compared on realpaths, so a symlink inside the
-    ! session dir cannot smuggle a read outside it either.
+  //[ Is `p` contained within `dir`?
+    !
+    ! Compared on realpaths, so a symlink inside the session dir cannot smuggle
+    ! a read outside it either.
   //]
   private def within(dir: String, p: String): Bool =
     val realDir = os.path.realpath(dir)
     val realP = os.path.realpath(p)
     realP == realDir || realP.startsWith(realDir + "/")
 
-  //[ The existing data directory for a client-supplied session id, or None. The id
-    ! is reduced to a basename first (so it cannot point outside `data/`), and the
-    ! directory must already exist — listing and serving never create one.
+  //[ The existing data directory for a client-supplied session id, or None
+    !
+    ! The id is reduced to a basename first (so it cannot point outside
+    ! `data/`), and the directory must already exist — listing and serving never
+    ! create one.
   //]
   private def existingDataDir(id: String): Option[String] receives workspace =
     val safe = sanitizeName(id)
@@ -534,8 +556,10 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       val dir = workspace.relative("data/" + safe)
       if os.path.isdir(dir) then Some(dir) else None
 
-  //[ A name not already taken in `dir`: `report.pdf` → `report-1.pdf` → … so an
-    ! upload never clobbers an existing file.
+  //[ A name not already taken in `dir`
+    !
+    ! `report.pdf` → `report-1.pdf` → … so an upload never clobbers an existing
+    ! file.
   //]
   private def uniqueName(dir: String, name: String): String =
     if !os.path.exists(os.path.join(dir, name)) then name
@@ -550,10 +574,11 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
         candidate = root + "-" + i.toString + ext
       candidate
 
-  //[ Build the turn's attachments from the message body's `attachments` array —
-    ! metadata for files already stored by `/api/upload`. Names are re-sanitized to
-    ! a basename defensively (the transcript and the model manifest must never carry
-    ! a path); the bytes are already on disk in the session dir.
+  //[ Build the turn's attachments from the message body's `attachments` array
+    !
+    ! Metadata for files already stored by `/api/upload`. Names are re-sanitized
+    ! to a basename defensively (the transcript and the model manifest must
+    ! never carry a path). The bytes are already on disk in the session dir.
   //]
   private def parseAttachments(items: py.List): List[Attachment] =
     var atts: List[Attachment] = []
@@ -580,11 +605,13 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       arr.append: py.dict("name" ~ f.name, "size" ~ f.size, "mime" ~ f.mime, "modified" ~ f.modified)
     arr
 
-  //[ Store one uploaded file (base64 in a JSON body) into a session's data
-    ! directory, minting the session if the request carries none — so the message
-    ! that follows resumes the same id and sees the file. Returns the session id and
-    ! the stored file's metadata. The name is sanitized and de-duplicated, so an
-    ! upload can neither escape the session dir nor clobber an existing file.
+  //[ Store one uploaded file into a session's data directory
+    !
+    ! (base64 in a JSON body) into a session's data directory, minting the
+    ! session if the request carries none — so the message that follows resumes
+    ! the same id and sees the file. Returns the session id and the stored
+    ! file's metadata. The name is sanitized and de-duplicated, so an upload can
+    ! neither escape the session dir nor clobber an existing file.
   //]
   private def handleUpload(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
     val body = json.loads(readBody(environ)).cast[py.Dict]
@@ -611,8 +638,10 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
                    else mimetypes.guessType(stored).getOrElse("application/octet-stream")
         respondJson: startResp, py.dict("session" ~ session.id, "name" ~ stored, "size" ~ size, "mime" ~ mime)
 
-  //[ List a session's data directory — the files currently in its workspace,
-    ! whether uploaded by the user or written by the agent. Newest first.
+  //[ List a session's data directory
+    !
+    ! The files currently in its workspace, whether uploaded by the user or
+    ! written by the agent. Newest first.
   //]
   private def handleFiles(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
     val files = match existingDataDir(queryParam(environ, "session"))
@@ -621,10 +650,11 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
     respondJson: startResp, py.dict("files" ~ filesToJson(files))
 
-  //[ Serve one file from a session's data directory for preview or download. The
-    ! session id and name are both sanitized, and the resolved path is verified to
-    ! stay within the session dir — an unknown session, missing file, or any
-    ! traversal attempt is a 404.
+  //[ Serve one file from a session's data directory for preview or download
+    !
+    ! The session id and name are both sanitized, and the resolved path is
+    ! verified to stay within the session dir — an unknown session, missing
+    ! file, or any traversal attempt is a 404.
   //]
   private def handleFile(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
     val name = sanitizeName(queryParam(environ, "name"))
@@ -667,8 +697,9 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
         in runTool.run(ToolInput(py.dict("code" ~ code)))
       respondJson: startResp, py.dict("session" ~ sessionId, "result" ~ outcome.result, "summary" ~ outcome.summary)
 
-  //[ Save a script into a session's files (overwriting a same-named one), so it can
-    ! be reopened, edited, and re-run. Mints a session if the request carries none.
+  //[ Save a script into a session's files (overwriting a same-named one), so it can be reopened, edited, and re-run
+    !
+    ! Mints a session if the request carries none.
   //]
   private def handleSave(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
     val body = json.loads(readBody(environ)).cast[py.Dict]

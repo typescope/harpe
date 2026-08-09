@@ -1,13 +1,14 @@
 //[ TelegramClient.jo
   !
   ! A thin client over the Telegram Bot API — the one place that touches the
-  ! network. Unlike the WhatsApp Cloud API (webhook in / REST out), Telegram lets
-  ! the bot *pull* updates over an outbound long-poll connection, so there is no
-  ! public endpoint, no TLS, and no signature to verify: `getUpdates` blocks until
-  ! messages arrive (or the poll times out), and `sendMessage` posts the reply.
+  ! network. Unlike the WhatsApp Cloud API (webhook in / REST out), Telegram
+  ! lets the bot *pull* updates over an outbound long-poll connection, so there
+  ! is no public endpoint, no TLS, and no signature to verify: `getUpdates`
+  ! blocks until messages arrive (or the poll times out), and `sendMessage`
+  ! posts the reply.
   !
   ! Everything is a JSON POST to `https://api.telegram.org/bot<token>/<method>`.
-  ! `apiCall` is the single request primitive; the higher-level methods are
+  ! `apiCall` is the single request primitive. The higher-level methods are
   ! phrased in terms of it.
 //]
 
@@ -17,14 +18,17 @@ import harpe.ffi.os
 import harpe.ffi.secrets
 
 
-//[ Telegram caps a message at 4096 characters; keep a margin so multi-byte
-  ! escapes never push a chunk over the limit.
+//[ Telegram caps a message at 4096 characters
+  !
+  ! Keep a margin so multi-byte escapes never push a chunk over the limit.
 //]
 private def maxMessageChars: Int = 4000
 
-//[ The outcome of one `getUpdates` poll: the updates array, or a human-readable
-  ! failure (a 409 conflict from a second poller, a bad token, a network blip, …)
-  ! that the loop can report instead of silently retrying.
+//[ The outcome of one `getUpdates` poll
+  !
+  ! The updates array, or a human-readable failure (a 409 conflict from a second
+  ! poller, a bad token, a network blip, …) that the loop can report instead of
+  ! silently retrying.
 //]
 union PollResult =
     Polled(updates: py.List)
@@ -52,16 +56,20 @@ private class TelegramClient(token: String)
     case Err(e) =>
       py.dict("ok" ~ false, "error" ~ e.message)
 
-  //[ A human-readable reason from a non-ok reply: the network error we caught, or
-    ! Telegram's own `description` (e.g. "Conflict: terminated by other
-    ! getUpdates request" for a 409), falling back to a generic string.
+  //[ A human-readable reason from a non-ok reply
+    !
+    ! The network error we caught, or Telegram's own `description` (e.g.
+    ! "Conflict: terminated by other getUpdates request" for a 409), falling
+    ! back to a generic string.
   //]
   def detail(resp: py.Dict): String =
     if resp.contains("error") then resp.get("error").asString
     else resp.get("description", "unknown error").asString
 
-  //[ Identify the bot behind the token (`getMe`). The caller uses this at startup
-    ! to confirm the token works and show which bot is live.
+  //[ Identify the bot behind the token (`getMe`)
+    !
+    ! The caller uses this at startup to confirm the token works and show which
+    ! bot is live.
   //]
   def getMe(): py.Dict = apiCall("getMe", py.dict(), 15.0)
 
@@ -80,12 +88,13 @@ private class TelegramClient(token: String)
     else
       PollFailed(detail(resp))
 
-  //[ Send `text` to `chatId`, split across as many messages as the 4096-char
-    ! limit requires. Each chunk is rendered from the model's Markdown into
-    ! Telegram HTML (`Markdown.toHtml` — a real CommonMark parse: headings,
-    ! lists, quotes, code, emphasis, links); if Telegram rejects the markup,
-    ! that chunk is resent as plain text so the content always gets through. An
-    ! empty body is replaced with a placeholder so the send never fails on it.
+  //[ Send `text` to `chatId`, split across as many messages as the 4096-char limit requires
+    !
+    ! Each chunk is rendered from the model's Markdown into Telegram HTML
+    ! (`Markdown.toHtml` — a real CommonMark parse: headings, lists, quotes,
+    ! code, emphasis, links). If Telegram rejects the markup, that chunk is
+    ! resent as plain text so the content always gets through. An empty body is
+    ! replaced with a placeholder so the send never fails on it.
   //]
   def sendMessage(chatId: String, text: String): Unit =
     val body = if text.trim == "" then "(no output)" else text
@@ -136,14 +145,14 @@ private class TelegramClient(token: String)
       "reply_markup" ~ py.dict("inline_keyboard" ~ py.list())
     ), 15.0)
 
-  //[ Show a transient status in the chat (e.g. "typing"); best-effort. //]
+  //[ Show a transient status in the chat (e.g. "typing"). Best-effort. //]
   def sendChatAction(chatId: String, action: String): Unit =
     val _ = apiCall("sendChatAction", py.dict("chat_id" ~ chatId, "action" ~ action), 15.0)
 
-  //[ Resolve a `file_id` to a temporary path on Telegram's file server
-    ! (`getFile`), the first half of a download. Returns the `file_path` to fetch,
-    ! or `None` on failure — an expired id, or a file above the Bot API's 20 MB
-    ! download cap.
+  //[ Resolve a `file_id` to a temporary path on Telegram's file server (`getFile`), the first half of a download
+    !
+    ! Returns the `file_path` to fetch, or `None` on failure — an expired id, or
+    ! a file above the Bot API's 20 MB download cap.
   //]
   def getFile(fileId: String): Option[String] =
     val resp = apiCall("getFile", py.dict("file_id" ~ fileId), 15.0)
@@ -154,9 +163,11 @@ private class TelegramClient(token: String)
     else
       None
 
-  //[ Download the bytes behind a `getFile` path — the second half. File content is
-    ! served from `/file/bot<token>/<path>` (not the JSON Bot API), so this is a
-    ! plain GET rather than an `apiCall`; `None` on any network/HTTP failure.
+  //[ Download the bytes behind a `getFile` path — the second half
+    !
+    ! File content is served from `/file/bot<token>/<path>` (not the JSON Bot
+    ! API), so this is a plain GET rather than an `apiCall`. `None` on any
+    ! network/HTTP failure.
   //]
   def downloadFile(filePath: String): Option[py.Dynamic] =
     val url = "https://api.telegram.org/file/bot" + token + "/" + filePath
@@ -165,11 +176,12 @@ private class TelegramClient(token: String)
     case Ok(resp) => Some(resp.read())
     case Err(_)   => None
 
-  //[ Upload a local file to `chatId` as a document (`sendDocument`), with an
-    ! optional caption. Bot API uploads are `multipart/form-data`, not JSON, so the
-    ! body is assembled by hand here — the one call that does not go through
-    ! `apiCall`. Best-effort, like `sendChatAction`: a failure is swallowed, since
-    ! the text answer has already been delivered.
+  //[ Upload a local file to `chatId` as a document (`sendDocument`), with an optional caption
+    !
+    ! Bot API uploads are `multipart/form-data`, not JSON, so the body is
+    ! assembled by hand here — the one call that does not go through `apiCall`.
+    ! Best-effort, like `sendChatAction`: a failure is swallowed, since the text
+    ! answer has already been delivered.
   //]
   def sendDocument(chatId: String, filePath: String, caption: String): Unit =
     val name = os.path.basename(filePath)

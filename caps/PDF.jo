@@ -1,12 +1,13 @@
 //[ PDF.jo
   !
-  ! An open PDF document: page-wise text, the outline and information dictionary,
-  ! content profiles, and page rendering. It holds the parsed document, so a loop
-  ! over pages parses the file once, not per call; close it when done.
+  ! An open PDF document: page-wise text, the outline and information
+  ! dictionary, content profiles, and page rendering. It holds the parsed
+  ! document, so a loop over pages parses the file once, not per call. Close it
+  ! when done.
   !
-  ! Deliberately no whole-document read: page-wise access keeps a large document's
-  ! cost proportional to what the program actually needs. Naming a page outside
-  ! `1..pageCount` is a bug in the program and aborts the run.
+  ! Deliberately no whole-document read: page-wise access keeps a large
+  ! document's cost proportional to what the program actually needs. Naming a
+  ! page outside `1..pageCount` is a bug in the program and aborts the run.
 //]
 
 namespace harpe.caps
@@ -45,7 +46,7 @@ interface PDF
   //]
   def metadata: Map[String, String]
 
-  //[ One page's text; `Err` when the page's content cannot be extracted. //]
+  //[ One page's text. `Err` when the page's content cannot be extracted. //]
   def pageText(page: Int): Result[String, String]
 
   //[ The page's content profile.

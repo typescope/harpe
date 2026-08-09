@@ -2,7 +2,7 @@
   !
   ! Direct read-only reference access to the skills directory: list, read, and
   ! search the agent's knowledge files. Files may be any type (.md, .jo, source,
-  ! …); names carry their extension. These back the `skillsList` / `skillsRead`
+  ! …). Names carry their extension. These back the `skillsList` / `skillsRead`
   ! / `skillsSearch` tools, which let the model READ its reference material
   ! without writing Jo — it still ACTS only through `runCode`.
   !
@@ -17,10 +17,12 @@ import harpe.ffi.builtins
 import harpe.Tool
 import harpe.logging.logger
 
-//[ The audit-log category for the skills tools — one record per content read
-  ! (`skillsRead`/`skillsSearch`), tagged by `action`. Reverse-namespaced per the
-  ! `harpe.logging.Entry` category convention. A denied `..` traversal is recorded
-  ! too (the requested `name` is logged before confinement is checked).
+//[ The audit-log category for the skills tools
+  !
+  ! One record per content read (`skillsRead`/`skillsSearch`), tagged by
+  ! `action`. Reverse-namespaced per the `harpe.logging.Entry` category
+  ! convention. A denied `..` traversal is recorded too (the requested `name` is
+  ! logged before confinement is checked).
 //]
 private def skillsCategory: String = "harpe.tools.skills"
 

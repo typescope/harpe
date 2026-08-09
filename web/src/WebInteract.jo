@@ -34,8 +34,10 @@ import harpe.Model.ReplyResult
 import harpe.Tool
 
 
-//[ A sink for one turn's progress: each call emits one JSON object, which the
-  ! server serializes and writes as a line of the NDJSON response stream.
+//[ A sink for one turn's progress
+  !
+  ! Each call emits one JSON object, which the server serializes and writes as a
+  ! line of the NDJSON response stream.
 //]
 type Sink = py.Dict => Unit
 type ApprovalHandler = (String, ApprovalRequest) => ApprovalDecision
@@ -50,8 +52,10 @@ private class WebInteract(sink: Sink, stop: py.Dynamic, approvalHandler: Approva
   def approve(id: String, request: ApprovalRequest): ApprovalDecision =
     approvalHandler(id, request)
 
-  //[ Translate one engine event into a UI event on the stream. `ModelRequestEnded`
-    ! carries no UI meaning on its own — the next `status`/`answer` supersedes it.
+  //[ Translate one engine event into a UI event on the stream
+    !
+    ! `ModelRequestEnded` carries no UI meaning on its own — the next
+    ! `status`/`answer` supersedes it.
   //]
   def emit(event: TurnEvent): Unit =
     match event

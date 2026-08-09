@@ -1,13 +1,13 @@
 //[ OpenAI.jo
   !
   ! The OpenAI `Model`, on the **Responses API** (`responses.create`) — the only
-  ! path that runs a reasoning model (gpt-5.x, o-series) *with* function tools, a
-  ! combination chat/completions rejects. Reasoning effort is configurable, and
-  ! setting it to `none` lets a non-reasoning model use this endpoint too.
+  ! path that runs a reasoning model (gpt-5.x, o-series) *with* function tools,
+  ! a combination chat/completions rejects. Reasoning effort is configurable,
+  ! and setting it to `none` lets a non-reasoning model use this endpoint too.
   !
-  ! This targets OpenAI proper; it is not a generic OpenAI-compatible shim — the
+  ! This targets OpenAI proper. It is not a generic OpenAI-compatible shim — the
   ! Responses API is OpenAI's own, not spoken by third-party endpoints. All
-  ! OpenAI-specific shape lives here; the loop never sees it.
+  ! OpenAI-specific shape lives here. The loop never sees it.
 //]
 
 namespace harpe.models
@@ -25,9 +25,10 @@ import harpe.callContext
 
 //[ Responses-API encodings. //]
 private section OpenAIResponses
-  //[ One tool's Responses-API function spec — flat, unlike the nested
-    ! chat/completions shape. `strict = false` because tools have optional
-    ! parameters, which strict schema validation forbids.
+  //[ One tool's Responses-API function spec — flat, unlike the nested chat/completions shape
+    !
+    ! `strict = false` because tools have optional parameters, which strict
+    ! schema validation forbids.
   //]
   def toolSpec(t: Tool): py.Dict =
     val properties = py.dict()
@@ -41,8 +42,9 @@ private section OpenAIResponses
     py.dict("type" ~ "function", "name" ~ t.name, "description" ~ t.description,
             "parameters" ~ parameters, "strict" ~ false)
 
-  //[ Inline content items (`input_image`/`input_file`) for `attachments` marked
-    ! `inline`, reading each one's bytes from `dataDir`. Mirrors
+  //[ Inline content items (`input_image`/`input_file`) for inline attachments
+    !
+    ! Reading each one's bytes from `dataDir`. Mirrors
     ! `Anthropic.anthropicMediaBlocks` — see its doc for the skip conditions.
   //]
   def openaiMediaBlocks(attachments: List[Attachment], dataDir: String): py.List =
@@ -121,7 +123,7 @@ private section OpenAIResponses
 
   //[ Parse a Responses API result into an `Assistant` reply.
     !
-    ! Text comes from the aggregate `output_text`; `function_call` items in
+    ! Text comes from the aggregate `output_text`. `function_call` items in
     ! `output` become tool calls, keyed by the `call_id` the follow-up echoes
     ! back. An `incomplete` status means the output hit `max_output_tokens`, so
     ! keep the text with a marker and drop any partial calls.
@@ -155,11 +157,11 @@ end
 
 //[ A reasoning-preserving turn on the Responses API.
   !
-  ! The first request sends the whole composed base; every later request sends
+  ! The first request sends the whole composed base. Every later request sends
   ! ONLY the new tool results plus `previous_response_id`, so the server retains
   ! the reasoning items and the model resumes its chain of thought across tool
   ! calls (rather than re-reasoning from scratch each round). This relies on the
-  ! default server-side `store`; it is the native Responses path for reasoning +
+  ! default server-side `store`. It is the native Responses path for reasoning +
   ! tools.
   !
   ! Prompt caching needs no opt-in — OpenAI caches eligible prefixes on its own,
@@ -327,7 +329,7 @@ def openai(
   if compatible then
     openaiCompatible(apiKey, model, baseUrl, timeoutSeconds, body)
   else
-    // Explicit request timeout; internal SDK retries disabled — the turn engine
+    // Explicit request timeout. Internal SDK retries disabled — the turn engine
     // owns the retry/backoff policy, and hidden SDK retries would multiply it.
     val client = py.module("openai").OpenAI:
       api_key = apiKey

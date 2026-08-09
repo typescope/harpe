@@ -25,9 +25,11 @@ import harpe.Model.*
 import harpe.turns.*
 
 section TurnView
-  //[ A turn as the page's message rows: the user's message, the agent's reply, or
-    ! an error row for a turn that failed. `dataDir` is the session's data
-    ! directory, used to resolve delivered files (`None` if it does not exist).
+  //[ A turn as the page's message rows
+    !
+    ! The user's message, the agent's reply, and an error row for a turn that
+    ! failed. `dataDir` is the session's data directory, used to resolve delivered
+    ! files (`None` if it does not exist).
   //]
   def rows(turn: TurnData, dataDir: Option[String]): py.List =
     val arr = py.list()
@@ -72,9 +74,11 @@ section TurnView
       arr.append: py.dict("name" ~ a.name, "size" ~ a.size, "mime" ~ a.mime, "inline" ~ a.inline)
     arr
 
-  //[ The card metadata for one `sendFile`d file. If the name (reduced to a
-    ! basename) still resolves to a real file in `dir`, returns `{name, size,
-    ! mime}`; otherwise `{name, missing: true}`.
+  //[ The card metadata for one `sendFile`d file
+    !
+    ! If the name (reduced to a basename) still resolves to a real file in `dir`,
+    ! returns `{name, size, mime}`. Otherwise `{name, missing: true}`, so a
+    ! delivered-then-vanished file is shown as a missing card rather than dropped.
   //]
   def sentFileJson(dir: Option[String], fileName: String): py.Dict =
     val base = os.path.basename(fileName.replace("\\", "/"))

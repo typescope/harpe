@@ -1,22 +1,22 @@
 //[ FileSystemProvider.jo
   !
-  ! The host-side granted-media source: files under a root directory, addressed by a
-  ! key that `keyToPath` turns into a path relative to `root`. Resolution is confined
-  ! to `root` — a `..` escape or an absolute path landing outside resolves to `None`,
-  ! never a file elsewhere on the host.
+  ! The host-side granted-media source: files under a root directory, addressed
+  ! by a key that `keyToPath` turns into a path relative to `root`. Resolution
+  ! is confined to `root` — a `..` escape or an absolute path landing outside
+  ! resolves to `None`, never a file elsewhere on the host.
   !
-  ! This is the staging primitive for the dissolved `MediaProvider`: `resolve` stats a
-  ! granted file and `copyTo` materializes it into the shared run dir, host-side,
-  ! before the turn — the guest then reads it through `FileSystem`. See
-  ! host-guest-boundary.md.
+  ! This is the staging primitive for the dissolved `MediaProvider`: `resolve`
+  ! stats a granted file and `copyTo` materializes it into the shared run dir,
+  ! host-side, before the turn — the guest then reads it through `FileSystem`.
+  ! See host-guest-boundary.md.
   !
   ! `keyToPath` is the access-control seam:
   !
-  !   - **Trusted / CLI** — the identity mapping (`FileSystemProvider.byPath`): the
-  !     key IS the path.
-  !   - **Multi-tenant** — a lookup mapping opaque, unguessable handles to paths, so a
-  !     model reaches only files it was granted; it cannot construct or enumerate
-  !     paths. Confinement to `root` still applies underneath, as defense in depth.
+  ! - **Trusted / CLI** — the identity mapping (`FileSystemProvider.byPath`):
+  ! the key IS the path. - **Multi-tenant** — a lookup mapping opaque,
+  ! unguessable handles to paths, so a model reaches only files it was granted.
+  ! It cannot construct or enumerate paths. Confinement to `root` still applies
+  ! underneath, as defense in depth.
 //]
 
 namespace harpe.media
@@ -52,12 +52,13 @@ section FileSystemProvider
   //[ Address files by their path relative to `root` — the identity mapping. //]
   def byPath(root: String): FileSystemProvider = new FileSystemProvider(root, id => id)
 
-  //[ The confined absolute path for `path` under `root`, or `None` if it escapes or is
-    ! not a regular file.
+  //[ The confined absolute path for `path` under `root`
     !
-    ! `realpath` resolves symlinks so a link cannot point out; the trailing separator
-    ! in the boundary check stops a sibling like `/root-evil` from passing as beneath
-    ! `/root`.
+    ! Or `None` if it escapes or is not a regular file.
+    !
+    ! `realpath` resolves symlinks so a link cannot point out. The trailing
+    ! separator in the boundary check stops a sibling like `/root-evil` from
+    ! passing as beneath `/root`.
   //]
   private[media] def confinedFile(root: String, path: String): Option[String] =
     val base   = os.path.realpath(root)

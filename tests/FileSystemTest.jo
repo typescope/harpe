@@ -100,7 +100,8 @@ def run(): Unit receives stdout =
   check("readText missing is Err", fs.readText("nope.txt").isErr)
   check("readBytes one-shot", fs.readBytes("sub/a.txt").success.toBase64 == "aGk=")
 
-  // Encoding: UTF-8 default with replacement; windows-1252 by name; others → Err.
+  // Encoding: UTF-8 default with replacement. Windows-1252 by name. Others →
+  // Err.
   file.writeBytes(os.path.join(dir, "legacy.txt"), py.dynamic("caf\u{E9}").callDynamic("encode", "windows-1252"))
   check("utf-8 default replaces", fs.readText("legacy.txt").success == "caf\u{FFFD}")
   check("explicit encoding", fs.readText("legacy.txt", "windows-1252").success == "caf\u{E9}")

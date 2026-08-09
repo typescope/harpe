@@ -1,10 +1,11 @@
 //[ Codec.jo
   !
-  ! `Entry` ⇄ JSON-able `py.Dict`: the one place the logging layer maps a record to
-  ! and from its host representation. `JsonlLogger` uses `entryDict` to serialize;
-  ! the sandbox audit stream uses both directions — the runtime serializes an entry
-  ! to cross the subprocess boundary, and the host (`runCode`) reconstructs it with
-  ! `entryFromDict` to replay through its own contextual logger.
+  ! `Entry` ⇄ JSON-able `py.Dict`: the one place the logging layer maps a record
+  ! to and from its host representation. `JsonlLogger` uses `entryDict` to
+  ! serialize. The sandbox audit stream uses both directions — the runtime
+  ! serializes an entry to cross the subprocess boundary, and the host
+  ! (`runCode`) reconstructs it with `entryFromDict` to replay through its own
+  ! contextual logger.
 //]
 
 namespace harpe.logging
@@ -12,17 +13,20 @@ namespace harpe.logging
 import harpe.ffi.builtins
 import harpe.ffi.time
 
-//[ An entry as a JSON-able dict: `time`, `category`, then its fields (each `Value`
-  ! unwrapped to its underlying host value; a nested map becomes a nested object).
+//[ An entry as a JSON-able dict
+  !
+  ! `time`, `category`, then its fields (each `Value` unwrapped to its
+  ! underlying host value. A nested map becomes a nested object).
 //]
 def entryDict(entry: Entry): py.Dict =
   val d = py.dict("time" ~ time.toRfc3339(entry.time), "category" ~ entry.category)
   for k ~ v in entry.fields.toList do d.set(k, valueToJson(v))
   d
 
-//[ The inverse of `entryDict`: rebuild an `Entry` from a decoded JSON dict, its
-  ! non-reserved keys becoming typed fields. Used to replay a sandboxed program's
-  ! records on the host.
+//[ The inverse of `entryDict`
+  !
+  ! Rebuild an `Entry` from a decoded JSON dict, its non-reserved keys becoming
+  ! typed fields. Used to replay a sandboxed program's records on the host.
 //]
 def entryFromDict(d: py.Dict): Entry =
   val timestamp = time.fromRfc3339(d.get("time", "").asString)
@@ -36,8 +40,9 @@ def entryFromDict(d: py.Dict): Entry =
 
   new Entry(timestamp, category, fields)
 
-//[ A field value as its underlying host value — the inverse of the `Value`
-  ! adapters. A nested map becomes a nested JSON object.
+//[ A field value as its underlying host value — the inverse of the `Value` adapters
+  !
+  ! A nested map becomes a nested JSON object.
 //]
 def valueToJson(v: Value): Any =
   match v
@@ -56,8 +61,10 @@ def valueToJson(v: Value): Any =
     for k ~ vv in m.toList do d.set(k, valueToJson(vv))
     d
 
-//[ A decoded JSON value as a `Value`. `bool` is checked before `int` (Python's
-  ! `bool` is an `int` subclass), so `true`/`false` never decode as `1`/`0`.
+//[ A decoded JSON value as a `Value`
+  !
+  ! `bool` is checked before `int` (Python's `bool` is an `int` subclass), so
+  ! `true`/`false` never decode as `1`/`0`.
 //]
 def valueFromJson(obj: py.Dynamic): Value =
   match builtins.typeName(obj)

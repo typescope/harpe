@@ -53,8 +53,10 @@ import harpe.turns.Failed
 //]
 union SessionState = Idle | Active(input: UserText)
 
-//[ One attached event sink (an open streaming response), identified so its owner
-  ! can detach it when its subscription ends.
+//[ One attached event sink
+  !
+  ! (an open streaming response), identified so its owner can detach it when its
+  ! subscription ends.
 //]
 class Subscriber(id: Int, sink: Sink)
 
@@ -63,32 +65,37 @@ private class PendingApproval(id: String, request: ApprovalRequest)
   var decision = ""
 end
 
-//[ One live conversation: its id, its append log, its agent (which owns the
-  ! context and therefore the running transcript window), and its working memory.
-  ! A lock serializes turns within the session so its state stays consistent
-  ! under concurrent requests.
+//[ One live conversation
+  !
+  ! Its id, its append log, its agent (which owns the context and therefore the
+  ! running transcript window), and its working memory. A lock serializes turns
+  ! within the session so its state stays consistent under concurrent requests.
 //]
 class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath: String, callCtx: CallContext)
   val lock = threading.lock()
 
-  //[ Set (via `POST /api/stop`) to request cancellation of the running turn;
-    ! the engine notices between model calls and tool executions. Cleared when
+  //[ Set (via `POST /api/stop`) to request cancellation of the running turn
+    !
+    ! The engine notices between model calls and tool executions. Cleared when
     ! that turn becomes idle.
   //]
   val stop = threading.event()
 
   var lastActive: Float = time.now()
 
-  //[ The live turn state (`Idle`/`Active`), reported to a tab on load so it can
-    ! reconnect to a turn in flight. `idle` is *set* exactly when `state` is `Idle`,
-    ! so a subscriber blocks on it for precisely the turn's remaining duration.
+  //[ The live turn state (`Idle`/`Active`), reported to a tab on load so it can reconnect to a turn in flight
+    !
+    ! `idle` is *set* exactly when `state` is `Idle`, so a subscriber blocks on
+    ! it for precisely the turn's remaining duration.
   //]
   var state: SessionState = Idle
   val idle = threading.event()
 
-  //[ The event sinks attached to the running turn — the initiating request plus
-    ! any tabs that subscribed after loading mid-turn — so one turn fans out to
-    ! every connected view. Guarded by `sinksLock`; `nextSubId` hands out ids.
+  //[ The event sinks attached to the running turn
+    !
+    ! The initiating request plus any tabs that subscribed after loading
+    ! mid-turn — so one turn fans out to every connected view. Guarded by
+    ! `sinksLock`. `nextSubId` hands out ids.
   //]
   private val sinksLock = threading.lock()
   private var subs: List[Subscriber] = []
@@ -118,10 +125,12 @@ class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath:
     subs = subs.select(s => s.id != id)
     sinksLock.release()
 
-  //[ Emit one event to every attached sink. The snapshot is taken under the lock
-    ! but the writes happen off it, so a slow client cannot stall the turn. A write
-    ! that fails — a tab that closed — is ignored: the sink is released by its owner
-    ! (the turn, or the subscriber handler) when the turn ends, not here.
+  //[ Emit one event to every attached sink
+    !
+    ! The snapshot is taken under the lock but the writes happen off it, so a
+    ! slow client cannot stall the turn. A write that fails — a tab that closed
+    ! — is ignored: the sink is released by its owner (the turn, or the
+    ! subscriber handler) when the turn ends, not here.
   //]
   def broadcast(obj: py.Dict): Unit =
     sinksLock.acquire()
@@ -186,11 +195,11 @@ class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath:
 
   //[ Run one user turn, fanning its events out to every attached sink.
     !
-    ! `initiatorSink` is the sink of the request that started the turn; it is
+    ! `initiatorSink` is the sink of the request that started the turn. It is
     ! attached once the turn owns the session lock (so it never receives a prior
     ! turn's events) and detached when the turn ends. While `state` is `Active`,
-    ! other tabs may attach via `addSink`; all of them see the same stream. When the
-    ! turn finishes, `idle` is set, which releases every subscriber.
+    ! other tabs may attach via `addSink`. All of them see the same stream. When
+    ! the turn finishes, `idle` is set, which releases every subscriber.
   //]
   def runTurn(input: UserText, initiatorSink: Sink, maxToolRounds: Int, maxRetries: Int): Unit =
     lastActive = time.now()
@@ -247,6 +256,7 @@ class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath:
     saveMemory()
 
   //[ Finish a cancelled or failed turn
+    !
     ! Memory is still persisted — it is deliberate and not rolled back with the
     ! provisional assistant transcript. The engine retains the user message.
   //]
@@ -261,15 +271,18 @@ class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath:
   def close(): Unit = log.close()
 end
 
-//[ Lightweight metadata for one persisted session, used to populate the session
-  ! picker without loading the whole conversation: the id (also its URL), a human
-  ! title (the first user message), and the start time.
+//[ Lightweight metadata for one persisted session
+  !
+  ! Used to populate the session picker without loading the whole conversation:
+  ! the id (also its URL), a human title (the first user message), and the start
+  ! time.
 //]
 class SessionMeta(id: String, title: String, time: Float)
 
-//[ One file in a session's data directory (an upload or agent output), as the
-  ! file list and drawer show it: its basename, byte size, guessed MIME type, and
-  ! last-modified time.
+//[ One file in a session's data directory
+  !
+  ! (an upload or agent output), as the file list and drawer show it: its
+  ! basename, byte size, guessed MIME type, and last-modified time.
 //]
 class SessionFile(name: String, size: Int, mime: String, modified: Float)
 
@@ -278,19 +291,23 @@ section Session
   def sessionPath(id: String): String receives workspace =
     workspace.relative("logs/sessions/" + id + ".jsonl")
 
-  //[ The per-session data directory — the private root the sandbox grants this
-    ! session as `HARPE_DATA_DIR`, so `fs` (and the document readers) see only this
-    ! session's files. Uploaded attachments land here, and files the agent writes
-    ! surface here too. Created on demand; scoped by id so sessions never share a
-    ! tree (the multi-tenant reason a single shared `data/` will not do).
+  //[ The per-session data directory
+    !
+    ! The private root the sandbox grants this session as `HARPE_DATA_DIR`, so
+    ! `fs` (and the document readers) see only this session's files. Uploaded
+    ! attachments land here, and files the agent writes surface here too.
+    ! Created on demand. Scoped by id so sessions never share a tree (the
+    ! multi-tenant reason a single shared `data/` will not do).
   //]
   def dataDir(id: String): String receives workspace =
     val dir = workspace.relative("data/" + id)
     if !os.path.isdir(dir) then os.makedirs(dir)
     dir
 
-  //[ The session's data directory only if it already exists — for rendering, which
-    ! must resolve delivered files without creating a directory as a side effect.
+  //[ The session's data directory, only if it already exists
+    !
+    ! For rendering, which must resolve delivered files without creating a
+    ! directory as a side effect.
   //]
   def existingDataDir(id: String): Option[String] receives workspace =
     val base = os.path.basename(id.replace("\\", "/"))
@@ -299,9 +316,10 @@ section Session
       val dir = workspace.relative("data/" + base)
       if os.path.isdir(dir) then Some(dir) else None
 
-  //[ The files in the data directory `dir`, newest first — uploads and agent
-    ! output alike. The caller passes an already-resolved, contained directory
-    ! (see `ChatServer.existingDataDir`); `[]` if it is missing or empty.
+  //[ The files in the data directory `dir`, newest first — uploads and agent output alike
+    !
+    ! The caller passes an already-resolved, contained directory (see
+    ! `ChatServer.existingDataDir`). `[]` if it is missing or empty.
   //]
   def listFiles(dir: String): List[SessionFile] =
     if !os.path.isdir(dir) then []
@@ -338,8 +356,10 @@ section Session
     if os.path.isfile(memory) then os.unlink(memory)
     if os.path.isdir(data) then py.module("shutil").rmtree(data)
 
-  //[ Reconstruct this id's conversation from disk; `[]` if it has no file yet,
-    ! so a freshly-minted (or unknown) id loads as an empty conversation.
+  //[ Reconstruct this id's conversation from disk
+    !
+    ! `[]` if it has no file yet, so a freshly-minted (or unknown) id loads as
+    ! an empty conversation.
   //]
   def load(id: String): List[Message] receives workspace =
     Transcript.fromEntries(loadEntries(id))

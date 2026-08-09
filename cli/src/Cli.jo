@@ -60,13 +60,13 @@ private def runChat(): Unit receives stdout, workspace =
       memory = memory
       initial = Session.load(sessionPath)
 
-  // The per-turn tool context; constant for a CLI run (one local working dir).
+  // The per-turn tool context. Constant for a CLI run (one local working dir).
   val data = workspace.relative("data")
   if !os.path.isdir(data) then os.makedirs(data)
   val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(data))
 
   while true do
-    // `None` is end-of-input (Ctrl-D); a blank line or a Ctrl-C'd prompt is
+    // `None` is end-of-input (Ctrl-D). A blank line or a Ctrl-C'd prompt is
     // `Some("")`, which just re-prompts.
     val userInput = interact.userInput() rescue None => break
 
@@ -103,8 +103,9 @@ private def runChat(): Unit receives stdout, workspace =
   println("  " + Style.success("♪ Elise stopped."))
 end
 
-//[ Whether the user explicitly requested the session picker. The template's
-  ! `jo resume` command passes this internal application flag.
+//[ Whether the user explicitly requested the session picker
+  !
+  ! The template's `jo resume` command passes this internal application flag.
 //]
 private def resumeRequested(): Bool =
   for argDyn in py.module("sys").argv.cast[py.List] do
@@ -146,8 +147,9 @@ section Session
       recent
 end
 
-//[ Let an interactive user continue one of the five newest sessions. The normal
-  ! startup path creates a fresh session without another prompt.
+//[ Let an interactive user continue one of the five newest sessions
+  !
+  ! The normal startup path creates a fresh session without another prompt.
 //]
 private def chooseSession(resume: Bool): String receives stdout, workspace =
   val recent = Session.recentFiles(5)

@@ -9,17 +9,17 @@ import harpe.interact.BrokerApprovals
 import harpe.approvals
 import sandbox.api
 
-// The agent's per-turn entry. The guest links jo.main = sandbox.runtime.main. It
-// installs the audit channel — code inside the sandbox (capability impls) logs
-// through the framework `harpe.logging` channel to a JSONL file the host names via
-// HARPE_AUDIT_LOG; the host (`runCode`) reads that file back and replays the
-// records with the turn's context — then runs the LLM's program. Capability impls
-// are built here and granted to the guest via `with sandbox.api.x = impl in ...`;
-// the LLM only ever gets the capability.
-//
-// The runtime depends on `harpe` directly, so impls can use the framework (even
-// run sub-agents). OS-level confinement is NOT applied here — it lives outside the
-// process, in an optional `sandbox/run.sh` wrapper (see docs/concepts/sandbox.md).
+// The agent's per-turn entry. The guest links jo.main = sandbox.runtime.main.
+// It installs the audit channel — code inside the sandbox (capability impls)
+// logs through the framework `harpe.logging` channel to a JSONL file the host
+// names via HARPE_AUDIT_LOG. The host (`runCode`) reads that file back and
+// replays the records with the turn's context — then runs the LLM's program.
+// Capability impls are built here and granted to the guest via `with
+// sandbox.api.x = impl in ...`. The LLM only ever gets the capability. The
+// runtime depends on `harpe` directly, so impls can use the framework (even run
+// sub-agents). OS-level confinement is NOT applied here — it lives outside the
+// process, in an optional `sandbox/run.sh` wrapper (see
+// docs/concepts/sandbox.md).
 def main(): Unit receives stdout =
   with approvals = BrokerApprovals.connect() in
     Logging.withLogger: auditLogger(), () => run()

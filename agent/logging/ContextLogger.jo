@@ -1,14 +1,15 @@
 //[ ContextLogger.jo
   !
   ! A `Logger` decorator that stamps ambient context — the "which user / which
-  ! session" of a turn — onto every entry before passing it to the wrapped logger.
-  ! A driver installs one per turn via `Logging.withContext`; because the stamping
-  ! happens in `logEntry` (the choke point every record flows through), it catches
-  ! `log`, the severity helpers, and direct `logEntry` alike.
+  ! session" of a turn — onto every entry before passing it to the wrapped
+  ! logger. A driver installs one per turn via `Logging.withContext`. Because
+  ! the stamping happens in `logEntry` (the choke point every record flows
+  ! through), it catches `log`, the severity helpers, and direct `logEntry`
+  ! alike.
   !
   ! The whole `context` map goes UNDER a single `key` (a nested sub-record), not
-  ! merged flat into the entry's fields — so ambient context can never collide with
-  ! or overwrite a producer's own field. `key` is reserved for this.
+  ! merged flat into the entry's fields — so ambient context can never collide
+  ! with or overwrite a producer's own field. `key` is reserved for this.
 //]
 
 namespace harpe.logging

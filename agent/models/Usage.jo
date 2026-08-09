@@ -41,9 +41,10 @@ private[harpe] def logUsage(
     "cacheReadTokens"  ~ cacheReadTokens
     "cacheWriteTokens" ~ cacheWriteTokens
 
-//[ An optional integer counter off a provider's `usage` object — 0 when the
-  ! provider omits the field or reports it as null, so a missing counter reads as
-  ! "nothing to report" rather than raising.
+//[ An optional integer counter off a provider's `usage` object
+  !
+  ! 0 when the provider omits the field or reports it as null, so a missing
+  ! counter reads as "nothing to report" rather than raising.
 //]
 private[harpe] def usageInt(usage: py.Dynamic, name: String): Int =
   val raw = builtins.attrOr(usage, name, py.none)

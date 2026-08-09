@@ -61,14 +61,16 @@ private class Console(out: String => Unit, historyFile: String)
     println("  " + Style.success("Ready.") + " Type a message to start.")
     println("  " + Style.muted("Ctrl-C, Ctrl-D, or 'quit' to exit."))
 
-  //[ Read one line from the user. `None` signals end-of-input (Ctrl-D / EOF),
-    ! on which the caller should exit.
+  //[ Read one line from the user
+    !
+    ! `None` signals end-of-input (Ctrl-D / EOF), on which the caller should
+    ! exit.
   //]
   def userInput(): Option[String] =
     println ""
     // Keep the prompt a single line with no embedded newline, so readline can
     // redraw it correctly when navigating history with the up/down arrows.
-    // Ctrl-C is handled by the SIGINT handler (quit); Ctrl-D surfaces here as
+    // Ctrl-C is handled by the SIGINT handler (quit). Ctrl-D surfaces here as
     // EOFError, which py.try catches so we exit cleanly instead of crashing.
     match py.try(py.input("You ▸ "))
     case Ok(line) =>
@@ -100,8 +102,8 @@ private class Console(out: String => Unit, historyFile: String)
     workerLock.acquire()
 
     // Cancellation is per-turn. The worker thread may outlive the CLI's visible
-    // turn after ESC; it must keep seeing its own cancelled state, even after the
-    // next prompt starts a fresh turn with a fresh watcher.
+    // turn after ESC. It must keep seeing its own cancelled state, even after
+    // the next prompt starts a fresh turn with a fresh watcher.
     val interrupt = threading.event()
     val stopWatch = threading.event()
     val active = threading.event()
@@ -279,9 +281,10 @@ private section Console
     val thread = threading.thread(watcher)
     thread.start()
 
-  // Run `work` on a background thread; return `WorkerCancelled` if `interrupt`
+  // Run `work` on a background thread. Return `WorkerCancelled` if `interrupt`
   // fires first (the abandoned worker finishes in the background). This lets a
-  // long model call be cancelled by ESC while still letting the worker roll back.
+  // long model call be cancelled by ESC while still letting the worker roll
+  // back.
   def callInterruptible(interact: Interact, work: () => TurnData, cleanup: () => Unit): WorkerOutcome =
     val box  = py.list(py.none)
     val err  = py.list("")

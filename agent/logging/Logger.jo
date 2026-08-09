@@ -3,15 +3,15 @@
   ! Where log entries go — the extensible half of the logging design. A `Logger`
   ! owns BOTH the format (JSON, sqlite, logfmt, a metrics API) and the target (a
   ! file, a database, a socket). Third-party code adds a backend by implementing
-  ! `logEntry`; producers, which hold a `Logger` and call `log`, never change.
+  ! `logEntry`. Producers, which hold a `Logger` and call `log`, never change.
   !
   ! The framework ships `JsonlLogger` (see JsonlLogger.jo), which appends every
-  ! entry as one JSON line to a single file (`category` a field). Routing entries
-  ! to different targets by `category` is just another `Logger` impl a driver can
-  ! write, so none is provided.
+  ! entry as one JSON line to a single file (`category` a field). Routing
+  ! entries to different targets by `category` is just another `Logger` impl a
+  ! driver can write, so none is provided.
   !
-  ! Backends need not be thread-safe: `Logging.withLogger` installs them behind a
-  ! lock (see Logging.jo), since runs are concurrent.
+  ! Backends need not be thread-safe: `Logging.withLogger` installs them behind
+  ! a lock (see Logging.jo), since runs are concurrent.
 //]
 
 namespace harpe.logging
@@ -30,11 +30,12 @@ interface Logger
     for k ~ v in fields do map = map.add(k, v)
     logEntry(new Entry(time.now(), category, map))
 
-  //[ Log a diagnostic message at a severity — the reserved-key convention on
-    ! `Entry`. `message` becomes the `info`/`warning`/`error` field; any extra
-    ! structured context goes in `fields`:
+  //[ Log a diagnostic message at a severity — the reserved-key convention on `Entry`
     !
-    !     logger.warn("harpe.model", "rate limited, retrying", "attempt" ~ 3)
+    ! `message` becomes the `info`/`warning`/`error` field. Any extra structured
+    ! context goes in `fields`:
+    !
+    ! logger.warn("harpe.model", "rate limited, retrying", "attempt" ~ 3)
   //]
   def info(category: String, message: String, fields: ..(String ~ Value)): Unit =
     log(category, "info" ~ message, ..fields)

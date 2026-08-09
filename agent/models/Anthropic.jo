@@ -3,7 +3,7 @@
   ! The Anthropic-backed `Model`: renders the Jo tool model into Anthropic tool
   ! specs, converts the provider-agnostic history into Anthropic messages, calls
   ! `messages.create`, and parses the content blocks back into an `Assistant`.
-  ! All Anthropic-specific shape lives here; the loop never sees it.
+  ! All Anthropic-specific shape lives here. The loop never sees it.
 //]
 
 namespace harpe.models
@@ -54,11 +54,12 @@ private def toolSpec(t: Tool): py.Dict =
     "input_schema" ~ py.dict("type" ~ "object", "properties" ~ properties, "required" ~ required)
   )
 
-//[ Inline content blocks (`image`/`document`) for `attachments` marked `inline`,
-  ! reading each one's bytes from `dataDir`. An attachment whose mime type is
-  ! neither an inline image nor a PDF, or whose bytes cannot be read, is silently
-  ! skipped — it still rides in the text manifest (`Model.userContent`), just not
-  ! as a direct content block.
+//[ Inline content blocks (`image`/`document`) for inline attachments
+  !
+  ! Reading each one's bytes from `dataDir`. An attachment whose mime type is
+  ! neither an inline image nor a PDF, or whose bytes cannot be read, is
+  ! silently skipped — it still rides in the text manifest
+  ! (`Model.userContent`), just not as a direct content block.
 //]
 private def anthropicMediaBlocks(attachments: List[Attachment], dataDir: String): py.List =
   val blocks = py.list()
@@ -291,10 +292,11 @@ private def toolResultMessage(results: List[ToolResult], dataDir: String): py.Di
 
 //[ One Anthropic `messages.create` with adaptive thinking enabled.
   !
-  ! `thinking: {type: "adaptive"}` lets the model reason (and interleave reasoning
-  ! between tool calls) on models that support it. A cache breakpoint on the system
-  ! block covers the tool list + system prompt (the stable prefix); when caching is
-  ! off, system is a plain string, byte-identical to an uncached request.
+  ! `thinking: {type: "adaptive"}` lets the model reason (and interleave
+  ! reasoning between tool calls) on models that support it. A cache breakpoint
+  ! on the system block covers the tool list + system prompt (the stable
+  ! prefix). When caching is off, system is a plain string, byte-identical to an
+  ! uncached request.
 //]
 private def anthropicCreate(
     client: py.Dynamic, model: String, cache: AnthropicCache,

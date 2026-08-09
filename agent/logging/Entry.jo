@@ -3,7 +3,7 @@
   ! The one thing a log producer and a log backend share: a neutral,
   ! format-agnostic record. It knows nothing about JSON, sqlite, files, or
   ! targets — only the data. A producer (the `runCode` tool, or any third-party
-  ! tool) builds an `Entry`; a `Logger` decides how and where to store it.
+  ! tool) builds an `Entry`. A `Logger` decides how and where to store it.
 //]
 
 namespace harpe.logging
@@ -15,17 +15,14 @@ namespace harpe.logging
 class IntVal(value: Int)
 class BoolVal(value: Bool)
 
-//[ A loggable value: a scalar (text, number, integer, boolean), a JSON array, or
-  ! a nested `Map`. Scalars go in bare — the adapters box `Int`/`Bool` on the way in:
+//[ A loggable value: a scalar (text, number, integer, boolean), a JSON array, or a nested `Map`
   !
-  !   logger.log
-  !     "runs"
-  !     "code" ~ src
-  !     "secs" ~ 1.5
-  !     "exitCode" ~ n
-  !     "ok" ~ true
+  ! Scalars go in bare — the adapters box `Int`/`Bool` on the way in:
   !
-  ! The nested map lets a whole sub-record ride under one key (see `ContextLogger`).
+  ! logger.log "runs" "code" ~ src "secs" ~ 1.5 "exitCode" ~ n "ok" ~ true
+  !
+  ! The nested map lets a whole sub-record ride under one key (see
+  ! `ContextLogger`).
 //]
 type Value = (String | Float | IntVal | BoolVal | List[Value] | Map[String, Value]) :- [IntVal, BoolVal]
 
