@@ -62,8 +62,7 @@ The two categories logged for you:
   `output`, or a `compileError`.
 - **`harpe.model`** — one per model call: `provider`, `model`, `inputTokens`,
   `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`. This is your token-usage
-  feed for billing and auditing. It is emitted by the built-in Anthropic/OpenAI
-  models.
+  feed for billing and auditing.
 
   `inputTokens` is the total input the provider processed, cached tokens
   included, and means the same thing on every provider — the adapters normalize
