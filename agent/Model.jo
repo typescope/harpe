@@ -105,6 +105,14 @@ section Model
     ! it needs no tokenizer and is exact. Carried on `Reply` so the loop can feed
     ! `inputTokens` back to the `Context` (a token-budget `SummarizingContext`
     ! compacts on it), and logged as the `harpe.model` event.
+    !
+    ! `inputTokens` is the TOTAL input processed, cached tokens included. The
+    ! adapters normalize the providers' differing bases before it gets here.
+    ! Deliberately no cache breakdown: caching changes what a prefix COSTS, never
+    ! what it contains, so a `Context` deciding what to keep has no use for the
+    ! split — it would be a provider detail leaking into a provider-independent
+    ! decision. The breakdown belongs in the `harpe.model` event, where billing
+    ! reads it (see `harpe.models.logUsage`).
   //]
   class Usage(inputTokens: Int, outputTokens: Int)
 

@@ -88,7 +88,7 @@ latest message. There is no field that turns it on.
 
 There is, however, a field that makes it hit more often. On `gpt-5.6` and later
 families, only requests carrying a `prompt_cache_key` get OpenAI's improved
-matching; the key is a routing hint that steers requests sharing a long common
+matching. The key is a routing hint that steers requests sharing a long common
 prefix to the same cache. Omitting it degrades the hit rate rather than breaking
 anything — such requests still cache, falling back to prefix hashing alone, and
 never fail for want of a key. Harpe sends one on every Responses request, derived
@@ -101,7 +101,7 @@ prompt_cache_key = "harpe:" + sha256(system)[0..16]
 Two requests built on the same system prompt therefore share a key, and
 unrelated agents stay apart, with no configuration and no identifier to thread
 through the application. High-volume deployments should know that OpenAI
-suggests roughly 15 requests per minute per key; a single busy agent sharing one
+suggests roughly 15 requests per minute per key. A single busy agent sharing one
 system prompt across many concurrent users sits on one key.
 
 Within a turn, the Responses path also chains requests with
