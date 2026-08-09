@@ -229,9 +229,16 @@ private class OpenAIResponsesSession(
       // Chain the next request from this response — only on success.
       prevId = response.id.asString
       val u = response.usage
+      // Unlike Anthropic, OpenAI's `input_tokens` is already the total — the
+      // cache counters below are a breakdown OF it, not additions to it, so
+      // nothing is added back here. `cache_write_tokens` appears on gpt-5.6 and
+      // later; `usageInt` reads 0 where a model or endpoint omits either field.
+      val details = builtins.attrOr(u, "input_tokens_details", py.none)
+      val cacheRead = if details.isNone then 0 else usageInt(details, "cached_tokens")
+      val cacheWrite = if details.isNone then 0 else usageInt(details, "cache_write_tokens")
       val inTok = u.input_tokens.asInt
       val outTok = u.output_tokens.asInt
-      logUsage("openai", model, inTok, outTok)
+      logUsage("openai", model, inTok, outTok, cacheRead, cacheWrite)
       Model.Reply(OpenAIResponses.parseResponse(response), new Usage(inTok, outTok))
 
     case Err(err) => classifyError(err)

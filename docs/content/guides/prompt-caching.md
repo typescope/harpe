@@ -118,11 +118,33 @@ server rather than of the request.
 
 ## Reading the effect
 
-Cache hits show up in provider-reported token usage, which Harpe records through
-the [Logger](/concepts/logging/) on every reply. A working cache shows a large
-share of input tokens read from cache on the second and later requests of a
-turn, and near-total cache reads on the stable prefix of a follow-up turn that
-arrives within the cache lifetime.
+Every reply emits a `harpe.model` event through the
+[Logger](/concepts/logging/) carrying `inputTokens`, `cacheReadTokens`, and
+`cacheWriteTokens`. The two cache fields are parts of `inputTokens`, so their
+share of it is the hit rate.
+
+```sh
+jq -s 'map(select(.category=="harpe.model"))
+       | {input: (map(.inputTokens) | add),
+          read:  (map(.cacheReadTokens) | add),
+          write: (map(.cacheWriteTokens) | add)}' logs/sessions/<session>.jsonl
+```
+
+> **Note.** The query assumes a JSONL backend. Storage is the application's
+> choice, and the same fields answer the same question in any other — see
+> [Reading and querying](/concepts/logging/#reading-and-querying).
+
+A working cache shows `cacheReadTokens` covering most of `inputTokens` on the
+second and later requests of a turn, and on the stable prefix of a follow-up turn
+that arrives within the cache lifetime. Writes concentrated in the first request
+of each turn are normal. Writes on *every* request mean the prefix is not stable
+— a context strategy rewriting history is the usual cause.
+
+Providers report these counts on different bases, and the adapters normalize
+them: Anthropic's `input_tokens` counts only the tokens after the last cache
+breakpoint, so Harpe adds the cached halves back, while OpenAI's already includes
+them. `inputTokens` therefore means total input on every provider and sums across
+them.
 
 The first request of a turn writes rather than reads, and a write costs more
 than an ordinary input token. Caching pays off through repetition, so it is

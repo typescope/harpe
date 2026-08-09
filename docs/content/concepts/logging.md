@@ -61,8 +61,17 @@ The two categories logged for you:
   `compileSeconds`, and — depending on the outcome — `runSeconds`, `exitCode`,
   `output`, or a `compileError`.
 - **`harpe.model`** — one per model call: `provider`, `model`, `inputTokens`,
-  `outputTokens`. This is your token-usage feed for billing and auditing. It is
-  emitted by the built-in Anthropic/OpenAI models.
+  `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`. This is your token-usage
+  feed for billing and auditing. It is emitted by the built-in Anthropic/OpenAI
+  models.
+
+  `inputTokens` is the total input the provider processed, cached tokens
+  included, and means the same thing on every provider — the adapters normalize
+  the counts, which providers report on different bases. The two cache fields
+  break that total down, so a price table applies the discounted cache rates to
+  them and the base rate to the remainder. Both read 0 when a provider reports no
+  cache detail, which is indistinguishable here from a provider that cached
+  nothing. See [Prompt Caching](/guides/prompt-caching/).
 
 ## Logging from your own tool
 
