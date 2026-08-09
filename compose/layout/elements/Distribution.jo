@@ -21,8 +21,9 @@ namespace compose.layout.elements
 import compose.layout.*
 import compose.drawing.*
 
-//[ A resolved main axis: how much room each child gets, and what it measured at
-  ! that size. Everything a flow needs to size itself and place its children.
+//[ A resolved main axis: how much room each child gets, and what it measured at that size
+  !
+  ! Everything a flow needs to size itself and place its children.
 //]
 class Track(sizes: List[Float], metrics: List[Measured])
   //[ The extent along the main axis, including the gaps between children. //]
@@ -44,9 +45,11 @@ class Track(sizes: List[Float], metrics: List[Measured])
 
     a
 
-  //[ The largest drop below a baseline. A row's height is `above + below`, not
-    ! `max(height)`: maximising the two halves independently is what stops a deep
-    ! descender in one child from shoving the shared baseline up.
+  //[ The largest drop below a baseline
+    !
+    ! A row's height is `above + below`, not `max(height)`: maximising the two
+    ! halves independently is what stops a deep descender in one child from
+    ! shoving the shared baseline up.
   //]
   def below: Float =
     var b = 0.0
@@ -74,9 +77,10 @@ class Track(sizes: List[Float], metrics: List[Measured])
     if metrics.isEmpty then 0.0 else metrics.get(0).baseline
 end
 
-//[ Divide `room` along the main axis and measure every child at the size it
-  ! ends up with. Rigid children get what they ask for; elastic ones split what
-  ! is left in proportion to their weight.
+//[ Divide `room` along the main axis and measure every child at the size it ends up with
+  !
+  ! Rigid children get what they ask for. Elastic ones split what is left in
+  ! proportion to their weight.
 //]
 private def resolve(children: List[Element], gap: Float, room: Float,
                     cross: Float, horizontal: Bool): Track receives graphics =

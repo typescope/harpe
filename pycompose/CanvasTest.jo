@@ -32,8 +32,9 @@ private class Probe(img: py.Dynamic)
 
   def pxHeight: Int = img.height.asInt
 
-  //[ How many distinct red-channel values appear in the box. Two means hard,
-    ! stair-stepped edges; many means anti-aliasing.
+  //[ How many distinct red-channel values appear in the box
+    !
+    ! Two means hard, stair-stepped edges. Many means anti-aliasing.
     !
     ! This samples an area rather than a scanline on purpose. A straight scan
     ! across a curve's widest point crosses the boundary perpendicular, where
@@ -120,7 +121,7 @@ private def antialiasing(dir: String): Unit receives stdout, graphics =
   check("circle interior is the fill color", p.at(60, 60).get(2) > 130)
   check("outside the circle is background", p.at(3, 60).get(0) > 240)
 
-// --- group composites the subtree; alpha composites each op ------------
+// --- group composites the subtree. Alpha composites each op ------------
 
 private def groupVersusAlpha(dir: String): Unit receives stdout, graphics =
   val red = Paint.of(Color.rgb255(220, 60, 50))
@@ -153,7 +154,7 @@ private def groupVersusAlpha(dir: String): Unit receives stdout, graphics =
   val pa = probeOf(dir, "alpha.png")
   val pg = probeOf(dir, "group.png")
 
-  // (95, 50) is inside both discs; (125, 50) is inside the blue one only
+  // (95, 50) is inside both discs. (125, 50) is inside the blue one only
   val alphaOverlap = pa.at(95, 50)
   val alphaBlue = pa.at(125, 50)
   val groupOverlap = pg.at(95, 50)
@@ -168,7 +169,7 @@ private def groupVersusAlpha(dir: String): Unit receives stdout, graphics =
   check("group and per-op alpha genuinely differ",
     groupOverlap.get(0) != alphaOverlap.get(0))
 
-// --- clip bounds drawing; scale changes pixels, not geometry -----------
+// --- clip bounds drawing. Scale changes pixels, not geometry -----------
 
 private def clipAndScale(dir: String): Unit receives stdout, graphics =
   val cv = graphics.create(100.0, 100.0, 2.0, Some(Color.white))

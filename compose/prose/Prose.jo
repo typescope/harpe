@@ -21,11 +21,13 @@ import compose.layout.*
 import compose.layout.elements.*
 
 section Prose
-  //[ Text in an explicit style — the one primitive here. The named constructors
-    ! below are this with a slot chosen for you.
+  //[ Text in an explicit style — the one primitive here
     !
-    ! It *binds* the style rather than reading ambient state, which is what makes
-    ! the stylesheet win over a `with Style.font = …` around the call site.
+    ! The named constructors below are this with a slot chosen for you.
+    !
+    ! It *binds* the style rather than reading ambient state, which is what
+    ! makes the stylesheet win over a `with Style.font = …` around the call
+    ! site.
   //]
   def styled(style: TextStyle, content: String): Element receives graphics =
     with
@@ -55,15 +57,19 @@ section Prose
   def label(content: String): Element receives graphics, styles =
     styled(styles.label, content)
 
-  //[ Stack blocks with the sheet's `blockGap` between them. Spacing lives here
-    ! rather than on each style, so adjacent blocks cannot double-space.
+  //[ Stack blocks with the sheet's `blockGap` between them
+    !
+    ! Spacing lives here rather than on each style, so adjacent blocks cannot
+    ! double-space.
   //]
   def column(blocks: ..Element): Element receives styles =
     new Column(blocks, styles.blockGap, Cross.stretch)
 
-  //[ A bulleted list. Each mark shares a baseline with the first line of its
-    ! item, which `row` does for free — the mark and the text are just two
-    ! children with baselines.
+  //[ A bulleted list
+    !
+    ! Each mark shares a baseline with the first line of its item, which `row`
+    ! does for free — the mark and the text are just two children with
+    ! baselines.
   //]
   def bullets(items: List[String]): Element receives graphics, styles =
     var rows = List.empty[Element]

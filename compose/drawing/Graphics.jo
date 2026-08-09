@@ -22,15 +22,18 @@ class ImageSize(width: Int, height: Int)
 
 //[ Create surfaces, and answer font/image facts. //]
 interface Graphics
-  //[ A new surface `width` × `height` logical units, at `scale` device pixels
-    ! per unit, filled with `background` — or transparent when `background` is
-    ! `None`.
+  //[ A new surface `width` × `height` logical units
+    !
+    ! At `scale` device pixels per unit, filled with `background` — or
+    ! transparent when `background` is `None`.
   //]
   def create(width: Float, height: Float, scale: Float,
              background: Option[Color]): Canvas
 
-  //[ Register the font file at `src` under `family`, so text in that `family`
-    ! renders with it — for a custom font that is not installed on the machine.
+  //[ Register the font file at `src` under `family`
+    !
+    ! So text in that `family` renders with it — for a custom font that is not
+    ! installed on the machine.
     !
     ! `src` is a TrueType or OpenType file: a single-face `.ttf`/`.otf`, or a
     ! `.ttc` collection (its first face is used). `Err` if the file is missing
@@ -38,9 +41,10 @@ interface Graphics
   //]
   def registerFont(family: String, src: String): Result[Unit, String]
 
-  //[ Shape `text` in the ambient font: the positioned glyphs a renderer draws,
-    ! with kerning and ligatures applied. This is both how text is measured
-    ! (`run.width`) and how it is drawn (`canvas.glyphs`).
+  //[ Shape `text` in the ambient font: the positioned glyphs a renderer draws, with kerning and ligatures applied
+    !
+    ! This is both how text is measured (`run.width`) and how it is drawn
+    ! (`canvas.glyphs`).
   //]
   def shape(text: String): GlyphRun receives Style.font
 

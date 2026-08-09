@@ -4,10 +4,10 @@
   ! drawing engine: it turns the imaging model into cairo calls, and answers the
   ! shaping and metric facts layout needs.
   !
-  ! Geometry arrives in logical units; the surface is allocated at
-  ! `width · scale` × `height · scale` device pixels and the context is scaled
-  ! once at creation, so every call below works in logical units and nothing
-  ! above this file mentions pixels.
+  ! Geometry arrives in logical units. The surface is allocated at `width ·
+  ! scale` × `height · scale` device pixels and the context is scaled once at
+  ! creation, so every call below works in logical units and nothing above this
+  ! file mentions pixels.
   !
   ! Text is never drawn from a string by cairo's "toy" API. It is shaped by
   ! HarfBuzz into positioned glyph ids and drawn with `show_glyphs`, which is
@@ -33,8 +33,9 @@ private def hb: py.Dynamic = py.module("uharfbuzz")
 private def io: py.Dynamic = py.module("io")
 private def pilImage: py.Dynamic = py.module("PIL.Image")
 
-//[ The C declarations needed to build a cairo font face from a font file.
-  ! Neither cairocffi nor pycairo exposes this; cairocffi is usable because it
+//[ The C declarations needed to build a cairo font face from a font file
+  !
+  ! Neither cairocffi nor pycairo exposes this. Cairocffi is usable because it
   ! is pure CFFI, so the missing entry points can simply be declared.
 //]
 private def cdefs: String =
@@ -79,12 +80,13 @@ class CairoGraphics(root: String)
 
     new CairoCanvas(this, surface, cr, width, height, scale, None)
 
-  //[ A vector `Canvas` that renders a single-page PDF. Symmetric with `create`:
-    ! the size is given here, the file name later, to `save`. PDF is measured in
-    ! points, so geometry is in points and there is no `scale` — the output is
-    ! resolution-independent.
+  //[ A vector `Canvas` that renders a single-page PDF
     !
-    ! The page renders into an in-memory buffer; `save` finalises it and writes
+    ! Symmetric with `create`: the size is given here, the file name later, to
+    ! `save`. PDF is measured in points, so geometry is in points and there is
+    ! no `scale` — the output is resolution-independent.
+    !
+    ! The page renders into an in-memory buffer. `save` finalises it and writes
     ! that buffer to the target. This is what lets the target live on `save`,
     ! matching the raster path, rather than being fixed at creation.
   //]
@@ -258,8 +260,10 @@ class CairoGraphics(root: String)
     new ImageSize(img.width.asInt, img.height.asInt)
 end
 
-//[ A single cairo surface — a raster `ImageSurface`, or a vector `PDFSurface`
-  ! backed by the `pdfBuffer` it renders into.
+//[ A single cairo surface
+  !
+  ! A raster `ImageSurface`, or a vector `PDFSurface` backed by the `pdfBuffer`
+  ! it renders into.
 //]
 class CairoCanvas(g: CairoGraphics, surface: py.Dynamic, cr: py.Dynamic,
                   w: Float, h: Float, sc: Float, pdfBuffer: Option[py.Dynamic])
@@ -362,11 +366,12 @@ class CairoCanvas(g: CairoGraphics, surface: py.Dynamic, cr: py.Dynamic,
   =
     orMessage: py.try(placeImage(src, x, y, width))
 
-  //[ Finish the current PDF page and begin a fresh, blank one. This is the one
-    ! document-level operation the backend adds on top of the single-surface
-    ! `Canvas` model: compose composes each page, and this sequences them into
-    ! one file. Draw a page, `nextPage`, draw the next; `save` writes them all.
-    ! A no-op on a raster surface.
+  //[ Finish the current PDF page and begin a fresh, blank one
+    !
+    ! This is the one document-level operation the backend adds on top of the
+    ! single-surface `Canvas` model: compose composes each page, and this
+    ! sequences them into one file. Draw a page, `nextPage`, draw the next.
+    ! `save` writes them all. A no-op on a raster surface.
   //]
   def nextPage(): Unit =
     val _ = cr.show_page()
@@ -374,9 +379,10 @@ class CairoCanvas(g: CairoGraphics, surface: py.Dynamic, cr: py.Dynamic,
   def save(target: String): Result[Unit, String] =
     orMessage: py.try(saveTo(target))
 
-  //[ Run `body` with the ambient transform and clip established, and the
-    ! surrounding state restored afterwards. cairo's save/restore is a state
-    ! push, not a buffer allocation, so this is cheap per operation.
+  //[ Run `body` with the ambient transform and clip established
+    !
+    ! And the surrounding state restored afterwards. cairo's save/restore is a
+    ! state push, not a buffer allocation, so this is cheap per operation.
   //]
   private def scoped(body: () => Unit): Unit receives
       Style.transform,
@@ -481,8 +487,8 @@ class CairoCanvas(g: CairoGraphics, surface: py.Dynamic, cr: py.Dynamic,
     case _: Blend.overlay  => cc.OPERATOR_OVERLAY
     case _                 => cc.OPERATOR_OVER
 
-  //[ Load an image through Pillow (so any readable format works), hand it to
-    ! cairo as a PNG stream, and paint it scaled into place.
+  //[ Draw an image, scaled into place
+    !
   //]
   private def placeImage(src: String, x: Float, y: Float, width: Float): Unit receives
       Style.alpha,

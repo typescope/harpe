@@ -2,9 +2,8 @@
   !
   ! The layout protocol: three methods, one per phase.
   !
-  !   build   →  Element tree     pure data, inspectable
-  !   layout  →  Laid tree        positions resolved, still data
-  !   paint   →  Canvas ops
+  ! build → Element tree pure data, inspectable layout → Laid tree positions
+  ! resolved, still data paint → Canvas ops
   !
   ! `layout` returns a positioned subtree instead of mutating anything, so what
   ! comes out is data you can query: where a node landed, what its baseline is,
@@ -13,7 +12,7 @@
   ! anchors against.
   !
   ! **Constraints go down, sizes come up, the parent positions.** `measure`
-  ! answers "how big do you want to be, given this room"; the parent then hands
+  ! answers "how big do you want to be, given this room". The parent then hands
   ! each child an absolute `Rect` in `layout`.
   !
   ! **`draw` recurses into children itself**, rather than an engine walker doing
@@ -23,7 +22,8 @@
   !
   ! Elements capture their styling when built, not when drawn, so one draws
   ! identically wherever it is placed. Jo's closures give this for free: a
-  ! `graphic`'s paint lambda captures the ambient `Style` at its definition site.
+  ! `graphic`'s paint lambda captures the ambient `Style` at its definition
+  ! site.
 //]
 
 namespace compose.layout
@@ -31,8 +31,9 @@ namespace compose.layout
 import compose.drawing.*
 import compose.layout.elements.*
 
-//[ What a `graphic` paints with: a canvas, plus the ambient state that has to
-  ! reach it.
+//[ What a `graphic` paints with
+  !
+  ! A canvas, plus the ambient state that has to reach it.
   !
   ! The `receives` clause is load-bearing, not decoration. Jo captures context
   ! params **lexically**, so a bare `Canvas => Unit` would silently see the
@@ -62,8 +63,9 @@ end
 
 //[ Something that can be measured, positioned, and painted. //]
 interface Element
-  //[ The size this element wants, given the room in `c`. The result must
-    ! satisfy `c`.
+  //[ The size this element wants, given the room in `c`
+    !
+    ! The result must satisfy `c`.
   //]
   def measure(c: Constraints): Measured receives graphics
 
@@ -71,9 +73,9 @@ interface Element
     !
     ! `bounds` is the rect the parent decided on, and the element **occupies all
     ! of it** — this is not a second chance to shrink. Ask `measure` for an
-    ! intrinsic size; `layout` only answers where things land. (Wrappers such as
-    ! `sized` and `align` may hand a child a smaller rect than they got, which is
-    ! exactly how you shrink-wrap something inside a larger frame.)
+    ! intrinsic size. `layout` only answers where things land. (Wrappers such as
+    ! `sized` and `align` may hand a child a smaller rect than they got, which
+    ! is exactly how you shrink-wrap something inside a larger frame.)
   //]
   def layout(bounds: Rect): Laid receives graphics
 
@@ -84,18 +86,21 @@ interface Element
       Style.transform,
       Style.clip
 
-  //[ How elastic this element is along its container's main axis. Zero means
-    ! rigid, and every element but `flex` answers zero. Declaring it on the
-    ! interface is what lets `row` and `column` read elasticity off any element
-    ! without pattern-matching on its type — so a user-defined element can be
-    ! elastic too.
+  //[ How elastic this element is along its container's main axis
+    !
+    ! Zero means rigid, and every element but `flex` answers zero. Declaring it
+    ! on the interface is what lets `row` and `column` read elasticity off any
+    ! element without pattern-matching on its type — so a user-defined element
+    ! can be elastic too.
   //]
   def flexWeight: Float
 end
 
 section Element
-  //[ Paint every child in order. The default recursion, for containers with no
-    ! state of their own to establish.
+  //[ Paint every child in order
+    !
+    ! The default recursion, for containers with no state of their own to
+    ! establish.
   //]
   def paintChildren(cv: Canvas, node: Laid): Unit receives
       graphics,
@@ -106,8 +111,8 @@ section Element
     for child in node.children do
       child.element.draw(cv, child)
 
-  //[ Lay `root` out into `frame`, paint it onto `cv`, and return the positioned
-    ! tree — the whole engine, in one call.
+  //[ Lay `root` out into `frame` and paint it onto `cv`
+    !
   //]
   def render(cv: Canvas, root: Element, frame: Rect): Laid receives
       graphics,
@@ -119,16 +124,19 @@ section Element
     root.draw(cv, node)
     node
 
-  //[ Lay `root` out into `frame` without drawing anything — for inspection and
-    ! for tests that assert on geometry rather than pixels.
+  //[ Lay `root` out into `frame` without drawing anything
+    !
+    ! For inspection and for tests that assert on geometry rather than pixels.
   //]
   def place(root: Element, frame: Rect): Laid receives graphics =
     root.layout(frame)
 
   // --- leaves ------------------------------------------------------------
 
-  //[ A wrapped paragraph in the ambient style. The style is captured now, so
-    ! build under `with Style.font = … in …` to style it.
+  //[ A wrapped paragraph in the ambient style
+    !
+    ! The style is captured now, so build under `with Style.font = … in …` to
+    ! style it.
   //]
   def text(content: String): Element receives
       Style.font,
@@ -189,14 +197,18 @@ section Element
   def row(children: ..Element): Element =
     new Row(children, 0.0, Cross.baseline)
 
-  //[ `row` with a different cross-axis alignment — `Cross.finish` to sit
-    ! children on a common bottom edge, `Cross.center` to centre them.
+  //[ `row` with a different cross-axis alignment
+    !
+    ! `Cross.finish` to sit children on a common bottom edge, `Cross.center` to
+    ! centre them.
   //]
   def rowAt(cross: Cross, children: ..Element): Element =
     new Row(children, 0.0, cross)
 
-  //[ `row` with one gap between every pair of children — for a list of like
-    ! things, where interleaving `Element.gap(n)` by hand is just noise.
+  //[ `row` with one gap between every pair of children
+    !
+    ! For a list of like things, where interleaving `Element.gap(n)` by hand is
+    ! just noise.
   //]
   def rowGap(gap: Float, children: ..Element): Element =
     new Row(children, gap, Cross.baseline)
@@ -205,8 +217,10 @@ section Element
   def column(children: ..Element): Element =
     new Column(children, 0.0, Cross.stretch)
 
-  //[ `column` with a different cross-axis alignment. `Cross.stretch` (the
-    ! default) hands each child the full width; `Cross.start` shrink-wraps them.
+  //[ `column` with a different cross-axis alignment
+    !
+    ! `Cross.stretch` (the default) hands each child the full width.
+    ! `Cross.start` shrink-wraps them.
   //]
   def columnAt(cross: Cross, children: ..Element): Element =
     new Column(children, 0.0, cross)
@@ -215,7 +229,7 @@ section Element
   def columnGap(gap: Float, children: ..Element): Element =
     new Column(children, gap, Cross.stretch)
 
-  //[ Children layered in z-order; later children paint over earlier ones. //]
+  //[ Children layered in z-order. Later children paint over earlier ones. //]
   def stack(children: ..Element): Element = new Stack(children)
 
   // --- wrappers ----------------------------------------------------------
@@ -242,8 +256,10 @@ section Element
   def background(child: Element, paint: Paint, radius: Float): Element =
     new Background(child, paint, radius)
 
-  //[ A stroked rounded rectangle around a child. Compose the two for a card
-    ! that is both filled and outlined: `border(background(x, fill, r), …, r)`.
+  //[ A stroked rounded rectangle around a child
+    !
+    ! Compose the two for a card that is both filled and outlined:
+    ! `border(background(x, fill, r), …, r)`.
   //]
   def border(child: Element, paint: Paint, stroke: Stroke, radius: Float): Element =
     new Border(child, paint, stroke, radius)
