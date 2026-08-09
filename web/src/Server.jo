@@ -75,15 +75,22 @@ def sendFileTool(): Tool = new Tool:
     val name = os.path.basename(fileName.replace("\\", "/"))
 
     if dir == "" then
-      new Tool.RunOutcome("No data directory is available to send from.", "sendFile · no data dir", [])
+      new Tool.RunOutcome:
+        "No data directory is available to send from."
+        "sendFile · no data dir"
+        media = []
 
     else if name == "" || name == "." || name == ".." || !os.path.isfile(os.path.join(dir, name)) then
-      new Tool.RunOutcome(
-        "No such file: '\{fileName}'. Write it to your data directory first, then send it.",
-        "sendFile · no such file", [])
+      new Tool.RunOutcome:
+        "No such file: '\{fileName}'. Write it to your data directory first, then send it."
+        "sendFile · no such file"
+        media = []
 
     else
-      new Tool.RunOutcome("Sent '\{name}' to the user.", "sendFile · \{name}", [])
+      new Tool.RunOutcome:
+        "Sent '\{name}' to the user."
+        "sendFile · \{name}"
+        media = []
 
 class ChatServer(brain: Model, name: String, wspace: Workspace)
   // Resident sessions, id -> Session. Persisted sessions not yet touched this
