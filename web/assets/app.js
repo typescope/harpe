@@ -30,6 +30,7 @@ var stopSent = false;
 var sessionList = [];
 var pending = [];   // File objects staged for the next message (not yet uploaded)
 var approvalCards = {};
+var pendingRows = null;   // committed rows from the current turn's turnFinish event
 
 function el(tag, cls, text) {
   var e = document.createElement(tag);
@@ -286,7 +287,7 @@ function fileCard(att, session) {
   return card;
 }
 
-function appendAttachments(row, atts, session) {
+function appendReceivedFiles(row, atts, session) {
   if (!atts || !atts.length) return;
   var wrap = el('div', 'attachments');
   atts.forEach(function (a) { wrap.appendChild(fileCard(a, session)); });
@@ -735,7 +736,9 @@ function loadInfo() {
 
 // --- sessions: URL <-> conversation ---
 
-function appendMessage(role, text, attachments, steps, files) {
+// `received` is what the user uploaded with the message, `sent` is what the agent
+// delivered via sendFile. Both are named from the agent's side.
+function appendMessage(role, text, received, steps, sent) {
   var displayRole = role === 'error' ? 'agent' : role;
   var row = addMessage(displayRole, '');
   var bubble = row.querySelector('.bubble');
@@ -748,9 +751,9 @@ function appendMessage(role, text, attachments, steps, files) {
     bubble.textContent = text;
     if (!text) bubble.style.display = 'none';
   }
-  appendAttachments(row, attachments, currentSession);
+  appendReceivedFiles(row, received, currentSession);
   if (role === 'agent') {
-    appendSentFiles(row, files, currentSession);
+    appendSentFiles(row, sent, currentSession);
     if (steps && steps.length) row.appendChild(codeTrace(steps));
   }
   return row;
@@ -854,7 +857,7 @@ function loadHistory(id, quiet) {
       var list = d.messages || [];
       var active = d.state && d.state.active;
       if (list.length === 0 && !active) { showEmpty(true); }
-      else { showEmpty(false); list.forEach(function (m) { appendMessage(m.role, m.text, m.attachments, m.steps, m.files); }); }
+      else { showEmpty(false); list.forEach(function (m) { appendMessage(m.role, m.text, m.received, m.steps, m.sent); }); }
       // A turn is still running on the server — reconnect and follow it live.
       if (active) reconnect(id, d.state, seq);
       scrollDown();
@@ -864,6 +867,21 @@ function loadHistory(id, quiet) {
       setLoading(false);
       if (!quiet) showEmpty(true);
     });
+}
+
+// Swap a finished turn's live rows for the committed rows the server sent with
+// turnFinish. No fetch: the event carries the same rendering /api/history would
+// have returned, so the code trace and delivered files appear without reloading
+// the conversation. Called with the two rows this turn created, so the splice
+// never has to guess which nodes are last.
+function commitTurn(userRow, agentRow) {
+  var rows = pendingRows;
+  pendingRows = null;
+  if (!rows || !rows.length) { scrollDown(); return; }
+
+  [userRow, agentRow].forEach(function (r) { if (r && r.parentNode) r.parentNode.remove(); });
+  rows.forEach(function (m) { appendMessage(m.role, m.text, m.received, m.steps, m.sent); });
+  scrollDown();
 }
 
 function openSession(id) {
@@ -920,9 +938,10 @@ function send() {
   var urow = addMessage('user', text);
   if (!text) urow.querySelector('.bubble').style.display = 'none';
   var localAtts = files.map(function (f) { return { name: f.name, size: f.size, mime: f.type }; });
-  appendAttachments(urow, localAtts, currentSession);
+  appendReceivedFiles(urow, localAtts, currentSession);
 
   busy = true;
+  pendingRows = null;
   sendBtn.classList.add('stop');
   sendBtn.setAttribute('aria-label', 'Stop');
 
@@ -941,10 +960,9 @@ function send() {
     input.focus();
     loadSessions();
     refreshFiles(false);   // update the list + badge; don't change open state
-    // Re-render successful turns so their code trace folds in. A failed turn has
-    // no assistant transcript message, so keep its streamed error visible.
-    if (currentSession && !bubble.classList.contains('error')) loadHistory(currentSession, true);
-    else scrollDown();
+    // Fold the live rows into the committed turn. A failed turn sends no
+    // turnFinish, so its streamed error stays on screen.
+    commitTurn(urow, row);
   }
 
   uploadAll(files).then(function (uploaded) {
@@ -953,7 +971,7 @@ function send() {
     if (uploaded.length) {
       var old = urow.querySelector('.attachments');
       if (old) old.remove();
-      appendAttachments(urow, uploaded, currentSession);
+      appendReceivedFiles(urow, uploaded, currentSession);
     }
     statusText.textContent = 'thinking';
     return streamTurn(text, uploaded, bubble, statusText, finish);
@@ -1010,12 +1028,13 @@ function streamTurn(text, attachments, bubble, statusText, finish) {
 
 // Reconnect to a turn already running on the server (e.g. after a page refresh,
 // or in a second tab opened mid-turn). The pending user message isn't in the
-// committed history yet, so it is rendered from the live `state`; then we follow
-// the turn's events until it ends, and reload the (now-committed) history.
+// committed history yet, so it is rendered from the live `state`, and once the
+// turn ends that live pair is swapped for the committed one.
 function reconnect(id, state, seq) {
-  appendMessage('user', state.text || '', state.attachments);
+  var urow = appendMessage('user', state.text || '', state.received);
 
   busy = true;
+  pendingRows = null;
   activeTurnSession = id;
   sendBtn.classList.add('stop');
   sendBtn.setAttribute('aria-label', 'Stop');
@@ -1032,9 +1051,8 @@ function reconnect(id, state, seq) {
   function finish() {
     status.remove();
     clearBusy();
-    // Preserve a streamed failure. It has no assistant transcript message and
-    // would otherwise disappear as soon as history is reloaded.
-    if (seq === loadSeq && !bubble.classList.contains('error')) loadHistory(id, true);
+    // Preserve a streamed failure: it sends no turnFinish, so nothing replaces it.
+    if (seq === loadSeq) commitTurn(urow, row);
     loadSessions();
     refreshFiles(false);   // a reconnected turn may have produced files
   }
@@ -1068,8 +1086,11 @@ function handle(ev, bubble, statusText) {
     finishApproval(ev.id, ev.decision);
   } else if (ev.type === 'assistant-message') {
     appendAgentText(bubble, ev.text);
-  } else if (ev.type === 'answer') {
-    appendAgentText(bubble, ev.text);
+  } else if (ev.type === 'turnFinish') {
+    // The committed turn, rendered by the server exactly as /api/history would.
+    // Stashed here and applied by finish(), so the swap happens once the stream
+    // is done rather than mid-render.
+    pendingRows = ev.rows || [];
   } else if (ev.type === 'error') {
     showTurnError(bubble, ev.detail);
   } else if (ev.type === 'interrupted') {

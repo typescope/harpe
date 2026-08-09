@@ -45,11 +45,14 @@ private def eventTag(e: TurnEvent): String =
   case ToolCallEnded(n, _)       => "tool-\{n}"
   case ContextCompacted(_)       => "compact"
 
-private def resultTag(r: TurnResult): String =
-  match r
-  case Answered(text) => "Answered(\{text})"
-  case Interrupted       => "Interrupted"
-  case Failed(detail)    => "Failed(\{detail})"
+// The turn's outcome and its visible text, as one tag. `Answered(x)` is kept as
+// the wording so the expectations still read as "what did the turn say".
+private def resultTag(t: TurnData): String =
+  match t.result
+  case Success        => "Answered(\{t.finalText})"
+  case Interrupted    => "Interrupted"
+  case Failed(detail) => "Failed(\{detail})"
+  case _              => "None"
 
 private def joinPy(xs: py.List): String =
   var s = ""

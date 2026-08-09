@@ -10,7 +10,7 @@ import harpe.logging.Logging
 import harpe.logging.JsonlLogger
 import harpe.logging.logger
 import harpe.Model.UserText
-import harpe.turns.Answered
+import harpe.turns.Success
 import harpe.tools.runCodeTool
 import harpe.tools.skillTools
 import harpe.context.FullContext
@@ -43,7 +43,7 @@ private def review(pr: String): Unit receives stdout, workspace, logger =
     "GITHUB_TOKEN" ~ os.getenv("GITHUB_TOKEN", "")
   )
 
-  match
+  val turn =
     with callContext = callCtx in
       agent.runTurn:
         UserText("please start review the pr", [])
@@ -51,8 +51,9 @@ private def review(pr: String): Unit receives stdout, workspace, logger =
         maxToolRounds = 30
         maxRetries = 4
 
-  case Answered(text) =>
-    println ("  · review completed: " + text)
+  match turn.result
+  case Success =>
+    println ("  · review completed: " + turn.text)
 
   case _ =>
     println "  · review failed"

@@ -39,7 +39,7 @@ import harpe.Model
 import harpe.Model.Message
 import harpe.Model.UserText
 import harpe.Model.Attachment
-import harpe.turns.Answered
+import harpe.turns.Success
 import harpe.turns.Interrupted
 import harpe.turns.Failed
 
@@ -203,13 +203,18 @@ class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath:
     val emit: Sink = obj => this.broadcast(obj)
     val interact = new WebInteract(emit, this.stop, (id, request) => requestApproval(id, request))
 
-    val result = with logger = log, callContext = callCtx in
+    val turn = with logger = log, callContext = callCtx in
       agent.runTurn(input, interact, maxToolRounds, maxRetries)
 
-    match result
-    case Answered(answer) =>
+    match turn.result
+    case Success =>
       this.commit()
-      broadcast(py.dict("type" ~ "answer", "text" ~ answer))
+      // The finished turn, rendered exactly as `/api/history` would render it once
+      // reloaded — so the page folds the live reply into its committed form (code
+      // trace, delivered files) from this event alone, with nothing to re-fetch.
+      broadcast: py.dict:
+        "type" ~ "turnFinish"
+        "rows" ~ TurnView.rows(turn, Session.existingDataDir(this.id))
 
     case Interrupted =>
       this.rollback()
@@ -218,6 +223,8 @@ class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath:
     case Failed(detail) =>
       this.rollback()
       broadcast(py.dict("type" ~ "failed", "detail" ~ detail))
+
+    case _ => pass
 
     removeSink(subId)
     state = Idle
@@ -281,6 +288,16 @@ section Session
     val dir = workspace.relative("data/" + id)
     if !os.path.isdir(dir) then os.makedirs(dir)
     dir
+
+  //[ The session's data directory only if it already exists — for rendering, which
+    ! must resolve delivered files without creating a directory as a side effect.
+  //]
+  def existingDataDir(id: String): Option[String] receives workspace =
+    val base = os.path.basename(id.replace("\\", "/"))
+    if base == "" || base == "." || base == ".." then None
+    else
+      val dir = workspace.relative("data/" + base)
+      if os.path.isdir(dir) then Some(dir) else None
 
   //[ The files in the data directory `dir`, newest first — uploads and agent
     ! output alike. The caller passes an already-resolved, contained directory

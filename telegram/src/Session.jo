@@ -34,7 +34,7 @@ import harpe.Model.Message
 import harpe.Model.UserText
 import harpe.Model.Assistant
 import harpe.Model.Attachment
-import harpe.turns.Answered
+import harpe.turns.Success
 import harpe.turns.Interrupted
 import harpe.turns.Failed
 
@@ -84,9 +84,10 @@ private class Session(id: String, log: Logger, agent: Agent, memory: Memory, mem
     val result = with logger = log, callContext = callCtx in
       agent.runTurn(userMsg, interact, maxToolRounds, maxRetries)
 
-    match result
-    case Answered(answer) =>
+    match result.result
+    case Success =>
       commit()
+      val answer = result.finalText
       if answer.trim != "" then client.sendMessage(this.id, answer)
 
     case Interrupted =>

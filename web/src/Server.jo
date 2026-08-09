@@ -431,49 +431,23 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! Each user message and each turn's FINAL reply are shown as bubbles. The turn's
     ! intermediate traffic is not hidden but folded into that reply: the `runCode`
     ! programs the agent ran (as `steps`, code paired with output by call id) and the
-    ! files it delivered via `sendFile` (as `files`, resolved against the session
+    ! files it delivered via `sendFile` (as `sent`, resolved against the session
     ! dir). Both come from the transcript — the tool calls the model itself made — so
     ! they persist across reloads and never fork from what the model reasons over.
+    !
+    ! `received` and `sent` name file lists from the AGENT's side: `received` is what
+    ! the user uploaded with a message, `sent` is what the agent delivered back. They
+    ! render differently (an image the agent sent previews inline, a delivered file
+    ! that has since vanished still shows as a muted card), so they stay separate
+    ! fields rather than one merged list.
   //]
   private def handleHistory(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
     val id = queryParam(environ, "session")
-    val turns = Session.loadTurns(id)
     val dataDir = existingDataDir(id)
 
     val arr = py.list()
-    for turn in turns do
-      if turn.user is UserText(t, attachments) then
-        arr.append: py.dict("role" ~ "user", "text" ~ t, "attachments" ~ attachmentsToJson(attachments))
-
-      var steps = py.list()       // this turn's {code, output} runCode steps
-      var pending = py.dict()     // runCode call id -> program, awaiting its result
-      var sent = py.list()        // this turn's sendFile deliveries
-      var visibleText = ""         // assistant text across this turn's tool rounds
-
-      for m in turn.messages do
-        if m is Assistant(t, calls) then
-          if t != "" then
-            if visibleText != "" then visibleText = visibleText + "\n\n"
-            visibleText = visibleText + t
-
-          for c in calls if c.name == "runCode" do
-            pending.set(c.id, c.input.string("code"))
-
-          // Each `sendFile` the agent made becomes an attachment on the reply. A file
-          // that no longer resolves is still shown because the delivery happened.
-          for c in calls if c.name == "sendFile" do
-            sent.append: sentFileJson(dataDir, c.input.string("fileName"))
-
-          if calls.isEmpty && visibleText != "" then
-            arr.append: py.dict("role" ~ "agent", "text" ~ visibleText, "steps" ~ steps, "files" ~ sent)
-
-        else if m is ToolResults(results) then
-          for r in results if pending.contains(r.id) do
-            steps.append: py.dict("code" ~ pending.get(r.id).asString, "output" ~ r.content)
-
-      if turn.result is Failed(detail) then
-        val message = if detail == "" then "Please try again." else detail
-        arr.append: py.dict("role" ~ "error", "text" ~ message)
+    for turn in Session.loadTurns(id) do
+      for row in py.iter(TurnView.rows(turn, dataDir)) do arr.append(row)
 
     // The live turn state alongside persisted history lets a reconnect subscribe
     // to a turn that is still running.
@@ -485,7 +459,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
   private def stateToJson(state: SessionState): py.Dict =
     match state
     case Idle          => py.dict("active" ~ false)
-    case Active(input) => py.dict("active" ~ true, "text" ~ input.text, "attachments" ~ attachmentsToJson(input.attachments))
+    case Active(input) => py.dict("active" ~ true, "text" ~ input.text, "received" ~ attachmentsToJson(input.attachments))
 
   private def queryParam(environ: py.Dynamic, key: String): String =
     val qs = environ.get("QUERY_STRING", "").asString
@@ -597,11 +571,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     atts
 
   //[ Attachments as a JSON array for the browser (history rows). //]
-  private def attachmentsToJson(atts: List[Attachment]): py.List =
-    val arr = py.list()
-    for a in atts do
-      arr.append: py.dict("name" ~ a.name, "size" ~ a.size, "mime" ~ a.mime, "inline" ~ a.inline)
-    arr
+  private def attachmentsToJson(atts: List[Attachment]): py.List = TurnView.receivedJson(atts)
 
   //[ Session files as a JSON array for the file list and drawer. //]
   private def filesToJson(files: List[SessionFile]): py.List =
@@ -609,31 +579,6 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     for f in files do
       arr.append: py.dict("name" ~ f.name, "size" ~ f.size, "mime" ~ f.mime, "modified" ~ f.modified)
     arr
-
-  //[ The card metadata for one `sendFile`d file. If the name (reduced to a basename)
-    ! still resolves to a real file in `dir`, returns `{name, size, mime}`; otherwise
-    ! `{name, missing: true}` — a delivered-then-vanished file is still part of the
-    ! dialog, so it is shown as a missing card rather than dropped.
-  //]
-  private def sentFileJson(dir: Option[String], fileName: String): py.Dict =
-    val name = sanitizeName(fileName)
-    val found: Option[String] =
-      match dir
-      case Some(d) =>
-        val p = os.path.join(d, name)
-        if name != "" && os.path.isfile(p) then Some(p) else None
-
-      case None => None
-
-    match found
-    case Some(p) =>
-      py.dict(
-        "name" ~ name,
-        "size" ~ os.path.getsize(p),
-        "mime" ~ mimetypes.guessType(name).getOrElse("application/octet-stream"))
-
-    case None =>
-      py.dict("name" ~ (if name != "" then name else fileName), "missing" ~ true)
 
   //[ Store one uploaded file (base64 in a JSON body) into a session's data
     ! directory, minting the session if the request carries none — so the message
