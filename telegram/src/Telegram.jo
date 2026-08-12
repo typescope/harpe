@@ -41,10 +41,9 @@ import harpe.context.WindowedContext
 
 //[ The entry point //]
 def main(): Unit receives stdout =
-  if Defaults.checkAgentDir() then
-    dotenv.load(".env")
-    val wspace = new Workspace(os.path.abspath("."))
-    with workspace = wspace in serve()
+  dotenv.load(".env")
+  val wspace = new Workspace(os.path.abspath("."))
+  with workspace = wspace in serve()
 
 private def serve(): Unit receives stdout, workspace =
   val token = os.getenv("TELEGRAM_BOT_TOKEN", "")

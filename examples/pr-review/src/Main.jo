@@ -22,13 +22,12 @@ def main(): Unit receives args, stdout =
 
   val pr = args[0]
 
-  if Defaults.checkAgentDir() then
-    dotenv.load(".env")
-    val wspace = new Workspace(os.path.abspath("."))
-    with workspace = wspace in
-      Logging.withLogger:
-        new JsonlLogger: wspace.relative("logs/agent.jsonl")
-        () => review(pr)
+  dotenv.load(".env")
+  val wspace = new Workspace(os.path.abspath("."))
+  with workspace = wspace in
+    Logging.withLogger:
+      new JsonlLogger: wspace.relative("logs/agent.jsonl")
+      () => review(pr)
 
 private def review(pr: String): Unit receives stdout, workspace, logger =
   val memory = new Memory

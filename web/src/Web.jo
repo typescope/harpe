@@ -26,10 +26,9 @@ import harpe.ffi.os
 
 //[ The entry point //]
 def main(): Unit receives stdout =
-  if Defaults.checkAgentDir() then
-    dotenv.load(".env")
-    val wspace = new Workspace(os.path.abspath("."))
-    with workspace = wspace in serve()
+  dotenv.load(".env")
+  val wspace = new Workspace(os.path.abspath("."))
+  with workspace = wspace in serve()
 
 private def serve(): Unit receives stdout, workspace =
   // The chat page is the agent's own file, served from disk (see Server.route),

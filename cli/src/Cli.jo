@@ -38,10 +38,9 @@ import harpe.turns.Interrupted
 
 //[ The entry point   //]
 def main(): Unit receives stdout =
-  if Defaults.checkAgentDir() then
-    dotenv.load(".env")
-    val wspace = new Workspace(os.path.abspath("."))
-    with workspace = wspace in runChat()
+  dotenv.load(".env")
+  val wspace = new Workspace(os.path.abspath("."))
+  with workspace = wspace in runChat()
 
 private def runChat(): Unit receives stdout, workspace =
   val inputHistory = workspace.relative("logs/inputs.txt")

@@ -8,7 +8,6 @@
 
 namespace harpe
 import harpe.ffi.sys
-import harpe.ffi.file
 
 import harpe.models.*
 import harpe.tools.*
@@ -79,16 +78,4 @@ section Defaults
       sys.exit(1)
       abort "Not reachable"
 
-  //[ Preflight: an agent must run from its working directory
-    !
-    ! The folder holding its `jo.toml` and a `sandbox/` — so the tools resolve
-    ! paths against it. Prints a clear error and returns false on a mislaunch.
-  //]
-  def checkAgentDir(): Bool receives IO.stdout =
-    if file.exists("jo.toml") && os.path.isdir("sandbox") then
-      true
-
-    else
-      println "Error: run this from an agent's working directory — a folder containing its jo.toml and a sandbox/ directory."
-      false
 end
