@@ -1,11 +1,11 @@
 +++
 title = "Create a Custom Capability"
 +++
-A capability interface defines what LLM-generated programs may request. Its
+A capability interface defines what LLM-generated programs can request. Its
 trusted implementation decides how those requests reach the outside world.
 
 This tutorial adds a read-only clock to the
-[`hello` project](/tutorial/build-your-first-agent/). The finished example
+[hello](/tutorial/build-your-first-agent/) project. The finished example
 compiles and runs without an external service or secret.
 
 ## Start from `hello`
@@ -41,7 +41,7 @@ param clock: Clock
 defer def runTask(): Unit receives stdout, clock
 ```
 
-This interface is the entire grant. Generated code may ask for the current time,
+This interface is the entire granted capability. Generated code can ask for the current time,
 but it cannot choose a timezone, read arbitrary system state, or mutate the
 clock. Anything absent from this interface remains unreachable.
 
@@ -68,7 +68,7 @@ def main(): Unit receives stdout =
 ```
 
 The implementation is trusted code, so it may use Python interoperability APIs.
-The generated guest never sees `py`, the `datetime` module, or any other host
+The generated guest code never sees `py`, the `datetime` module, or any other host
 authority—it receives only the `clock` capability.
 
 Enable Python interoperability for the runtime module in
@@ -141,12 +141,9 @@ def runTask(): Unit receives stdout, clock =
   println clock.now
 ```
 
-A program that tries `py.module("datetime")`, reads a file, or calls an
-undeclared method fails to compile.
-
 ## Designing real capabilities
 
-The clock is intentionally small, but the same boundary applies to databases,
+The clock is intentionally small, but the same procedures apply to databases,
 internal APIs, ticket systems, and payment providers:
 
 - Put only the operations the agent needs in the interface.
@@ -157,7 +154,7 @@ internal APIs, ticket systems, and payment providers:
 - Separate read authority from write authority so they can be granted
   independently.
 
-For example, prefer:
+For example, prefer fine grained interface:
 
 ```jo
 interface CustomerDirectory
@@ -165,8 +162,7 @@ interface CustomerDirectory
 end
 ```
 
-over a generic SQL or shell capability. The narrow interface is useful
-documentation, but more importantly it is a boundary the compiler enforces.
+over a generic SQL or shell capability.
 
 ## Irreversible actions
 
