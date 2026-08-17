@@ -7,7 +7,7 @@ fine-grained permissions through
 agent for developing a software project.
 
 It is designed for agentic workflows involving critical infrastructure,
-sensitive data, or consequential operations. To guarantee safety properties under these circumstances, agents are granted fine-grained permissions that are explicit and reviewable.
+sensitive data, or consequential operations. For security, agents are granted fine-grained permissions that are explicit and reviewable.
 
 ![Model-generated code is confined behind a typed boundary. It can reach the trusted runtime and outside world only through capabilities explicitly exposed by the application's API.](/img/typed-sandbox.svg)
 

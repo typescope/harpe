@@ -154,7 +154,7 @@ internal APIs, ticket systems, and payment providers:
 - Separate read authority from write authority so they can be granted
   independently.
 
-For example, prefer fine grained interface:
+For example, prefer interfaces with fine-grained permissions:
 
 ```jo
 interface CustomerDirectory
