@@ -1,14 +1,19 @@
 //[ TurnResult.jo
   !
-  ! The outcome of one user turn
+  ! How one user turn ended
 //]
 namespace harpe.turns
 
-//[ The outcome of one user turn
+//[ How one user turn ended
   !
-  ! An answer, an interruption, or a failed request.
+  ! A completed answer, an interruption, or a failed request.
+  !
+  ! `Success` carries nothing. The turn's content — the assistant text, the tool
+  ! calls it made, their results — lives in the `TurnData` this is a field of, so
+  ! a live turn and one replayed from the transcript are the same value. Reading
+  ! an answer means reading the turn, not a string duplicated beside it.
 //]
 union TurnResult =
-    Answered(text: String)
+    Success
   | Interrupted
   | Failed(detail: String)

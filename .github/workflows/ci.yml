@@ -33,12 +33,37 @@ jobs:
       - name: Verify Jo install
         run: jo --version
 
+      # Every driver, built against this branch's own caps/ and agent/ sources via
+      # the ci/*.toml specs. These catch a framework change that breaks a driver on
+      # the same commit that makes it, which the package builds below cannot: those
+      # resolve the last PUBLISHED harpe, so a driver updated alongside a new API
+      # stays red there until that API ships in a release.
       - name: Build hello agent
         run: jo build hello --spec ci/hello.toml
 
       - name: Build hello sandbox guest
         run: jo build sandbox-guest --spec ci/hello.toml
 
+      - name: Build CLI agent (local sources)
+        run: jo build cli --spec ci/cli.toml
+
+      - name: Build CLI sandbox guest (local sources)
+        run: jo build sandbox-guest --spec ci/cli.toml
+
+      - name: Build web agent (local sources)
+        run: jo build web --spec ci/web.toml
+
+      - name: Build web sandbox guest (local sources)
+        run: jo build sandbox-guest --spec ci/web.toml
+
+      - name: Build Telegram agent (local sources)
+        run: jo build telegram --spec ci/telegram.toml
+
+      - name: Build Telegram sandbox guest (local sources)
+        run: jo build sandbox-guest --spec ci/telegram.toml
+
+      # The same drivers from their own jo.toml, resolving harpe and harpe-caps
+      # from the registry — the check that a shipped release still builds them.
       - name: Build CLI agent
         working-directory: cli
         run: jo build

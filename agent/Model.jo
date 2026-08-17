@@ -1,10 +1,11 @@
 //[ Model.jo
   !
-  ! A provider-agnostic abstraction for a chat model (LLM), so the loop can drive
-  ! Anthropic, OpenAI, a local model, or a dummy for tests — all behind one
-  ! interface. The conversation is modeled in Jo (`Message`); each provider impl
-  ! converts to/from its own wire format. The loop owns the history and runs the
-  ! tools; the model only turns (system, history, tools) into the next reply.
+  ! A provider-agnostic abstraction for a chat model (LLM), so the loop can
+  ! drive Anthropic, OpenAI, a local model, or a dummy for tests — all behind
+  ! one interface. The conversation is modeled in Jo (`Message`). Each provider
+  ! impl converts to/from its own wire format. The loop owns the history and
+  ! runs the tools. The model only turns (system, history, tools) into the next
+  ! reply.
 //]
 
 namespace harpe
@@ -22,14 +23,15 @@ import harpe.logging.logger
   !
   ! The agent's brain. `startTurn` begins one user turn, seeded ONCE with the
   ! `base` context (system prompt + transcript + transient tail) the `Context`
-  ! composed for the user's message. The returned `Session` drives that turn's tool
-  ! loop; the engine never re-renders `base` for it.
+  ! composed for the user's message. The returned `Session` drives that turn's
+  ! tool loop. The engine never re-renders `base` for it.
   !
-  ! Why a per-turn object rather than a stateless `reply`: a reasoning model must
-  ! carry provider-specific state — thinking-block handles, a server-side response
-  ! id — ACROSS the turn's tool round-trips, but that state is opaque, non-portable,
-  ! and load-bearing only within the turn. Keeping it in the `Session` means `Message`,
-  ! `Context`, and the audit log stay uniform and never learn reasoning exists.
+  ! Why a per-turn object rather than a stateless `reply`: a reasoning model
+  ! must carry provider-specific state — thinking-block handles, a server-side
+  ! response id — ACROSS the turn's tool round-trips, but that state is opaque,
+  ! non-portable, and load-bearing only within the turn. Keeping it in the
+  ! `Session` means `Message`, `Context`, and the audit log stay uniform and
+  ! never learn reasoning exists.
 //]
 interface Model
   def startTurn(base: Rendered): Session
@@ -39,14 +41,15 @@ section Model
   //[ Message
     !
     ! One entry in the conversation, as the loop sees it — independent of any
-    ! provider's wire format. `Assistant` is also what a `Session.reply` returns.
+    ! provider's wire format. `Assistant` is also what a `Session.reply`
+    ! returns.
     !
     ! A `UserText` carries `attachments`: files the user shared this turn, which
-    ! live in the agent's data directory. Their bytes are NOT in the transcript —
-    ! only this metadata is; the model reads a file's content through `fs`/`runCode`
-    ! (a provider render folds a manifest line into the user's text so the model
-    ! knows the files are there — see `userContent`). A driver with no file support
-    ! passes the empty list: `UserText(text, [])`.
+    ! live in the agent's data directory. Their bytes are NOT in the transcript
+    ! — only this metadata is. The model reads a file's content through
+    ! `fs`/`runCode` (a provider render folds a manifest line into the user's
+    ! text so the model knows the files are there — see `userContent`). A driver
+    ! with no file support passes the empty list: `UserText(text, [])`.
   //]
   union Message =
       UserText(text: String, attachments: List[Attachment])
@@ -56,28 +59,30 @@ section Model
   //[ Attachment
     !
     ! One file the user shared, referenced by name within the agent's data
-    ! directory (the sandbox roots `fs` there). It rides in the transcript as pure
-    ! metadata — `name` (the basename in the data dir), `size` in bytes, and `mime`
-    ! type — so the UI can show a file card and the model can be told the file
-    ! exists. The bytes stay on disk; the model fetches them with `fs`.
+    ! directory (the sandbox roots `fs` there). It rides in the transcript as
+    ! pure metadata — `name` (the basename in the data dir), `size` in bytes,
+    ! and `mime` type — so the UI can show a file card and the model can be told
+    ! the file exists. The bytes stay on disk. The model fetches them with `fs`.
     !
     ! `inline` marks that this attachment should ALSO be shown to the model
     ! directly, as a real image/document content block, rather than only by
-    ! reference. It is honored only when the carrying message is the newest one in
-    ! the rendered window (see `agent/models/Anthropic.jo`, `OpenAI.jo`) — an older
-    ! message's `inline` is inert, so a past image is never silently re-sent (and
-    ! re-billed) on a later turn. `Tool.ToolResult.media` uses the same type and is
-    ! always fresh (a tool result exists only for the turn it was produced in), so
-    ! it inlines unconditionally within that turn. Never persisted differently:
-    ! `inline` is stored as given, the render layer alone decides whether to act on
-    ! it.
+    ! reference. It is honored only when the carrying message is the newest one
+    ! in the rendered window (see `agent/models/Anthropic.jo`, `OpenAI.jo`) — an
+    ! older message's `inline` is inert, so a past image is never silently
+    ! re-sent (and re-billed) on a later turn. `Tool.ToolResult.media` uses the
+    ! same type and is always fresh (a tool result exists only for the turn it
+    ! was produced in), so it inlines unconditionally within that turn. Never
+    ! persisted differently: `inline` is stored as given, the render layer alone
+    ! decides whether to act on it.
   //]
   class Attachment(name: String, size: Int, mime: String, inline: Bool)
 
-  //[ The user text a provider sends for one `UserText`, with a manifest of any
-    ! attachments appended so the model knows which files wait in its data
-    ! directory (it reads them with `fs`). No attachments: the text is returned
-    ! unchanged, so an attachment-free turn is byte-for-byte what it was before.
+  //[ The user text a provider sends for one `UserText`
+    !
+    ! With a manifest of any attachments appended so the model knows which files
+    ! wait in its data directory (it reads them with `fs`). No attachments: the
+    ! text is returned unchanged, so an attachment-free turn is byte-for-byte
+    ! what it was before.
   //]
   def userContent(text: String, attachments: List[Attachment]): String =
     if attachments.isEmpty then text
@@ -118,10 +123,11 @@ section Model
 
   //[ ReplyResult
     !
-    ! The outcome of asking the model for a reply: the assistant message (with the
-    ! call's token usage), or a typed error. `Transient` errors (rate limits, 5xx,
-    ! connection blips) are worth retrying with backoff; `Fatal` ones (auth, bad
-    ! request) are not. The provider classifies the failure; the loop owns retries.
+    ! The outcome of asking the model for a reply: the assistant message (with
+    ! the call's token usage), or a typed error. `Transient` errors (rate
+    ! limits, 5xx, connection blips) are worth retrying with backoff. `Fatal`
+    ! ones (auth, bad request) are not. The provider classifies the failure. The
+    ! loop owns retries.
   //]
   union ReplyResult =
       Reply(message: Assistant, usage: Usage)
@@ -130,12 +136,12 @@ section Model
 
   //[ Session
     !
-    ! The model-side session for one user turn in progress. The engine
-    ! first calls `reply` with no tool results, then calls it again with the
-    ! results of any tools requested by the previous reply.
-    ! The session owns the intra-turn tail (the growing assistant/tool-result
-    ! sequence and any provider reasoning state); the engine feeds it results and
-    ! reads back the reply, but never re-composes the base.
+    ! The model-side session for one user turn in progress. The engine first
+    ! calls `reply` with no tool results, then calls it again with the results
+    ! of any tools requested by the previous reply. The session owns the
+    ! intra-turn tail (the growing assistant/tool-result sequence and any
+    ! provider reasoning state). The engine feeds it results and reads back the
+    ! reply, but never re-composes the base.
     !
     ! `reply` `receives logger` — read at call time — so a provider can emit its
     ! token usage to the turn's logging context (see `harpe.models.logUsage`).

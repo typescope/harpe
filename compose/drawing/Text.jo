@@ -2,10 +2,10 @@
   !
   ! Shaped text: the glyph vocabulary, and wrapping into lines.
   !
-  ! A `GlyphRun` is the output of shaping — positioned glyph ids, not characters.
-  ! Everything below the shaper works in glyphs, which is what makes kerning and
-  ! ligatures come out right: `graphics.shape` runs the text through HarfBuzz,
-  ! and `canvas.glyphs` draws exactly what it produced.
+  ! A `GlyphRun` is the output of shaping — positioned glyph ids, not
+  ! characters. Everything below the shaper works in glyphs, which is what makes
+  ! kerning and ligatures come out right: `graphics.shape` runs the text through
+  ! HarfBuzz, and `canvas.glyphs` draws exactly what it produced.
   !
   ! A wrapped paragraph is a list of `Line`s, each a list of shaped word runs.
   ! Keeping the words distinct (rather than one run per line) is what lets
@@ -16,10 +16,10 @@
   ! Still deliberately thin, and still not the whole text engine:
   !
   ! - one script per string, no itemization and no font fallback, so a code
-  !   point the ambient font lacks renders as a missing-glyph box
-  ! - greedy breaking at whitespace only — no UAX #14, no kinsoku, and a word
-  !   wider than the box overruns it rather than breaking
-  ! - all whitespace (including newlines) is a soft break; there is no hard break
+  ! point the ambient font lacks renders as a missing-glyph box - greedy
+  ! breaking at whitespace only — no UAX #14, no kinsoku, and a word wider than
+  ! the box overruns it rather than breaking - all whitespace (including
+  ! newlines) is a soft break. There is no hard break
   !
   ! Those three all belong to the break stage, which arrives with the vendored
   ! UCD tables. See `drawing-engine.md`.
@@ -27,8 +27,10 @@
 
 namespace compose.drawing
 
-//[ One positioned glyph. `id` is an index into the font, not a code point;
-  ! `cluster` is the offset in the source text it came from.
+//[ One positioned glyph
+  !
+  ! `id` is an index into the font, not a code point. `cluster` is the offset in
+  ! the source text it came from.
 //]
 class Glyph(id: Int, xAdvance: Float, xOffset: Float, yOffset: Float, cluster: Int)
 
@@ -63,8 +65,10 @@ class Line(words: List[GlyphRun])
 end
 
 section Text
-  //[ Greedily wrap `text` to `width`, one `Line` per visual line. Whitespace
-    ! separates words; a word wider than `width` overruns onto its own line.
+  //[ Greedily wrap `text` to `width`, one `Line` per visual line
+    !
+    ! Whitespace separates words. A word wider than `width` overruns onto its
+    ! own line.
   //]
   def wrap(text: String, width: Float): List[Line] receives graphics, Style.font =
     val ws = words(text)
@@ -93,10 +97,11 @@ section Text
 
     lines
 
-  //[ Draw `lines` into `box`, one per `leading`-scaled line height, at the
-    ! ambient alignment. Returns the y offset just past the last baseline, so a
-    ! caller can stack blocks. Lines past the bottom of `box` are still drawn —
-    ! clipping and overflow are the layout engine's job, not this layer's.
+  //[ Draw `lines` into `box`, one per `leading`-scaled line height, at the ambient alignment
+    !
+    ! Returns the y offset just past the last baseline, so a caller can stack
+    ! blocks. Lines past the bottom of `box` are still drawn — clipping and
+    ! overflow are the layout engine's job, not this layer's.
     !
     ! `justify` stretches the inter-word gaps to fill the box, but never on the
     ! last line (which would leave a sparse final row) nor on a line with no
@@ -124,8 +129,9 @@ section Text
 
     y
 
-  //[ Place one line's words, left to right, at the alignment's starting x with
-    ! its gap width.
+  //[ Place one line's words
+    !
+    ! Left to right, at the alignment's starting x with its gap width.
   //]
   private def drawLine(cv: Canvas, line: Line, box: Rect, baseline: Float,
                        spaceW: Float, isLast: Bool): Unit receives

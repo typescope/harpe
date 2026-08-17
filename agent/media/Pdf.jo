@@ -1,12 +1,13 @@
 //[ Pdf.jo
   !
-  ! The `PdfReader` backend behind `FileSystem.openPDF`, backed by pypdfium2 — PDFium,
-  ! Chrome's PDF engine, a self-contained wheel with no system dependency.
-  ! Opening parses once; `PdfImpl` is the handle over the parsed document.
+  ! The `PdfReader` backend behind `FileSystem.openPDF`, backed by pypdfium2 —
+  ! PDFium, Chrome's PDF engine, a self-contained wheel with no system
+  ! dependency. Opening parses once. `PdfImpl` is the handle over the parsed
+  ! document.
   !
-  ! Error shape follows the file APIs: `open` is the speculative step and answers
-  ! `Err` for a missing or corrupt document; handle methods are total except
-  ! `pageText`/`pageImage`, whose per-page extraction can genuinely fail.
+  ! Error shape follows the file APIs: `open` is the speculative step and
+  ! answers `Err` for a missing or corrupt document. Handle methods are total
+  ! except `pageText`/`pageImage`, whose per-page extraction can genuinely fail.
 //]
 
 namespace harpe.media
@@ -18,8 +19,9 @@ import harpe.ffi.builtins
 
 private def pdfiumMod: py.Dynamic = py.module("pypdfium2")
 
-//[ The pypdfium2 `PdfReader` backend, resolving a relative path against `root`.
-  ! Parses once; `Err` for a missing or corrupt document.
+//[ The pypdfium2 `PdfReader` backend, resolving a relative path against `root`
+  !
+  ! Parses once. `Err` for a missing or corrupt document.
 //]
 class PdfiumReader(root: String)
   view PdfReader
@@ -32,8 +34,9 @@ class PdfiumReader(root: String)
     opened.map: doc => new PdfImpl(doc, root)
 end
 
-//[ The open document: a parsed pypdfium2 `PdfDocument` plus the root for
-  ! resolving render targets.
+//[ The open document
+  !
+  ! A parsed pypdfium2 `PdfDocument` plus the root for resolving render targets.
 //]
 private class PdfImpl(doc: py.Dynamic, root: String)
   view PDF
@@ -111,8 +114,9 @@ private class PdfImpl(doc: py.Dynamic, root: String)
     image.save(realTarget)
     new ImageSize(image.width.asInt, image.height.asInt)
 
-  //[ Naming a page outside the document is a program bug, not an environment
-    ! surprise — abort with a clear message.
+  //[ Naming a page outside the document is a program bug
+    !
+    ! Not an environment surprise — abort with a clear message.
   //]
   private def checkPage(page: Int): Unit =
     if page < 1 || page > pageCount then

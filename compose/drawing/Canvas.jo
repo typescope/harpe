@@ -47,8 +47,10 @@ interface Canvas
       Style.transform,
       Style.clip
 
-  //[ Stroke an `outline` — an open `Trace` or a closed `Region` — with the
-    ! ambient stroke paint and stroke geometry.
+  //[ Stroke an `outline`
+    !
+    ! An open `Trace` or a closed `Region` — with the ambient stroke paint and
+    ! stroke geometry.
   //]
   def stroke(outline: Trace | Region): Unit receives
       Style.strokePaint,
@@ -67,9 +69,10 @@ interface Canvas
       Style.transform,
       Style.clip
 
-  //[ Draw an already-shaped `run` with its origin at `x` and its baseline at
-    ! `baseline`, in the ambient text paint. The run carries its own font, so
-    ! this does not read `Style.font` — shaping already resolved it.
+  //[ Draw an already-shaped `run` with its origin at `x` and its baseline at `baseline`, in the ambient text paint
+    !
+    ! The run carries its own font, so this does not read `Style.font` — shaping
+    ! already resolved it.
   //]
   def glyphs(run: GlyphRun, x: Float, baseline: Float): Unit receives
       Style.textPaint,
@@ -77,8 +80,9 @@ interface Canvas
       Style.transform,
       Style.clip
 
-  //[ Shape `text` in the ambient font and draw it at `x` / `baseline`. A
-    ! convenience over `graphics.shape` plus `glyphs`; it does not wrap.
+  //[ Shape `text` in the ambient font and draw it at `x` / `baseline`
+    !
+    ! A convenience over `graphics.shape` plus `glyphs`. It does not wrap.
   //]
   def textAt(x: Float, baseline: Float, text: String): Unit receives
       graphics,
@@ -90,14 +94,13 @@ interface Canvas
   =
     glyphs(graphics.shape(text), x, baseline)
 
-  //[ Render `body` to an offscreen surface, then composite that surface once at
-    ! `opacity` with `blend`.
+  //[ Render `body` offscreen, then composite it once
     !
-    ! This is not the same as `Style.alpha`, and the difference is the
-    ! reason it exists. `alpha` applies per operation, so two overlapping shapes
-    ! at `alpha = 0.5` blend against each other and the overlap darkens. Inside
-    ! a group they are drawn opaque and the *result* is composited once, so the
-    ! group behaves as a single object with no internal seams.
+    ! This is not the same as `Style.alpha`, and the difference is the reason it
+    ! exists. `alpha` applies per operation, so two overlapping shapes at `alpha
+    ! = 0.5` blend against each other and the overlap darkens. Inside a group
+    ! they are drawn opaque and the *result* is composited once, so the group
+    ! behaves as a single object with no internal seams.
     !
     ! It takes a body rather than being a context param because the backend
     ! needs the scope *exit* to pop and composite, and it never observes a
@@ -105,8 +108,10 @@ interface Canvas
   //]
   def group(opacity: Float, blend: Blend, body: () => Unit): Unit
 
-  //[ Draw the image at `src`, its top-left at (`x`, `y`), scaled to `width`
-    ! logical units wide (aspect preserved).
+  //[ Draw the image at `src`
+    !
+    ! Its top-left at (`x`, `y`), scaled to `width` logical units wide (aspect
+    ! preserved).
   //]
   def imageAt(src: String, x: Float, y: Float, width: Float): Result[Unit, String] receives
       Style.alpha,

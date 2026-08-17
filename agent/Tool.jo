@@ -17,12 +17,14 @@ import harpe.Tool.*
 import harpe.Model.Attachment
 import harpe.logging.logger
 
-//[ A tool call's driver-supplied context: a flat key/value bag the driver
-  ! populates per turn (e.g. a data-directory grant, or backend config). Kept a
-  ! plain string map, not a struct, so a generic tool like `runCode` stays
-  ! application-agnostic — it copies the pairs verbatim into the guest environment
-  ! and interprets none of them. The keys are guest env-var names the driver and
-  ! its own sandbox runtime agree on — an application protocol, not the framework's.
+//[ A tool call's driver-supplied context
+  !
+  ! A flat key/value bag the driver populates per turn (e.g. a data-directory
+  ! grant, or backend config). Kept a plain string map, not a struct, so a
+  ! generic tool like `runCode` stays application-agnostic — it copies the pairs
+  ! verbatim into the guest environment and interprets none of them. The keys
+  ! are guest env-var names the driver and its own sandbox runtime agree on — an
+  ! application protocol, not the framework's.
 //]
 type CallContext = Map[String, String]
 
@@ -43,9 +45,9 @@ param callContext: CallContext
   !
   ! One LLM-facing tool: a Jo description (name, prose, typed params) plus the
   ! host-side handler invoked when the model calls it. `run` gets the call's
-  ! typed input and returns the outcome — result text fed back to the model plus a
-  ! one-line console summary. Agents build these to extend the toolset; advanced
-  ! agents build the whole set (including `runCode`).
+  ! typed input and returns the outcome — result text fed back to the model plus
+  ! a one-line console summary. Agents build these to extend the toolset.
+  ! Advanced agents build the whole set (including `runCode`).
 //]
 class Tool(
   name: String,
@@ -95,8 +97,9 @@ section Tool
   //]
   class ToolParam(name: String, paramType: ParamType, description: String, required: Bool)
 
-  //[ A tool call the model wants to make: a provider id, the tool name, and the
-    ! typed arguments.
+  //[ A tool call the model wants to make
+    !
+    ! A provider id, the tool name, and the typed arguments.
   //]
   class ToolCall(id: String, name: String, input: ToolInput)
 
@@ -127,11 +130,11 @@ section Tool
   end
 
 
-  //[ Run a tool, turning an unexpected host exception into an error `RunOutcome`
-    ! instead of letting it abort the whole turn. A well-behaved tool returns a
-    ! `RunOutcome`; this is the backstop for one that raises. The failure is fed
-    ! back to the model as a tool result — so the model can react — rather than
-    ! crashing the turn (or the driver).
+  //[ Run a tool, containing an unexpected host exception
+    !
+    ! A well-behaved tool returns a `RunOutcome`. This is the backstop for one
+    ! that raises. The failure is fed back to the model as a tool result — so
+    ! the model can react — rather than crashing the turn (or the driver).
   //]
   def runSafely(tool: Tool, input: ToolInput): RunOutcome receives logger, callContext, currentInteract =
     match py.try(tool.run(input))
@@ -159,14 +162,16 @@ section Tool
   def numParam(name: String, description: String): ToolParam =
     new ToolParam(name, NumParam, description, true)
 
-  //[ Bound a tool result's text to at most `maxChars`, keeping the head and the tail
-    ! and marking the elided middle (a program's setup is at the start, its errors and
-    ! final output at the end — both worth keeping). Text within the limit is returned
-    ! unchanged.
+  //[ Bound a tool result's text to at most `maxChars`
     !
-    ! This bounds only what the model sees; a tool that elides is expected to preserve
-    ! the full artifact elsewhere (e.g. `runCode` logs it to `logs/agent.jsonl`), so
-    ! nothing is lost from the record — this is the "reference, don't inline" rule.
+    ! Keeping the head and the tail and marking the elided middle (a program's
+    ! setup is at the start, its errors and final output at the end — both worth
+    ! keeping). Text within the limit is returned unchanged.
+    !
+    ! This bounds only what the model sees. A tool that elides is expected to
+    ! preserve the full artifact elsewhere (e.g. `runCode` logs it to
+    ! `logs/agent.jsonl`), so nothing is lost from the record — this is the
+    ! "reference, don't inline" rule.
   //]
   def elide(text: String, maxChars: Int): String =
     if text.size <= maxChars then

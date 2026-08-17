@@ -13,8 +13,6 @@ import harpe.Tool.*
 import harpe.logging.*
 import harpe.turns.*
 
-class TurnData(user: Message, messages: List[Message], result: TurnResult | None)
-
 section Transcript
   def maxResumeChars: Int = 1000000
 
@@ -57,11 +55,8 @@ section Transcript
         pending = pending + messageFromDict(entryDict(entry))
 
       else if entry.category == "harpe.turn.answered" then
-        var answer = ""
-        for message in pending do
-          if message is Assistant(text, calls) && calls.isEmpty then answer = text.trim
         match user
-        case Some(message) => turns = turns + TurnData(message, pending, Answered(answer))
+        case Some(message) => turns = turns + TurnData(message, pending, Success)
         case None          => pass
         user = None
         pending = []
@@ -96,7 +91,7 @@ section Transcript
     var messages: List[Message] = []
     for turn in turns(entries) do
       messages = messages + turn.user
-      if turn.result is Answered(_) then messages = messages ++ turn.messages
+      if turn.result is Success then messages = messages ++ turn.messages
     truncate(messages, maxResumeChars)
 
   private def messageFields(message: Message): Map[String, Value] =

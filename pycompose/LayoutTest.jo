@@ -222,7 +222,7 @@ private def justify(dir: String): Unit receives stdout, graphics =
   val _2 = cv.save("justify.png")
   val img = pilImage.open("\{dir}/justify.png").convert("RGB")
 
-  // a justified line reaches the right edge of the box; a ragged one would not
+  // a justified line reaches the right edge of the box. A ragged one would not
   check("a justified line fills to the right edge", inkNear(img, 228, 20))
   check("justify leaves the left edge flush", inkNear(img, 11, 20))
 
@@ -277,8 +277,10 @@ private def dark(img: py.Dynamic, x: Int, y: Int): Bool =
 
 // --- clipping, the one rule that only exists in pixels ------------------
 
-//[ Paint the whole local 200×200 box green. Lifted out of the `graphic` call
-  ! because Jo will not parse a multi-line lambda inside a call's parentheses.
+//[ Paint the whole local 200×200 box green
+  !
+  ! Lifted out of the `graphic` call because Jo will not parse a multi-line
+  ! lambda inside a call's parentheses.
 //]
 private def fillAll(canvas: Canvas): Unit receives
     graphics,

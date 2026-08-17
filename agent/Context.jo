@@ -3,18 +3,18 @@
   ! `Context` — the pluggable context-engineering surface. A per-session value
   ! that owns the transcript and composes what the model sees for each request:
   ! the engine (`Agent.runTurn`) appends transcript events to it and calls
-  ! `render` once per user turn (at its start). Implementing this interface is the whole
-  ! customization surface for context management — there is deliberately no
-  ! secondary hook.
+  ! `render` once per user turn (at its start). Implementing this interface is
+  ! the whole customization surface for context management — there is
+  ! deliberately no secondary hook.
   !
   ! Two strategies are provided, named by their transcript policy:
-  ! `WindowedContext` (the default) drops turns that fall out of its window;
+  ! `WindowedContext` (the default) drops turns that fall out of its window.
   ! `SummarizingContext` distills them into a rolling summary via the model.
-  ! Both render the base system prompt (AGENT.md) as the stable `system`, and the
-  ! volatile working memory as the `transient` tail (after the transcript, so a
-  ! memory edit never invalidates the cached prefix) — memory is orthogonal to
-  ! the strategy: a store the agent maintains through tools, which any strategy
-  ! may render.
+  ! Both render the base system prompt (AGENT.md) as the stable `system`, and
+  ! the volatile working memory as the `transient` tail (after the transcript,
+  ! so a memory edit never invalidates the cached prefix) — memory is orthogonal
+  ! to the strategy: a store the agent maintains through tools, which any
+  ! strategy may render.
 //]
 
 namespace harpe
@@ -30,24 +30,27 @@ interface Context
   //[ Record a transcript event: user text, an assistant reply, or tool results. //]
   def append(message: Message): Unit
 
-  //[ Compose what the model sees for a turn: a `Rendered` bundling the system
-    ! prompt, the transcript window, and a transient tail.
+  //[ Compose what the model sees for a turn
     !
-    ! Called once per user turn, at its start — the `Model` seeds a `Session` from
-    ! it and owns the intra-turn tail thereafter, so the base is NOT recomposed
-    ! per tool round. (A token-budget strategy therefore compacts at a turn
-    ! boundary, on the previous turn's reported usage, not mid-tool-loop — which
-    ! is correct: the growing tail is load-bearing and cannot be pruned here.)
-    ! May be effectful — an impl can use `interact` to call the model first (e.g.
-    ! summarize old turns, whose token usage it logs) and mutate its own state,
-    ! under the turn's cancellation and event stream.
+    ! A `Rendered` bundling the system prompt, the transcript window, and a
+    ! transient tail.
+    !
+    ! Called once per user turn, at its start — the `Model` seeds a `Session`
+    ! from it and owns the intra-turn tail thereafter, so the base is NOT
+    ! recomposed per tool round. (A token-budget strategy therefore compacts at
+    ! a turn boundary, on the previous turn's reported usage, not mid-tool-loop
+    ! — which is correct: the growing tail is load-bearing and cannot be pruned
+    ! here.) May be effectful — an impl can use `interact` to call the model
+    ! first (e.g. summarize old turns, whose token usage it logs) and mutate its
+    ! own state, under the turn's cancellation and event stream.
   //]
   def render(interact: Interact): Rendered receives logger
 
-  //[ Observe the token usage the provider reported for the last request. The
-    ! engine calls this after each successful reply, so a strategy can size itself
-    ! on the provider's exact counts (a token-budget `SummarizingContext` compacts
-    ! on `usage.inputTokens`). A strategy that doesn't care ignores it.
+  //[ Observe the token usage the provider reported for the last request
+    !
+    ! The engine calls this after each successful reply, so a strategy can size
+    ! itself on the provider's exact counts (a token-budget `SummarizingContext`
+    ! compacts on `usage.inputTokens`). A strategy that doesn't care ignores it.
   //]
   def observe(usage: Usage): Unit
 

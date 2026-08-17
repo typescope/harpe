@@ -219,8 +219,8 @@ private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, wo
   check("Image.convert", isSize(image.convert("pic.png", "pic.jpg").success, 30, 20))
   check("Image on missing is Err", image.dimensions("nope.png").isErr)
 
-  // OCR: Tesseract degrades gracefully when the system binary is absent; RapidOCR
-  // reads real text when its package is installed.
+  // OCR: Tesseract degrades gracefully when the system binary is absent.
+  // RapidOCR reads real text when its package is installed.
   val tesseract: OCR = TesseractOcr(dir)
   val tessResult = tesseract.text("pic.png")
   check("OCR tesseract answers", tessResult.isOk || tessResult.isErr)

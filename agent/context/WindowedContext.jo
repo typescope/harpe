@@ -1,8 +1,9 @@
 //[ WindowedContext.jo
   !
   ! The default `Context` strategy: a sliding window over the transcript. Turns
-  ! that fall out of the window are dropped from the sent context (the structured
-  ! session log still keeps them); memory carries longer-term context.
+  ! that fall out of the window are dropped from the sent context (the
+  ! structured session log still keeps them). Memory carries longer-term
+  ! context.
 //]
 
 namespace harpe.context
@@ -11,16 +12,20 @@ import harpe.*
 import harpe.util.truncate
 import harpe.Model.*
 
-//[ Budget (characters) for the recent transcript window (~4 chars/token); older
-  ! whole turns are dropped to fit, and memory carries longer-term context.
+//[ Budget (characters) for the recent transcript window (~4 chars/token)
+  !
+  ! Older whole turns are dropped to fit, and memory carries longer-term
+  ! context.
 //]
 private def maxTranscriptChars(): Int = 24000
 
-//[ The default context: the stable base prompt (AGENT.md) as `system`, a
-  ! char-budget window of recent turns as the messages, and the volatile memory
-  ! block as the transient tail — after the transcript, so a memory edit leaves
-  ! the cached transcript prefix intact. `initial` seeds the window (a resumed
-  ! session's replayed transcript; `[]` for a fresh one).
+//[ The default context
+  !
+  ! The stable base prompt (AGENT.md) as `system`, a char-budget window of
+  ! recent turns as the messages, and the volatile memory block as the transient
+  ! tail — after the transcript, so a memory edit leaves the cached transcript
+  ! prefix intact. `initial` seeds the window (a resumed session's replayed
+  ! transcript. `[]` for a fresh one).
 //]
 class WindowedContext(baseSystem: String, memory: Memory, initial: List[Message])
   view Context
@@ -31,8 +36,10 @@ class WindowedContext(baseSystem: String, memory: Memory, initial: List[Message]
   def append(message: Message): Unit =
     transcript = transcript + message
 
-  //[ Pure — `interact` is unused. Reads the memory snapshot each call, so an
-    ! `updateMemory` during a turn is visible to the next request.
+  //[ Pure — `interact` is unused
+    !
+    ! Reads the memory snapshot each call, so an `updateMemory` during a turn is
+    ! visible to the next request.
   //]
   def render(interact: Interact): Rendered =
     val mem = memory.snapshot()
@@ -50,10 +57,11 @@ class WindowedContext(baseSystem: String, memory: Memory, initial: List[Message]
     transcript = marked
 end
 
-//[ The volatile memory block, appended after the stable base prompt by both
-  ! provided strategies (namespace-private, shared across the strategy files).
-  ! One section per key; the keys are the agent's own (steered by AGENT.md, no
-  ! fixed schema).
+//[ The volatile memory block
+  !
+  ! Appended after the stable base prompt by both provided strategies
+  ! (namespace-private, shared across the strategy files). One section per key.
+  ! The keys are the agent's own (steered by AGENT.md, no fixed schema).
 //]
 private def memoryBlock(memory: Map[String, String]): String =
   var s = "# Working memory\n\n(You maintain this with the memory tools; it persists across turns.)\n"

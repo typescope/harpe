@@ -34,17 +34,19 @@ class DirEntry(path: String, isDirectory: Bool)
   ! an unrecoverable I/O fault, and both abort the run.
 //]
 interface FileSystem
-  //[ Whether `path` names an existing file or directory.
+  //[ Whether `path` names an existing file or directory
+    !
     ! Returns `false` when the path is invalid.
   //]
   def exists(path: String): Bool
 
-  //[ Whether `path` names an existing file.
+  //[ Whether `path` names an existing file
+    !
     ! Returns `false` when the path is invalid.
   //]
   def isFile(path: String): Bool
 
-  //[ The metadata record for `path`; `Ok(None)` when nothing exists there. //]
+  //[ The metadata record for `path`. `Ok(None)` when nothing exists there. //]
   def stat(path: String): Result[Option[FileInfo], String]
 
   //[ The entries directly under `dir`, sorted by name. Pass `""` for the root.
@@ -56,8 +58,8 @@ interface FileSystem
   //[ Open the file at `path` for text reads. Close it when done.
     !
     ! Text decodes as `encoding` — `"utf-8"` (the default) or `"windows-1252"`
-    ! (the common legacy encoding; it also decodes latin-1 text): a fixed set
-    ! every runtime supports with identical semantics; any other name is an
+    ! (the common legacy encoding. It also decodes latin-1 text): a fixed set
+    ! every runtime supports with identical semantics. Any other name is an
     ! `Err`. Undecodable bytes decode to the replacement character U+FFFD —
     ! mojibake or U+FFFD in the output is the signal to reopen with the other
     ! encoding.
@@ -67,25 +69,29 @@ interface FileSystem
   //[ Open the file at `path` for binary reads. Close it when done. //]
   def openBinaryFile(path: String): Result[BinaryFile, String]
 
-  //[ Open the PDF document at `path` — parse and validate once; the `PDF` is the
-    ! handle for page-wise reading. Close it when done.
+  //[ Open the PDF document at `path` — parse and validate once. The `PDF` is the handle for page-wise reading
     !
-    ! A shortcut through the ambient `pdfReader` backend; rebind the param to swap
-    ! the backend.
+    ! Close it when done.
+    !
+    ! A shortcut through the ambient `pdfReader` backend. Rebind the param to
+    ! swap the backend.
   //]
   def openPDF(path: String): Result[PDF, String] receives pdfReader =
     pdfReader.open(path)
 
-  //[ Open the spreadsheet workbook (`.xlsx`) at `path` — parse and validate once;
-    ! the `Workbook` is the handle for sheet-wise reading. Close it when done.
+  //[ Open the spreadsheet workbook (`.xlsx`) at `path`
+    !
+    ! Parse and validate once. The `Workbook` is the handle for sheet-wise
+    ! reading. Close it when done.
     !
     ! A shortcut through the ambient `excelReader` backend.
   //]
   def openWorkbook(path: String): Result[Workbook, String] receives excelReader =
     excelReader.open(path)
 
-  //[ Open the Word document (`.docx`) at `path` — parse once; the `Word` is the
-    ! handle for paragraph-wise reading. Close it when done.
+  //[ Open the Word document (`.docx`) at `path` — parse once. The `Word` is the handle for paragraph-wise reading
+    !
+    ! Close it when done.
     !
     ! A shortcut through the ambient `wordReader` backend.
   //]
@@ -109,16 +115,18 @@ interface FileSystem
       file.close()
       content
 
-  //[ Write `content` to `file` as UTF-8, replacing what is there — creating the
-    ! file (and any missing parent directories) if needed. The write counterpart of
-    ! `readText`: a one-shot for producing a text artifact.
+  //[ Write `content` to `file` as UTF-8, replacing what is there
+    !
+    ! Creating the file (and any missing parent directories) if needed. The
+    ! write counterpart of `readText`: a one-shot for producing a text artifact.
   //]
   def writeText(path: String, content: String): Result[Unit, String]
 
-  //[ Create (or truncate) the file at `path` and return it open for binary writing;
+  //[ Create (or truncate) the file at `path`, open for binary writing
+    !
     ! `Err` when the path or I/O operation fails. Any missing parent directories
-    ! are created. Build the bytes with `BinaryFile.write`, then `close`. For text
-    ! output, prefer `writeText`.
+    ! are created. Build the bytes with `BinaryFile.write`, then `close`. For
+    ! text output, prefer `writeText`.
   //]
   def createBinaryFile(path: String): Result[BinaryFile, String]
 end

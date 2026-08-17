@@ -41,13 +41,14 @@ section Markdown
   private def escAttr(s: String): String =
     py.dynamic(esc(s)).replace("\"", "&quot;").asString
 
-  // In the list-nesting stack, a bullet list is this marker; an ordered list
+  // In the list-nesting stack, a bullet list is this marker. An ordered list
   // holds its next item number instead.
   private def bullet(): Int = 0 - 1
 
-  //[ Render the block-level token stream. `lists` tracks nesting: one entry per
-    ! open list (bullet marker or the next ordinal), which yields the item
-    ! prefixes and the indentation depth.
+  //[ Render the block-level token stream
+    !
+    ! `lists` tracks nesting: one entry per open list (bullet marker or the next
+    ! ordinal), which yields the item prefixes and the indentation depth.
   //]
   private def renderBlocks(tokens: py.List): String =
     var s = ""

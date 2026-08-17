@@ -1,18 +1,18 @@
 //[ Telegram.jo
   !
   ! The Telegram agent loop (the Harpe "conversational" trigger, over a Telegram
-  ! bot) and its entry point. `jo run` with `jo.main = harpe.telegram.main` starts
-  ! an outbound long-poll against the Bot API: each incoming message — text, or a
-  ! file with an optional caption — is one turn of the shared engine, driven by
-  ! `TelegramInteract`. Files the user sends are downloaded into the chat's data
-  ! directory (read with `fs`); files the agent produces are sent back with the
-  ! `sendFile` tool.
+  ! bot) and its entry point. `jo run` with `jo.main = harpe.telegram.main`
+  ! starts an outbound long-poll against the Bot API: each incoming message —
+  ! text, or a file with an optional caption — is one turn of the shared engine,
+  ! driven by `TelegramInteract`. Files the user sends are downloaded into the
+  ! chat's data directory (read with `fs`). Files the agent produces are sent
+  ! back with the `sendFile` tool.
   !
   ! Unlike the web driver there is no HTTP server — Telegram lets the bot pull
   ! updates, so nothing needs to be publicly reachable. The poll thread only
   ! filters and dispatches: each chat has its own FIFO queue drained by a
-  ! dedicated worker thread, so turns for different chats run concurrently while a
-  ! single chat's turns stay ordered. The poll loop never blocks on a turn.
+  ! dedicated worker thread, so turns for different chats run concurrently while
+  ! a single chat's turns stay ordered. The poll loop never blocks on a turn.
 //]
 
 namespace harpe.telegram
@@ -41,10 +41,9 @@ import harpe.context.WindowedContext
 
 //[ The entry point //]
 def main(): Unit receives stdout =
-  if Defaults.checkAgentDir() then
-    dotenv.load(".env")
-    val wspace = new Workspace(os.path.abspath("."))
-    with workspace = wspace in serve()
+  dotenv.load(".env")
+  val wspace = new Workspace(os.path.abspath("."))
+  with workspace = wspace in serve()
 
 private def serve(): Unit receives stdout, workspace =
   val token = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -127,10 +126,12 @@ private def sendFileTool(client: TelegramClient, chatId: String): Tool = new Too
       client.sendDocument(chatId, os.path.join(dir, name), "")
       new Tool.RunOutcome("Sent '\{name}' to the user.", "sendFile · \{name}", [])
 
-//[ The bot: holds the model, prompt, toolset, the network client, and the
-  ! sender allowlist, plus a registry of resident sessions keyed by chat id. It
-  ! polls for updates and drives one turn per incoming message. `allowed` is the
-  ! set of permitted sender (user) ids — authorization is by who sends, not where.
+//[ The bot
+  !
+  ! Holds the model, prompt, toolset, the network client, and the sender
+  ! allowlist, plus a registry of resident sessions keyed by chat id. It polls
+  ! for updates and drives one turn per incoming message. `allowed` is the set
+  ! of permitted sender (user) ids — authorization is by who sends, not where.
 //]
 private class PendingTelegramApproval(
     id: String,
@@ -154,9 +155,10 @@ private class TelegramBot(
   private val approvalLock = threading.lock()
   private val pendingApprovals = py.dict()
 
-  //[ The long-poll loop: fetch updates, advance the offset past each one, and
-    ! dispatch text messages. `getUpdates` blocks until messages arrive or the
-    ! poll times out, so this loop idles cheaply.
+  //[ The long-poll loop: fetch updates, advance the offset past each one, and dispatch text messages
+    !
+    ! `getUpdates` blocks until messages arrive or the poll times out, so this
+    ! loop idles cheaply.
   //]
   def run(): Unit receives stdout, workspace =
     var offset = 0
@@ -177,15 +179,17 @@ private class TelegramBot(
         py.module("time").sleep(3.0)
     end
 
-  //[ Handle one update: act on a message with an identifiable sender that carries
-    ! text or files (documents, photos, audio, video, voice) — a media message's
-    ! caption is its text — and ignore everything else (edits, joins, callbacks,
-    ! stickers, anonymous-admin and channel posts with no `from`, …); enforce the
-    ! sender allowlist; then run a turn.
+  //[ Handle one update
     !
-    ! Authorization is by sender id. An unlisted sender is told their id only in a
-    ! private chat — in a group the bot may see many strangers' messages, so it
-    ! ignores them silently (logging to the console) rather than spamming a
+    ! Act on a message with an identifiable sender that carries text or files
+    ! (documents, photos, audio, video, voice) — a media message's caption is
+    ! its text — and ignore everything else (edits, joins, callbacks, stickers,
+    ! anonymous-admin and channel posts with no `from`, …). Enforce the sender
+    ! allowlist. Then run a turn.
+    !
+    ! Authorization is by sender id. An unlisted sender is told their id only in
+    ! a private chat — in a group the bot may see many strangers' messages, so
+    ! it ignores them silently (logging to the console) rather than spamming a
     ! rejection into the group.
   //]
   private def handleUpdate(update: py.Dict): Unit receives stdout, workspace =
@@ -213,11 +217,11 @@ private class TelegramBot(
     val senderId = "\{message.get("from").cast[py.Dict].get("id").asInt}"
 
     // In a group, only take a turn when the bot is addressed — an @mention, a
-    // /command, or a reply to the bot — with that prefix stripped. Non-addressed
-    // chatter is ignored. (With privacy mode on, the bot only receives addressed
-    // messages anyway; this gate makes the behavior the same either way, and
-    // strips the mention/command so the model sees a clean prompt.) In a private
-    // chat every message is for the bot.
+    // /command, or a reply to the bot — with that prefix stripped.
+    // Non-addressed chatter is ignored. (With privacy mode on, the bot only
+    // receives addressed messages anyway. This gate makes the behavior the same
+    // either way, and strips the mention/command so the model sees a clean
+    // prompt.) In a private chat every message is for the bot.
     var effectiveText = text
     if chatType == "group" || chatType == "supergroup" then
       match addressedText(message, text)
@@ -315,11 +319,12 @@ private class TelegramBot(
     if pending.messageId >= 0 then client.clearApprovalButtons(chatId, pending.messageId)
     decision
 
-  //[ The files attached to a message, as `FileSpec`s (resolved to bytes later, on
-    ! the worker thread). Covers the media kinds the Bot API delivers: a `document`,
-    ! a `photo` (largest size), `voice`, `audio`, and `video`. A kind with no
-    ! filename of its own gets a sensible default; the mime type is Telegram's if it
-    ! gave one, else guessed from the name at download time.
+  //[ The files attached to a message, as `FileSpec`s (resolved to bytes later, on the worker thread)
+    !
+    ! Covers the media kinds the Bot API delivers: a `document`, a `photo`
+    ! (largest size), `voice`, `audio`, and `video`. A kind with no filename of
+    ! its own gets a sensible default. The mime type is Telegram's if it gave
+    ! one, else guessed from the name at download time.
   //]
   private def extractFiles(message: py.Dict): List[FileSpec] =
     var specs: List[FileSpec] = []
@@ -348,9 +353,11 @@ private class TelegramBot(
 
     specs
 
-  //[ For a group message, the text to act on if the bot is addressed — a reply to
-    ! the bot, an @mention, or a /command (not aimed at another bot) — with that
-    ! mention/command prefix stripped. `None` when the message is not for the bot.
+  //[ For a group message, the text to act on if the bot is addressed
+    !
+    ! A reply to the bot, an @mention, or a /command (not aimed at another bot)
+    ! — with that mention/command prefix stripped. `None` when the message is
+    ! not for the bot.
   //]
   private def addressedText(message: py.Dict, text: String): Option[String] =
     val t = text.trim
@@ -375,8 +382,10 @@ private class TelegramBot(
       val replied = message.get("reply_to_message").cast[py.Dict]
       replied.contains("from") && replied.get("from").cast[py.Dict].get("id", 0).asInt == botId
 
-  //[ The text after a leading `/command` (or `/command@thisbot`), or `None` if the
-    ! command is explicitly targeted at a different bot (`/command@otherbot`).
+  //[ The text after a leading `/command`
+    !
+    ! Or `None` if the command is explicitly targeted at a different bot
+    ! (`/command@otherbot`).
   //]
   private def commandText(t: String): Option[String] =
     val parts = py.dynamic(t).split(py.none, 1).cast[py.List]
@@ -398,11 +407,12 @@ private class TelegramBot(
 
   private def lower(s: String): String = py.dynamic(s).lower().asString
 
-  //[ Enqueue a message for its chat, creating the session (and its worker) on
-    ! first contact. Under `registryLock` so the enqueue is atomic with a worker's
-    ! reap decision: either the message lands in a live session's queue, or the
-    ! session was reaped and we build a fresh one — never a message dropped into a
-    ! dead queue. Session load (disk) happens outside the lock; only the poll
+  //[ Enqueue a message for its chat, creating the session (and its worker) on first contact
+    !
+    ! Under `registryLock` so the enqueue is atomic with a worker's reap
+    ! decision: either the message lands in a live session's queue, or the
+    ! session was reaped and we build a fresh one — never a message dropped into
+    ! a dead queue. Session load (disk) happens outside the lock. Only the poll
     ! thread creates, so the check-then-create needs no extra guard.
   //]
   private def dispatch(chatId: String, incoming: Incoming): Unit receives workspace =
@@ -416,7 +426,7 @@ private class TelegramBot(
       val log = Session.forSession(chatId)
       val memoryPath = Session.memoryPath(chatId)
       val memory = Memory.load(memoryPath)
-      // `Session.load` caps the replayed transcript (a RAM backstop); the full
+      // `Session.load` caps the replayed transcript (a RAM backstop). The full
       // transcript stays on disk.
       val agent = new Agent:
         brain = brain
@@ -437,10 +447,11 @@ private class TelegramBot(
       registryLock.release()
       startWorker(chatId, session)
 
-  //[ The chat's worker: drain its queue, running one turn per message in arrival
-    ! order. Runs on a dedicated daemon thread, so a long turn blocks only this
-    ! chat, not the poll loop or other chats. A crashing turn is contained — the
-    ! chat is told, and the worker keeps serving — rather than killing the thread.
+  //[ The chat's worker: drain its queue, running one turn per message in arrival order
+    !
+    ! Runs on a dedicated daemon thread, so a long turn blocks only this chat,
+    ! not the poll loop or other chats. A crashing turn is contained — the chat
+    ! is told, and the worker keeps serving — rather than killing the thread.
     !
     ! When no message arrives for 15 minutes, the worker reaps itself: under
     ! `registryLock` it re-checks the queue is still empty (guarding against a

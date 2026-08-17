@@ -32,16 +32,15 @@ import harpe.Model.UserText
 import harpe.Model.Message
 import harpe.tools.memoryTools
 import harpe.context.WindowedContext
-import harpe.turns.Answered
+import harpe.turns.Success
 import harpe.turns.Failed
 import harpe.turns.Interrupted
 
 //[ The entry point   //]
 def main(): Unit receives stdout =
-  if Defaults.checkAgentDir() then
-    dotenv.load(".env")
-    val wspace = new Workspace(os.path.abspath("."))
-    with workspace = wspace in runChat()
+  dotenv.load(".env")
+  val wspace = new Workspace(os.path.abspath("."))
+  with workspace = wspace in runChat()
 
 private def runChat(): Unit receives stdout, workspace =
   val inputHistory = workspace.relative("logs/inputs.txt")
@@ -60,13 +59,13 @@ private def runChat(): Unit receives stdout, workspace =
       memory = memory
       initial = Session.load(sessionPath)
 
-  // The per-turn tool context; constant for a CLI run (one local working dir).
+  // The per-turn tool context. Constant for a CLI run (one local working dir).
   val data = workspace.relative("data")
   if !os.path.isdir(data) then os.makedirs(data)
   val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(data))
 
   while true do
-    // `None` is end-of-input (Ctrl-D); a blank line or a Ctrl-C'd prompt is
+    // `None` is end-of-input (Ctrl-D). A blank line or a Ctrl-C'd prompt is
     // `Some("")`, which just re-prompts.
     val userInput = interact.userInput() rescue None => break
 
@@ -75,18 +74,24 @@ private def runChat(): Unit receives stdout, workspace =
     if userInput == "" then continue
 
     val userMsg = UserText(userInput, [])
-    val res = interact.turn: (turnInteract: Interact) =>
+    val runTurn = (turnInteract: Interact) =>
       with logger = sessionLog, callContext = callCtx in
         agent.runTurn(userMsg, turnInteract, maxToolRounds = 50, maxRetries = 4)
 
-    if res is Answered(text) then
-      interact.agentResponse(text)
+    val res = interact.turn(userMsg, runTurn)
 
-    else if res is Interrupted then
+    match res.result
+    case Success =>
+      interact.agentResponse(res.finalText)
+
+    case Interrupted =>
       println("  " + Style.warning("⎋ interrupted"))
-    else if res is Failed(detail) then
+
+    case Failed(detail) =>
       val message = if detail == "" then "request failed" else "request failed: \{detail}"
       println("  " + Style.error("· \{message}"))
+
+    case _ => pass
 
     // Persist memory regardless of outcome (it is not rolled back with a turn).
     if !memory.isEmpty then Memory.save(memoryPath, memory)
@@ -97,8 +102,9 @@ private def runChat(): Unit receives stdout, workspace =
   println("  " + Style.success("♪ Elise stopped."))
 end
 
-//[ Whether the user explicitly requested the session picker. The template's
-  ! `jo resume` command passes this internal application flag.
+//[ Whether the user explicitly requested the session picker
+  !
+  ! The template's `jo resume` command passes this internal application flag.
 //]
 private def resumeRequested(): Bool =
   for argDyn in py.module("sys").argv.cast[py.List] do
@@ -140,8 +146,9 @@ section Session
       recent
 end
 
-//[ Let an interactive user continue one of the five newest sessions. The normal
-  ! startup path creates a fresh session without another prompt.
+//[ Let an interactive user continue one of the five newest sessions
+  !
+  ! The normal startup path creates a fresh session without another prompt.
 //]
 private def chooseSession(resume: Bool): String receives stdout, workspace =
   val recent = Session.recentFiles(5)

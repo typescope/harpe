@@ -28,7 +28,7 @@ interface Socket
   //[ Send all of `data` (raw bytes), retrying short writes. //]
   def sendall(data: py.Dynamic): Unit
 
-  //[ Receive up to `bufsize` bytes; fewer if that is all that arrived, empty at EOF. //]
+  //[ Receive up to `bufsize` bytes. Fewer if that is all that arrived, empty at EOF. //]
   def recv(bufsize: Int): py.Dynamic
 
   //[ Close the socket. //]
@@ -39,7 +39,7 @@ end
 def unixStream(): Socket =
   module.socket(module.AF_UNIX, module.SOCK_STREAM).cast[Socket]
 
-//[ Block until a client connects; return the connection socket.
+//[ Block until a client connects. Return the connection socket.
   !
   ! Python's `accept` yields a `(conn, addr)` pair — this returns the `conn`.
 //]

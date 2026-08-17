@@ -34,41 +34,47 @@ import harpe.Model.Message
 import harpe.Model.UserText
 import harpe.Model.Assistant
 import harpe.Model.Attachment
-import harpe.turns.Answered
+import harpe.turns.Success
 import harpe.turns.Interrupted
 import harpe.turns.Failed
 
 
-//[ One file the user attached to a Telegram message, as the poll loop hands it to
-  ! the chat's worker: Telegram's `file_id` (resolved to bytes only when the turn
-  ! runs, off the poll thread), a suggested basename, and the mime type Telegram
-  ! reported (`""` if none — guessed from the name at download time).
+//[ One file the user attached to a Telegram message
+  !
+  ! As the poll loop hands it to the chat's worker: Telegram's `file_id`
+  ! (resolved to bytes only when the turn runs, off the poll thread), a
+  ! suggested basename, and the mime type Telegram reported (`""` if none —
+  ! guessed from the name at download time).
 //]
 class FileSpec(fileId: String, name: String, mime: String)
 
-//[ One queued message for a chat's worker: the text (a plain message, or a media
-  ! caption) and any files that rode with it. This is the unit the poll loop
-  ! enqueues and the worker drains — replacing the bare text string, so a message
-  ! can now carry attachments.
+//[ One queued message for a chat's worker
+  !
+  ! The text (a plain message, or a media caption) and any files that rode with
+  ! it. This is the unit the poll loop enqueues and the worker drains —
+  ! replacing the bare text string, so a message can now carry attachments.
 //]
 class Incoming(text: String, files: List[FileSpec], senderId: String)
 
 
-//[ One live conversation: its chat id, its append log, its agent (which owns
-  ! the context and therefore the running transcript window), and its working
-  ! memory.
+//[ One live conversation
   !
-  ! Each session has a FIFO `queue` drained by its own dedicated worker thread, so
-  ! turns for different chats run concurrently while turns within one chat stay
-  ! ordered and serialized. Only that worker touches the session's state, so no
-  ! lock is needed around it.
+  ! Its chat id, its append log, its agent (which owns the context and therefore
+  ! the running transcript window), and its working memory.
+  !
+  ! Each session has a FIFO `queue` drained by its own dedicated worker thread,
+  ! so turns for different chats run concurrently while turns within one chat
+  ! stay ordered and serialized. Only that worker touches the session's state,
+  ! so no lock is needed around it.
 //]
 private class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath: String, callCtx: CallContext)
   val queue = py.module("queue").Queue()
 
-  //[ Begin a user turn: download any attached files into the session's data
-    ! directory (so the agent can read them with `fs`), run the turn, then deliver
-    ! its answer — the text reply plus any files the agent `sendFile`d back.
+  //[ Begin a user turn
+    !
+    ! Download any attached files into the session's data directory (so the
+    ! agent can read them with `fs`), run the turn, then deliver its answer —
+    ! the text reply plus any files the agent `sendFile`d back.
   //]
   def runTurn(
       incoming: Incoming,
@@ -84,9 +90,10 @@ private class Session(id: String, log: Logger, agent: Agent, memory: Memory, mem
     val result = with logger = log, callContext = callCtx in
       agent.runTurn(userMsg, interact, maxToolRounds, maxRetries)
 
-    match result
-    case Answered(answer) =>
+    match result.result
+    case Success =>
       commit()
+      val answer = result.finalText
       if answer.trim != "" then client.sendMessage(this.id, answer)
 
     case Interrupted =>
@@ -99,12 +106,14 @@ private class Session(id: String, log: Logger, agent: Agent, memory: Memory, mem
         else "Request failed: \{detail}"
       client.sendMessage(this.id, message)
 
-  //[ Download this turn's attached files into the session's data directory,
-    ! returning them as `Attachment` metadata for the `UserText`. The bytes land on
-    ! disk (so the agent reads them with `fs`); only the metadata rides in the
-    ! transcript. A file that fails to resolve or download is skipped rather than
-    ! failing the turn — the model still sees the ones that arrived. Runs on the
-    ! chat's worker thread, so the network I/O never blocks the poll loop.
+  //[ Download this turn's attached files into the session's data directory
+    !
+    ! Returning them as `Attachment` metadata for the `UserText`. The bytes land
+    ! on disk (so the agent reads them with `fs`). Only the metadata rides in
+    ! the transcript. A file that fails to resolve or download is skipped rather
+    ! than failing the turn — the model still sees the ones that arrived. Runs
+    ! on the chat's worker thread, so the network I/O never blocks the poll
+    ! loop.
   //]
   private def materialize(incoming: Incoming, client: TelegramClient): List[Attachment] =
     val dir = callCtx.getOrElse("HARPE_DATA_DIR", "")
@@ -139,29 +148,36 @@ private class Session(id: String, log: Logger, agent: Agent, memory: Memory, mem
     saveMemory()
 
   //[ Finish a cancelled or failed turn
+    !
     ! Memory is still persisted — it is deliberate and not rolled back with the
     ! provisional assistant transcript. The engine retains the user message.
   //]
   private def rollback(): Unit =
     saveMemory()
 
-  //[ Persist the working memory beside the transcript archive. Runs on the chat's
-    ! worker thread. The resolved path is captured when the session is created.
+  //[ Persist the working memory beside the transcript archive
+    !
+    ! Runs on the chat's worker thread. The resolved path is captured when the
+    ! session is created.
   //]
   private def saveMemory(): Unit =
     if !memory.isEmpty then Memory.save(memoryPath, memory)
 end
 
-//[ Reduce a client-supplied name to a safe bare basename: drop any directory part
-  ! (both separators) and reject the traversal names, so a stored or sent file can
-  ! never escape the session's data directory. "" if nothing safe remains.
+//[ Reduce a client-supplied name to a safe bare basename
+  !
+  ! Drop any directory part (both separators) and reject the traversal names, so
+  ! a stored or sent file can never escape the session's data directory. "" if
+  ! nothing safe remains.
 //]
 private def sanitizeName(raw: String): String =
   val base = os.path.basename(raw.replace("\\", "/"))
   if base == "" || base == "." || base == ".." then "" else base
 
-//[ A name not already taken in `dir`: `photo.jpg` → `photo-1.jpg` → … so a
-  ! download never clobbers an existing file.
+//[ A name not already taken in `dir`
+  !
+  ! `photo.jpg` → `photo-1.jpg` → … so a download never clobbers an existing
+  ! file.
 //]
 private def uniqueName(dir: String, name: String): String =
   if name == "" || !os.path.exists(os.path.join(dir, name)) then name
@@ -180,11 +196,12 @@ section Session
   def sessionPath(chatId: String): String receives workspace =
     workspace.relative("logs/sessions/" + chatId + ".jsonl")
 
-  //[ The per-chat data directory — the private root the sandbox grants this
-    ! session as `HARPE_DATA_DIR`, so `fs` (and the document readers) see only this
-    ! chat's files. Downloaded attachments land here, and files the agent writes
-    ! surface here too. Created on demand; scoped by chat id so chats never share a
-    ! tree.
+  //[ The per-chat data directory
+    !
+    ! The private root the sandbox grants this session as `HARPE_DATA_DIR`, so
+    ! `fs` (and the document readers) see only this chat's files. Downloaded
+    ! attachments land here, and files the agent writes surface here too.
+    ! Created on demand. Scoped by chat id so chats never share a tree.
   //]
   def dataDir(chatId: String): String receives workspace =
     val dir = workspace.relative("data/" + chatId)
@@ -199,8 +216,10 @@ section Session
     val path = sessionPath(chatId)
     path.substring(0, path.size - 6) + ".memory.json"
 
-  //[ Reconstruct this chat's conversation from disk; `[]` if it has no file yet,
-    ! so a chat seen for the first time starts empty.
+  //[ Reconstruct this chat's conversation from disk
+    !
+    ! `[]` if it has no file yet, so a chat seen for the first time starts
+    ! empty.
   //]
   def load(chatId: String): List[Message] receives workspace =
     val path = sessionPath(chatId)

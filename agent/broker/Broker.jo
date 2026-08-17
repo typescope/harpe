@@ -1,24 +1,26 @@
 //[ Broker.jo
   !
-  ! The broker: one live host↔guest channel. The host binds a per-run Unix socket and
-  ! serves each connection with a single `Frame => Frame` handler; the guest connects
-  ! with a `BrokerClient` and issues `request(frame)` calls that block for a response.
-  ! This is the live counterpart of the audit log (which is guest→host, async). It is
-  ! deliberately generic — a `Frame` in, a `Frame` out — with no service registry or
-  ! per-capability call surface: the fixed cross-cutting concerns (real-time `send`,
-  ! `confirm`) ride this one channel. See host-guest-boundary.md.
+  ! The broker: one live host↔guest channel. The host binds a per-run Unix
+  ! socket and serves each connection with a single `Frame => Frame` handler.
+  ! The guest connects with a `BrokerClient` and issues `request(frame)` calls
+  ! that block for a response. This is the live counterpart of the audit log
+  ! (which is guest→host, async). It is deliberately generic — a `Frame` in, a
+  ! `Frame` out — with no service registry or per-capability call surface: the
+  ! fixed cross-cutting concerns (real-time `send`, `confirm`) ride this one
+  ! channel. See host-guest-boundary.md.
   !
-  ! Wire format: each frame is `[4-byte jsonLen][json][4-byte blobLen][blob]` — a
-  ! UTF-8 JSON header plus an optional **raw** binary trailer. Bytes ride the trailer,
-  ! never base64 inside the JSON, so a byte range costs no encode/decode and no 33%
-  ! inflation. Large payloads do not travel here at all: the guest gets a relative path to a
-  ! file the host materialized in the shared run dir and reads it directly. The broker
-  ! carries only bounded reads (a text line range, a small buffer) and metadata.
+  ! Wire format: each frame is `[4-byte jsonLen][json][4-byte blobLen][blob]` —
+  ! a UTF-8 JSON header plus an optional **raw** binary trailer. Bytes ride the
+  ! trailer, never base64 inside the JSON, so a byte range costs no
+  ! encode/decode and no 33% inflation. Large payloads do not travel here at
+  ! all: the guest gets a relative path to a file the host materialized in the
+  ! shared run dir and reads it directly. The broker carries only bounded reads
+  ! (a text line range, a small buffer) and metadata.
   !
-  ! The frame contents are the handler's own protocol; the broker imposes only one
-  ! convention — a handler that raises is answered with an error frame
-  ! (`{"ok": false, "error": …}`), so a failing handler is a clean response rather
-  ! than a dropped connection, and `request` aborts on it.
+  ! The frame contents are the handler's own protocol. The broker imposes only
+  ! one convention — a handler that raises is answered with an error frame
+  ! (`{"ok": false, "error": …}`), so a failing handler is a clean response
+  ! rather than a dropped connection, and `request` aborts on it.
 //]
 
 namespace harpe.broker
@@ -47,7 +49,7 @@ section Frame
 
   //[ An error frame — `{"ok": false, "error": message}`, no trailer.
     !
-    ! The broker replies with this when a handler raises; `BrokerClient.request`
+    ! The broker replies with this when a handler raises. `BrokerClient.request`
     ! recognizes it and aborts.
   //]
   def error(message: String): Frame =
@@ -113,17 +115,20 @@ private def recvFrame(sock: socket.Socket): Option[Frame] =
 // Broker (host)
 //------------------------------------------------------------------------------
 
-//[ A running broker: its listening socket, the path it bound, and the per-connection
-  ! frame handler.
+//[ A running broker
   !
-  ! `handle` turns each request frame into a response frame; its contents are the
-  ! handler's own protocol. A handler that raises is answered with `Frame.error`.
+  ! Its listening socket, the path it bound, and the per-connection frame
+  ! handler.
+  !
+  ! `handle` turns each request frame into a response frame. Its contents are
+  ! the handler's own protocol. A handler that raises is answered with
+  ! `Frame.error`.
 //]
 class Broker(server: socket.Socket, path: String, handle: Frame => Frame)
   //[ Stop accepting and remove the socket file.
     !
-    ! In-flight connections finish on their own threads; new `accept` calls raise once
-    ! the socket is closed.
+    ! In-flight connections finish on their own threads. New `accept` calls
+    ! raise once the socket is closed.
   //]
   def stop(): Unit =
     server.close()
@@ -132,11 +137,10 @@ class Broker(server: socket.Socket, path: String, handle: Frame => Frame)
 end
 
 section Broker
-  //[ Bind a broker at `path`, serve connections with `handle`, and spawn its accept
-    ! loop on a daemon thread.
+  //[ Bind a broker at `path` and start serving
     !
-    ! Each connection is served on its own thread, so concurrent guest calls do not
-    ! block one another.
+    ! Each connection is served on its own thread, so concurrent guest calls do
+    ! not block one another.
   //]
   def start(path: String, handle: Frame => Frame): Broker =
     val server = socket.unixStream()

@@ -2,14 +2,13 @@
   !
   ! The web agent loop (the Harpe "conversational" trigger, served in a browser)
   ! and its entry point. `jo run` with `jo.main = harpe.web.main` starts a local
-  ! HTTP server; the chat page talks to it over HTTP. Each user message is one
+  ! HTTP server. The chat page talks to it over HTTP. Each user message is one
   ! turn of the shared engine, driven by `WebInteract` so the browser sees
   ! progress live.
   !
-  ! The server is threaded (one request per thread), so the page and
-  ! `/api/stop` stay responsive while a turn runs; a session's turns are
-  ! serialized by its lock, and a running turn is cancellable via the session's
-  ! stop event.
+  ! The server is threaded (one request per thread), so the page and `/api/stop`
+  ! stay responsive while a turn runs. A session's turns are serialized by its
+  ! lock, and a running turn is cancellable via the session's stop event.
 //]
 
 namespace harpe.web
@@ -27,10 +26,9 @@ import harpe.ffi.os
 
 //[ The entry point //]
 def main(): Unit receives stdout =
-  if Defaults.checkAgentDir() then
-    dotenv.load(".env")
-    val wspace = new Workspace(os.path.abspath("."))
-    with workspace = wspace in serve()
+  dotenv.load(".env")
+  val wspace = new Workspace(os.path.abspath("."))
+  with workspace = wspace in serve()
 
 private def serve(): Unit receives stdout, workspace =
   // The chat page is the agent's own file, served from disk (see Server.route),
@@ -47,7 +45,7 @@ private def serve(): Unit receives stdout, workspace =
   val host = os.getenv("HOST", "127.0.0.1")
   val port = Int.parse(os.getenv("PORT", "8765")) rescue None => 8765
 
-  // The WSGI app is a thin adapter onto the server; the runtime calls it with
+  // The WSGI app is a thin adapter onto the server. The runtime calls it with
   // (environ, start_response) per request.
   val app = (environ: py.Dynamic, startResp: py.Dynamic) =>
     server.handle(environ, startResp)

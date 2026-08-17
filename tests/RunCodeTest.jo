@@ -9,7 +9,7 @@
   ! to `jo build` + `python3`, so they are slower than the unit tests.
   !
   ! The fixture ships an executable `sandbox/run.sh`, so every run here goes
-  ! through it. It is silent by default; with `HARPE_TEST_PROBE` set it echoes
+  ! through it. It is silent by default. With `HARPE_TEST_PROBE` set it echoes
   ! whether `ANTHROPIC_API_KEY` leaked into the child (it must not).
 //]
 
@@ -123,7 +123,8 @@ private def concurrentCheck(tool: Tool, n: Int): Unit receives stdout =
   for t in threads do t.join()
 
   // The fixture's run.sh prepends a marker line, so each result ends with — but
-  // is not exactly — its own number; clobbering would leave the wrong number last.
+  // is not exactly — its own number. Clobbering would leave the wrong number
+  // last.
   var j = 0
   var allOk = true
   while j < n do

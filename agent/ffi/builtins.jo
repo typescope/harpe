@@ -28,8 +28,10 @@ def len(x: Any): Int = module.len(x).asInt
 //[ Materialize a Python iterable (generator, dict keys, …) as a list. //]
 def list(x: Any): py.List = module.callDynamic("list", x).cast[py.List]
 
-//[ The name of a Python value's type (`"str"`, `"int"`, `"float"`, `"bool"`,
-  ! `"dict"`, …) — used to dispatch on a decoded JSON value.
+//[ The name of a Python value's type
+  !
+  ! (`"str"`, `"int"`, `"float"`, `"bool"`, `"dict"`, …) — used to dispatch on a
+  ! decoded JSON value.
 //]
 def typeName(x: Any): String =
   module.getattr(module.callDynamic("type", x), "__name__").asString
@@ -37,7 +39,9 @@ def typeName(x: Any): String =
 //[ The next item from a Python iterator, or `fallback` when exhausted. //]
 def next(it: Any, fallback: Any): py.Dynamic = module.next(it, fallback)
 
-//[ Build a class dynamically — Python's three-argument `type(name, bases, attrs)`.
+//[ Build a class dynamically
+  !
+  ! Python's three-argument `type(name, bases, attrs)`.
 //]
 def newType(name: String, bases: Any, attrs: Any): py.Dynamic =
   module.callDynamic("type", name, bases, attrs)
@@ -45,7 +49,9 @@ def newType(name: String, bases: Any, attrs: Any): py.Dynamic =
 //[ Round `x` to `ndigits` decimal places (Python `round`). //]
 def round(x: Float, ndigits: Int): Float = module.round(x, ndigits).asFloat
 
-//[ Python's `int(x)` — used to read an integer out of a foreign value such as
-  ! a cffi pointer cast to `intptr_t`.
+//[ Python's `int(x)`
+  !
+  ! Used to read an integer out of a foreign value such as a cffi pointer cast
+  ! to `intptr_t`.
 //]
 def int(x: Any): Int = module.callDynamic("int", x).asInt

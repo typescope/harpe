@@ -1,0 +1,104 @@
+//[ TurnView.jo
+  !
+  ! One turn as the chat page renders it.
+  !
+  ! `TurnData` is the whole input: the same value `Agent.runTurn` returns for the
+  ! turn it just ran and `Transcript.turns` rebuilds from the journal. So a turn
+  ! that just finished and a turn reloaded a week later go through this one
+  ! function, and the live view cannot drift from the persisted one.
+  !
+  ! The mapping is presentation, and it lives here rather than in the agent: the
+  ! turn's intermediate traffic is folded into its reply, with the `runCode`
+  ! programs as `steps` (code paired with its output by call id) and the
+  ! `sendFile` deliveries as `sent`. Both are read back from the tool calls the
+  ! model itself made, so what the user sees and what the model reasons over are
+  ! the same events.
+//]
+
+namespace harpe.web
+
+import harpe.ffi.os
+import harpe.ffi.mimetypes
+
+import harpe.TurnData
+import harpe.Model.*
+import harpe.turns.*
+
+section TurnView
+  //[ A turn as the page's message rows
+    !
+    ! The user's message, the agent's reply, and an error row for a turn that
+    ! failed. `dataDir` is the session's data directory, used to resolve delivered
+    ! files (`None` if it does not exist).
+  //]
+  def rows(turn: TurnData, dataDir: Option[String]): py.List =
+    val arr = py.list()
+
+    if turn.user is UserText(t, attachments) then
+      arr.append: py.dict("role" ~ "user", "text" ~ t, "received" ~ receivedJson(attachments))
+
+    val steps = py.list()      // this turn's {code, output} runCode steps
+    val pending = py.dict()    // runCode call id -> program, awaiting its result
+    val sent = py.list()       // this turn's sendFile deliveries
+
+    for m in turn.messages do
+      if m is Assistant(_, calls) then
+        for c in calls if c.name == "runCode" do
+          pending.set(c.id, c.input.string("code"))
+
+        // A file that no longer resolves is still listed, because the delivery
+        // happened and is part of the dialog.
+        for c in calls if c.name == "sendFile" do
+          sent.append: sentFileJson(dataDir, c.input.string("fileName"))
+
+      else if m is ToolResults(results) then
+        for r in results if pending.contains(r.id) do
+          steps.append: py.dict("code" ~ pending.get(r.id).asString, "output" ~ r.content)
+
+    // `turn.text` joins every visible reply across the turn's tool rounds, so a
+    // turn that spoke before calling a tool keeps that text.
+    val text = turn.text
+    if turn.result is Success && text != "" then
+      arr.append: py.dict("role" ~ "agent", "text" ~ text, "steps" ~ steps, "sent" ~ sent)
+
+    if turn.result is Failed(detail) then
+      val message = if detail == "" then "Please try again." else detail
+      arr.append: py.dict("role" ~ "error", "text" ~ message)
+
+    arr
+
+  //[ The files that arrived with a user message. //]
+  def receivedJson(attachments: List[Attachment]): py.List =
+    val arr = py.list()
+    for a in attachments do
+      arr.append: py.dict("name" ~ a.name, "size" ~ a.size, "mime" ~ a.mime, "inline" ~ a.inline)
+    arr
+
+  //[ The card metadata for one `sendFile`d file
+    !
+    ! If the name (reduced to a basename) still resolves to a real file in `dir`,
+    ! returns `{name, size, mime}`. Otherwise `{name, missing: true}`, so a
+    ! delivered-then-vanished file is shown as a missing card rather than dropped.
+  //]
+  def sentFileJson(dir: Option[String], fileName: String): py.Dict =
+    val base = os.path.basename(fileName.replace("\\", "/"))
+    val name = if base == "" || base == "." || base == ".." then "" else base
+
+    val found: Option[String] =
+      match dir
+      case Some(d) =>
+        val p = os.path.join(d, name)
+        if name != "" && os.path.isfile(p) then Some(p) else None
+
+      case None => None
+
+    match found
+    case Some(p) =>
+      py.dict(
+        "name" ~ name,
+        "size" ~ os.path.getsize(p),
+        "mime" ~ mimetypes.guessType(name).getOrElse("application/octet-stream"))
+
+    case None =>
+      py.dict("name" ~ (if name != "" then name else fileName), "missing" ~ true)
+end

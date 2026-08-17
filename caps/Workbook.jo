@@ -1,8 +1,9 @@
 //[ Workbook.jo
   !
   ! An open spreadsheet workbook, read sheet-wise: list the sheets, size one up,
-  ! then read a row window. Windowed access keeps a huge sheet's cost proportional
-  ! to what the program actually needs; close the workbook when done.
+  ! then read a row window. Windowed access keeps a huge sheet's cost
+  ! proportional to what the program actually needs. Close the workbook when
+  ! done.
 //]
 
 namespace harpe.caps
@@ -10,7 +11,7 @@ namespace harpe.caps
 //[ A sheet's extent: rows and columns. //]
 class SheetSize(rows: Int, columns: Int)
 
-//[ An open workbook. Rows are 1-based; an unknown sheet name answers `None`. //]
+//[ An open workbook. Rows are 1-based. An unknown sheet name answers `None`. //]
 interface Workbook
   //[ The sheet names, in workbook order. //]
   def sheets: List[String]
@@ -18,9 +19,10 @@ interface Workbook
   //[ The extent of `sheet` — plan a window before reading. //]
   def dimensions(sheet: String): Option[SheetSize]
 
-  //[ The cells of rows [`start`, `start + count`) of `sheet`, rendered as text
-    ! (an empty cell is `""`). A window past the end reads short. `start` is
-    ! 1-based; a `start` below 1 is a bug in the program and aborts the run.
+  //[ The cells of rows [`start`, `start + count`) of `sheet`, rendered as text (an empty cell is `""`)
+    !
+    ! A window past the end reads short. `start` is 1-based. A `start` below 1
+    ! is a bug in the program and aborts the run.
   //]
   def rows(sheet: String, start: Int, count: Int): Option[List[List[String]]]
 

@@ -13,7 +13,7 @@ import jo.IO.stdout
 import harpe.*
 import harpe.Model.*
 import harpe.Tool.*
-import harpe.turns.Answered
+import harpe.turns.Success
 import harpe.turns.Failed
 import harpe.logging.logger
 import harpe.logging.JsonlLogger
@@ -98,7 +98,7 @@ def run(): Unit receives stdout =
 
   val turns = Transcript.turns(entries)
   check("turn projection size", turns.size == 4)
-  check("answered turn result", turns.get(0).result is Answered(_))
+  check("answered turn result", turns.get(0).result is Success)
   check("failed turn result", turns.get(1).result is Failed("bad model"))
   check("failed turn drops provisional messages", turns.get(1).messages.isEmpty)
   check("open turn has no result", turns.get(3).result is None)

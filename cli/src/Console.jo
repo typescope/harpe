@@ -16,9 +16,10 @@ import harpe.ffi.time
 import jo.IO.stdout
 import harpe.*
 import harpe.turns.*
+import harpe.Model.Message
 
 private union WorkerOutcome =
-    WorkerCompleted(result: TurnResult)
+    WorkerCompleted(result: TurnData)
   | WorkerCancelled
   | WorkerCrashed(message: String)
 
@@ -60,14 +61,16 @@ private class Console(out: String => Unit, historyFile: String)
     println("  " + Style.success("Ready.") + " Type a message to start.")
     println("  " + Style.muted("Ctrl-C, Ctrl-D, or 'quit' to exit."))
 
-  //[ Read one line from the user. `None` signals end-of-input (Ctrl-D / EOF),
-    ! on which the caller should exit.
+  //[ Read one line from the user
+    !
+    ! `None` signals end-of-input (Ctrl-D / EOF), on which the caller should
+    ! exit.
   //]
   def userInput(): Option[String] =
     println ""
     // Keep the prompt a single line with no embedded newline, so readline can
     // redraw it correctly when navigating history with the up/down arrows.
-    // Ctrl-C is handled by the SIGINT handler (quit); Ctrl-D surfaces here as
+    // Ctrl-C is handled by the SIGINT handler (quit). Ctrl-D surfaces here as
     // EOFError, which py.try catches so we exit cleanly instead of crashing.
     match py.try(py.input("You ▸ "))
     case Ok(line) =>
@@ -92,15 +95,15 @@ private class Console(out: String => Unit, historyFile: String)
     os.makedirs("data")
     val _ = py.try(py.module("readline").write_history_file(historyFile))
 
-  def turn(f: Interact => TurnResult): TurnResult =
+  def turn(userMsg: Message, f: Interact => TurnData): TurnData =
     // Serialize the real worker lifetime, not just the visible CLI turn. After
     // ESC the worker may still be waiting on a model/tool call and must finish
     // rolling back before another turn can touch the shared agent context.
     workerLock.acquire()
 
     // Cancellation is per-turn. The worker thread may outlive the CLI's visible
-    // turn after ESC; it must keep seeing its own cancelled state, even after the
-    // next prompt starts a fresh turn with a fresh watcher.
+    // turn after ESC. It must keep seeing its own cancelled state, even after
+    // the next prompt starts a fresh turn with a fresh watcher.
     val interrupt = threading.event()
     val stopWatch = threading.event()
     val active = threading.event()
@@ -118,10 +121,13 @@ private class Console(out: String => Unit, historyFile: String)
     Console.restoreTerminal(savedTerm)
     stopWatch.set()
 
+    // A cancelled or crashed worker produced no turn value, so synthesize one that
+    // says so. It carries no messages, matching how the transcript replays a turn
+    // that never committed.
     match outcome
-    case WorkerCompleted(res) => res
-    case WorkerCancelled      => Interrupted
-    case WorkerCrashed(message) => Failed(message)
+    case WorkerCompleted(res)   => res
+    case WorkerCancelled        => TurnData(userMsg, [], Interrupted)
+    case WorkerCrashed(message) => TurnData(userMsg, [], Failed(message))
 
   def display(event: TurnEvent): Unit = with IO.stdout = out in
     match event
@@ -275,10 +281,11 @@ private section Console
     val thread = threading.thread(watcher)
     thread.start()
 
-  // Run `work` on a background thread; return `WorkerCancelled` if `interrupt`
+  // Run `work` on a background thread. Return `WorkerCancelled` if `interrupt`
   // fires first (the abandoned worker finishes in the background). This lets a
-  // long model call be cancelled by ESC while still letting the worker roll back.
-  def callInterruptible(interact: Interact, work: () => TurnResult, cleanup: () => Unit): WorkerOutcome =
+  // long model call be cancelled by ESC while still letting the worker roll
+  // back.
+  def callInterruptible(interact: Interact, work: () => TurnData, cleanup: () => Unit): WorkerOutcome =
     val box  = py.list(py.none)
     val err  = py.list("")
     val done = threading.event()
@@ -297,7 +304,7 @@ private section Console
       if done.wait(0.05).asBool then
         val message = err.get(0).asString
         if message != "" then out = WorkerCrashed(message)
-        else out = WorkerCompleted(box.get(0).cast[TurnResult])
+        else out = WorkerCompleted(box.get(0).cast[TurnData])
         waiting = false
       else if interact.cancelled then
         waiting = false

@@ -46,7 +46,7 @@ class SummarizingContext(
   private var markedInputTokens: Int = 0
 
   // The provider's reported input-token count for the last request (0 until the
-  // first reply). Drives the compaction trigger; updated by `observe`.
+  // first reply). Drives the compaction trigger. Updated by `observe`.
   private var lastInputTokens: Int = 0
 
   def append(message: Message): Unit =
@@ -55,12 +55,14 @@ class SummarizingContext(
   // Size the next compaction decision on the provider's exact token count.
   def observe(usage: Usage): Unit = lastInputTokens = usage.inputTokens
 
-  //[ Compact if over the high-water mark, then compose: the base prompt and the
-    ! distilled summary as `system`, the retained recent turns as the messages,
-    ! and the volatile memory block as the transient tail (after the transcript,
-    ! so a memory edit leaves the cached prefix intact). The summary stays in
-    ! `system`: a compaction rewrites the message window at the same moment, so
-    ! keeping the summary cached with the base prompt costs nothing.
+  //[ Compact if over the high-water mark, then compose
+    !
+    ! The base prompt and the distilled summary as `system`, the retained recent
+    ! turns as the messages, and the volatile memory block as the transient tail
+    ! (after the transcript, so a memory edit leaves the cached prefix intact).
+    ! The summary stays in `system`: a compaction rewrites the message window at
+    ! the same moment, so keeping the summary cached with the base prompt costs
+    ! nothing.
   //]
   def render(interact: Interact): Rendered receives logger =
     if lastInputTokens > highWaterTokens then compact(interact)
@@ -79,19 +81,23 @@ class SummarizingContext(
     markedSummary = summary
     markedInputTokens = lastInputTokens
 
-  //[ Restores the summary and the token count too: a compaction rewrites the
-    ! window, so rolling back only the window would resurrect turns already folded
-    ! into the summary — or leave a stale high token count that re-triggers it.
+  //[ Restores the summary and the token count too
+    !
+    ! A compaction rewrites the window, so rolling back only the window would
+    ! resurrect turns already folded into the summary — or leave a stale high
+    ! token count that re-triggers it.
   //]
   def rollback(): Unit =
     transcript = markedTranscript
     summary = markedSummary
     lastInputTokens = markedInputTokens
 
-  //[ Fold the oldest whole turns into the rolling summary, keeping the window
-    ! `truncate` would keep under the low-water budget. Skipped (leaving the
-    ! transcript untouched) when the distillation call fails or is cancelled, or
-    ! when nothing can be dropped (the window is a single oversized turn).
+  //[ Fold the oldest whole turns into the rolling summary
+    !
+    ! Keeping the window `truncate` would keep under the low-water budget.
+    ! Skipped (leaving the transcript untouched) when the distillation call
+    ! fails or is cancelled, or when nothing can be dropped (the window is a
+    ! single oversized turn).
   //]
   private def compact(interact: Interact): Unit receives logger =
     val kept = truncate(transcript, lowWaterChars)
@@ -107,8 +113,10 @@ class SummarizingContext(
         interact.emit: turns.ContextCompacted(dropCount)
 end
 
-//[ The distilled-history block, between the stable base prompt and the memory
-  ! block (it changes only at compactions, memory on any agent edit).
+//[ The distilled-history block
+  !
+  ! Between the stable base prompt and the memory block (it changes only at
+  ! compactions, memory on any agent edit).
 //]
 private def summaryBlock(summary: String): String =
   "# Conversation summary\n\n(Older turns, distilled; the messages below are the most recent turns.)\n\n" + summary
@@ -117,8 +125,10 @@ private def summaryBlock(summary: String): String =
 private def distillSystem(): String =
   "You maintain a running summary of a conversation between a user and an agent. Reply with ONLY the updated summary text — no preamble, no headings. Preserve: the user's goals and constraints, decisions made, facts discovered, tool actions taken and their outcomes, and unresolved questions. Be concise; drop pleasantries and dead ends."
 
-//[ The distillation request: the summary so far (if any) plus the turns being
-  ! folded in, rendered as plain text.
+//[ The distillation request
+  !
+  ! The summary so far (if any) plus the turns being folded in, rendered as
+  ! plain text.
 //]
 private def distillRequest(summary: String, dropped: List[Message]): Message =
   val lead =

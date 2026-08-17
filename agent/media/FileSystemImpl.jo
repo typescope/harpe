@@ -123,8 +123,8 @@ class FileSystemImpl
 
   //[ Open for reading and writing, in binary mode.
     !
-    ! The not-a-file check gives the common miss a clean symbolic message; `py.try`
-    ! catches the rest (permissions, races).
+    ! The not-a-file check gives the common miss a clean symbolic message.
+    ! `py.try` catches the rest (permissions, races).
   //]
   private def openHandle(path: String): Result[py.Dynamic, String] =
     val real = resolvePath(realRoot, path) rescue err: Err[String] => return err
@@ -134,8 +134,9 @@ class FileSystemImpl
         py.try:
           py.open(real, "r+b")
 
-  //[ Create `real`'s parent directory if it is missing, so a write into a fresh
-    ! subdirectory (`"out/chart.png"`) just works.
+  //[ Create `real`'s parent directory if it is missing
+    !
+    ! So a write into a fresh subdirectory (`"out/chart.png"`) just works.
   //]
   private def ensureParent(real: String): Unit =
     val parent = os.path.dirname(real)
@@ -153,7 +154,7 @@ end
 
 //[ An open text file over a binary handle.
   !
-  ! Decodes as `encoding` with replacement at undecodable bytes; `lines` rewinds
+  ! Decodes as `encoding` with replacement at undecodable bytes. `lines` rewinds
   ! and starts a fresh lazy traversal.
 //]
 private class TextFileImpl(handle: py.Dynamic, encoding: String)

@@ -1,17 +1,18 @@
 //[ RunCode.jo
   !
-  ! The `runCode` tool: compile the model's program against the agent sandbox and
-  ! run it, capturing the result — timed and emitted as a `harpe.tools.runCode`
-  ! log entry to the caller's injected channel. This is the program-execution log,
-  ! distinct from the conversational session history; the format and destination
-  ! are the `Logger` backend's policy (see `harpe.logging`).
+  ! The `runCode` tool: compile the model's program against the agent sandbox
+  ! and run it, capturing the result — timed and emitted as a
+  ! `harpe.tools.runCode` log entry to the caller's injected channel. This is
+  ! the program-execution log, distinct from the conversational session history.
+  ! The format and destination are the `Logger` backend's policy (see
+  ! `harpe.logging`).
   !
-  ! How it compiles — and why it is concurrency-safe. Building the sandbox's guest
-  ! module once (`jo build`, the user's one-time prep) records the *exact* compiler
-  ! invocation in the target's `.done` sidecar: the backend, every `--lib`
-  ! (checking libraries) and `--link-lib` (link libraries) pointing at the
-  ! dependencies' already-built, read-only `.sast`, the `--link` map, and the
-  ! source/`-o`/`--sast` paths — one argument per line.
+  ! How it compiles — and why it is concurrency-safe. Building the sandbox's
+  ! guest module once (`jo build`, the user's one-time prep) records the *exact*
+  ! compiler invocation in the target's `.done` sidecar: the backend, every
+  ! `--lib` (checking libraries) and `--link-lib` (link libraries) pointing at
+  ! the dependencies' already-built, read-only `.sast`, the `--link` map, and
+  ! the source/`-o`/`--sast` paths — one argument per line.
   !
   ! `runCode` replays that invocation with only the source, output, and `--sast`
   ! removed for per-run paths, so it compiles the ONE program against immutable
@@ -19,8 +20,8 @@
   !
   ! Because the libraries are read-only and every run writes its own source,
   ! output, and sast dir, concurrent runs never touch shared state — no warming,
-  ! no per-run package copy, no dependency re-resolution. A semaphore still bounds
-  ! how many compiler/interpreter processes run at once.
+  ! no per-run package copy, no dependency re-resolution. A semaphore still
+  ! bounds how many compiler/interpreter processes run at once.
 //]
 
 namespace harpe.tools
@@ -41,24 +42,28 @@ import harpe.logging.*
 private def shutilMod: py.Dynamic = py.module("shutil")
 private def tempfileMod: py.Dynamic = py.module("tempfile")
 
-//[ The log category for this tool's records — one program compile+run each.
-  ! Reverse-namespaced (namespace + tool name) so it is unique in the open set and
-  ! filterable by prefix; see the category convention on `harpe.logging.Entry`.
+//[ The log category for this tool's records — one program compile+run each
+  !
+  ! Reverse-namespaced (namespace + tool name) so it is unique in the open set
+  ! and filterable by prefix. See the category convention on
+  ! `harpe.logging.Entry`.
 //]
 private def runCodeCategory: String = "harpe.tools.runCode"
 
-//[ Locate the compiler-invocation record left by `jo build` for the guest — the
-  ! `*.py.done` sidecar next to the built target. `None` if the guest has not been
-  ! built yet.
+//[ Locate the compiler-invocation record left by `jo build` for the guest
+  !
+  ! The `*.py.done` sidecar next to the built target. `None` if the guest has
+  ! not been built yet.
 //]
 private def findDoneFile(sandboxDir: String): Option[String] =
   val hits = glob.glob(os.path.join(sandboxDir, ".build/*/jo-*/target/*.py.done"))
   if hits.size == 0 then None else Some(hits.get(0).asString)
 
-//[ Replay the recorded invocation (`lines`, one argument per line) with this
-  ! run's paths swapped in: the source file (the lone `.jo` positional), the `-o`
-  ! output, and the `--sast` output directory. Everything else — the compiler
-  ! path, backend, `--lib`/`--link-lib`, `--link` map — is reused verbatim.
+//[ Replay the recorded invocation with this run's paths swapped in
+  !
+  ! The source file (the lone `.jo` positional), the `-o` output, and the
+  ! `--sast` output directory. Everything else — the compiler path, backend,
+  ! `--lib`/`--link-lib`, `--link` map — is reused verbatim.
 //]
 private def replayArgs(lines: List[String], runSrc: String, runOut: String): py.List =
   val args = py.list()
@@ -101,9 +106,11 @@ private def compilerErrorText(outText: String, errText: String): String =
   else if err == "" then out
   else out + "\n" + err
 
-//[ One bounded, isolated run: acquire a build slot, compile+run in a fresh temp
-  ! directory, then delete it and release the slot — always, even on failure. If
-  ! the guest has not been built, return a clear message instead (no build here).
+//[ One bounded, isolated run
+  !
+  ! Acquire a build slot, compile+run in a fresh temp directory, then delete it
+  ! and release the slot — always, even on failure. If the guest has not been
+  ! built, return a clear message instead (no build here).
 //]
 private def runCode(
     code: String,
@@ -131,14 +138,15 @@ private def runCode(
     val _ = py.try(shutilMod.rmtree(runDir, ignore_errors = true))
     gate.release()
 
-    // Bound only the text the model sees; `buildAndRun` has already logged the full
-    // output/error to the run log, so nothing is lost from the record.
+    // Bound only the text the model sees. `buildAndRun` has already logged the
+    // full output/error to the run log, so nothing is lost from the record.
     match outcome
     case Ok(outc) => Tool.RunOutcome: Tool.elide(outc.result, maxResultChars), outc.summary, outc.media
     case Err(e)   => Tool.RunOutcome("The run failed unexpectedly: \{e.message}", "internal error", [])
 
-//[ Compile and run `code` in `runDir` by replaying the recorded invocation from
-  ! `donePath`, logging the outcome.
+//[ Compile and run `code` in `runDir`
+  !
+  ! By replaying the recorded invocation from `donePath`, logging the outcome.
 //]
 private def buildAndRun(
     code: String,
@@ -230,10 +238,11 @@ private def buildAndRun(
   )
   runEnv.set("HARPE_BROKER_SOCKET", brokerPath)
 
-  // The driver's per-turn config, copied in verbatim — `runCode` interprets none
-  // of it: the keys are guest env-var names the driver chose (an application
-  // protocol between the driver and its own sandbox runtime, not the framework's).
-  // This is the host→guest "state" channel; see host-guest-boundary.md.
+  // The driver's per-turn config, copied in verbatim — `runCode` interprets
+  // none of it: the keys are guest env-var names the driver chose (an
+  // application protocol between the driver and its own sandbox runtime, not
+  // the framework's). This is the host→guest "state" channel. See
+  // host-guest-boundary.md.
   for k ~ v in callContext.toList do
     runEnv.set(k, v)
 
@@ -341,10 +350,10 @@ private def handleBroker(
 //[ Replay the sandbox's audit log through the ambient (contextual) `logger`.
   !
   ! The sandbox runtime logged its records as JSONL to `path` (named via
-  ! HARPE_AUDIT_LOG); each line is one `Entry`. Re-emitting them through this
+  ! HARPE_AUDIT_LOG). Each line is one `Entry`. Re-emitting them through this
   ! logger — running inside the turn's context scope — stamps each with the
-  ! session, so a sandboxed program's records land in the log alongside the tool's
-  ! own. A malformed line is skipped rather than failing the run.
+  ! session, so a sandboxed program's records land in the log alongside the
+  ! tool's own. A malformed line is skipped rather than failing the run.
 //]
 private def replayAudit(path: String): Unit receives logger =
   if file.exists(path) then
@@ -355,15 +364,15 @@ private def replayAudit(path: String): Unit receives logger =
 
 //[ The core "act" tool: compile + run a Jo program against the agent sandbox.
   !
-  ! Requires the sandbox to have been built once (`jo build`), which records
-  ! the compiler invocation this tool replays. Until then, calls return a "sandbox
+  ! Requires the sandbox to have been built once (`jo build`), which records the
+  ! compiler invocation this tool replays. Until then, calls return a "sandbox
   ! not built" message rather than building anything themselves.
   !
-  ! `buildTimeout` / `runTimeout` are host-side wall-clock backstops (seconds): a
-  ! guest stuck compiling or in an infinite loop is killed (process group and all)
-  ! rather than hanging the loop. Finer OS-level confinement (memory/CPU caps,
-  ! filesystem, uid) lives outside the process in the optional `sandbox/run.sh`
-  ! wrapper (see docs/concepts/sandbox.md).
+  ! `buildTimeout` / `runTimeout` are host-side wall-clock backstops (seconds):
+  ! a guest stuck compiling or in an infinite loop is killed (process group and
+  ! all) rather than hanging the loop. Finer OS-level confinement (memory/CPU
+  ! caps, filesystem, uid) lives outside the process in the optional
+  ! `sandbox/run.sh` wrapper (see docs/concepts/sandbox.md).
   !
   ! `approvalDeadline` is the application's watchdog for one approval pause. It
   ! should be slightly longer than the deadline enforced by the application's
@@ -371,22 +380,25 @@ private def replayAudit(path: String): Unit receives logger =
   ! sandbox process waiting forever.
   !
   ! `maxConcurrent` bounds how many builds+runs proceed at once (each spawns a
-  ! compiler + interpreter process); further calls wait for a slot. Concurrent
-  ! calls are isolated by construction — each compiles its own source against the
-  ! shared, read-only dependency libraries — so they never corrupt each other.
+  ! compiler + interpreter process). Further calls wait for a slot. Concurrent
+  ! calls are isolated by construction — each compiles its own source against
+  ! the shared, read-only dependency libraries — so they never corrupt each
+  ! other.
   !
   ! Each run emits one `harpe.tools.runCode` `Entry` (code, and the outcome's
   ! compile/run timings, output or error) to the ambient `logger` channel — read
-  ! at call time, so the turn's `Logging.withContext` tags reach it. Its format and destination
-  ! are the `Logger` backend's policy — see `harpe.logging.Logging.withLogger`.
+  ! at call time, so the turn's `Logging.withContext` tags reach it. Its format
+  ! and destination are the `Logger` backend's policy — see
+  ! `harpe.logging.Logging.withLogger`.
   !
-  ! `maxResultChars` bounds the result text returned to the model (middle-elided,
-  ! head + tail kept) so one large program output cannot flood the context. The
-  ! full, un-elided output is still written to `logger`, so nothing is lost.
+  ! `maxResultChars` bounds the result text returned to the model
+  ! (middle-elided, head + tail kept) so one large program output cannot flood
+  ! the context. The full, un-elided output is still written to `logger`, so
+  ! nothing is lost.
   !
-  ! Defense in depth is external: if `sandbox/run.sh` (at the sandbox project root)
-  ! exists and is executable, each run goes through it — `run.sh <out.py>` — and
-  ! the script owns the interpreter, uid drop, and OS confinement (ulimit,
+  ! Defense in depth is external: if `sandbox/run.sh` (at the sandbox project
+  ! root) exists and is executable, each run goes through it — `run.sh <out.py>`
+  ! — and the script owns the interpreter, uid drop, and OS confinement (ulimit,
   ! landrun, bwrap, docker, …). Absent, the guest runs under the system Python.
   ! See `docs/concepts/sandbox.md`.
 //]
@@ -402,7 +414,7 @@ def runCodeTool(
 
   // The optional run.sh wrapper sits at sandbox/run.sh — i.e. at the sandbox
   // project root. If it exists it must be executable, or every run would fail
-  // obscurely; catch that once at startup rather than per call.
+  // obscurely. Catch that once at startup rather than per call.
   val runScript = os.path.join(sandboxDir, "run.sh")
 
   if os.path.isfile(runScript) then

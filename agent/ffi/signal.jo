@@ -14,13 +14,14 @@ private def module: py.Dynamic = py.module("signal")
 //[ The SIGKILL signal number. //]
 def SIGKILL: Int = module.SIGKILL.asInt
 
-//[ Install a handler for SIGINT (Ctrl-C), replacing the default that raises
-  ! `KeyboardInterrupt`. Must be called from the main thread.
+//[ Install a handler for SIGINT (Ctrl-C), replacing the default that raises `KeyboardInterrupt`
   !
-  ! `handler` receives the signal number and the interrupted stack frame (a Python
-  ! frame object, or `py.none`). It runs on the main thread at the next bytecode
-  ! boundary, so it can set a `threading` event a worker polls, or raise to abort a
-  ! blocking main-thread call such as `input()`.
+  ! Must be called from the main thread.
+  !
+  ! `handler` receives the signal number and the interrupted stack frame (a
+  ! Python frame object, or `py.none`). It runs on the main thread at the next
+  ! bytecode boundary, so it can set a `threading` event a worker polls, or
+  ! raise to abort a blocking main-thread call such as `input()`.
 //]
 def onSigint(handler: (Int, py.Dynamic) => Unit): Unit =
   module.signal(module.SIGINT, handler)

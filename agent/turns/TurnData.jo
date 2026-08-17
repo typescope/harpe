@@ -1,0 +1,49 @@
+//[ TurnData.jo
+  !
+  ! One user turn as a value: the message that started it, everything the turn
+  ! produced, and how it ended.
+  !
+  ! This is the turn's single representation. `Agent.runTurn` returns one for the
+  ! turn it just ran, and `Transcript.turns` rebuilds the same shape from a
+  ! session's journal. A driver therefore renders a finished turn and a reloaded
+  ! turn with one function, and the two cannot drift apart.
+//]
+namespace harpe
+
+import harpe.Model.*
+import harpe.turns.*
+
+//[ One user turn
+  !
+  ! `messages` is the turn's own traffic in order — each assistant reply and each
+  ! batch of tool results — excluding `user`, which starts it. `result` is `None`
+  ! for a turn still in flight (a journal whose last turn was never completed).
+//]
+class TurnData(user: Message, messages: List[Message], result: TurnResult | None)
+  //[ Everything the turn said, joined.
+    !
+    ! A turn may speak several times — before and between tool calls — so this is
+    ! the whole visible answer. Use it to render a finished turn from scratch, as a
+    ! page does when it loads a conversation. Empty when the turn produced no text
+    ! (interrupted, or failed before replying).
+  //]
+  def text: String =
+    var out = ""
+    for m in messages do
+      if m is Assistant(t, _) && t.trim != "" then
+        out = if out == "" then t.trim else out + "\n\n" + t.trim
+    out
+
+  //[ The turn's closing reply — the last thing it said, after its final tool call.
+    !
+    ! Use it where the earlier parts have ALREADY been shown: a driver that prints
+    ! each `AssistantMessage` event as it arrives wants only this at the end, or it
+    ! repeats itself. A driver that renders the finished turn in one go wants
+    ! `text` instead.
+  //]
+  def finalText: String =
+    var out = ""
+    for m in messages do
+      if m is Assistant(t, calls) && calls.isEmpty && t.trim != "" then out = t.trim
+    out
+end

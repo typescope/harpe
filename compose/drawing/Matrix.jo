@@ -50,8 +50,9 @@ section Matrix
   def translate(dx: Float, dy: Float): Matrix = new Matrix(1.0, 0.0, 0.0, 1.0, dx, dy)
   def scale(sx: Float, sy: Float): Matrix = new Matrix(sx, 0.0, 0.0, sy, 0.0, 0.0)
 
-  //[ A rotation of `radians` about the origin, clockwise in a top-left-origin
-    ! space. Compose with `translate` via `andThen` to rotate about a point.
+  //[ A rotation of `radians` about the origin, clockwise in a top-left-origin space
+    !
+    ! Compose with `translate` via `andThen` to rotate about a point.
   //]
   def rotate(radians: Float): Matrix =
     val co = cos(radians)
@@ -68,9 +69,10 @@ section Matrix
   private def twoPi: Float = 6.28318530717958647692
   private def halfPi: Float = 1.57079632679489661923
 
-  //[ Sine of `radians`. Argument-reduced to [-π/2, π/2], then a 13th-order
-    ! Taylor series in Horner form — accurate to about 1e-9, far inside a
-    ! pixel.
+  //[ Sine of `radians`
+    !
+    ! Argument-reduced to [-π/2, π/2], then a 13th-order Taylor series in Horner
+    ! form — accurate to about 1e-9, far inside a pixel.
   //]
   def sin(radians: Float): Float =
     // reduce into (-2π, 2π), then into [-π, π]

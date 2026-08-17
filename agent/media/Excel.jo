@@ -1,9 +1,9 @@
 //[ Excel.jo
   !
-  ! The `ExcelReader` backend behind `FileSystem.openWorkbook`, backed by openpyxl.
-  ! Opening loads the workbook once, in read-only streaming mode (`read_only`:
-  ! bounded memory over huge sheets; `data_only`: formula results, not formulas).
-  ! Needs the `openpyxl` Python package.
+  ! The `ExcelReader` backend behind `FileSystem.openWorkbook`, backed by
+  ! openpyxl. Opening loads the workbook once, in read-only streaming mode
+  ! (`read_only`: bounded memory over huge sheets. `data_only`: formula results,
+  ! not formulas). Needs the `openpyxl` Python package.
 //]
 
 namespace harpe.media
@@ -14,8 +14,9 @@ import harpe.ffi.builtins
 
 private def openpyxlMod: py.Dynamic = py.module("openpyxl")
 
-//[ The openpyxl `ExcelReader` backend, resolving a relative path against `root`.
-  ! Parses once; `Err` for a missing or corrupt file.
+//[ The openpyxl `ExcelReader` backend, resolving a relative path against `root`
+  !
+  ! Parses once. `Err` for a missing or corrupt file.
 //]
 class OpenpyxlExcel(root: String)
   view ExcelReader

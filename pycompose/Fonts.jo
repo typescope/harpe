@@ -1,33 +1,37 @@
 //[ Fonts.jo
   !
-  ! System font discovery for the cairo backend. A vector backend ships no fonts,
-  ! and there is no fontconfig on macOS/Windows — so discover the machine's fonts
-  ! uniformly: walk the platform's standard font directories, index the files by
-  ! basename, and resolve the logical families (sans/serif/mono) to known
-  ! filenames (DejaVu → Liberation → Noto → the native Windows/macOS names).
+  ! System font discovery for the cairo backend. A vector backend ships no
+  ! fonts, and there is no fontconfig on macOS/Windows — so discover the
+  ! machine's fonts uniformly: walk the platform's standard font directories,
+  ! index the files by basename, and resolve the logical families
+  ! (sans/serif/mono) to known filenames (DejaVu → Liberation → Noto → the
+  ! native Windows/macOS names).
   !
-  ! A `FontFinder` caches its index for its lifetime; build one per backend.
+  ! A `FontFinder` caches its index for its lifetime. Build one per backend.
 //]
 
 namespace pycompose
 
 
-//[ Resolves a (family, style) to a font-file path, from registered fonts first
-  ! and the platform's installed fonts otherwise.
+//[ Resolve a (family, style) to a font-file path
+  !
+  ! From registered fonts first and the platform's installed fonts otherwise.
 //]
 class FontFinder
   var registered: Map[String, String] = Map.empty[String, String]
   var indexRef: Option[Map[String, String]] = None
 
-  //[ Register a real font-file `path` under `family` — it then wins over any
-    ! discovered font of the same family.
+  //[ Register a real font-file `path` under `family`
+    !
+    ! It then wins over any discovered font of the same family.
   //]
   def register(family: String, path: String): Unit =
     registered = registered.add(family, path)
 
-  //[ Resolve (`family`, `style`) to a font-file path: a registered family wins,
-    ! else the best match among the platform's installed fonts; `None` if the
-    ! machine has none of the candidates.
+  //[ Resolve (`family`, `style`) to a font-file path
+    !
+    ! A registered family wins, else the best match among the platform's
+    ! installed fonts. `None` if the machine has none of the candidates.
   //]
   def resolve(family: String, style: String): Option[String] =
     match registered.getOpt(family)
@@ -43,8 +47,10 @@ class FontFinder
       indexRef = Some(idx)
       idx
 
-  //[ Walk the font directories, mapping each font file's lowercased basename to
-    ! its full path (first occurrence wins, directories in preference order).
+  //[ Walk the font directories
+    !
+    ! Mapping each font file's lowercased basename to its full path (first
+    ! occurrence wins, directories in preference order).
   //]
   private def buildIndex(): Map[String, String] =
     var idx = Map.empty[String, String]
@@ -99,8 +105,10 @@ class FontFinder
   private def isFontFile(name: String): Bool =
     name.endsWith(".ttf") || name.endsWith(".otf") || name.endsWith(".ttc")
 
-  //[ Candidate font-file basenames (lowercased) for (`family`, `style`), most
-    ! preferred first — DejaVu, then Liberation, Noto, and the native names.
+  //[ Candidate font-file basenames (lowercased) for (`family`, `style`)
+    !
+    ! Most preferred first — DejaVu, then Liberation, Noto, and the native
+    ! names.
   //]
   private def candidates(family: String, style: String): List[String] =
     match family
