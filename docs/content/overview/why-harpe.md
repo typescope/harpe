@@ -7,15 +7,13 @@ fine-grained permissions through
 agent for developing a software project.
 
 It is designed for agentic workflows involving critical infrastructure,
-sensitive data, or consequential operations. Broad access is the wrong security
-model in these settings. Agents need useful autonomy under fine-grained
-permissions that are explicit and reviewable.
+sensitive data, or consequential operations. For security, agents are granted fine-grained permissions that are explicit and reviewable.
 
 ![Model-generated code is confined behind a typed boundary. It can reach the trusted runtime and outside world only through capabilities explicitly exposed by the application's API.](/img/typed-sandbox.svg)
 
 ## A typed authority boundary
 
-For each turn, the model can write a small Jo program. Harpe compiles it as an
+For each agent action step, the model writes a Jo program. Harpe compiles it as an
 untrusted guest against capability interfaces chosen by the application.
 Trusted implementations retain credentials, tenant scope, and validation.
 

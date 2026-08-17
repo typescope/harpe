@@ -1,9 +1,6 @@
 +++
 title = "Build Your First Agent"
 +++
-Harpe agents act by writing typed Jo programs. The `hello` template strips that
-idea down to the smallest program so you can inspect the whole path
-from a message to compiled code.
 
 ## Create the project
 
@@ -16,24 +13,6 @@ cp .env.example .env
 
 Set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY` in `.env`.
 OpenRouter also requires `MODEL`.
-
-The project contains only:
-
-```text
-my-agent/
-  jo.toml
-  AGENT.md
-  src/
-    Main.jo
-  sandbox/
-    jo.toml
-    SandboxAPI.jo
-    SandboxRuntime.jo
-    Task.jo
-```
-
-The interaction is intentionally primitive—no spinner, cancellation, sessions,
-or media—so you can see the essential agent loop in `Main.jo`.
 
 ## Run it
 
@@ -50,11 +29,22 @@ You ▸ Find the prime numbers below 20.
 Agent ▸ The primes below 20 are 2, 3, 5, 7, 11, 13, 17.
 ```
 
-That exchange is one **turn**. Harpe gives the model a single tool,
-`runCode`. The model can answer directly, or use that tool to write a Jo
-program, compile it against your sandbox, run it, and use its output.
-
 ## Inspect the application
+
+The project contains:
+
+```text
+my-agent/
+  jo.toml
+  AGENT.md
+  src/
+    Main.jo
+  sandbox/
+    jo.toml
+    SandboxAPI.jo
+    SandboxRuntime.jo
+    Task.jo
+```
 
 Open `src/Main.jo`. It assembles the entire agent:
 
