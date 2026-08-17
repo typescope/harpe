@@ -87,8 +87,8 @@ curl --fail https://pkg.typescope.ai/harpe.jsonl
 Only after both packages are public, create a second branch from `main`. In the
 pull request:
 
-- [ ] Update the `harpe` package version in `cli/jo.toml`, `web/jo.toml`, and
-      `telegram/jo.toml`.
+- [ ] Update the `harpe` package version in `cli/jo.toml`, `web/jo.toml`,
+      `telegram/jo.toml`, and `templates/hello/jo.toml`.
 - [ ] Update the `harpe` and `harpe-caps` versions in each driver's
       `sandbox/jo.toml`.
 - [ ] Set `JO_REGISTRY_URL=https://pkg.typescope.ai` in CI.
@@ -97,8 +97,14 @@ pull request:
 - [ ] Build every driver sandbox guest from its own `sandbox/jo.toml`.
 
 Jo package constraints use `MAJOR.MINOR`, so a `0.1.0` package is referenced as
-`0.1`. A metadata file already carrying that constraint needs no textual edit;
-confirm it explicitly during review.
+`0.1`. A minor bump therefore rewrites every constraint in the list above, while
+a patch bump rewrites none of them. When a file needs no textual edit, confirm
+that explicitly during review rather than assuming it. Afterwards, grep for the
+constraint being replaced — not the new one — which should now match nothing:
+
+```sh
+grep -rn 'version = "MAJOR.MINOR"' --include='jo.toml' .
+```
 
 Wait for required checks to pass and merge. This green integration commit is
 the commit to tag: it contains the package and driver versions tested against
@@ -118,6 +124,13 @@ Never move or reuse a published version tag.
 
 ## 6. Create the permanent Harpe GitHub release
 
+The release notes are the new version's section of `CHANGELOG.md` alone, so cut
+it out — passing the whole file would republish every earlier version's notes:
+
+```sh
+awk '/^## /{n++} n==1' CHANGELOG.md > /tmp/notes-v0.1.0.md
+```
+
 Create a private release containing the binary and source artifacts:
 
 ```sh
@@ -133,5 +146,5 @@ gh release create v0.1.0 \
   --repo typescope/harpe \
   --verify-tag \
   --title "Harpe 0.1.0" \
-  --notes-file CHANGELOG.md
+  --notes-file /tmp/notes-v0.1.0.md
 ```
