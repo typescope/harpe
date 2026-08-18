@@ -48,17 +48,57 @@ param callContext: CallContext
   ! typed input and returns the outcome — result text fed back to the model plus
   ! a one-line console summary. Agents build these to extend the toolset.
   ! Advanced agents build the whole set (including `runCode`).
+  !
+  ! A tool that is just its four parts is built with the `Tool(...)` factory
+  ! below. A tool with logic of its own — helpers, state it owns, a resource it
+  ! holds — implements this interface directly, so that logic lives in one unit
+  ! instead of in namespace-level functions threading captured values into a
+  ! closure.
 //]
-class Tool(
-  name: String,
-  description: String,
-  params: List[ToolParam],
-  // `receives logger, callContext`, not captured: the handler reads the ambient
-  // logger and driver `CallContext` at the call site (the turn loop), so the
-  // current turn's logging context (see `Logging.withContext`) and config reach it
-  // — rather than freezing what the tool was built with.
-  run: ToolInput => RunOutcome receives logger, callContext, currentInteract
-)
+interface Tool
+  //[ The name the model calls this tool by. //]
+  def name: String
+
+  //[ Prose the model reads to decide WHEN to call it. //]
+  def description: String
+
+  //[ The typed inputs this tool accepts
+    !
+    ! Read afresh every time a request is rendered, not once when the tool was
+    ! built, so a tool may derive its schema from live state.
+  //]
+  def params: List[ToolParam]
+
+  //[ Handle one call from the model
+    !
+    ! `receives logger, callContext` is declared here and inherited by every
+    ! implementation: the handler reads the ambient logger and driver
+    ! `CallContext` at the call site (the turn loop), so the current turn's
+    ! logging context (see `Logging.withContext`) and config reach it — rather
+    ! than values frozen when the tool was built.
+  //]
+  def run(input: ToolInput): RunOutcome receives logger, callContext, currentInteract
+end
+
+//[ A tool from its four parts
+  !
+  ! The plain way to write a tool, and what most tools want:
+  !
+  ! ```
+  ! Tool:
+  !   "weather"
+  !   "Look up the current weather in a city"
+  !   [Tool.strParam("city", "the city to look up")]
+  !   input => lookUp(input.string("city"))
+  ! ```
+//]
+def Tool(
+    name: String,
+    description: String,
+    params: List[ToolParam],
+    run: ToolInput => RunOutcome receives logger, callContext, currentInteract)
+: Tool =
+  new Tool.SimpleTool(name, description, params, run)
 
 section Tool
   //[ A tool result
@@ -129,6 +169,30 @@ section Tool
     def numOr(name: String, fallback: Float): Float = raw.get(name, fallback).asFloat
   end
 
+
+  //[ A tool that is nothing but its four parts
+    !
+    ! What the `Tool(...)` factory builds, and what most tools are: a name,
+    ! prose, params, and a handler that closes over whatever it needs. A tool
+    ! with logic of its own implements `Tool` directly instead — see the
+    ! interface.
+    !
+    ! The constructor parameters are named apart from the interface members
+    ! because a class parameter does not itself implement one, so each is
+    ! forwarded.
+  //]
+  class SimpleTool(
+      toolName: String,
+      toolDescription: String,
+      toolParams: List[ToolParam],
+      handler: ToolInput => RunOutcome receives logger, callContext, currentInteract)
+    view Tool
+
+    def name: String = toolName
+    def description: String = toolDescription
+    def params: List[ToolParam] = toolParams
+    def run(input: ToolInput): RunOutcome = handler(input)
+  end
 
   //[ Run a tool, containing an unexpected host exception
     !
