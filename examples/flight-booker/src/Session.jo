@@ -1,0 +1,109 @@
+//[ Session.jo
+  !
+  ! The flight-booker's live conversation object (`Session`) and its storage
+  ! layout: one session per Telegram chat, keyed by `chat.id`, persisted as
+  ! `logs/sessions/<chatId>.jsonl` under the workspace.
+  !
+  ! Unlike the general telegram driver, this session carries no file attachments
+  ! — the booking flow is text-only. Attached media is silently ignored.
+//]
+
+namespace harpe.examples.flightbooker
+import harpe.ffi.time
+import harpe.ffi.os
+import harpe.ffi.file
+import harpe.ffi.json
+
+import harpe.Agent
+import harpe.Memory
+import harpe.Transcript
+import harpe.workspace
+import harpe.logging.JsonlLogger
+import harpe.logging.Logger
+import harpe.logging.logger
+import harpe.logging.Entry
+import harpe.logging.entryFromDict
+import harpe.Model
+import harpe.Model.Message
+import harpe.Model.UserText
+import harpe.Model.Assistant
+import harpe.turns.Success
+import harpe.turns.Interrupted
+import harpe.turns.Failed
+
+
+//[ One queued message for a chat's worker //]
+class Incoming(text: String, senderId: String)
+
+
+//[ One live conversation //]
+private class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath: String)
+  val queue = py.module("queue").Queue()
+
+  //[ Run one user turn: deliver the message to the agent, send the reply //]
+  def runTurn(
+      incoming: Incoming,
+      client: TelegramClient,
+      approvalHandler: TelegramApprovalHandler,
+      maxToolRounds: Int,
+      maxRetries: Int)
+  : Unit =
+    val userMsg = UserText(incoming.text, [])
+    val interact = new TelegramInteract(client, this.id, approvalHandler)
+
+    val result = with logger = log in
+      agent.runTurn(userMsg, interact, maxToolRounds, maxRetries)
+
+    match result.result
+    case Success =>
+      commit()
+      val answer = result.finalText
+      if answer.trim != "" then client.sendMessage(this.id, answer)
+
+    case Interrupted =>
+      rollback()
+
+    case Failed(detail) =>
+      rollback()
+      val message =
+        if detail == "" then "Request failed. Please try again."
+        else "Request failed: \{detail}"
+      client.sendMessage(this.id, message)
+
+  private def commit(): Unit =
+    saveMemory()
+
+  private def rollback(): Unit =
+    saveMemory()
+
+  private def saveMemory(): Unit =
+    if !memory.isEmpty then Memory.save(memoryPath, memory)
+end
+
+
+section Session
+  //[ The JSONL file backing this chat's session. //]
+  def sessionPath(chatId: String): String receives workspace =
+    workspace.relative("logs/sessions/" + chatId + ".jsonl")
+
+  //[ An append log for this chat's session (file created lazily). //]
+  def forSession(chatId: String): Logger receives workspace =
+    new JsonlLogger(sessionPath(chatId))
+
+  def memoryPath(chatId: String): String receives workspace =
+    val path = sessionPath(chatId)
+    path.substring(0, path.size - 6) + ".memory.json"
+
+  //[ Reconstruct this chat's conversation from disk
+    !
+    ! Returns `[]` if the chat has no prior transcript.
+  //]
+  def load(chatId: String): List[Message] receives workspace =
+    val path = sessionPath(chatId)
+    if !file.exists(path) then []
+    else
+      var entries: List[Entry] = []
+      for line in file.read(path).lines if line.trim != "" do
+        entries = entries + entryFromDict(json.loads(line).cast[py.Dict])
+      Transcript.fromEntries(entries)
+end

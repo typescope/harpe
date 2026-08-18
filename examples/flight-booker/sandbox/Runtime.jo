@@ -1,0 +1,14 @@
+namespace sandbox.runtime
+
+import jo.IO.stdout
+import harpe.ffi.os
+import sandbox.api
+
+//[ Sandbox entry point — reads the Duffel token, wires the capability, runs the guest //]
+def main(): Unit receives stdout =
+  val token = os.getenv("DUFFEL_API_KEY", "")
+  if token == "" then abort "sandbox: DUFFEL_API_KEY is not set"
+
+  val duffelImpl = new DuffelClient(token)
+  with api.duffel = duffelImpl in
+    api.runTask()

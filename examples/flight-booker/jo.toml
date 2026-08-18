@@ -1,0 +1,17 @@
+jo = "0.12"
+
+[module.agent]
+kind = "app"
+platform = "python"
+enable-ffi = true
+src = ["src/"]
+depth = 2
+
+modules = [{ id = "harpe", path = "../.." }]
+
+links = [
+  { from = "jo.main", to = "harpe.examples.flightbooker.main" },
+]
+
+[commands]
+start = "jo build --spec sandbox/jo.toml guest && jo run"

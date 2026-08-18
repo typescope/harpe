@@ -1,0 +1,233 @@
+//[ DuffelClient.jo
+  !
+  ! A thin HTTP client over the Duffel REST API (https://duffel.com/docs).
+  ! Implements `api.Duffel` directly so `Runtime.jo` can grant it as the
+  ! `duffel` capability without an extra wrapper layer.
+  !
+  ! All calls are JSON POST / GET to https://api.duffel.com. The token must be
+  ! a Duffel test key (starts with `duffel_test_`) — the `balance` payment type
+  ! then works without a real card, using Duffel's sandbox credit.
+//]
+
+namespace sandbox.runtime
+
+import harpe.ffi.json
+import harpe.ffi.os
+import sandbox.api
+
+
+private def duffelBase: String = "https://api.duffel.com"
+private def duffelVersion: String = "v2"
+
+//[ The Duffel HTTP client — implements the api.Duffel capability //]
+class DuffelClient(token: String)
+  view api.Duffel
+
+  private def urllibReq: py.Dynamic = py.module("urllib.request")
+
+  //[ Build auth + versioning headers for every request //]
+  private def makeHeaders(): py.Dict =
+    py.dict(
+      "Authorization"  ~ ("Bearer " + token),
+      "Duffel-Version" ~ duffelVersion,
+      "Content-Type"   ~ "application/json",
+      "Accept"         ~ "application/json"
+    )
+
+  //[ One Duffel API call — POST or GET, with an optional JSON body
+    !
+    ! Returns the parsed JSON dict. On any network or HTTP error, returns a
+    ! synthetic `{errors: [{title: "..."}]}` dict so callers handle one shape.
+  //]
+  private def apiCall(method: String, path: String, body: Option[py.Dict]): py.Dict =
+    val url = duffelBase + path
+    val encodedBody = match body
+      case Some(b) => py.dynamic(json.dumps(b)).encode()
+      case None    => py.none
+
+    val req = urllibReq.Request(
+      url,
+      data    = encodedBody,
+      headers = makeHeaders(),
+      method  = method
+    )
+
+    match py.try(urllibReq.urlopen(req, timeout = 30.0))
+    case Ok(resp) =>
+      json.loads(resp.read().decode().asString).cast[py.Dict]
+
+    case Err(e) =>
+      // Surface HTTP errors (4xx/5xx): urllib raises HTTPError, which has a
+      // `read()` method on its body. Try to parse Duffel's error JSON; fall
+      // back to the exception message.
+      val errMsg = py.dynamic(e.message)
+      val body =
+        match py.try(errMsg.read().decode())
+        case Ok(raw) =>
+          match py.try(json.loads(raw.asString).cast[py.Dict])
+          case Ok(parsed) => parsed
+          case Err(_)     => py.dict("errors" ~ py.list(py.dict("title" ~ raw.asString)))
+        case Err(_) =>
+          py.dict("errors" ~ py.list(py.dict("title" ~ e.message)))
+      body
+
+  //[ Parse a raw Duffel offer dict into an api.FlightOffer //]
+  private def parseOffer(offer: py.Dict): api.FlightOffer =
+    val sliceList = offer.get("slices").cast[py.List]
+    var slices: List[api.FlightSlice] = []
+
+    for sliceDyn in sliceList do
+      val s = sliceDyn.cast[py.Dict]
+      val segList = s.get("segments").cast[py.List]
+      var segs: List[api.FlightSegment] = []
+
+      for segDyn in segList do
+        val seg = segDyn.cast[py.Dict]
+        val originCode = seg.get("origin").cast[py.Dict].get("iata_code").asString
+        val destCode   = seg.get("destination").cast[py.Dict].get("iata_code").asString
+        val carrier    = seg.get("operating_carrier").cast[py.Dict].get("name").asString
+        val flightNum  = seg.get("marketing_carrier_flight_number", "").asString
+        segs = segs + new api.FlightSegment(
+          originCode,
+          destCode,
+          seg.get("departing_at").asString,
+          seg.get("arriving_at").asString,
+          carrier,
+          flightNum,
+          seg.get("duration", "").asString
+        )
+
+      val originCode = s.get("origin").cast[py.Dict].get("iata_code").asString
+      val destCode   = s.get("destination").cast[py.Dict].get("iata_code").asString
+      slices = slices + new api.FlightSlice(
+        originCode,
+        destCode,
+        s.get("departing_at", "").asString,
+        s.get("arriving_at", "").asString,
+        s.get("duration", "").asString,
+        segs
+      )
+
+    val paxList = offer.get("passengers").cast[py.List]
+    var paxIds: List[String] = []
+    for pDyn in paxList do
+      paxIds = paxIds + pDyn.cast[py.Dict].get("id").asString
+
+    new api.FlightOffer(
+      offer.get("id").asString,
+      offer.get("total_amount").asString,
+      offer.get("total_currency").asString,
+      slices,
+      paxIds
+    )
+
+  //[ Search for one-way flights — creates an offer request then lists offers //]
+  def searchFlights(
+    origin: String,
+    destination: String,
+    departureDate: String,
+    passengerCount: Int,
+    cabinClass: String
+  ): api.SearchResult =
+    var paxList = py.list()
+    var i = 0
+    while i < passengerCount do
+      paxList.append(py.dict("type" ~ "adult"))
+      i = i + 1
+
+    val reqBody = py.dict("data" ~ py.dict(
+      "slices" ~ py.list(py.dict(
+        "origin"         ~ origin,
+        "destination"    ~ destination,
+        "departure_date" ~ departureDate
+      )),
+      "passengers"     ~ paxList,
+      "cabin_class"    ~ cabinClass,
+      "return_offers"  ~ false
+    ))
+
+    val reqResp = apiCall("POST", "/air/offer_requests", Some(reqBody))
+    if reqResp.contains("errors") then
+      val err = firstError(reqResp)
+      println "searchFlights: offer request failed — " + err
+      return new api.SearchResult("", [])
+
+    val requestId = reqResp.get("data").cast[py.Dict].get("id").asString
+
+    // Fetch offers sorted cheapest-first, capped at 10.
+    val offersResp = apiCall(
+      "GET",
+      "/air/offers?offer_request_id=" + requestId + "&sort=total_amount&limit=10",
+      None
+    )
+    if offersResp.contains("errors") then
+      val err = firstError(offersResp)
+      println "searchFlights: list offers failed — " + err
+      return new api.SearchResult(requestId, [])
+
+    val offerList = offersResp.get("data").cast[py.List]
+    var offers: List[api.FlightOffer] = []
+    for offerDyn in offerList do
+      offers = offers + parseOffer(offerDyn.cast[py.Dict])
+
+    new api.SearchResult(requestId, offers)
+
+  //[ Fetch the full details of one offer //]
+  def getOffer(offerId: String): api.OfferDetail =
+    val resp = apiCall("GET", "/air/offers/" + offerId, None)
+    if resp.contains("errors") then
+      return new api.OfferDetail("", "", "", [], [])
+
+    val offer = parseOffer(resp.get("data").cast[py.Dict])
+    new api.OfferDetail(offer.id, offer.totalAmount, offer.currency, offer.slices, offer.passengerIds)
+
+  //[ Book a flight with mock balance payment (test mode) //]
+  def createOrder(
+    offerId: String,
+    passengers: List[api.PassengerInfo],
+    paymentAmount: String,
+    paymentCurrency: String
+  ): api.OrderConfirmation =
+    var paxList = py.list()
+    for p in passengers do
+      paxList.append(py.dict(
+        "id"           ~ p.id,
+        "title"        ~ p.title,
+        "given_name"   ~ p.givenName,
+        "family_name"  ~ p.familyName,
+        "born_on"      ~ p.bornOn,
+        "email"        ~ p.email,
+        "phone_number" ~ p.phoneNumber,
+        "gender"       ~ p.gender
+      ))
+
+    val body = py.dict("data" ~ py.dict(
+      "selected_offers" ~ py.list(offerId),
+      "passengers"      ~ paxList,
+      "payments"        ~ py.list(py.dict(
+        "type"     ~ "balance",
+        "amount"   ~ paymentAmount,
+        "currency" ~ paymentCurrency
+      )),
+      "type"            ~ "instant"
+    ))
+
+    val resp = apiCall("POST", "/air/orders", Some(body))
+    if resp.contains("errors") then
+      return new api.OrderConfirmation("", "", "", "", firstError(resp))
+
+    val data = resp.get("data").cast[py.Dict]
+    new api.OrderConfirmation(
+      data.get("id").asString,
+      data.get("booking_reference").asString,
+      data.get("total_amount").asString,
+      data.get("total_currency").asString,
+      ""
+    )
+
+  //[ Extract the first error title from a Duffel error response //]
+  private def firstError(resp: py.Dict): String =
+    val errs = resp.get("errors").cast[py.List]
+    if errs.size > 0 then errs.get(0).cast[py.Dict].get("title", "unknown error").asString
+    else "unknown error"
+end
