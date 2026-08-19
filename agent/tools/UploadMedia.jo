@@ -69,11 +69,11 @@ class UploadMediaTool
         "uploadMedia · unsupported · \{mime}", [])
 
     else
-      val size = os.path.getsize(os.path.join(dir, baseName))
-      new RunOutcome(
-        "'\{baseName}' is attached below — look at it directly in your next reply.",
-        "uploadMedia · \{baseName}",
-        [Attachment(baseName, size, mime, true)])
+      val path = os.path.join(dir, baseName)
+      new RunOutcome:
+        "'\{baseName}' is attached below — look at it directly in your next reply."
+        "uploadMedia · \{baseName}"
+        [Attachment(baseName, os.path.getsize(path), mime, true, path)]
 end
 
 //[ The `uploadMedia` tool. //]

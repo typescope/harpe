@@ -59,10 +59,7 @@ private def runChat(): Unit receives stdout, workspace =
   val skills  = new SkillTools(workspace.skillsDir)
   val mem     = new MemoryTools(memory)
 
-  // Widened explicitly: a list literal takes its element type from the first
-  // entry, and these are four different tool classes.
-  val specs: List[Tool] =
-    (List.empty[Tool] + runCode + upload + bash) ++ skills.specs ++ mem.specs
+  val specs: List[Tool] = [runCode, upload, bash, ..skills.specs, ..mem.specs]
 
   val agent = new Agent:
     brain = Defaults.model()
@@ -78,9 +75,10 @@ private def runChat(): Unit receives stdout, workspace =
   val dataDir = os.path.abspath(data)
 
   // What actually runs for each name the model can call. The CLI grants the
-  // guest no configuration of its own, so `runCode` gets an empty environment.
+  // guest no configuration of its own, so `runCode` takes its default (empty)
+  // environment.
   val handlers: Map[String, Handler] = Map:
-    runCode.name           ~ (i => runCode.run(i["code"], Map.empty[String, String]))
+    runCode.name           ~ (i => runCode.run(i["code"]))
     upload.name            ~ (i => upload.show(i["fileName"], dataDir))
     bash.name              ~ (i => bash.run(i["command"]))
     skills.listSpec.name   ~ (i => skills.list())
@@ -105,7 +103,6 @@ private def runChat(): Unit receives stdout, workspace =
         agent.runTurn:
           userMsg
           handlers
-          dataDir
           maxToolRounds = 50
           maxRetries = 4
 

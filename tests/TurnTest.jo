@@ -160,7 +160,6 @@ private def scenario(tools: List[TestTool], maxToolRounds: Int, maxRetries: Int,
       agent.runTurn:
         UserText("dummy message", [])
         routesOf(tools)
-        dataDir = ""
         maxToolRounds = maxToolRounds
         maxRetries = maxRetries
   "\{resultTag(res)} | \{joinPy(channel.log)}"
@@ -187,13 +186,13 @@ def run(): Unit receives stdout, logger =
       tools
       maxToolRounds = 50
       maxRetries = 4
-      model = (base, dir) => (results, tools) => textReply("hi")
+      model = base => (results, tools) => textReply("hi")
       state = live
     expected = "Answered(hi) | start,end"
 
   // One tool call is run, then the next reply (text) ends the turn. The per-turn
   // counter lives in `startTurn`, so it is fresh for each turn.
-  val askB: Model = (base, dir) =>
+  val askB: Model = base =>
     val stepB = py.list(0)
     (results, tools) =>
       val n = stepB.get(0).asInt
@@ -208,7 +207,7 @@ def run(): Unit receives stdout, logger =
   // Tool budget: once spent (maxToolRounds=1) the model is re-asked with no
   // tools and must answer with text. The scripted model returns text only when
   // offered no tools.
-  val askC: Model = (base, dir) => (results, tools) =>
+  val askC: Model = base => (results, tools) =>
     if tools.isEmpty then textReply("final") else toolReply("echo")
 
   check:
@@ -223,18 +222,18 @@ def run(): Unit receives stdout, logger =
       tools
       maxToolRounds = 50
       maxRetries = 4
-      model = (base, dir) => (results, tools) => Fatal("bad key")
+      model = base => (results, tools) => Fatal("bad key")
       state = live
     expected = "Failed(bad key) | start,end"
 
   // A failed turn retains its user message in the live context. Only the
   // provisional assistant/tool tail is rolled back.
   val failedContext = new WindowedContext("", new Memory, [])
-  val failedAgent = new Agent((base, dir) => (results, tools) => Fatal("bad key"), specsOf(tools), failedContext)
+  val failedAgent = new Agent(base => (results, tools) => Fatal("bad key"), specsOf(tools), failedContext)
   val failedChannel = new TestInteract(live)
   val failedResult =
     with interact = failedChannel in
-      failedAgent.runTurn(UserText("keep me", []), routesOf(tools), "", 50, 4)
+      failedAgent.runTurn(UserText("keep me", []), routesOf(tools), 50, 4)
   val failedMessages = failedContext.render(failedChannel).messages
   check:
     "D failed user retained"
@@ -249,13 +248,13 @@ def run(): Unit receives stdout, logger =
       tools
       maxToolRounds = 50
       maxRetries = 0
-      model = (base, dir) => (results, tools) => Transient("rate limited")
+      model = base => (results, tools) => Transient("rate limited")
       state = live
     expected = "Failed(rate limited) | start,end"
 
   // Transient once, then success: exercises the backoff + retry path. With a
   // fake Interrupt, `pause` returns instantly — no real 1s wait.
-  val askG: Model = (base, dir) =>
+  val askG: Model = base =>
     val stepG = py.list(0)
     (results, tools) =>
       val n = stepG.get(0).asInt
@@ -270,13 +269,13 @@ def run(): Unit receives stdout, logger =
   // Cancellation already requested → the turn bails before asking the model.
   check:
     "H cancelled-before-request"
-    scenario: tools, 50, 4, (base, dir) => (results, tools) => toolReply("echo"), State(cancelled = true, pause = true)
+    scenario: tools, 50, 4, base => (results, tools) => toolReply("echo"), State(cancelled = true, pause = true)
     "Interrupted | "
 
   // Cancellation while a blocking model call is in flight discards the reply,
   // even if it is a complete text answer.
   val stateH2 = State(cancelled = false, pause = false)
-  val askH2: Model = (base, dir) => (results, tools) =>
+  val askH2: Model = base => (results, tools) =>
     stateH2.cancelledNow = true
     textReply("too late")
 
@@ -288,12 +287,12 @@ def run(): Unit receives stdout, logger =
   // Cancellation fires during the backoff pause → the retry is abandoned.
   check:
     "I cancelled-during-backoff"
-    scenario: tools, 50, 4, (base, dir) => (results, tools) => new Transient("blip"), State(cancelled = false, pause = true)
+    scenario: tools, 50, 4, base => (results, tools) => new Transient("blip"), State(cancelled = false, pause = true)
     "Interrupted | start,end,transient"
 
   // A tool that raises does NOT crash the turn: `runSafely` turns the exception
   // into an error result the model sees, and the next (text) reply ends the turn.
-  val askJ: Model = (base, dir) =>
+  val askJ: Model = base =>
     val stepJ = py.list(0)
     (results, tools) =>
       val n = stepJ.get(0).asInt
@@ -308,7 +307,7 @@ def run(): Unit receives stdout, logger =
   // The assistant message containing a tool call must be durable before the tool
   // begins. The tool marker and transcript records share one logger, making their
   // order observable without relying on wall-clock time.
-  val askK: Model = (base, dir) =>
+  val askK: Model = base =>
     val step = py.list(0)
     (results, tools) =>
       val n = step.get(0).asInt
@@ -319,7 +318,7 @@ def run(): Unit receives stdout, logger =
   val toolsK = [loggingTool()]
   val agentK = new Agent(askK, specsOf(toolsK), new WindowedContext("", new Memory, []))
   with logger = capture, interact = new TestInteract(live) in
-    val _ = agentK.runTurn(UserText("dummy text", []), routesOf(toolsK), "", 50, 4)
+    val _ = agentK.runTurn(UserText("dummy text", []), routesOf(toolsK), 50, 4)
 
   check:
     "K message-logged-before-tool"
@@ -332,7 +331,7 @@ def run(): Unit receives stdout, logger =
   val toolsL = [failingLoggingTool()]
   val agentL = new Agent(askK, specsOf(toolsL), new WindowedContext("", new Memory, []))
   with logger = captureFailure, interact = new TestInteract(live) in
-    val _ = agentL.runTurn(UserText("dummy text", []), routesOf(toolsL), "", 50, 4)
+    val _ = agentL.runTurn(UserText("dummy text", []), routesOf(toolsL), 50, 4)
 
   check:
     "L message-kept-when-tool-fails"
@@ -341,7 +340,7 @@ def run(): Unit receives stdout, logger =
 
   // Visible assistant text accompanying a tool request reaches the interaction
   // before the tool starts.
-  val askM: Model = (base, dir) =>
+  val askM: Model = base =>
     val step = py.list(0)
     (results, tools) =>
       val n = step.get(0).asInt

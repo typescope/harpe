@@ -34,11 +34,11 @@ private section OpenRouterResponses
       "parameters" ~ parameters
       "strict" ~ false
 
-  def mediaBlocks(attachments: List[Attachment], dataDir: String): py.List =
+  def mediaBlocks(attachments: List[Attachment]): py.List =
     val blocks = py.list()
     for a in attachments if a.inline do
       if isInlineImage(a.mime) then
-        match readInlineBase64(dataDir, a.name)
+        match readInlineBase64(a.path)
         case Some(data) =>
           blocks.append:
             py.dict:
@@ -46,7 +46,7 @@ private section OpenRouterResponses
               "image_url" ~ "data:\{a.mime};base64,\{data}"
         case None => pass
       else if isInlinePdf(a.mime) then
-        match readInlineBase64(dataDir, a.name)
+        match readInlineBase64(a.path)
         case Some(data) =>
           blocks.append:
             py.dict:
@@ -57,7 +57,7 @@ private section OpenRouterResponses
     end
     blocks
 
-  def toInput(history: List[Message], dataDir: String): py.List =
+  def toInput(history: List[Message]): py.List =
     val items = py.list()
     val lastIdx = history.size - 1
     var i = 0
@@ -65,7 +65,7 @@ private section OpenRouterResponses
     for m in history do
       match m
       case UserText(text, attachments) =>
-        val media = if i == lastIdx then mediaBlocks(attachments, dataDir) else py.list()
+        val media = if i == lastIdx then mediaBlocks(attachments) else py.list()
         if media.size == 0 then
           items.append(py.dict("role" ~ "user", "content" ~ Model.userContent(text, attachments)))
         else
@@ -117,13 +117,13 @@ private class OpenRouterModel(
     client: py.Dynamic, model: String, effort: String, extraBody: py.Dict)
   view Model
 
-  def startTurn(base: Rendered, dataDir: String): Session =
-    new OpenRouterSession(client, model, effort, extraBody, base, dataDir)
+  def startTurn(base: Rendered): Session =
+    new OpenRouterSession(client, model, effort, extraBody, base)
 end
 
 private class OpenRouterSession(
     client: py.Dynamic, model: String, effort: String,
-    extraBody: py.Dict, base: Rendered, dataDir: String)
+    extraBody: py.Dict, base: Rendered)
   view Session
 
   //[ The complete Responses `input` accepted so far.
@@ -149,7 +149,7 @@ private class OpenRouterSession(
     match committedInput
     case Some(items) => for item in items do input.append(item)
     case None =>
-      val initial = OpenRouterResponses.toInput(base.messages, dataDir)
+      val initial = OpenRouterResponses.toInput(base.messages)
       for item in initial do input.append(item)
       if base.transient != "" then input.append(py.dict("role" ~ "user", "content" ~ base.transient))
 
@@ -159,7 +159,7 @@ private class OpenRouterSession(
           "type" ~ "function_call_output"
           "call_id" ~ r.id
           "output" ~ r.content
-      val media = OpenRouterResponses.mediaBlocks(r.media, dataDir)
+      val media = OpenRouterResponses.mediaBlocks(r.media)
       if media.size > 0 then input.append(py.dict("role" ~ "user", "content" ~ media))
 
     val specs = py.list()

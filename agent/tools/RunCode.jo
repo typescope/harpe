@@ -51,6 +51,9 @@ private def tempfileMod: py.Dynamic = py.module("tempfile")
 //]
 private def runCodeCategory: String = "harpe.tools.runCode"
 
+//[ The default: the driver grants the guest no configuration of its own. //]
+private def noGuestEnv: Map[String, String] = Map.empty[String, String]
+
 //[ Replay the recorded invocation with this run's paths swapped in
   !
   ! The source file (the lone `.jo` positional), the `-o` output, and the
@@ -192,7 +195,7 @@ class RunCodeTool(
     ! agree on, an application protocol rather than the framework's. It arrives
     ! from the driver's route, so the values are whatever that turn should see.
   //]
-  def run(code: String, guestEnv: Map[String, String])
+  def run(code: String, guestEnv: Map[String, String] = noGuestEnv)
   : RunOutcome receives logger, interact =
     match findDoneFile
     case None =>

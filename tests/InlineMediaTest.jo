@@ -35,16 +35,16 @@ def run(): Unit receives stdout =
   val dir = tempfile.mkdtemp()
   file.writeBytes(os.path.join(dir, "hi.bin"), py.dynamic("hi").callDynamic("encode", "utf-8"))
 
-  match readInlineBase64(dir, "hi.bin")
+  match readInlineBase64(os.path.join(dir, "hi.bin"))
   case Some(b64) => check("reads and base64-encodes", b64 == "aGk=")
   case None      => check("reads and base64-encodes", false)
 
-  // --- readInlineBase64: no data directory ---
-  match readInlineBase64("", "hi.bin")
-  case Some(_) => check("empty dataDir is None", false)
-  case None    => check("empty dataDir is None", true)
+  // --- readInlineBase64: the attachment carries no path ---
+  match readInlineBase64("")
+  case Some(_) => check("empty path is None", false)
+  case None    => check("empty path is None", true)
 
   // --- readInlineBase64: file does not exist ---
-  match readInlineBase64(dir, "missing.bin")
+  match readInlineBase64(os.path.join(dir, "missing.bin"))
   case Some(_) => check("missing file is None", false)
   case None    => check("missing file is None", true)

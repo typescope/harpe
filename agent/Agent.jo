@@ -31,7 +31,7 @@ import harpe.Tool.*
 //]
 class Agent(brain: Model, tools: List[Tool], context: Context)
   def runTurn(
-      userMsg: Message, handlers: Map[String, Handler], dataDir: String,
+      userMsg: Message, handlers: Map[String, Handler],
       maxToolRounds: Int, maxRetries: Int)
   : TurnData receives logger, interact =
     Agent.runTurn:
@@ -40,7 +40,6 @@ class Agent(brain: Model, tools: List[Tool], context: Context)
       tools
       handlers
       context
-      dataDir
       maxToolRounds
       maxRetries
 end
@@ -72,7 +71,7 @@ section Agent
   //]
   def runTurn(
       userMsg: Message, brain: Model, tools: List[Tool], handlers: Map[String, Handler],
-      context: Context, dataDir: String, maxToolRounds: Int, maxRetries: Int)
+      context: Context, maxToolRounds: Int, maxRetries: Int)
   : TurnData receives logger, interact =
 
     for t in tools do
@@ -94,7 +93,7 @@ section Agent
     // owns the intra-turn tail. The engine feeds it tool results and never
     // re-renders.
     val rendered = context.render(interact)
-    val session = brain.startTurn(rendered, dataDir)
+    val session = brain.startTurn(rendered)
 
     // Tool results to hand the model on the next round ([] for the first request).
     var pending: List[ToolResult] = []

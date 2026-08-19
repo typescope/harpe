@@ -34,7 +34,7 @@ private def review(pr: String): Unit receives stdout, workspace, logger =
   val basePrompt = workspace.read("AGENT.md") rescue None => ""
   val runCode = runCodeTool(workspace.sandboxDir, 610.0)
   val skills = new SkillTools(workspace.skillsDir)
-  val specs: List[Tool] = (List.empty[Tool] + runCode) ++ skills.specs
+  val specs: List[Tool] = [runCode, ..skills.specs]
 
   val context = new FullContext(basePrompt, memory, [])
   val agent = new Agent(Defaults.model(), specs, context)
@@ -57,7 +57,6 @@ private def review(pr: String): Unit receives stdout, workspace, logger =
       agent.runTurn:
         UserText("please start review the pr", [])
         handlers
-        dataDir = ""
         maxToolRounds = 30
         maxRetries = 4
 

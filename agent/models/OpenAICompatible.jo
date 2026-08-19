@@ -32,10 +32,10 @@ private section CompatibleChat
         "description" ~ t.description,
         "parameters" ~ parameters)
 
-  def imageBlocks(attachments: List[Attachment], dataDir: String): py.List =
+  def imageBlocks(attachments: List[Attachment]): py.List =
     val blocks = py.list()
     for a in attachments if a.inline && isInlineImage(a.mime) do
-      match readInlineBase64(dataDir, a.name)
+      match readInlineBase64(a.path)
       case Some(data) =>
         blocks.append:
           py.dict:
@@ -44,7 +44,7 @@ private section CompatibleChat
       case None => pass
     blocks
 
-  def toMessages(rendered: Rendered, dataDir: String): py.List =
+  def toMessages(rendered: Rendered): py.List =
     val messages = py.list()
     if rendered.system != "" then messages.append(py.dict("role" ~ "system", "content" ~ rendered.system))
 
@@ -53,7 +53,7 @@ private section CompatibleChat
     for m in rendered.messages do
       match m
       case UserText(text, attachments) =>
-        val media = if i == lastIdx then imageBlocks(attachments, dataDir) else py.list()
+        val media = if i == lastIdx then imageBlocks(attachments) else py.list()
         val content = Model.userContent(text, attachments)
         if media.size == 0 then
           messages.append(py.dict("role" ~ "user", "content" ~ content))
@@ -82,7 +82,7 @@ private section CompatibleChat
           messages.append:
             py.dict("role" ~ "tool", "tool_call_id" ~ r.id, "content" ~ r.content)
 
-          val resultMedia = imageBlocks(r.media, dataDir)
+          val resultMedia = imageBlocks(r.media)
           for block in resultMedia do media.append(block)
 
         if media.size > 0 then messages.append(py.dict("role" ~ "user", "content" ~ media))
@@ -113,13 +113,13 @@ private section CompatibleChat
     else
       new Assistant(text.trim, calls)
 
-  def appendResults(messages: py.List, results: List[ToolResult], dataDir: String): Unit =
+  def appendResults(messages: py.List, results: List[ToolResult]): Unit =
     val media = py.list()
     for r in results do
       messages.append:
         py.dict("role" ~ "tool", "tool_call_id" ~ r.id, "content" ~ r.content)
 
-      val resultMedia = imageBlocks(r.media, dataDir)
+      val resultMedia = imageBlocks(r.media)
       for block in resultMedia do media.append(block)
 
     if media.size > 0 then messages.append(py.dict("role" ~ "user", "content" ~ media))
@@ -128,12 +128,12 @@ end
 private class CompatibleModel(client: py.Dynamic, model: String, extraBody: py.Dict)
   view Model
 
-  def startTurn(base: Rendered, dataDir: String): Session =
-    new CompatibleSession(client, model, extraBody, base, dataDir)
+  def startTurn(base: Rendered): Session =
+    new CompatibleSession(client, model, extraBody, base)
 end
 
 private class CompatibleSession(
-    client: py.Dynamic, model: String, extraBody: py.Dict, base: Rendered, dataDir: String)
+    client: py.Dynamic, model: String, extraBody: py.Dict, base: Rendered)
   view Session
 
   //[ Complete Chat Completions messages accepted so far
@@ -150,10 +150,10 @@ private class CompatibleSession(
     match committed
     case Some(items) => for item in items do messages.append(item)
     case None =>
-      val initial = CompatibleChat.toMessages(base, dataDir)
+      val initial = CompatibleChat.toMessages(base)
       for item in initial do messages.append(item)
 
-    CompatibleChat.appendResults(messages, results, dataDir)
+    CompatibleChat.appendResults(messages, results)
 
     val specs = py.list()
     for t in tools do specs.append(CompatibleChat.toolSpec(t))

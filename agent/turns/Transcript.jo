@@ -119,15 +119,26 @@ section Transcript
   private def attachmentsDict(attachments: List[Attachment]): py.List =
     val list = py.list()
     for a in attachments do
-      list.append(py.dict("name" ~ a.name, "size" ~ a.size, "mime" ~ a.mime, "inline" ~ a.inline))
+      list.append:
+        py.dict:
+          "name"   ~ a.name
+          "size"   ~ a.size
+          "mime"   ~ a.mime
+          "inline" ~ a.inline
+          "path"   ~ a.path
     list
 
   private def attachmentsFrom(list: py.List): List[Attachment] =
     var attachments: List[Attachment] = []
     for item in list do
       val a = item.cast[py.Dict]
-      attachments = attachments + Attachment(a.get("name", "").asString, a.get("size", 0).asInt,
-                                               a.get("mime", "").asString, a.get("inline", false).asBool)
+      val attachment = Attachment:
+        a.get("name", "").asString
+        a.get("size", 0).asInt
+        a.get("mime", "").asString
+        a.get("inline", false).asBool
+        a.get("path", "").asString
+      attachments = attachments + attachment
     attachments
 
   private def messageFromDict(d: py.Dict): Message =

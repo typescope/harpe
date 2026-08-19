@@ -34,8 +34,7 @@ import harpe.logging.logger
   ! never learn reasoning exists.
 //]
 interface Model
-  //[ Open a turn over `base`, resolving any attachment bytes under `dataDir`. //]
-  def startTurn(base: Rendered, dataDir: String): Session
+  def startTurn(base: Rendered): Session
 end
 
 section Model
@@ -59,11 +58,16 @@ section Model
 
   //[ Attachment
     !
-    ! One file the user shared, referenced by name within the agent's data
-    ! directory (the sandbox roots `fs` there). It rides in the transcript as
-    ! pure metadata — `name` (the basename in the data dir), `size` in bytes,
-    ! and `mime` type — so the UI can show a file card and the model can be told
-    ! the file exists. The bytes stay on disk. The model fetches them with `fs`.
+    ! One file the user shared. It rides in the transcript as pure metadata —
+    ! `name` (what the model and the UI call it, the basename in the agent's
+    ! data directory), `size` in bytes, `mime` type, and `path`, where the bytes
+    ! actually live on the host — so the UI can show a file card and the model
+    ! can be told the file exists. The bytes stay on disk. The model fetches
+    ! them with `fs`.
+    !
+    ! `path` is what makes the data directory a driver concern rather than the
+    ! framework's: whoever creates an attachment knows where the file is, so no
+    ! layer below has to be told the directory to resolve it against.
     !
     ! `inline` marks that this attachment should ALSO be shown to the model
     ! directly, as a real image/document content block, rather than only by
@@ -76,7 +80,7 @@ section Model
     ! persisted differently: `inline` is stored as given, the render layer alone
     ! decides whether to act on it.
   //]
-  class Attachment(name: String, size: Int, mime: String, inline: Bool)
+  class Attachment(name: String, size: Int, mime: String, inline: Bool, path: String)
 
   //[ The user text a provider sends for one `UserText`
     !
@@ -146,8 +150,8 @@ section Model
     !
     ! `reply` `receives logger` — read at call time — so a provider can emit its
     ! token usage to the turn's logging context (see `harpe.models.logUsage`).
-    ! The data directory an inline attachment's bytes come from is fixed when
-    ! the turn opens, so it is a `startTurn` argument rather than ambient.
+    ! An inline attachment carries its own `path`, so nothing here needs to be
+    ! told a data directory to resolve it against.
     !
     ! Retry contract: `reply` is IDEMPOTENT. `results` are committed to the tail
     ! only on a successful `Reply` (atomically with the assistant message), so a

@@ -33,7 +33,7 @@ private def chat(): Unit receives stdout, harpe.workspace, logger =
 
   // What runs when the model calls a tool, wired by name.
   val handlers: Map[String, Handler] = Map:
-    runCode.name ~ (i => runCode.run(i["code"], Map.empty[String, String]))
+    runCode.name ~ (i => runCode.run(i["code"]))
 
   val data = workspace.relative("data")
   os.makedirs(data)
@@ -52,7 +52,6 @@ private def chat(): Unit receives stdout, harpe.workspace, logger =
         agent.runTurn:
           UserText(input, [])
           handlers
-          dataDir
           maxToolRounds = 10
           maxRetries = 2
 
