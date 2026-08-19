@@ -16,7 +16,7 @@ list. Memory is that reliable place, independent of the transcript window.
 
 ## How the agent uses it
 
-Three tools, offered by `new MemoryTools(memory)` and wired by each driver:
+Three tools, offered by `MemoryTools` and wired by each driver against a store:
 
 - **`updateMemory(key, value)`** — set or replace the *whole* value under a key.
 - **`readMemory(key)`** — read one key's current value.

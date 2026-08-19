@@ -85,25 +85,24 @@ def run(): Unit receives stdout, logger, interact =
 
   // --- MemoryTools: the LLM's read/write/list interface to a Memory store ---
   val mem = new Memory
-  val mtools = new MemoryTools(mem)
-  check("MemoryTools offers three specs", mtools.specs.size == 3)
+  check("MemoryTools offers three specs", MemoryTools.specs.size == 3)
 
-  val r1 = mtools.update("goal", "win")
+  val r1 = MemoryTools.update(mem, "goal", "win")
   check("updateMemory writes the store", mem.get("goal") == "win")
   check("updateMemory summary names the key", r1.summary == "memory ← goal")
 
-  val r2 = mtools.read("goal")
+  val r2 = MemoryTools.read(mem, "goal")
   check("readMemory returns the value", r2.result == "win")
 
-  val r3 = mtools.read("absent")
+  val r3 = MemoryTools.read(mem, "absent")
   check("readMemory notes an empty key", r3.result.contains("empty"))
 
   mem.set("plan", "do X")
-  val r4 = mtools.list()
+  val r4 = MemoryTools.list(mem)
   check("listMemory reports the keys", r4.result.contains("goal") && r4.result.contains("plan"))
 
   // --- persistence flow: a tool writes memory, it survives save + reload ---
   val ppath = os.path.join(tempfile.mkdtemp(), "s.memory.json")
-  val _ = mtools.update("note", "remember this")
+  val _ = MemoryTools.update(mem, "note", "remember this")
   Memory.save(ppath, mem)
   check("tool-written memory persists across save/load", Memory.load(ppath).get("note") == "remember this")

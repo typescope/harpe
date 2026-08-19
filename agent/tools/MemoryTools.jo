@@ -1,9 +1,9 @@
 //[ MemoryTools.jo
   !
   ! The LLM's interface to its working memory (`harpe.Memory`): tools to read,
-  ! write, and list memory keys. Each holds the session's store as a field, so
-  ! the generic `Tool` abstraction stays memory-agnostic (memory is only for the
-  ! LLM, not host code).
+  ! write, and list memory keys. The store is not held anywhere — a route passes
+  ! it in — so the generic `Tool` abstraction stays memory-agnostic (memory is
+  ! only for the LLM, not host code).
   !
   ! What keys to maintain, and how, is up to the agent's AGENT.md prompt. These
   ! tools impose no schema.
@@ -14,13 +14,13 @@ namespace harpe.tools
 import harpe.*
 import harpe.Tool.*
 
-//[ The LLM's read/write/list tools over one `Memory`
+//[ The LLM's read/write/list tools over a `Memory`
   !
-  ! One object for the group: it holds the store the three verbs share, and
-  ! exposes each verb as a spec (what the model is offered) plus a typed method
-  ! (what a driver's route calls).
+  ! Nothing here is stateful, so this is a section rather than a class: the three
+  ! specs are constants shared by every session, and the store each verb acts on
+  ! arrives as an argument from the driver's route.
 //]
-class MemoryTools(memory: Memory)
+section MemoryTools
   //[ Every spec in this group, for the agent's tool list. //]
   def specs: List[Tool] = [updateSpec, readSpec, listSpec]
 
@@ -32,7 +32,7 @@ class MemoryTools(memory: Memory)
        strParam("value", "The full new value for the key; replaces any previous value.")]
 
   //[ Replace the whole value under `key`. //]
-  def update(key: String, value: String): RunOutcome =
+  def update(memory: Memory, key: String, value: String): RunOutcome =
     memory.set(key, value)
     new RunOutcome("Updated memory[\{key}].", "memory ← \{key}", attachments = [])
 
@@ -43,7 +43,7 @@ class MemoryTools(memory: Memory)
       [strParam("key", "The memory key to read.")]
 
   //[ The current value under `key`. //]
-  def read(key: String): RunOutcome =
+  def read(memory: Memory, key: String): RunOutcome =
     val value = memory.get(key)
     val body = if value == "" then "(memory[\{key}] is empty)" else value
     new RunOutcome(body, "memory → \{key}", attachments = [])
@@ -55,7 +55,7 @@ class MemoryTools(memory: Memory)
       []
 
   //[ The keys currently stored. //]
-  def list(): RunOutcome =
+  def list(memory: Memory): RunOutcome =
     val ks = memory.keys()
     val body = if ks.isEmpty then "(memory is empty)" else ks.join("\n")
     new RunOutcome(body, "memory keys", attachments = [])

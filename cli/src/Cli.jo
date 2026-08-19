@@ -51,15 +51,14 @@ private def runChat(): Unit receives stdout, workspace =
   val sessionLog = new JsonlLogger(sessionPath)
   val memoryPath = Session.memoryPath(sessionPath)
   val memory = Memory.load(memoryPath)
-  // The tools this agent can act with. Each is built once, here, and holds
-  // whatever it needs to live for the whole session.
+  // `runCode` owns a build semaphore, so it is an object built once here. The
+  // rest own nothing and are reached through their sections.
   val runCode = runCodeTool(workspace.sandboxDir, 610.0)
-  val upload  = uploadMediaTool()
   val bash    = new RunBashTool
-  val skills  = new SkillTools(workspace.skillsDir)
-  val mem     = new MemoryTools(memory)
+  val skillsDir = workspace.skillsDir
 
-  val specs: List[Tool] = [runCode, upload, bash, ..skills.specs, ..mem.specs]
+  val specs: List[Tool] =
+    [runCode, UploadMediaTool.spec, bash, ..SkillTools.specs, ..MemoryTools.specs]
 
   val agent = new Agent:
     brain = Defaults.model()
@@ -78,15 +77,15 @@ private def runChat(): Unit receives stdout, workspace =
   // guest no configuration of its own, so `runCode` takes its default (empty)
   // environment.
   val handlers: Map[String, Handler] = Map:
-    runCode.name           ~ (i => runCode.run(i["code"]))
-    upload.name            ~ (i => upload.show(i["fileName"], dataDir))
-    bash.name              ~ (i => bash.run(i["command"]))
-    skills.listSpec.name   ~ (i => skills.list())
-    skills.readSpec.name   ~ (i => skills.read(i["name"]))
-    skills.searchSpec.name ~ (i => skills.search(i["query"]))
-    mem.updateSpec.name    ~ (i => mem.update(i["key"], i["value"]))
-    mem.readSpec.name      ~ (i => mem.read(i["key"]))
-    mem.listSpec.name      ~ (i => mem.list())
+    runCode.name                ~ (i => runCode.run(i["code"]))
+    UploadMediaTool.spec.name   ~ (i => UploadMediaTool.show(i["fileName"], dataDir))
+    bash.name                   ~ (i => bash.run(i["command"]))
+    SkillTools.listSpec.name    ~ (i => SkillTools.list(skillsDir))
+    SkillTools.readSpec.name    ~ (i => SkillTools.read(skillsDir, i["name"]))
+    SkillTools.searchSpec.name  ~ (i => SkillTools.search(skillsDir, i["query"]))
+    MemoryTools.updateSpec.name ~ (i => MemoryTools.update(memory, i["key"], i["value"]))
+    MemoryTools.readSpec.name   ~ (i => MemoryTools.read(memory, i["key"]))
+    MemoryTools.listSpec.name   ~ (i => MemoryTools.list(memory))
 
   while true do
     // `None` is end-of-input (Ctrl-D). A blank line or a Ctrl-C'd prompt is

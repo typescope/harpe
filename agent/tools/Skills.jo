@@ -63,13 +63,13 @@ private def readTextOrEmpty(path: String): String =
     case Ok(c)  => c.asString
     case Err(_) => ""
 
-//[ The read-only reference tools over one skills directory
+//[ The read-only reference tools over a skills directory
   !
-  ! One object for the group: it holds the directory the three verbs share, and
-  ! exposes each verb as a spec (what the model is offered) plus a typed method
-  ! (what a driver's route calls).
+  ! Nothing here is stateful, so this is a section rather than a class: the three
+  ! specs are constants shared by every session, and the directory each verb
+  ! reads arrives as an argument from the driver's route.
 //]
-class SkillTools(skillsDir: String)
+section SkillTools
   //[ Every spec in this group, for the agent's tool list. //]
   def specs: List[Tool] = [listSpec, readSpec, searchSpec]
 
@@ -79,8 +79,8 @@ class SkillTools(skillsDir: String)
       "List the names of all available skill files (read-only reference docs). Each name includes its file extension (e.g. .md, .jo)."
       []
 
-  //[ The names of every skill file. //]
-  def list(): RunOutcome =
+  //[ The names of every skill file under `skillsDir`. //]
+  def list(skillsDir: String): RunOutcome =
     val names = collectSkills(skillsDir).map(pair => pair.fst)
     val body = if names.isEmpty then "(no skills found)" else names.join("\n")
     new RunOutcome(body, "listed skills", attachments = [])
@@ -91,8 +91,8 @@ class SkillTools(skillsDir: String)
       "Read a skill file by its full name including extension. Returns the file contents."
       [strParam("name", "The full skill file name including extension, as returned by skillsList (e.g. \"jo-cheat-sheet.md\")")]
 
-  //[ One skill file's contents, confined to the skills directory. //]
-  def read(skill: String): RunOutcome receives logger =
+  //[ One skill file's contents, confined to `skillsDir`. //]
+  def read(skillsDir: String, skill: String): RunOutcome receives logger =
     logger.log:
       skillsCategory
       "action" ~ "read"
@@ -100,7 +100,7 @@ class SkillTools(skillsDir: String)
 
     val absPath = os.path.abspath(os.path.normpath(os.path.join(skillsDir, skill)))
 
-    if !confined(absPath) then
+    if !confined(skillsDir, absPath) then
       return new RunOutcome("Access denied: path outside skills directory", "denied · \{skill}", attachments = [])
 
     if os.path.isfile(absPath) then
@@ -116,20 +116,20 @@ class SkillTools(skillsDir: String)
       "Case-insensitive search across all skill files. Returns matching lines as 'name:lineNumber: text'."
       [strParam("query", "Substring to search for (case-insensitive)")]
 
-  //[ Matching lines across every skill file, capped at `maxHits`. //]
-  def search(query: String): RunOutcome receives logger =
+  //[ Matching lines across every skill file under `skillsDir`, capped at `maxHits`. //]
+  def search(skillsDir: String, query: String): RunOutcome receives logger =
     logger.log:
       skillsCategory
       "action" ~ "search"
       "query"  ~ query
 
-    new RunOutcome(matches(query), "searched · \{query}", attachments = [])
+    new RunOutcome(matches(skillsDir, query), "searched · \{query}", attachments = [])
 
   //[ At most this many matching lines come back, however many files matched. //]
   private def maxHits: Int = 30
 
-  //[ Is `absPath` inside the skills directory — i.e. did `..` not escape it? //]
-  private def confined(absPath: String): Bool =
+  //[ Is `absPath` inside `skillsDir` — i.e. did `..` not escape it? //]
+  private def confined(skillsDir: String, absPath: String): Bool =
     val absDir = os.path.abspath(skillsDir)
     if !absPath.startsWith(absDir) then
       false
@@ -139,7 +139,7 @@ class SkillTools(skillsDir: String)
       absPath.get(absDir.size) == '/'
 
   //[ The `name:lineNumber: text` lines matching `query`, capped at `maxHits`. //]
-  private def matches(query: String): String =
+  private def matches(skillsDir: String, query: String): String =
     val files = collectSkills(skillsDir)
     val lowerQuery = query.toLower
     var out = ""

@@ -41,21 +41,20 @@ An assembly is ordinary Jo code:
 
 ```jo
 val runCode = runCodeTool(workspace.sandboxDir, approvalDeadline = 610.0)
-val mem = new MemoryTools(memory)
 
 val agent = new Agent:
   brain = brain
-  tools = [runCode, ..mem.specs]
+  tools = [runCode, ..MemoryTools.specs]
   context = new WindowedContext:
     baseSystem = workspace.read("AGENT.md").getOrElse("")
     memory = memory
     initial = history
 
 val handlers: Map[String, Handler] = Map:
-  runCode.name        ~ (i => runCode.run(i["code"]))
-  mem.updateSpec.name ~ (i => mem.update(i["key"], i["value"]))
-  mem.readSpec.name   ~ (i => mem.read(i["key"]))
-  mem.listSpec.name   ~ (i => mem.list())
+  runCode.name                ~ (i => runCode.run(i["code"]))
+  MemoryTools.updateSpec.name ~ (i => MemoryTools.update(memory, i["key"], i["value"]))
+  MemoryTools.readSpec.name   ~ (i => MemoryTools.read(memory, i["key"]))
+  MemoryTools.listSpec.name   ~ (i => MemoryTools.list(memory))
 
 with interact = channel in
   agent.runTurn(userMsg, handlers, maxToolRounds = 50, maxRetries = 4)

@@ -24,14 +24,14 @@ import harpe.logging.logger
 
 
 // A no-op logger for the tool run. These tests assert on results, not logs.
-private def listSkills(skills: SkillTools): String =
-  with logger = Logging.discard in skills.list().result
+private def listSkills(dir: String): String =
+  with logger = Logging.discard in SkillTools.list(dir).result
 
-private def readSkill(skills: SkillTools, name: String): String =
-  with logger = Logging.discard in skills.read(name).result
+private def readSkill(dir: String, name: String): String =
+  with logger = Logging.discard in SkillTools.read(dir, name).result
 
-private def searchSkills(skills: SkillTools, query: String): String =
-  with logger = Logging.discard in skills.search(query).result
+private def searchSkills(dir: String, query: String): String =
+  with logger = Logging.discard in SkillTools.search(dir, query).result
 
 private def check(label: String, cond: Bool): Unit receives stdout =
   assert: cond, "skills: \{label} failed"
@@ -58,7 +58,7 @@ def run(): Unit receives stdout =
   file.write(os.path.join(tmp, "shared/ref.md"), "linked reference")
   os.symlink(os.path.join(tmp, "shared"), os.path.join(skillsDir, "linked"))
 
-  val tools = new SkillTools(skillsDir)
+  val tools = skillsDir
 
   // Listing surfaces nested files, names carrying their sub-directory path —
   // including files inside a symlinked directory.

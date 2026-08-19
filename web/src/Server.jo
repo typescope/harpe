@@ -64,16 +64,13 @@ import harpe.turns.Failed
   ! does not resolve, so the model can correct it (write the file first, or fix a
   ! typo) rather than silently failing.
 //]
-class SendFileTool
-  view Tool
-
-  def name: String = "sendFile"
-
-  def description: String =
-    "Deliver a file to the user — it appears as an attachment in your reply. Write the file to the data directory first (e.g. with `fs`)."
-
-  def params: List[Tool.ToolParam] =
-    [Tool.strParam("fileName", "The name of the file in your data directory to send to the user")]
+section SendFileTool
+  //[ The spec, for the agent's tool list. //]
+  def spec: Tool =
+    Tool:
+      "sendFile"
+      "Deliver a file to the user — it appears as an attachment in your reply. Write the file to the data directory first (e.g. with `fs`)."
+      [Tool.strParam("fileName", "The name of the file in your data directory to send to the user")]
 
   //[ Record the intent to deliver `fileName` from the session directory `dir`. //]
   def send(fileName: String, dir: String): Tool.RunOutcome =
@@ -108,12 +105,17 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
   // The `runCode` tool the interactive editor (`/api/run`) executes against — the
   // same compile+sandbox machinery the agent uses, so an edited script runs exactly
   // as the agent's would, with the session's data dir as its `fs` root.
-  // The tools every session shares. `runTool` holds the build semaphore, so one
-  // instance bounds concurrent sandbox runs across the whole server.
+  // `runTool` holds the build semaphore, so one instance bounds concurrent
+  // sandbox runs across the whole server. The other tools own nothing.
   private val runTool: RunCodeTool = runCodeTool(wspace.sandboxDir, 610.0)
-  private val upload: UploadMediaTool = uploadMediaTool()
-  private val sendFile: SendFileTool = new SendFileTool
-  private val skills: SkillTools = new SkillTools(wspace.skillsDir)
+
+  //[ Every spec the model is offered — identical for every session. //]
+  private def specs: List[Tool] =
+    [runTool,
+     UploadMediaTool.spec,
+     SendFileTool.spec,
+     ..SkillTools.specs,
+     ..MemoryTools.specs]
 
   //[ The WSGI application: establish the request context, then route
     !
@@ -330,27 +332,27 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! readers) are rooted per session. Uploads land there, agent output surfaces
     ! there, and these routes are where that directory reaches the tools.
   //]
-  private def routes(mem: MemoryTools, id: String): Map[String, Handler] =
+  private def routes(memory: Memory, id: String): Map[String, Handler] =
     val dataDir = os.path.abspath(Session.dataDir(id))
+    val skillsDir = wspace.skillsDir
     Map:
-      runTool.name           ~ (i => runTool.run(i["code"]))
-      upload.name            ~ (i => upload.show(i["fileName"], dataDir))
-      sendFile.name          ~ (i => sendFile.send(i["fileName"], dataDir))
-      skills.listSpec.name   ~ (i => skills.list())
-      skills.readSpec.name   ~ (i => skills.read(i["name"]))
-      skills.searchSpec.name ~ (i => skills.search(i["query"]))
-      mem.updateSpec.name    ~ (i => mem.update(i["key"], i["value"]))
-      mem.readSpec.name      ~ (i => mem.read(i["key"]))
-      mem.listSpec.name      ~ (i => mem.list())
+      runTool.name                ~ (i => runTool.run(i["code"]))
+      UploadMediaTool.spec.name   ~ (i => UploadMediaTool.show(i["fileName"], dataDir))
+      SendFileTool.spec.name      ~ (i => SendFileTool.send(i["fileName"], dataDir))
+      SkillTools.listSpec.name    ~ (i => SkillTools.list(skillsDir))
+      SkillTools.readSpec.name    ~ (i => SkillTools.read(skillsDir, i["name"]))
+      SkillTools.searchSpec.name  ~ (i => SkillTools.search(skillsDir, i["query"]))
+      MemoryTools.updateSpec.name ~ (i => MemoryTools.update(memory, i["key"], i["value"]))
+      MemoryTools.readSpec.name   ~ (i => MemoryTools.read(memory, i["key"]))
+      MemoryTools.listSpec.name   ~ (i => MemoryTools.list(memory))
 
   //[ A fresh session under a newly-minted, time-sortable id. //]
   private def createSession(): Session receives workspace =
     val id = time.strftime("%Y%m%dT%H%M%S") + "-" + secrets.tokenHex(nbytes = 2)
     val memory = new Memory
-    val mem = new MemoryTools(memory)
     val agent = new Agent:
       brain = brain
-      tools = [runTool, upload, sendFile, ..skills.specs, ..mem.specs]
+      tools = specs
       context = new WindowedContext:
         baseSystem = workspace.read("AGENT.md").getOrElse("")
         memory = memory
@@ -362,7 +364,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       agent
       memory
       Session.memoryPath(id)
-      routes(mem, id)
+      routes(memory, id)
 
     registryLock.acquire()
     registry.set(id, session)
@@ -390,16 +392,15 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       val memory = Memory.load(Session.memoryPath(id))
       // `Session.load` caps the replayed transcript (a RAM backstop). The full
       // transcript stays on disk.
-      val mem = new MemoryTools(memory)
       val agent = new Agent:
         brain = brain
-        tools = [runTool, upload, sendFile, ..skills.specs, ..mem.specs]
+        tools = specs
         context = new WindowedContext:
           baseSystem = workspace.read("AGENT.md").getOrElse("")
           memory = memory
           initial = Session.load(id)
 
-      val session = new Session(id, log, agent, memory, Session.memoryPath(id), routes(mem, id))
+      val session = new Session(id, log, agent, memory, Session.memoryPath(id), routes(memory, id))
 
       registryLock.acquire()
       val winner =

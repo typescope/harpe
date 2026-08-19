@@ -82,17 +82,21 @@ The framework provides the tools, and your driver wires them:
 
 - **`runCodeTool(sandboxDir, approvalDeadline)`** — `runCode`, which compiles and
   runs a Jo program in the sandbox. This is the agent's main way to act.
-- **`uploadMediaTool()`** — `uploadMedia`, which shows an image or PDF from the
+- **`UploadMediaTool`** — `uploadMedia`, which shows an image or PDF from the
   data directory directly to the chat model.
-- **`new SkillTools(skillsDir)`** — `skillsList` / `skillsRead` / `skillsSearch`,
-  read-only access to the agent's `skills/`.
-- **`new MemoryTools(memory)`** — `updateMemory` / `readMemory` / `listMemory`,
-  the agent's working memory.
+- **`SkillTools`** — `skillsList` / `skillsRead` / `skillsSearch`, read-only
+  access to the agent's `skills/`.
+- **`MemoryTools`** — `updateMemory` / `readMemory` / `listMemory`, the agent's
+  working memory.
 
-Each is an object holding its own configuration, offering `specs` (or being a
-spec itself) plus typed methods your routes call. There is deliberately no
-default toolset: a driver names what its agent can do, so the whole surface is
-readable in one place.
+Each offers `spec` (or `specs`, for a group) plus one typed method per verb that
+your routes call. Only `runCodeTool` is a constructor: it is the one tool that
+owns something with a lifetime — the semaphore bounding concurrent sandbox runs
+— while the others own nothing, so they are sections and their per-session
+values arrive as arguments.
+
+There is deliberately no default toolset: a driver names what its agent can do,
+so the whole surface is readable in one place.
 
 ## Writing a tool
 
@@ -199,11 +203,13 @@ weather.name ~ (i => weather.lookUp(i["city"], preferredUnits))
 
 Three things to know:
 
-- The object holds only what is as timeless as its spec — an API key, a
-  connection, a semaphore. Everything contextual is an argument its route
-  supplies, which is what lets one object serve every session at once. The web
-  server relies on this: a single `runCode` bounds sandbox concurrency across the
-  whole process, while each session's route hands it that session's settings.
+- **A class only if the tool owns something.** An API key, a connection, a
+  semaphore — something with a lifetime. Everything contextual is an argument
+  its route supplies, which is what lets one object serve every session at once:
+  a single `runCode` bounds sandbox concurrency across the whole process, while
+  each session's route hands it that session's settings. A tool that owns
+  nothing is a `section` instead, with its spec as a constant and every value it
+  needs passed in — that is what `SkillTools` and `MemoryTools` are.
 - A class parameter does not implement an interface member, so name the
   parameters apart from `name` / `description` / `params` and let the members
   read them.
@@ -223,17 +229,17 @@ Wiring happens in two places where your driver constructs its `Agent`. The specs
 go on the agent:
 
 ```jo
-val specs: List[Tool] = [runCode, weather, ..skills.specs, ..mem.specs]
+val specs: List[Tool] = [runCode, weather, ..SkillTools.specs, ..MemoryTools.specs]
 ```
 
 and the routes go to each turn:
 
 ```jo
 val handlers: Map[String, Handler] = Map:
-  runCode.name         ~ (i => runCode.run(i["code"]))
-  weather.name         ~ (i => weather.lookUp(i["city"]))
-  skills.readSpec.name ~ (i => skills.read(i["name"]))
-  mem.updateSpec.name  ~ (i => mem.update(i["key"], i["value"]))
+  runCode.name                ~ (i => runCode.run(i["code"]))
+  weather.name                ~ (i => weather.lookUp(i["city"]))
+  SkillTools.readSpec.name    ~ (i => SkillTools.read(skillsDir, i["name"]))
+  MemoryTools.updateSpec.name ~ (i => MemoryTools.update(memory, i["key"], i["value"]))
 
 agent.runTurn(userMsg, handlers, maxToolRounds = 50, maxRetries = 4)
 ```
