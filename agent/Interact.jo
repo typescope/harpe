@@ -39,13 +39,15 @@ interface Interact
   def approve(id: String, request: ApprovalRequest): ApprovalDecision
 end
 
-//[ The current turn's interaction channel.
+//[ The current turn's interaction channel
   !
-  ! Tool handlers read this context parameter when they need an out-of-band
-  ! interaction such as sandbox approval. `Agent.runTurn` binds it immediately
-  ! around each tool call.
+  ! The driver binds this around a turn — `with interact = ... in
+  ! agent.runTurn(...)` — and the turn engine and every tool handler read it
+  ! from there. One binding, one name: the engine does not rebind it around
+  ! tool calls, so a handler sees exactly the channel the driver opened the turn
+  ! with.
 //]
-param currentInteract: Interact
+param interact: Interact
 
 section Interact
   //[ An interaction channel for work performed outside an active user turn.

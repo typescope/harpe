@@ -30,7 +30,7 @@ import harpe.logging.entryFromDict
 import harpe.logging.logger
 import harpe.Model.UserText
 import harpe.Model.Message
-import harpe.tools.memoryTools
+import harpe.tools.*
 import harpe.context.WindowedContext
 import harpe.turns.Success
 import harpe.turns.Failed
@@ -44,30 +44,56 @@ def main(): Unit receives stdout =
 
 private def runChat(): Unit receives stdout, workspace =
   val inputHistory = workspace.relative("logs/inputs.txt")
-  val interact = new Console(stdout, inputHistory)
-  interact.init()
+  val console = new Console(stdout, inputHistory)
+  console.init()
 
   val sessionPath = chooseSession(resumeRequested())
   val sessionLog = new JsonlLogger(sessionPath)
   val memoryPath = Session.memoryPath(sessionPath)
   val memory = Memory.load(memoryPath)
+  // The tools this agent can act with. Each is built once, here, and holds
+  // whatever it needs to live for the whole session.
+  val runCode = runCodeTool(workspace.sandboxDir, 610.0)
+  val upload  = uploadMediaTool()
+  val bash    = new RunBashTool
+  val skills  = new SkillTools(workspace.skillsDir)
+  val mem     = new MemoryTools(memory)
+
+  // Widened explicitly: a list literal takes its element type from the first
+  // entry, and these are four different tool classes.
+  val specs: List[Tool] =
+    (List.empty[Tool] + runCode + upload + bash) ++ skills.specs ++ mem.specs
+
   val agent = new Agent:
     brain = Defaults.model()
-    tools = Defaults.tools(610.0) ++ memoryTools(memory) ++ [runBashTool()]
+    tools = specs
     context = new WindowedContext:
       baseSystem = workspace.read("AGENT.md").getOrElse("")
       memory = memory
       initial = Session.load(sessionPath)
 
-  // The per-turn tool context. Constant for a CLI run (one local working dir).
+  // One local working directory for the whole run.
   val data = workspace.relative("data")
   if !os.path.isdir(data) then os.makedirs(data)
-  val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(data))
+  val dataDir = os.path.abspath(data)
+
+  // What actually runs for each name the model can call. The CLI grants the
+  // guest no configuration of its own, so `runCode` gets an empty environment.
+  val handlers: Map[String, Handler] = Map:
+    runCode.name           ~ (i => runCode.run(i["code"], Map.empty[String, String]))
+    upload.name            ~ (i => upload.show(i["fileName"], dataDir))
+    bash.name              ~ (i => bash.run(i["command"]))
+    skills.listSpec.name   ~ (i => skills.list())
+    skills.readSpec.name   ~ (i => skills.read(i["name"]))
+    skills.searchSpec.name ~ (i => skills.search(i["query"]))
+    mem.updateSpec.name    ~ (i => mem.update(i["key"], i["value"]))
+    mem.readSpec.name      ~ (i => mem.read(i["key"]))
+    mem.listSpec.name      ~ (i => mem.list())
 
   while true do
     // `None` is end-of-input (Ctrl-D). A blank line or a Ctrl-C'd prompt is
     // `Some("")`, which just re-prompts.
-    val userInput = interact.userInput() rescue None => break
+    val userInput = console.userInput() rescue None => break
 
     if userInput == "quit" || userInput == "exit" then break
 
@@ -75,14 +101,19 @@ private def runChat(): Unit receives stdout, workspace =
 
     val userMsg = UserText(userInput, [])
     val runTurn = (turnInteract: Interact) =>
-      with logger = sessionLog, callContext = callCtx in
-        agent.runTurn(userMsg, turnInteract, maxToolRounds = 50, maxRetries = 4)
+      with logger = sessionLog, interact = turnInteract in
+        agent.runTurn:
+          userMsg
+          handlers
+          dataDir
+          maxToolRounds = 50
+          maxRetries = 4
 
-    val res = interact.turn(userMsg, runTurn)
+    val res = console.turn(userMsg, runTurn)
 
     match res.result
     case Success =>
-      interact.agentResponse(res.finalText)
+      console.agentResponse(res.finalText)
 
     case Interrupted =>
       println("  " + Style.warning("⎋ interrupted"))

@@ -157,7 +157,7 @@ private def replayAudit(path: String): Unit receives logger =
   ! compiler invocation each run replays. Until then, calls return a "sandbox
   ! not built" message rather than building anything themselves.
 //]
-private class RunCodeTool(
+class RunCodeTool(
     sandboxDir: String,
     approvalDeadline: Float,
     buildTimeout: Float,
@@ -180,13 +180,20 @@ private class RunCodeTool(
   def params: List[ToolParam] =
     [strParam("code", "The Jo source code to compile and run")]
 
-  //[ One bounded, isolated run
+  //[ One bounded, isolated run of `code`
     !
     ! Acquire a build slot, compile+run in a fresh temp directory, then delete
     ! it and release the slot — always, even on failure. If the guest has not
     ! been built, return a clear message instead (no build here).
+    !
+    ! `guestEnv` is the driver's per-run configuration for the guest process,
+    ! copied into its environment verbatim — this tool interprets none of it.
+    ! The keys are guest env-var names the driver and its own sandbox runtime
+    ! agree on, an application protocol rather than the framework's. It arrives
+    ! from the driver's route, so the values are whatever that turn should see.
   //]
-  def run(input: ToolInput): RunOutcome =
+  def run(code: String, guestEnv: Map[String, String])
+  : RunOutcome receives logger, interact =
     match findDoneFile
     case None =>
       new RunOutcome(
@@ -196,7 +203,7 @@ private class RunCodeTool(
     case Some(donePath) =>
       gate.acquire()
       val runDir = tempfileMod.mkdtemp(prefix = "run-").asString
-      val outcome = py.try(buildAndRun(input.string("code"), donePath, runDir))
+      val outcome = py.try(buildAndRun(code, donePath, runDir, guestEnv))
       val _ = py.try(shutilMod.rmtree(runDir, ignore_errors = true))
       gate.release()
 
@@ -219,8 +226,9 @@ private class RunCodeTool(
     !
     ! By replaying the recorded invocation from `donePath`, logging the outcome.
   //]
-  private def buildAndRun(code: String, donePath: String, runDir: String)
-  : RunOutcome receives logger, currentInteract, callContext =
+  private def buildAndRun(
+      code: String, donePath: String, runDir: String, guestEnv: Map[String, String])
+  : RunOutcome receives logger, interact =
     // Each run emits one `harpe.tools.runCode` log entry — the program under test
     // plus the fields specific to how it ended — to the injected channel. What
     // becomes of the entry (format, destination) is the Logger backend's policy.
@@ -297,16 +305,16 @@ private class RunCodeTool(
     val approvalActive = threading.event()
     val broker = Broker.start(
       brokerPath,
-      frame => handleBroker(frame, currentInteract, approvalActive)
+      frame => handleBroker(frame, interact, approvalActive)
     )
     runEnv.set("HARPE_BROKER_SOCKET", brokerPath)
 
-    // The driver's per-turn config, copied in verbatim — `runCode` interprets
-    // none of it: the keys are guest env-var names the driver chose (an
-    // application protocol between the driver and its own sandbox runtime, not
-    // the framework's). This is the host→guest "state" channel. See
+    // The driver's config, copied in verbatim — `runCode` interprets none of
+    // it: the keys are guest env-var names the driver chose (an application
+    // protocol between the driver and its own sandbox runtime, not the
+    // framework's). This is the host→guest "state" channel. See
     // host-guest-boundary.md.
-    for k ~ v in callContext.toList do
+    for k ~ v in guestEnv.toList do
       runEnv.set(k, v)
 
     // Run the guest IN its own run dir, so its working directory (`.`) is that
@@ -424,7 +432,7 @@ def runCodeTool(
     runTimeout: Float = 30.0,
     maxConcurrent: Int = 4,
     maxResultChars: Int = 4000)
-: Tool =
+: RunCodeTool =
   val runScript = os.path.join(sandboxDir, "run.sh")
 
   if os.path.isfile(runScript) then

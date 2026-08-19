@@ -21,18 +21,24 @@ def main(): Unit receives stdout =
     Logging.withLogger(Logging.discard, () => chat())
 
 private def chat(): Unit receives stdout, harpe.workspace, logger =
+  val runCode = runCodeTool(workspace.sandboxDir, approvalDeadline = 610.0)
+
   val agent = new Agent:
     brain = Defaults.model()
-    tools = [runCodeTool(workspace.sandboxDir, approvalDeadline = 610.0)]
+    tools = [runCode]
     context = new FullContext:
       baseSystem = workspace.read("AGENT.md").getOrElse("")
       memory = new Memory
       initial = []
 
+  // What runs when the model calls a tool, wired by name.
+  val handlers: Map[String, Handler] = Map:
+    runCode.name ~ (i => runCode.run(i["code"], Map.empty[String, String]))
+
   val data = workspace.relative("data")
   os.makedirs(data)
-  val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(data))
-  val interact = new SimpleInteract
+  val dataDir = os.path.abspath(data)
+  val channel = new SimpleInteract
 
   println "Ask the agent something. Type 'quit' to stop."
 
@@ -42,8 +48,13 @@ private def chat(): Unit receives stdout, harpe.workspace, logger =
     if input == "" then continue
 
     val result =
-      with callContext = callCtx in
-        agent.runTurn(UserText(input, []), interact, maxToolRounds = 10, maxRetries = 2)
+      with interact = channel in
+        agent.runTurn:
+          UserText(input, [])
+          handlers
+          dataDir
+          maxToolRounds = 10
+          maxRetries = 2
 
     match result.result
     case Success => println "\nAgent ▸ \{result.text}"

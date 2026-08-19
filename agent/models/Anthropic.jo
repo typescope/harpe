@@ -15,7 +15,6 @@ import harpe.Model.*
 import harpe.Tool
 import harpe.Tool.*
 import harpe.logging.logger
-import harpe.callContext
 
 
 //[ Cache
@@ -184,8 +183,8 @@ private class AnthropicModel(
     client: py.Dynamic, model: String, cache: AnthropicCache, extraBody: py.Dict)
   view Model
 
-  def startTurn(base: Rendered): Session =
-    new AnthropicSession(client, model, cache, extraBody, base)
+  def startTurn(base: Rendered, dataDir: String): Session =
+    new AnthropicSession(client, model, cache, extraBody, base, dataDir)
 end
 
 //[ A reasoning-preserving turn on the Messages API.
@@ -199,17 +198,15 @@ end
 //]
 private class AnthropicSession(
     client: py.Dynamic, model: String, cache: AnthropicCache,
-    extraBody: py.Dict, base: Rendered)
+    extraBody: py.Dict, base: Rendered, dataDir: String)
   view Session
 
-  // The wire messages, accumulated across the turn. They are seeded lazily on
-  // the first reply, when the session's data directory is available, then grown
-  // with raw tool_result and assistant turns.
+  // The wire messages, accumulated across the turn. They are seeded on the
+  // first reply, then grown with raw tool_result and assistant turns.
   private var messages: py.List = py.list()
   private var initialized: Bool = false
 
-  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger, callContext =
-    val dataDir = callContext.getOrElse("HARPE_DATA_DIR", "")
+  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
     if !initialized then
       messages = toMessages(base.messages, cache, dataDir)
       initialized = true

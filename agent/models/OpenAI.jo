@@ -21,7 +21,6 @@ import harpe.Model.*
 import harpe.Tool
 import harpe.Tool.*
 import harpe.logging.logger
-import harpe.callContext
 
 //[ Responses-API encodings. //]
 private section OpenAIResponses
@@ -151,8 +150,8 @@ private class OpenAIResponsesModel(
     client: py.Dynamic, model: String, effort: String, extraBody: py.Dict)
   view Model
 
-  def startTurn(base: Rendered): Session =
-    new OpenAIResponsesSession(client, model, effort, extraBody, base)
+  def startTurn(base: Rendered, dataDir: String): Session =
+    new OpenAIResponsesSession(client, model, effort, extraBody, base, dataDir)
 end
 
 //[ A reasoning-preserving turn on the Responses API.
@@ -173,7 +172,7 @@ end
 //]
 private class OpenAIResponsesSession(
     client: py.Dynamic, model: String, effort: String,
-    extraBody: py.Dict, base: Rendered)
+    extraBody: py.Dict, base: Rendered, dataDir: String)
   view Session
 
   // "" until the first successful reply, then the id to chain the next request
@@ -183,8 +182,7 @@ private class OpenAIResponsesSession(
   // Stable for the turn, and across every turn built on the same system prompt.
   private val cacheKey: String = "harpe:" + hashlib.sha256Hex(base.system).substring(0, 16)
 
-  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger, callContext =
-    val dataDir = callContext.getOrElse("HARPE_DATA_DIR", "")
+  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
     val toolSpecs = py.list()
     for t in tools do toolSpecs.append(OpenAIResponses.toolSpec(t))
 

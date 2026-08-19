@@ -14,7 +14,6 @@ import harpe.Model.*
 import harpe.Tool
 import harpe.Tool.*
 import harpe.logging.logger
-import harpe.callContext
 
 private section OpenRouterResponses
   def toolSpec(t: Tool): py.Dict =
@@ -118,20 +117,19 @@ private class OpenRouterModel(
     client: py.Dynamic, model: String, effort: String, extraBody: py.Dict)
   view Model
 
-  def startTurn(base: Rendered): Session =
-    new OpenRouterSession(client, model, effort, extraBody, base)
+  def startTurn(base: Rendered, dataDir: String): Session =
+    new OpenRouterSession(client, model, effort, extraBody, base, dataDir)
 end
 
 private class OpenRouterSession(
     client: py.Dynamic, model: String, effort: String,
-    extraBody: py.Dict, base: Rendered)
+    extraBody: py.Dict, base: Rendered, dataDir: String)
   view Session
 
   //[ The complete Responses `input` accepted so far.
     !
     ! `None` means that no request has succeeded. The base is encoded lazily on
-    ! the first `reply`, where `callContext` provides the data directory needed
-    ! for inline attachments. After a successful request, `Some` contains that
+    ! the first `reply`. After a successful request, `Some` contains that
     ! input followed by every raw output item returned by OpenRouter. The next
     ! request copies it and appends new tool results.
     !
@@ -145,8 +143,7 @@ private class OpenRouterSession(
   //]
   private var committedInput: Option[py.List] = None
 
-  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger, callContext =
-    val dataDir = callContext.getOrElse("HARPE_DATA_DIR", "")
+  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
     val input = py.list()
 
     match committedInput

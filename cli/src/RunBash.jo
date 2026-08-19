@@ -9,15 +9,23 @@ import harpe.*
 import harpe.ffi.subprocess
 import harpe.ffi.text
 
-def runBashTool(): Tool receives workspace =
-  Tool(
-    "runBash",
-    "Run a Bash command in the agent workspace after asking the user for approval.",
-    [Tool.strParam("command", "The exact Bash command to run")],
-    input => runBash(input.string("command"))
-  )
+//[ The `runBash` tool: its spec, and the command runner a route calls. //]
+class RunBashTool
+  view Tool
 
-private def runBash(command: String): Tool.RunOutcome receives workspace, currentInteract =
+  def name: String = "runBash"
+
+  def description: String =
+    "Run a Bash command in the agent workspace after asking the user for approval."
+
+  def params: List[Tool.ToolParam] =
+    [Tool.strParam("command", "The exact Bash command to run")]
+
+  def run(command: String): Tool.RunOutcome receives workspace, interact =
+    runBash(command)
+end
+
+private def runBash(command: String): Tool.RunOutcome receives workspace, interact =
   if command.trim == "" then
     return new Tool.RunOutcome("The command is empty.", "empty command", [])
 
@@ -27,7 +35,7 @@ private def runBash(command: String): Tool.RunOutcome receives workspace, curren
     "```bash\n\{command}\n```"
   )
 
-  match currentInteract.approve(id, request)
+  match interact.approve(id, request)
   case Rejected =>
     new Tool.RunOutcome("The user rejected the command.", "command rejected", [])
 

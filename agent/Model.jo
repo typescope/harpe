@@ -34,7 +34,8 @@ import harpe.logging.logger
   ! never learn reasoning exists.
 //]
 interface Model
-  def startTurn(base: Rendered): Session
+  //[ Open a turn over `base`, resolving any attachment bytes under `dataDir`. //]
+  def startTurn(base: Rendered, dataDir: String): Session
 end
 
 section Model
@@ -145,8 +146,8 @@ section Model
     !
     ! `reply` `receives logger` — read at call time — so a provider can emit its
     ! token usage to the turn's logging context (see `harpe.models.logUsage`).
-    ! `receives callContext` lets the provider resolve inline attachment bytes
-    ! from the session's data directory.
+    ! The data directory an inline attachment's bytes come from is fixed when
+    ! the turn opens, so it is a `startTurn` argument rather than ambient.
     !
     ! Retry contract: `reply` is IDEMPOTENT. `results` are committed to the tail
     ! only on a successful `Reply` (atomically with the assistant message), so a
@@ -154,7 +155,7 @@ section Model
     ! failed attempt mutates nothing. The caller never tracks what it committed.
   //]
   interface Session
-    def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger, callContext
+    def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger
 
   //[ SimpleSession
     !
@@ -164,12 +165,12 @@ section Model
     ! Providers that carry intra-turn state (e.g. reasoning handles) implement
     ! `Session` directly instead.
   //]
-  class SimpleSession(base: Rendered, send: (Rendered, List[Tool]) => ReplyResult receives logger, callContext)
+  class SimpleSession(base: Rendered, send: (Rendered, List[Tool]) => ReplyResult receives logger)
     view Session
 
     private var messages: List[Message] = base.messages
 
-    def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger, callContext =
+    def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
       // Build the request WITHOUT committing, so a failed attempt leaves the tail
       // untouched and a retry (same results) re-sends identically.
       val outgoing =

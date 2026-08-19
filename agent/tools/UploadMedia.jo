@@ -21,7 +21,6 @@ import harpe.ffi.mimetypes
 import harpe.Tool
 import harpe.Tool.*
 import harpe.Model.Attachment
-import harpe.callContext
 import harpe.models.*
 
 //[ Show a file in the data directory to the model directly
@@ -30,7 +29,7 @@ import harpe.models.*
   ! inlinable, returns it as `media` so the render layer shows it to the model
   ! directly. Mirrors `sendFile`'s name handling (basename only, no `..`/`.`).
 //]
-private class UploadMediaTool
+class UploadMediaTool
   view Tool
 
   def name: String = "uploadMedia"
@@ -41,9 +40,8 @@ private class UploadMediaTool
   def params: List[ToolParam] =
     [strParam("fileName", "The name of the image or PDF file in your data directory to view")]
 
-  def run(input: ToolInput): RunOutcome =
-    val fileName = input.string("fileName")
-    val dir = callContext.getOrElse("HARPE_DATA_DIR", "")
+  //[ Attach the data-directory file `fileName` for the model to look at. //]
+  def show(fileName: String, dir: String): RunOutcome =
     val baseName = os.path.basename(fileName.replace("\\", "/"))
 
     if dir == "" then
@@ -79,4 +77,4 @@ private class UploadMediaTool
 end
 
 //[ The `uploadMedia` tool. //]
-def uploadMediaTool(): Tool = new UploadMediaTool
+def uploadMediaTool(): UploadMediaTool = new UploadMediaTool

@@ -2,7 +2,9 @@
   !
   ! The tool abstraction
   !
-  ! A `Tool` is a name + prose + typed parameters + a host-side handler.
+  ! A `Tool` is a name + prose + typed parameters: the spec the model is offered.
+  ! What runs when the model calls it is a `Handler`, which the driver wires to
+  ! the name for each turn.
   !
   ! Tool authors describe inputs in Jo. Each provider renders its own wire spec
   ! from this model, so `Tool` stays provider-neutral and authors never
@@ -17,43 +19,16 @@ import harpe.Tool.*
 import harpe.Model.Attachment
 import harpe.logging.logger
 
-//[ A tool call's driver-supplied context
+//[ A tool spec
   !
-  ! A flat key/value bag the driver populates per turn (e.g. a data-directory
-  ! grant, or backend config). Kept a plain string map, not a struct, so a
-  ! generic tool like `runCode` stays application-agnostic — it copies the pairs
-  ! verbatim into the guest environment and interprets none of them. The keys
-  ! are guest env-var names the driver and its own sandbox runtime agree on — an
-  ! application protocol, not the framework's.
-//]
-type CallContext = Map[String, String]
-
-section CallContext
-  //[ A call context granting nothing — the driver set no config for this turn. //]
-  def empty: CallContext = Map.empty[String, String]
-end
-
-//[ The ambient per-turn call context
+  ! One LLM-facing tool as the model sees it: a Jo description of its name,
+  ! prose, and typed params. It carries no behaviour — see `Handler` — so a spec
+  ! can live as long as the agent while what runs is rewired every turn.
   !
-  ! A context parameter the driver supplies with `with callContext = ... in ...`
-  ! and a tool reads through `receives callContext`, so the handler sees the
-  ! CURRENT turn's config rather than one frozen when the tool was built.
-//]
-param callContext: CallContext
-
-//[ A tool
-  !
-  ! One LLM-facing tool: a Jo description (name, prose, typed params) plus the
-  ! host-side handler invoked when the model calls it. `run` gets the call's
-  ! typed input and returns the outcome — result text fed back to the model plus
-  ! a one-line console summary. Agents build these to extend the toolset.
-  ! Advanced agents build the whole set (including `runCode`).
-  !
-  ! A tool that is just its four parts is built with the `Tool(...)` factory
+  ! A spec that is just its three parts comes from the `Tool(...)` factory
   ! below. A tool with logic of its own — helpers, state it owns, a resource it
-  ! holds — implements this interface directly, so that logic lives in one unit
-  ! instead of in namespace-level functions threading captured values into a
-  ! closure.
+  ! holds — implements this interface and exposes typed methods its routes call,
+  ! so that logic lives in one unit.
 //]
 interface Tool
   //[ The name the model calls this tool by. //]
@@ -68,37 +43,36 @@ interface Tool
     ! built, so a tool may derive its schema from live state.
   //]
   def params: List[ToolParam]
-
-  //[ Handle one call from the model
-    !
-    ! `receives logger, callContext` is declared here and inherited by every
-    ! implementation: the handler reads the ambient logger and driver
-    ! `CallContext` at the call site (the turn loop), so the current turn's
-    ! logging context (see `Logging.withContext`) and config reach it — rather
-    ! than values frozen when the tool was built.
-  //]
-  def run(input: ToolInput): RunOutcome receives logger, callContext, currentInteract
 end
 
-//[ A tool from its four parts
+//[ What a driver wires a tool's name to for one turn
   !
-  ! The plain way to write a tool, and what most tools want:
+  ! The host-side code that actually runs when the model calls a tool. It is
+  ! NOT part of `Tool`: the spec is what the model sees and lives as long as the
+  ! agent, while the handler is written per turn, where the turn's `Interact`
+  ! and the driver's own context are in scope. That is what lets a handler close
+  ! over typed, per-turn values instead of receiving them through an untyped bag.
+  !
+  ! `logger` and `interact` stay ambient so a driver MAY hoist its map to
+  ! session scope and still see the current turn's channel and interaction.
+//]
+type Handler = ToolInput => RunOutcome receives logger, interact
+
+//[ A tool spec from its three parts
+  !
+  ! The plain way to declare a tool, and what most tools want:
   !
   ! ```
   ! Tool:
   !   "weather"
   !   "Look up the current weather in a city"
   !   [Tool.strParam("city", "the city to look up")]
-  !   input => lookUp(input.string("city"))
   ! ```
+  !
+  ! What runs when the model calls it is the driver's `Handler`, wired by name.
 //]
-def Tool(
-    name: String,
-    description: String,
-    params: List[ToolParam],
-    run: ToolInput => RunOutcome receives logger, callContext, currentInteract)
-: Tool =
-  new Tool.SimpleTool(name, description, params, run)
+def Tool(name: String, description: String, params: List[ToolParam]): Tool =
+  new Tool.SimpleTool(name, description, params)
 
 section Tool
   //[ A tool result
@@ -177,44 +151,40 @@ section Tool
   end
 
 
-  //[ A tool that is nothing but its four parts
+  //[ A tool spec that is nothing but its three parts
     !
-    ! What the `Tool(...)` factory builds, and what most tools are: a name,
-    ! prose, params, and a handler that closes over whatever it needs. A tool
-    ! with logic of its own implements `Tool` directly instead — see the
-    ! interface.
+    ! What the `Tool(...)` factory builds. A tool with logic of its own is a
+    ! class implementing `Tool` and exposing whatever typed methods its routes
+    ! call — see `harpe.tools.runCodeTool`.
     !
     ! The constructor parameters are named apart from the interface members
     ! because a class parameter does not itself implement one, so each is
     ! forwarded.
   //]
-  class SimpleTool(
-      toolName: String,
-      toolDescription: String,
-      toolParams: List[ToolParam],
-      handler: ToolInput => RunOutcome receives logger, callContext, currentInteract)
+  class SimpleTool(toolName: String, toolDescription: String, toolParams: List[ToolParam])
     view Tool
 
     def name: String = toolName
     def description: String = toolDescription
     def params: List[ToolParam] = toolParams
-    def run(input: ToolInput): RunOutcome = handler(input)
   end
 
-  //[ Run a tool, containing an unexpected host exception
+  //[ Run a handler, containing an unexpected host exception
     !
-    ! A well-behaved tool returns a `RunOutcome`. This is the backstop for one
-    ! that raises. The failure is fed back to the model as a tool result — so
-    ! the model can react — rather than crashing the turn (or the driver).
+    ! A well-behaved handler returns a `RunOutcome`. This is the backstop for
+    ! one that raises. The failure is fed back to the model as a tool result —
+    ! so the model can react — rather than crashing the turn (or the driver).
+    ! The engine applies it to every route, so a driver's wiring cannot take the
+    ! turn down.
   //]
-  def runSafely(tool: Tool, input: ToolInput): RunOutcome receives logger, callContext, currentInteract =
-    match py.try(tool.run(input))
+  def runSafely(name: String, handler: Handler, input: ToolInput): RunOutcome receives logger, interact =
+    match py.try(handler(input))
     case Ok(outcome) => outcome
 
     case Err(e) =>
       new RunOutcome(
-        "The tool '\{tool.name}' failed: \{e.message}",
-        "error · \{tool.name}",
+        "The tool '\{name}' failed: \{e.message}",
+        "error · \{name}",
         [])
 
   //[ A required string parameter — the common case when defining a tool. //]

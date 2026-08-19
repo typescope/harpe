@@ -15,7 +15,6 @@ import harpe.Model.*
 import harpe.Tool
 import harpe.Tool.*
 import harpe.logging.logger
-import harpe.callContext
 
 private section CompatibleChat
   def toolSpec(t: Tool): py.Dict =
@@ -129,12 +128,12 @@ end
 private class CompatibleModel(client: py.Dynamic, model: String, extraBody: py.Dict)
   view Model
 
-  def startTurn(base: Rendered): Session =
-    new CompatibleSession(client, model, extraBody, base)
+  def startTurn(base: Rendered, dataDir: String): Session =
+    new CompatibleSession(client, model, extraBody, base, dataDir)
 end
 
 private class CompatibleSession(
-    client: py.Dynamic, model: String, extraBody: py.Dict, base: Rendered)
+    client: py.Dynamic, model: String, extraBody: py.Dict, base: Rendered, dataDir: String)
   view Session
 
   //[ Complete Chat Completions messages accepted so far
@@ -145,8 +144,7 @@ private class CompatibleSession(
   //]
   private var committed: Option[py.List] = None
 
-  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger, callContext =
-    val dataDir = callContext.getOrElse("HARPE_DATA_DIR", "")
+  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
     val messages = py.list()
 
     match committed
