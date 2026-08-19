@@ -39,8 +39,7 @@ the agent sees relative names like `api/payments.md`. Markdown is the usual choi
 
 ## The tools
 
-`Defaults.tools(approvalDeadline)` includes three read-only tools over
-`skills/`:
+`new SkillTools(skillsDir)` offers three read-only tools over `skills/`:
 
 - **`skillsList`** — the names of all skill files (with extensions).
 - **`skillsRead`** — the contents of one file, by name.

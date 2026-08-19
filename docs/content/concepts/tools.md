@@ -23,14 +23,14 @@ tool schema. The compiler checks its use before the program runs.
 
 ## What a tool is
 
-`Tool` is an interface with four members:
+A tool is two things that live for different lengths of time. The **spec** is what
+the model is offered, and lives as long as the agent:
 
 ```jo
 interface Tool
   def name: String
   def description: String
   def params: List[ToolParam]
-  def run(input: ToolInput): RunOutcome receives logger, callContext, currentInteract
 end
 ```
 
@@ -39,17 +39,20 @@ end
   for the model, not for yourself.
 - **`params`** — the typed inputs it accepts (below). Read every time a request is
   rendered, so a tool may derive its schema from live state.
-- **`run`** — your host-side handler: it gets the call's typed input and returns a
-  `RunOutcome`. Its `receives` clause is what puts the ambient `logger`, the
-  driver's `callContext`, and `currentInteract` in scope inside the handler, as
-  of the turn the call belongs to.
 
-Most tools are nothing but those four parts, and the `Tool(...)` factory builds one
-from them — that is the next section. A tool with logic of its own implements the
-interface directly instead, which [Tools that own their
-logic](#tools-that-own-their-logic) covers.
+The **handler** is what actually runs, and is wired per turn:
 
-You describe all of this in Jo. Each provider renders its own wire spec from it, so
+```jo
+type Handler = ToolInput => RunOutcome receives logger, interact
+```
+
+Your driver hands `runTurn` a `Map[String, Handler]` pairing each spec's name with
+the code to run. Because you write that map, a handler closes over whatever the
+turn needs — a session's data directory, an API token, your own typed context —
+with nothing passed through the framework to get there. Every spec must have a
+route: an unrouted name aborts the turn before the model is called.
+
+You describe the spec in Jo. Each provider renders its own wire spec from it, so
 you never hand-write JSON schema.
 
 See [Structured output](/concepts/structured-output/) for why Harpe usually keeps
@@ -58,34 +61,40 @@ agent's final answer.
 
 ## What ships
 
-`Defaults.tools(approvalDeadline)` provides:
+The framework provides the tools, and your driver wires them:
 
-- **`runCode`** — compile and run a Jo program in the sandbox. This is the agent's main way
-  to act.
-- **`uploadMedia`** — show an image or PDF from the data directory directly to
-  the chat model.
-- **skill tools** — `skillsList` / `skillsRead` / `skillsSearch`, read-only access
-  to the agent's `skills/`.
+- **`runCodeTool(sandboxDir, approvalDeadline)`** — `runCode`, which compiles and
+  runs a Jo program in the sandbox. This is the agent's main way to act.
+- **`uploadMediaTool()`** — `uploadMedia`, which shows an image or PDF from the
+  data directory directly to the chat model.
+- **`new SkillTools(skillsDir)`** — `skillsList` / `skillsRead` / `skillsSearch`,
+  read-only access to the agent's `skills/`.
+- **`new MemoryTools(memory)`** — `updateMemory` / `readMemory` / `listMemory`,
+  the agent's working memory.
 
-and the drivers add **memory tools** — `updateMemory` / `readMemory` / `listMemory`,
-the agent's working memory. You add yours alongside these.
+Each is an object holding its own configuration, offering `specs` (or being a
+spec itself) plus typed methods your routes call. There is deliberately no
+default toolset: a driver names what its agent can do, so the whole surface is
+readable in one place.
 
 ## Writing a tool
 
-Describe the parameters, read them typed, return a result:
+Declare the spec, then route its name to code that returns a `RunOutcome`:
 
 ```jo
 import harpe.Tool
 import harpe.Tool.*
 
-def weatherTool(): Tool =
+val weather: Tool =
   Tool:
     name = "weather"
     description = "Look up the current weather in a city"
     params = [strParam("city", "the city to look up")]
-    run = input => lookUp(input.string("city"))
 
-// Keep the handler body in a small function. It may use `logger` freely.
+// In the driver's handler map. `logger` is in scope inside a route.
+weather.name ~ (i => lookUp(i["city"]))
+
+// The route stays one line; the work lives in a function.
 // Once a tool grows past that, give it a class instead — see below.
 private def lookUp(city: String): RunOutcome =
   new RunOutcome("Sunny in \{city}, 22°C", "weather · \{city}", [])
@@ -142,8 +151,8 @@ new RunOutcome(elide(output, 4000), "ran · 3.1s", [])
 
 Most of an agent's logic ends up inside its tools, and a tool grows: helper
 functions, a resource it holds open, state it keeps between calls. Implement
-`Tool` directly and all of that lives in one class, instead of in
-namespace-level functions threading captured values through a closure.
+`Tool` directly and all of that lives in one class — the spec it offers, the
+config it holds, and the typed methods its routes call.
 
 ```jo
 class WeatherTool(apiKey: String)
@@ -155,27 +164,32 @@ class WeatherTool(apiKey: String)
   def description: String = "Look up the current weather in a city"
   def params: List[ToolParam] = [strParam("city", "the city to look up")]
 
-  def run(input: ToolInput): RunOutcome =
+  //[ What the route calls. Per-turn values arrive as arguments. //]
+  def lookUp(city: String, units: String): RunOutcome =
     lookups = lookups + 1
-    report(input.string("city"))
+    report(city, units)
 
-  private def report(city: String): RunOutcome =
-    new RunOutcome("Sunny in \{city}, 22°C", "weather · \{city}", [])
+  private def report(city: String, units: String): RunOutcome =
+    new RunOutcome("Sunny in \{city}, 22°\{units}", "weather · \{city}", [])
 end
 ```
 
-Two things to know:
+The object goes in the agent's spec list and its method goes in the handler map:
 
-- `run` does not restate `receives`. It inherits the interface's declaration, so
-  the handler reads the ambient `logger` and `callContext` exactly as a
-  factory-built tool does — the current turn's, not the ones in scope when the
-  tool was constructed.
+```jo
+weather.name ~ (i => weather.lookUp(i["city"], preferredUnits))
+```
+
+Three things to know:
+
+- The tool holds what lives as long as it does — an API key, a connection, a
+  semaphore. Anything that varies per turn or per session is an argument its
+  route supplies, so one object can serve many sessions.
 - A class parameter does not implement an interface member, so name the
   parameters apart from `name` / `description` / `params` and let the members
   read them.
-
-Because `description` and `params` are methods, a tool written this way can also
-compute its schema per turn rather than freezing it at construction.
+- Because `description` and `params` are methods, a tool written this way can
+  compute its schema from live state rather than freezing it at construction.
 
 ## Errors are safe
 
@@ -186,16 +200,30 @@ crashes. Return a clear message for expected failures. Let unexpected ones raise
 
 ## Adding your tool
 
-Tools are assembled per session where your driver constructs its `Agent` — append
-yours to the defaults:
+Wiring happens in two places where your driver constructs its `Agent`. The specs
+go on the agent:
 
 ```jo
-Defaults.tools(610.0) ++ memoryTools(memory) ++ [weatherTool()]
+val specs: List[Tool] = [runCode, weather, ..skills.specs, ..mem.specs]
 ```
 
-That is the whole wiring: the model now sees `weather` in its toolset and can call
-it. (An agent with different needs can build the toolset from scratch instead of
-starting from `Defaults.tools(610.0)`.)
+and the routes go to each turn:
+
+```jo
+val handlers: Map[String, Handler] = Map:
+  runCode.name         ~ (i => runCode.run(i["code"]))
+  weather.name         ~ (i => weather.lookUp(i["city"]))
+  skills.readSpec.name ~ (i => skills.read(i["name"]))
+  mem.updateSpec.name  ~ (i => mem.update(i["key"], i["value"]))
+
+agent.runTurn(userMsg, handlers, maxToolRounds = 50, maxRetries = 4)
+```
+
+That is the whole wiring: the model now sees `weather` in its toolset, and the map
+says exactly what happens when it calls it. The map is also where per-turn and
+per-session values enter — the CLI passes its data directory to `uploadMedia`
+this way, and the `pr-review` example passes a PR URL and a GitHub token into
+`runCode`'s guest environment.
 
 ## Logging from a tool
 

@@ -40,16 +40,25 @@ Those concerns stay in the driver.
 An assembly is ordinary Jo code:
 
 ```jo
+val runCode = runCodeTool(workspace.sandboxDir, approvalDeadline = 610.0)
+val mem = new MemoryTools(memory)
+
 val agent = new Agent:
   brain = brain
-  tools =
-    Defaults.tools(approvalDeadline = 610.0) ++ memoryTools(memory)
+  tools = [runCode, ..mem.specs]
   context = new WindowedContext:
     baseSystem = workspace.read("AGENT.md").getOrElse("")
     memory = memory
     initial = history
 
-agent.runTurn(userMsg, interact, maxToolRounds = 50, maxRetries = 4)
+val handlers: Map[String, Handler] = Map:
+  runCode.name        ~ (i => runCode.run(i["code"]))
+  mem.updateSpec.name ~ (i => mem.update(i["key"], i["value"]))
+  mem.readSpec.name   ~ (i => mem.read(i["key"]))
+  mem.listSpec.name   ~ (i => mem.list())
+
+with interact = channel in
+  agent.runTurn(userMsg, handlers, maxToolRounds = 50, maxRetries = 4)
 ```
 
 Select another [model](/concepts/models/), add or remove
@@ -84,7 +93,7 @@ The default turn loop can be used without constructing an `Agent`:
 
 ```jo
 Agent.runTurn(
-  userMsg, brain, tools, context, interact,
+  userMsg, brain, tools, handlers, context,
   maxToolRounds, maxRetries)
 ```
 

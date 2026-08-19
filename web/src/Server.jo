@@ -32,7 +32,6 @@ import harpe.ffi.mimetypes
 import harpe.ffi.builtins
 
 import harpe.Agent
-import harpe.callContext
 import harpe.Interact
 import harpe.interact
 import harpe.Defaults
@@ -46,10 +45,10 @@ import harpe.Model.Message
 import harpe.Model.UserText
 import harpe.Model.Attachment
 import harpe.Model.ToolResults
-import harpe.tools.memoryTools
-import harpe.tools.runCodeTool
+import harpe.tools.*
 import harpe.context.WindowedContext
 import harpe.Tool
+import harpe.Handler
 import harpe.Tool.ToolInput
 import harpe.turns.Failed
 
@@ -65,14 +64,20 @@ import harpe.turns.Failed
   ! does not resolve, so the model can correct it (write the file first, or fix a
   ! typo) rather than silently failing.
 //]
-def sendFileTool(): Tool = Tool:
-  name = "sendFile"
-  description = "Deliver a file to the user — it appears as an attachment in your reply. Write the file to the data directory first (e.g. with `fs`)."
-  params = [Tool.strParam("fileName", "The name of the file in your data directory to send to the user")]
-  run = input =>
-    val fileName = input.string("fileName")
-    val dir = callContext.getOrElse("HARPE_DATA_DIR", "")
-    val name = os.path.basename(fileName.replace("\\", "/"))
+class SendFileTool
+  view Tool
+
+  def name: String = "sendFile"
+
+  def description: String =
+    "Deliver a file to the user — it appears as an attachment in your reply. Write the file to the data directory first (e.g. with `fs`)."
+
+  def params: List[Tool.ToolParam] =
+    [Tool.strParam("fileName", "The name of the file in your data directory to send to the user")]
+
+  //[ Record the intent to deliver `fileName` from the session directory `dir`. //]
+  def send(fileName: String, dir: String): Tool.RunOutcome =
+    val baseName = os.path.basename(fileName.replace("\\", "/"))
 
     if dir == "" then
       new Tool.RunOutcome:
@@ -80,7 +85,7 @@ def sendFileTool(): Tool = Tool:
         "sendFile · no data dir"
         media = []
 
-    else if name == "" || name == "." || name == ".." || !os.path.isfile(os.path.join(dir, name)) then
+    else if baseName == "" || baseName == "." || baseName == ".." || !os.path.isfile(os.path.join(dir, baseName)) then
       new Tool.RunOutcome:
         "No such file: '\{fileName}'. Write it to your data directory first, then send it."
         "sendFile · no such file"
@@ -88,8 +93,8 @@ def sendFileTool(): Tool = Tool:
 
     else
       new Tool.RunOutcome:
-        "Sent '\{name}' to the user."
-        "sendFile · \{name}"
+        "Sent '\{baseName}' to the user."
+        "sendFile · \{baseName}"
         media = []
 
 class ChatServer(brain: Model, name: String, wspace: Workspace)
@@ -103,7 +108,12 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
   // The `runCode` tool the interactive editor (`/api/run`) executes against — the
   // same compile+sandbox machinery the agent uses, so an edited script runs exactly
   // as the agent's would, with the session's data dir as its `fs` root.
-  private val runTool: Tool = runCodeTool(wspace.sandboxDir, 610.0)
+  // The tools every session shares. `runTool` holds the build semaphore, so one
+  // instance bounds concurrent sandbox runs across the whole server.
+  private val runTool: RunCodeTool = runCodeTool(wspace.sandboxDir, 610.0)
+  private val upload: UploadMediaTool = uploadMediaTool()
+  private val sendFile: SendFileTool = new SendFileTool
+  private val skills: SkillTools = new SkillTools(wspace.skillsDir)
 
   //[ The WSGI application: establish the request context, then route
     !
@@ -202,7 +212,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     val body = json.loads(readBody(environ)).cast[py.Dict]
     val text = body.get("text", "").asString
     val reqId = body.get("session", "").asString
-    val attachments = parseAttachments(body.get("attachments", py.list()).cast[py.List])
+    val attachmentItems = body.get("attachments", py.list()).cast[py.List]
 
     val headers = py.list(
       py.tuple("Content-Type", "application/x-ndjson"),
@@ -214,7 +224,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
     // A turn needs either text or at least one attachment (an attachments-only
     // message — "here, look at this file" — is valid).
-    if text.trim == "" && attachments.isEmpty then
+    if text.trim == "" && attachmentItems.size == 0 then
       sink(py.dict("type" ~ "error", "detail" ~ "empty message"))
 
     else
@@ -228,7 +238,9 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       // the session lock), and the turn fans its events out to it and to any
       // tab that subscribes mid-turn. Tag every log entry with the session it
       // belongs to. The
-      val input = UserText(text, attachments)
+      // The files live in the session's own data directory, so their paths are
+      // only knowable once the session is resolved.
+      val input = UserText(text, parseAttachments(attachmentItems, Session.dataDir(session.id)))
       session.runTurn(input, sink, maxToolRounds = 50, maxRetries = 4)
 
     py.list()
@@ -311,24 +323,46 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     case Some(session) => session.state
     case None          => Idle
 
+  //[ What runs for each tool name, for one session
+    !
+    ! Every session gets its own data directory — a multi-session server must
+    ! not hand one shared directory to every session, so `fs` (and the document
+    ! readers) are rooted per session. Uploads land there, agent output surfaces
+    ! there, and these routes are where that directory reaches the tools.
+  //]
+  private def routes(mem: MemoryTools, id: String): Map[String, Handler] =
+    val dataDir = os.path.abspath(Session.dataDir(id))
+    Map:
+      runTool.name           ~ (i => runTool.run(i["code"]))
+      upload.name            ~ (i => upload.show(i["fileName"], dataDir))
+      sendFile.name          ~ (i => sendFile.send(i["fileName"], dataDir))
+      skills.listSpec.name   ~ (i => skills.list())
+      skills.readSpec.name   ~ (i => skills.read(i["name"]))
+      skills.searchSpec.name ~ (i => skills.search(i["query"]))
+      mem.updateSpec.name    ~ (i => mem.update(i["key"], i["value"]))
+      mem.readSpec.name      ~ (i => mem.read(i["key"]))
+      mem.listSpec.name      ~ (i => mem.list())
+
   //[ A fresh session under a newly-minted, time-sortable id. //]
   private def createSession(): Session receives workspace =
     val id = time.strftime("%Y%m%dT%H%M%S") + "-" + secrets.tokenHex(nbytes = 2)
     val memory = new Memory
+    val mem = new MemoryTools(memory)
     val agent = new Agent:
       brain = brain
-      tools = Defaults.tools(610.0) ++ memoryTools(memory) ++ [sendFileTool()]
+      tools = [runTool, upload, sendFile, ..skills.specs, ..mem.specs]
       context = new WindowedContext:
         baseSystem = workspace.read("AGENT.md").getOrElse("")
         memory = memory
         initial = []
 
-    // Grant this session its own data directory as HARPE_DATA_DIR — a
-    // multi-session server must not hand one shared directory to every session,
-    // so `fs` (and the document readers) are rooted per session. Uploads land
-    // there. Agent output surfaces there.
-    val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(Session.dataDir(id)))
-    val session = new Session(id, Session.forSession(id), agent, memory, Session.memoryPath(id), callCtx)
+    val session = new Session:
+      id
+      Session.forSession(id)
+      agent
+      memory
+      Session.memoryPath(id)
+      routes(mem, id)
 
     registryLock.acquire()
     registry.set(id, session)
@@ -356,16 +390,16 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       val memory = Memory.load(Session.memoryPath(id))
       // `Session.load` caps the replayed transcript (a RAM backstop). The full
       // transcript stays on disk.
+      val mem = new MemoryTools(memory)
       val agent = new Agent:
         brain = brain
-        tools = Defaults.tools(610.0) ++ memoryTools(memory) ++ [sendFileTool()]
+        tools = [runTool, upload, sendFile, ..skills.specs, ..mem.specs]
         context = new WindowedContext:
           baseSystem = workspace.read("AGENT.md").getOrElse("")
           memory = memory
           initial = Session.load(id)
 
-      val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(Session.dataDir(id)))
-      val session = new Session(id, log, agent, memory, Session.memoryPath(id), callCtx)
+      val session = new Session(id, log, agent, memory, Session.memoryPath(id), routes(mem, id))
 
       registryLock.acquire()
       val winner =
@@ -580,7 +614,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! to a basename defensively (the transcript and the model manifest must
     ! never carry a path). The bytes are already on disk in the session dir.
   //]
-  private def parseAttachments(items: py.List): List[Attachment] =
+  private def parseAttachments(items: py.List, dataDir: String): List[Attachment] =
     var atts: List[Attachment] = []
     for aDyn in items do
       val a = aDyn.cast[py.Dict]
@@ -591,6 +625,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
           a.get("size", 0).asInt
           a.get("mime", "").asString
           a.get("inline", false).asBool
+          os.path.join(os.path.abspath(dataDir), name)
         atts = atts + att
 
     atts
@@ -691,10 +726,8 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       val session = if reqId == "" then createSession() else openSession(requestedId)
       val sessionId = session.id
       val outcome =
-        with logger = session.log,
-             callContext = session.callCtx,
-             interact = Interact.unattended
-        in runTool.run(ToolInput(py.dict("code" ~ code)))
+        with logger = session.log, interact = Interact.unattended
+        in runTool.run(code)
       respondJson: startResp, py.dict("session" ~ sessionId, "result" ~ outcome.result, "summary" ~ outcome.summary)
 
   //[ Save a script into a session's files (overwriting a same-named one), so it can be reopened, edited, and re-run

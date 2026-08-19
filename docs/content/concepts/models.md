@@ -21,7 +21,7 @@ interface Model
 section Model
   interface Session
     def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult
-        receives logger, callContext
+        receives logger
   end
 end
 ```

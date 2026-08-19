@@ -49,17 +49,24 @@ my-agent/
 Open `src/Main.jo`. It assembles the entire agent:
 
 ```jo
+val runCode = runCodeTool(workspace.sandboxDir, approvalDeadline = 610.0)
+
 val agent = new Agent:
   brain = Defaults.model()
-  tools = [runCodeTool(workspace.sandboxDir, approvalDeadline = 610.0)]
+  tools = [runCode]
   context = new FullContext:
     baseSystem = workspace.read("AGENT.md").getOrElse("")
     memory = new Memory
     initial = []
+
+// What runs when the model calls a tool, wired by name.
+val handlers: Map[String, Handler] = Map:
+  runCode.name ~ (i => runCode.run(i["code"]))
 ```
 
-The rest of the file reads terminal input, passes it to `agent.runTurn`, and
-prints the answer.
+The agent is offered one tool spec, and the map says what happens when the model
+calls it. The rest of the file reads terminal input, passes it to
+`agent.runTurn` along with the handlers, and prints the answer.
 
 `SimpleInteract` implements the interface through which the engine reports turn
 events and asks whether a turn was cancelled:
