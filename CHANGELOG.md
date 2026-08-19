@@ -12,10 +12,11 @@ them meant contextual values had to reach a long-lived object through an untyped
 string map. `Tool` is now the description alone, and a driver wires each name to
 a handler for each turn.
 
-### harpe-caps
+### harpe-caps 0.3.0
 
-Unchanged, still 0.2.0. The capability interfaces did not move this cycle, so
-`harpe`'s constraint on it and every driver's `sandbox/jo.toml` stay at `0.2`.
+- No changes. The capability interfaces are identical to 0.2.0. The version
+  moves with `harpe` so the two packages a project depends on always carry the
+  same number — a mismatched pair reads like a mistake even when it is correct.
 
 ### harpe 0.3.0
 
