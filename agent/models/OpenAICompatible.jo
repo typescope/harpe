@@ -82,7 +82,7 @@ private section CompatibleChat
           messages.append:
             py.dict("role" ~ "tool", "tool_call_id" ~ r.id, "content" ~ r.content)
 
-          val resultMedia = imageBlocks(r.media)
+          val resultMedia = imageBlocks(r.attachments)
           for block in resultMedia do media.append(block)
 
         if media.size > 0 then messages.append(py.dict("role" ~ "user", "content" ~ media))
@@ -119,7 +119,7 @@ private section CompatibleChat
       messages.append:
         py.dict("role" ~ "tool", "tool_call_id" ~ r.id, "content" ~ r.content)
 
-      val resultMedia = imageBlocks(r.media)
+      val resultMedia = imageBlocks(r.attachments)
       for block in resultMedia do media.append(block)
 
     if media.size > 0 then messages.append(py.dict("role" ~ "user", "content" ~ media))

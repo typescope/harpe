@@ -203,7 +203,7 @@ class RunCodeTool(
       new RunOutcome:
         "The sandbox is not built. Run `jo build` in the sandbox project once before starting the agent."
         "sandbox not built"
-        []
+        attachments = []
 
     case Some(donePath) =>
       gate.acquire()
@@ -215,8 +215,8 @@ class RunCodeTool(
       // Bound only the text the model sees. `buildAndRun` has already logged the
       // full output/error to the run log, so nothing is lost from the record.
       match outcome
-      case Ok(outc) => new RunOutcome(elide(outc.result, maxResultChars), outc.summary, outc.media)
-      case Err(e)   => new RunOutcome("The run failed unexpectedly: \{e.message}", "internal error", [])
+      case Ok(outc) => new RunOutcome(elide(outc.result, maxResultChars), outc.summary, outc.attachments)
+      case Err(e)   => new RunOutcome("The run failed unexpectedly: \{e.message}", "internal error", attachments = [])
 
   //[ Locate the compiler-invocation record left by `jo build` for the guest
     !
@@ -261,7 +261,7 @@ class RunCodeTool(
       return new RunOutcome:
         "The build timed out after \{buildTimeout}s."
         "build timed out · \{buildTimeout}s"
-        []
+        attachments = []
 
     if build.returnCode != 0 then
       val compileError = compilerErrorText(build.out, build.err)
@@ -274,11 +274,11 @@ class RunCodeTool(
       return new RunOutcome:
         "The program did not compile (\{compileSeconds}s):\n\{compileError}"
         "did not compile · \{compileSeconds}s"
-        []
+        attachments = []
 
     // 2. Run the compiled program (its path is the `-o` we just supplied).
     if !os.path.isfile(runOut) then
-      return new RunOutcome("The program compiled but no executable was found.", "no executable produced", [])
+      return new RunOutcome("The program compiled but no executable was found.", "no executable produced", attachments = [])
 
     // A `sandbox/run.sh` wrapper (defense in depth) owns how the program runs — the
     // interpreter, any uid drop, and OS-level confinement (ulimit/landrun/bwrap/…).
@@ -355,12 +355,12 @@ class RunCodeTool(
         return new RunOutcome:
           "The approval did not finish within \{approvalDeadline}s, so the program was stopped."
           "approval timed out · \{runSeconds}s"
-          []
+          attachments = []
       else
         return new RunOutcome:
           "The program ran too long and was stopped after \{runTimeout}s (possible infinite loop)."
           "timed out · ran \{runSeconds}s"
-          []
+          attachments = []
 
     val runReturnCode = run.returnCode
     val runOutText = run.out.trim
@@ -387,7 +387,7 @@ class RunCodeTool(
       "runSeconds"     ~ runSeconds
       "exitCode"       ~ runReturnCode
       "output"         ~ result
-    new RunOutcome(result, summary, [])
+    new RunOutcome(result, summary, attachments = [])
 end
 
 //[ The core "act" tool: compile + run a Jo program against the agent sandbox.

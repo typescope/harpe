@@ -83,19 +83,19 @@ class SendFileTool
       new Tool.RunOutcome:
         "No data directory is available to send from."
         "sendFile · no data dir"
-        media = []
+        attachments = []
 
     else if baseName == "" || baseName == "." || baseName == ".." || !os.path.isfile(os.path.join(dir, baseName)) then
       new Tool.RunOutcome:
         "No such file: '\{fileName}'. Write it to your data directory first, then send it."
         "sendFile · no such file"
-        media = []
+        attachments = []
 
     else
       new Tool.RunOutcome:
         "Sent '\{baseName}' to the user."
         "sendFile · \{baseName}"
-        media = []
+        attachments = []
 
 class ChatServer(brain: Model, name: String, wspace: Workspace)
   // Resident sessions, id -> Session. Persisted sessions not yet touched this
@@ -624,8 +624,8 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
           name
           a.get("size", 0).asInt
           a.get("mime", "").asString
-          a.get("inline", false).asBool
-          os.path.join(os.path.abspath(dataDir), name)
+          inline = a.get("inline", false).asBool
+          path = os.path.join(os.path.abspath(dataDir), name)
         atts = atts + att
 
     atts

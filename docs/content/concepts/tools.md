@@ -39,12 +39,9 @@ request's credentials. Almost nothing about it is stable.
 Bundle the two and one of them has to give. Either the timeless half is rebuilt
 whenever the context changes — a fresh toolset per session, per turn — or the
 contextual values must reach the object some other way, because an object built
-at startup cannot know where this turn's files live. Harpe used to take the
-second road, threading an untyped string map through the whole framework to get
-a data directory into a tool. Keeping the two apart costs one map and removes
-that channel entirely.
+at startup cannot know where this turn's files live.
 
-So: the **spec** is what the model is offered, and lives as long as the agent.
+Keeping them apart costs one map. The spec is what the model is offered:
 
 ```jo
 interface Tool
@@ -147,13 +144,13 @@ input["city"]                  // the indexing form of `string`
 ## Returning a result
 
 ```jo
-class RunOutcome(result, summary, media)
+class RunOutcome(result, summary, attachments)
 ```
 
 - **`result`** is the text fed back to the model — what it sees as the tool's
   output.
 - **`summary`** is a one-line status for the console and logs (e.g. `"weather · Paris"`).
-- **`media`** is a list of attachments to show directly to the model; use `[]`
+- **`attachments`** is a list of files to show directly to the model; use `[]`
   for an ordinary text result.
 
 **Bound large output.** Context is finite, so don't feed the model a megabyte.

@@ -113,7 +113,7 @@ section Transcript
       val list = py.list()
       for result in results do
         list.append(py.dict("id" ~ result.id, "content" ~ result.content,
-                            "media" ~ attachmentsDict(result.media)))
+                            "attachments" ~ attachmentsDict(result.attachments)))
       py.dict("role" ~ "tool_results", "results" ~ list)
 
   private def attachmentsDict(attachments: List[Attachment]): py.List =
@@ -136,8 +136,8 @@ section Transcript
         a.get("name", "").asString
         a.get("size", 0).asInt
         a.get("mime", "").asString
-        a.get("inline", false).asBool
-        a.get("path", "").asString
+        inline = a.get("inline", false).asBool
+        path = a.get("path", "").asString
       attachments = attachments + attachment
     attachments
 
@@ -159,7 +159,7 @@ section Transcript
         val toolResult = ToolResult:
           r.get("id", "").asString
           r.get("content", "").asString
-          attachmentsFrom(r.get("media", py.list()).cast[py.List])
+          attachmentsFrom(r.get("attachments", py.list()).cast[py.List])
         results = results + toolResult
       ToolResults(results)
 end

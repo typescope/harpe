@@ -83,7 +83,7 @@ class SkillTools(skillsDir: String)
   def list(): RunOutcome =
     val names = collectSkills(skillsDir).map(pair => pair.fst)
     val body = if names.isEmpty then "(no skills found)" else names.join("\n")
-    new RunOutcome(body, "listed skills", [])
+    new RunOutcome(body, "listed skills", attachments = [])
 
   def readSpec: Tool =
     Tool:
@@ -101,14 +101,14 @@ class SkillTools(skillsDir: String)
     val absPath = os.path.abspath(os.path.normpath(os.path.join(skillsDir, skill)))
 
     if !confined(absPath) then
-      return new RunOutcome("Access denied: path outside skills directory", "denied · \{skill}", [])
+      return new RunOutcome("Access denied: path outside skills directory", "denied · \{skill}", attachments = [])
 
     if os.path.isfile(absPath) then
       match py.try(py.open(absPath, "r").read())
-        case Ok(c)  => new RunOutcome(c.asString, "read · \{skill}", [])
-        case Err(_) => new RunOutcome("Skill \{skill} could not be read as text.", "unreadable · \{skill}", [])
+        case Ok(c)  => new RunOutcome(c.asString, "read · \{skill}", attachments = [])
+        case Err(_) => new RunOutcome("Skill \{skill} could not be read as text.", "unreadable · \{skill}", attachments = [])
     else
-      new RunOutcome("Skill not found: \{skill}", "not found · \{skill}", [])
+      new RunOutcome("Skill not found: \{skill}", "not found · \{skill}", attachments = [])
 
   def searchSpec: Tool =
     Tool:
@@ -123,7 +123,7 @@ class SkillTools(skillsDir: String)
       "action" ~ "search"
       "query"  ~ query
 
-    new RunOutcome(matches(query), "searched · \{query}", [])
+    new RunOutcome(matches(query), "searched · \{query}", attachments = [])
 
   //[ At most this many matching lines come back, however many files matched. //]
   private def maxHits: Int = 30

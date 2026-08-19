@@ -157,11 +157,11 @@ section Agent
               if handlers.contains(toolName) then
                 runSafely(toolName, handlers[toolName], call.input)
               else
-                RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}", [])
+                RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}", attachments = [])
 
             interact.emit: ToolCallEnded(toolName, outcome.summary)
 
-            toolResults = toolResults + ToolResult(call.id, outcome.result, outcome.media)
+            toolResults = toolResults + ToolResult(call.id, outcome.result, outcome.attachments)
           end
 
           if cancelled || interact.cancelled then

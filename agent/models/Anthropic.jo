@@ -263,17 +263,17 @@ end
 
 //[ A user turn carrying tool_result blocks for `results`.
   !
-  ! `r.media` inlines unconditionally here — unlike a `UserText`'s attachments,
+  ! `r.attachments` inlines unconditionally here — unlike a `UserText`'s attachments,
   ! a tool result exists only for the round it was produced in: `toMessages`
   ! (rendering a PAST, already-committed turn) never re-derives a `tool_result`
-  ! block from a `ToolResults` message's `media`, so a past tool-delivered image
+  ! block from a `ToolResults` message's `attachments`, so a past tool-delivered image
   ! is never resent once this turn ends — no positional guard needed here.
 //]
 private def toolResultMessage(results: List[ToolResult]): py.Dict =
   val content = py.list()
 
   for r in results do
-    val media = anthropicMediaBlocks(r.media)
+    val media = anthropicMediaBlocks(r.attachments)
 
     if media.size == 0 then
       content.append:

@@ -79,12 +79,12 @@ section Tool
     !
     ! - `result` is the text fed back to the model
     ! - `summary` is the one-line status shown in the console
-    ! - `media` is any attachment the tool wants to show the model directly (not
+    ! - `attachments` is any file the tool wants to show the model directly (not
     !   just reference by name) — e.g. `uploadMedia` marking a file `inline` so
     !   the render layer can send it as a real image/document content block.
     !   `[]` for the ordinary, text-only case.
   //]
-  class RunOutcome(result: String, summary: String, media: List[Attachment])
+  class RunOutcome(result: String, summary: String, attachments: List[Attachment])
 
   //[ Tool parameter type
     !
@@ -119,10 +119,10 @@ section Tool
 
   //[ The result of running a tool call, fed back to the model next turn.
     !
-    ! `media` mirrors `RunOutcome.media` — carried through so the provider render
+    ! `attachments` mirrors `RunOutcome.attachments` — carried through so the provider render
     ! layer can decide whether to inline it (see `RunOutcome`).
   //]
-  class ToolResult(id: String, content: String, media: List[Attachment])
+  class ToolResult(id: String, content: String, attachments: List[Attachment])
 
   //[ Input in a tool call
     !
@@ -185,7 +185,7 @@ section Tool
       new RunOutcome:
         "The tool '\{name}' failed: \{e.message}"
         "error · \{name}"
-        []
+        attachments = []
 
   //[ A required string parameter — the common case when defining a tool. //]
   def strParam(name: String, description: String): ToolParam =

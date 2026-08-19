@@ -26,7 +26,7 @@ import harpe.models.*
 //[ Show a file in the data directory to the model directly
   !
   ! Takes `fileName` in the session's data directory and, if its type is
-  ! inlinable, returns it as `media` so the render layer shows it to the model
+  ! inlinable, returns it as an attachment so the render layer shows it to the model
   ! directly. Mirrors `sendFile`'s name handling (basename only, no `..`/`.`).
 //]
 class UploadMediaTool
@@ -45,13 +45,13 @@ class UploadMediaTool
     val baseName = os.path.basename(fileName.replace("\\", "/"))
 
     if dir == "" then
-      new RunOutcome("No data directory is available to upload from.", "uploadMedia · no data dir", [])
+      new RunOutcome("No data directory is available to upload from.", "uploadMedia · no data dir", attachments = [])
 
     else if !isDataFile(dir, baseName) then
       new RunOutcome:
         "No such file: '\{fileName}'. Write it to your data directory first, then upload it."
         "uploadMedia · no such file"
-        []
+        attachments = []
 
     else
       inline(dir, baseName)
@@ -68,14 +68,14 @@ class UploadMediaTool
       new RunOutcome:
         "'\{baseName}' is \{mime}, which cannot be shown directly — only JPEG/PNG/GIF/WebP images and PDFs can. Use `ocr`/`pdf`/`fs` to read it instead."
         "uploadMedia · unsupported · \{mime}"
-        []
+        attachments = []
 
     else
       val path = os.path.join(dir, baseName)
       new RunOutcome:
         "'\{baseName}' is attached below — look at it directly in your next reply."
         "uploadMedia · \{baseName}"
-        [Attachment(baseName, os.path.getsize(path), mime, true, path)]
+        [Attachment(baseName, os.path.getsize(path), mime, inline = true, path = path)]
 end
 
 //[ The `uploadMedia` tool. //]
