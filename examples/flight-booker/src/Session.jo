@@ -18,6 +18,7 @@ import harpe.Agent
 import harpe.Memory
 import harpe.Transcript
 import harpe.workspace
+import harpe.callContext
 import harpe.logging.JsonlLogger
 import harpe.logging.Logger
 import harpe.logging.logger
@@ -51,7 +52,7 @@ private class Session(id: String, log: Logger, agent: Agent, memory: Memory, mem
     val userMsg = UserText(incoming.text, [])
     val interact = new TelegramInteract(client, this.id, approvalHandler)
 
-    val result = with logger = log in
+    val result = with logger = log, callContext = Map("DUFFEL_API_KEY" ~ os.getenv("DUFFEL_API_KEY", "")) in
       agent.runTurn(userMsg, interact, maxToolRounds, maxRetries)
 
     match result.result
@@ -69,6 +70,9 @@ private class Session(id: String, log: Logger, agent: Agent, memory: Memory, mem
         if detail == "" then "Request failed. Please try again."
         else "Request failed: \{detail}"
       client.sendMessage(this.id, message)
+
+    case None =>
+      rollback()
 
   private def commit(): Unit =
     saveMemory()
