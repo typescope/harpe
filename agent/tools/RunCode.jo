@@ -132,11 +132,12 @@ private def handleBroker(
         case Ok(value)   => value
         case Err(error) => abort error.message
 
-      Frame.of(json.dumps(py.dict(
-        "ok" ~ true,
-        "id" ~ id,
-        "decision" ~ ApprovalDecision.wire(decision)
-      )))
+      Frame.of:
+        json.dumps:
+          py.dict:
+            "ok"       ~ true
+            "id"       ~ id
+            "decision" ~ ApprovalDecision.wire(decision)
 
 //[ Replay the sandbox's audit log through the ambient (contextual) `logger`.
   !
@@ -199,9 +200,10 @@ class RunCodeTool(
   : RunOutcome receives logger, interact =
     match findDoneFile
     case None =>
-      new RunOutcome(
-        "The sandbox is not built. Run `jo build` in the sandbox project once before starting the agent.",
-        "sandbox not built", [])
+      new RunOutcome:
+        "The sandbox is not built. Run `jo build` in the sandbox project once before starting the agent."
+        "sandbox not built"
+        []
 
     case Some(donePath) =>
       gate.acquire()
@@ -256,9 +258,10 @@ class RunCodeTool(
         "compileSeconds" ~ compileSeconds
         "timedOut"       ~ true
         "phase"          ~ "compile"
-      return new RunOutcome(
-        "The build timed out after \{buildTimeout}s.",
-        "build timed out · \{buildTimeout}s", [])
+      return new RunOutcome:
+        "The build timed out after \{buildTimeout}s."
+        "build timed out · \{buildTimeout}s"
+        []
 
     if build.returnCode != 0 then
       val compileError = compilerErrorText(build.out, build.err)
@@ -268,9 +271,10 @@ class RunCodeTool(
         "compiled"       ~ false
         "compileSeconds" ~ compileSeconds
         "compileError"   ~ compileError
-      return new RunOutcome(
-        "The program did not compile (\{compileSeconds}s):\n\{compileError}",
-        "did not compile · \{compileSeconds}s", [])
+      return new RunOutcome:
+        "The program did not compile (\{compileSeconds}s):\n\{compileError}"
+        "did not compile · \{compileSeconds}s"
+        []
 
     // 2. Run the compiled program (its path is the `-o` we just supplied).
     if !os.path.isfile(runOut) then
@@ -306,10 +310,9 @@ class RunCodeTool(
     // transcript.
     val brokerPath = os.path.join(runDir, "broker.sock")
     val approvalActive = threading.event()
-    val broker = Broker.start(
-      brokerPath,
+    val broker = Broker.start:
+      brokerPath
       frame => handleBroker(frame, interact, approvalActive)
-    )
     runEnv.set("HARPE_BROKER_SOCKET", brokerPath)
 
     // The driver's config, copied in verbatim — `runCode` interprets none of
@@ -323,14 +326,14 @@ class RunCodeTool(
     // Run the guest IN its own run dir, so its working directory (`.`) is that
     // isolated scratch — never the host's agent dir — with no env var needed to name it.
     val t1 = time.now()
-    val attemptedRun = py.try(subprocess.runCappedWithPauses(
-      runCmd,
-      runTimeout,
-      approvalActive,
-      approvalDeadline,
-      env = runEnv,
-      cwd = runDir
-    ))
+    val attemptedRun = py.try:
+      subprocess.runCappedWithPauses:
+        runCmd
+        runTimeout
+        approvalActive
+        approvalDeadline
+        env = runEnv
+        cwd = runDir
     broker.stop()
     val run =
       match attemptedRun
@@ -349,13 +352,15 @@ class RunCodeTool(
         "phase"          ~ (if run.pauseTimedOut then "approval" else "run")
 
       if run.pauseTimedOut then
-        return new RunOutcome(
-          "The approval did not finish within \{approvalDeadline}s, so the program was stopped.",
-          "approval timed out · \{runSeconds}s", [])
+        return new RunOutcome:
+          "The approval did not finish within \{approvalDeadline}s, so the program was stopped."
+          "approval timed out · \{runSeconds}s"
+          []
       else
-        return new RunOutcome(
-          "The program ran too long and was stopped after \{runTimeout}s (possible infinite loop).",
-          "timed out · ran \{runSeconds}s", [])
+        return new RunOutcome:
+          "The program ran too long and was stopped after \{runTimeout}s (possible infinite loop)."
+          "timed out · ran \{runSeconds}s"
+          []
 
     val runReturnCode = run.returnCode
     val runOutText = run.out.trim
@@ -443,5 +448,10 @@ def runCodeTool(
     if !osMod.access(runScript, osMod.X_OK).asBool then
       abort "sandbox run.sh exists but is not executable — run `chmod +x \{runScript}` (see docs/concepts/sandbox.md)"
 
-  new RunCodeTool(
-    sandboxDir, approvalDeadline, buildTimeout, runTimeout, maxConcurrent, maxResultChars)
+  new RunCodeTool:
+    sandboxDir
+    approvalDeadline
+    buildTimeout
+    runTimeout
+    maxConcurrent
+    maxResultChars

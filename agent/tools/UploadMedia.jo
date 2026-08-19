@@ -48,9 +48,10 @@ class UploadMediaTool
       new RunOutcome("No data directory is available to upload from.", "uploadMedia · no data dir", [])
 
     else if !isDataFile(dir, baseName) then
-      new RunOutcome(
-        "No such file: '\{fileName}'. Write it to your data directory first, then upload it.",
-        "uploadMedia · no such file", [])
+      new RunOutcome:
+        "No such file: '\{fileName}'. Write it to your data directory first, then upload it."
+        "uploadMedia · no such file"
+        []
 
     else
       inline(dir, baseName)
@@ -64,9 +65,10 @@ class UploadMediaTool
     val mime = mimetypes.guessType(baseName).getOrElse("application/octet-stream")
 
     if !isInlineImage(mime) && !isInlinePdf(mime) then
-      new RunOutcome(
-        "'\{baseName}' is \{mime}, which cannot be shown directly — only JPEG/PNG/GIF/WebP images and PDFs can. Use `ocr`/`pdf`/`fs` to read it instead.",
-        "uploadMedia · unsupported · \{mime}", [])
+      new RunOutcome:
+        "'\{baseName}' is \{mime}, which cannot be shown directly — only JPEG/PNG/GIF/WebP images and PDFs can. Use `ocr`/`pdf`/`fs` to read it instead."
+        "uploadMedia · unsupported · \{mime}"
+        []
 
     else
       val path = os.path.join(dir, baseName)

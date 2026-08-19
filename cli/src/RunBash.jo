@@ -53,10 +53,10 @@ private def runBash(command: String): Tool.RunOutcome receives workspace, intera
     )
 
     if result.timedOut then
-      new Tool.RunOutcome(
-        "The command ran longer than 30 seconds and was stopped.",
-        "command timed out",
-        [])
+      new Tool.RunOutcome:
+        "The command ran longer than 30 seconds and was stopped."
+        "command timed out"
+        []
 
     else
       val out = result.out.trim
@@ -70,7 +70,7 @@ private def runBash(command: String): Tool.RunOutcome receives workspace, intera
       if result.returnCode == 0 then
         new Tool.RunOutcome(Tool.elide(content, 4000), "command completed", [])
       else
-        new Tool.RunOutcome(
-          Tool.elide("The command exited with status \{result.returnCode}:\n\{content}", 4000),
-          "command failed · exit \{result.returnCode}",
-          [])
+        new Tool.RunOutcome:
+          Tool.elide("The command exited with status \{result.returnCode}:\n\{content}", 4000)
+          "command failed · exit \{result.returnCode}"
+          []

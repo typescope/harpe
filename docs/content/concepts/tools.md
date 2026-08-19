@@ -23,8 +23,28 @@ tool schema. The compiler checks its use before the program runs.
 
 ## What a tool is
 
-A tool is two things that live for different lengths of time. The **spec** is what
-the model is offered, and lives as long as the agent:
+A tool is two things, and Harpe keeps them apart because they live in different
+time.
+
+A **spec** is timeless. *`weather` takes a city and returns its weather* is true
+on the first turn and the thousandth, in every session, for every user. It does
+not depend on who is asking, what was said before, or where this user's files
+are. It is also what each provider re-renders into wire format on every single
+request.
+
+An **executor** is contextual. It runs *now*: for this turn, in this session,
+against this user's data directory, through this interaction channel, with this
+request's credentials. Almost nothing about it is stable.
+
+Bundle the two and one of them has to give. Either the timeless half is rebuilt
+whenever the context changes — a fresh toolset per session, per turn — or the
+contextual values must reach the object some other way, because an object built
+at startup cannot know where this turn's files live. Harpe used to take the
+second road, threading an untyped string map through the whole framework to get
+a data directory into a tool. Keeping the two apart costs one map and removes
+that channel entirely.
+
+So: the **spec** is what the model is offered, and lives as long as the agent.
 
 ```jo
 interface Tool
@@ -40,7 +60,7 @@ end
 - **`params`** — the typed inputs it accepts (below). Read every time a request is
   rendered, so a tool may derive its schema from live state.
 
-The **handler** is what actually runs, and is wired per turn:
+The **handler** is the executor — what actually runs — and is wired per turn:
 
 ```jo
 type Handler = ToolInput => RunOutcome receives logger, interact
@@ -182,9 +202,11 @@ weather.name ~ (i => weather.lookUp(i["city"], preferredUnits))
 
 Three things to know:
 
-- The tool holds what lives as long as it does — an API key, a connection, a
-  semaphore. Anything that varies per turn or per session is an argument its
-  route supplies, so one object can serve many sessions.
+- The object holds only what is as timeless as its spec — an API key, a
+  connection, a semaphore. Everything contextual is an argument its route
+  supplies, which is what lets one object serve every session at once. The web
+  server relies on this: a single `runCode` bounds sandbox concurrency across the
+  whole process, while each session's route hands it that session's settings.
 - A class parameter does not implement an interface member, so name the
   parameters apart from `name` / `description` / `params` and let the members
   read them.
