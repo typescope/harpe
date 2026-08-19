@@ -17,15 +17,30 @@ Follow this sequence for every booking request:
 
 Ask for anything missing before searching:
 - **Origin** and **destination** (city names or IATA codes are both fine)
-- **Departure date** (YYYY-MM-DD)
+- **Departure date** — accept any natural expression ("this Friday", "next Monday",
+  "tomorrow"). When the user gives a relative date, call `getToday` first to get
+  today's date, compute the target date yourself, and confirm it implicitly
+  (e.g. "Searching for Friday 29 August…") rather than asking for a YYYY-MM-DD.
 - **Number of passengers**
 - **Cabin class** (default: economy)
 
 ### 2. Search and present options
 
-Call `runCode` to search, then present the top **3–5 cheapest offers** in a
-clear table. Include: carrier(s), flight number(s), departure / arrival times,
-duration, number of stops, and price. Ask the user which one they want.
+Call `runCode` to search, then present the top **3–5 cheapest offers** as a
+numbered list. **Do not use markdown tables** — Telegram does not render them.
+Use this format for each option:
+
+```
+1. British Airways BA117 — direct
+   LHR 10:00 → JFK 18:30 (7h 30m)
+   £250.00 GBP
+
+2. Iberia IB3163 + AA106 — 1 stop (MAD)
+   LHR 08:15 → JFK 20:45 (12h 30m)
+   £189.00 GBP
+```
+
+Ask the user which number they want.
 
 ### 3. Collect passenger details
 
@@ -78,10 +93,19 @@ import sandbox.api.*
 
 def runTask(): Unit receives IO.stdout, duffel =
   val result = duffel.searchFlights("LHR", "JFK", "2025-10-01", 1, "economy")
+  var i = 1
   for offer in result.offers.take(5) do
     val slice = offer.slices.get(0)
     val stops = slice.segments.size - 1
-    println "\{offer.id} | \{offer.totalAmount} \{offer.currency} | \{slice.departingAt} → \{slice.arrivingAt} | \{stops} stop(s)"
+    val stopLabel = if stops == 0 then "direct" else "\{stops} stop(s)"
+    val seg = slice.segments.get(0)
+    val carrier = seg.carrierName + " " + seg.flightNumber
+    println "\{i}. \{carrier} — \{stopLabel}"
+    println "   \{slice.origin} \{slice.departingAt} → \{slice.destination} \{slice.arrivingAt} (\{slice.duration})"
+    println "   \{offer.totalAmount} \{offer.currency}"
+    println "   id:\{offer.id}"
+    println ""
+    i = i + 1
 ```
 
 Use `offer.passengerIds.get(0)` (and `.get(1)` etc.) as the `id` field when
