@@ -149,7 +149,7 @@ class DuffelClient(token: String)
     val reqResp = apiCall("POST", "/air/offer_requests", Some(reqBody))
     if reqResp.contains("errors") then
       val err = firstError(reqResp)
-      println "searchFlights: offer request failed — " + err
+      println("searchFlights: offer request failed — " + err)
       return new api.SearchResult("", [])
 
     val requestId = reqResp.get("data").cast[py.Dict].get("id").asString
@@ -162,7 +162,7 @@ class DuffelClient(token: String)
     )
     if offersResp.contains("errors") then
       val err = firstError(offersResp)
-      println "searchFlights: list offers failed — " + err
+      println("searchFlights: list offers failed — " + err)
       return new api.SearchResult(requestId, [])
 
     val offerList = offersResp.get("data").cast[py.List]
