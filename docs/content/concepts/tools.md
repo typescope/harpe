@@ -112,6 +112,7 @@ input.int("count")             // 0 if absent
 input.bool("verbose")          // false if absent
 input.num("threshold")         // 0.0 if absent
 input.intOr("count", 10)       // 10 if absent
+input["city"]                  // the indexing form of `string`
 ```
 
 ## Returning a result

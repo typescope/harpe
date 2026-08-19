@@ -156,6 +156,13 @@ section Tool
     ! handlers read `input.string("code")` instead of poking a raw py.Dict.
   //]
   class ToolInput(raw: py.Dict)
+    //[ The string argument under `key`, or `""` if the model omitted it
+      !
+      ! The indexing form of `string`, so a route reads as one line:
+      ! `i => runBash(i["command"])`.
+    //]
+    def get(key: String): String = string(key)
+
     def string(name: String): String = raw.get(name, "").asString
     def stringOr(name: String, fallback: String): String = raw.get(name, fallback).asString
 

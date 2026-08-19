@@ -38,6 +38,7 @@ def run(): Unit receives stdout, logger, callContext, currentInteract =
   check("int reads an integer", full.int("n") == 42)
   check("bool reads a boolean", full.bool("b") == true)
   check("num reads a number", full.num("f") == 3.5)
+  check("indexing reads a string", full["s"] == "hi")
 
   // --- missing keys fall back: explicit fallback, then bare defaults ---
   val empty = ToolInput(py.dict())
@@ -49,6 +50,7 @@ def run(): Unit receives stdout, logger, callContext, currentInteract =
   check("int default is zero", empty.int("x") == 0)
   check("bool default is false", empty.bool("x") == false)
   check("num default is zero", empty.num("x") == 0.0)
+  check("indexing default is empty", empty["x"] == "")
 
   // --- parameter constructors carry the right type, all required ---
   val sp = strParam("a", "d")
