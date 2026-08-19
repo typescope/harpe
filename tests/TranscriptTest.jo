@@ -42,7 +42,7 @@ def run(): Unit receives stdout =
 
   // One answered turn, including an unrelated diagnostic entry.
   with logger = sessionLog in
-    Transcript.start(UserText("hi", []))
+    Transcript.start(UserInput("hi", []))
     Transcript.append(Assistant("on it", [call]))
     logger.log("myagent.debug", "note" ~ "between messages")
     Transcript.append(ToolResults([ToolResult("c1", "42", [])]))
@@ -81,13 +81,13 @@ def run(): Unit receives stdout =
   // User messages are durable even when their turns fail or crash. Assistant
   // messages remain provisional, while a later answered turn commits normally.
   with logger = sessionLog in
-    Transcript.start(UserText("will fail", []))
+    Transcript.start(UserInput("will fail", []))
     Transcript.append(Assistant("partial", []))
     Transcript.failed("bad model")
-    Transcript.start(UserText("again", []))
+    Transcript.start(UserInput("again", []))
     Transcript.append(Assistant("done", []))
     Transcript.commit()
-    Transcript.start(UserText("crashed", []))
+    Transcript.start(UserInput("crashed", []))
 
   var entries: List[harpe.logging.Entry] = []
   val records = readRecords(path)
@@ -105,9 +105,9 @@ def run(): Unit receives stdout =
 
   val loaded = Transcript.fromEntries(entries)
   check("loader keeps every user message", loaded.size == 7)
-  check("loader drops failed assistant message", loaded.get(4) is UserText("again", _))
+  check("loader drops failed assistant message", loaded.get(4) is UserInput("again", _))
   check("loader keeps later answered turn", loaded.get(5) is Assistant("done", _))
-  check("loader keeps crash user message", loaded.get(6) is UserText("crashed", _))
+  check("loader keeps crash user message", loaded.get(6) is UserInput("crashed", _))
 
   sessionLog.close()
   os.unlink(path)

@@ -46,26 +46,35 @@ my-agent/
     Task.jo
 ```
 
-Open `src/Main.jo`. It assembles the entire agent:
+Open `src/Main.jo`. It names the pieces a turn will be run with:
 
 ```jo
 val runCode = runCodeTool(workspace.sandboxDir, approvalDeadline = 610.0)
 
-val agent = new Agent:
-  brain = Defaults.model()
-  tools = [runCode]
-  context = new FullContext:
-    baseSystem = workspace.read("AGENT.md").getOrElse("")
-    memory = new Memory
-    initial = []
+val brain = Defaults.model()
+
+// The context is the one piece that must outlive a turn: it carries the
+// conversation from one turn to the next.
+val context = new FullContext:
+  baseSystem = workspace.read("AGENT.md").getOrElse("")
+  memory = new Memory
+  initial = []
 
 // What runs when the model calls a tool, wired by name.
 val routes = runCode.routes()
 ```
 
-The agent is offered one tool spec, and `routes` says what happens when the model
-calls it. The rest of the file reads terminal input, passes it to
-`agent.runTurn` along with the routes, and prints the answer.
+There is no `Agent` object to build — these are just values, and a turn is the
+call that brings them together. The model is offered one tool spec, and `routes`
+says what happens when it calls it. The rest of the file reads terminal input,
+hands it to `Agent.runTurn` with these pieces, and prints the answer:
+
+```jo
+Agent.runTurn(input, brain, [runCode], routes, context, maxToolRounds = 10, maxRetries = 2)
+```
+
+`input` is the raw string from the terminal — `runTurn` accepts one directly,
+so nothing has to wrap it first.
 
 `SimpleInteract` implements the interface through which the engine reports turn
 events and asks whether a turn was cancelled:

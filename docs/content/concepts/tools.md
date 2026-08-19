@@ -249,7 +249,7 @@ val routes =
     ++ runCode.routes()
     ++ weather.routes(preferredUnits)
 
-agent.runTurn(userMsg, routes, maxToolRounds = 50, maxRetries = 4)
+Agent.runTurn(userMsg, brain, specs, routes, context, maxToolRounds = 50, maxRetries = 4)
 ```
 
 `.add: name, handler` is there for a one-off, but a tool worth naming is worth

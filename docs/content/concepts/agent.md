@@ -19,47 +19,78 @@ to work together while keeping each independently extensible and customizable.
 
 ![A driver owns sessions, persistence, and presentation. Its core coordinates a model, tools, and context through an iterative turn engine.](/img/agent-components.svg)
 
-## A convenient assembly
+## There is no Agent object
 
-Harpe provides a convenient assembly for developing agents:
+Harpe has no `Agent` class, and this is the reason why.
+
+Suppose there were one. It would hold some of what a turn needs — a model, some
+tools, a context — while the rest stayed arguments. Ask why the boundary falls
+there and the answer runs out. Why is the tool budget a turn policy but the
+toolset the agent? Why does the routing table, which every driver builds beside
+its tools and keeps for exactly as long, live on the other side of the line?
+Any answer describes a habit, not a distinction. Naming a subset "the agent" is
+pointing at a fourth building.
+
+So a turn takes what a turn needs, and each input is an ordinary parameter with
+a default:
 
 ```jo
-class Agent(brain: Model, tools: List[Tool], context: Context)
+def runTurn(
+    input: UserInput :- [stringInput],
+    brain: Model = Defaults.model,
+    tools: List[Tool] = NoTools,
+    routes: Routes = Routes.empty,
+    context: Context = NoHistory,
+    maxToolRounds: Int = 50,
+    maxRetries: Int = 4)
+: TurnData receives logger, interact
 ```
 
-This class pre-binds three inputs to the turn engine. Applications can instead
-inject all the components through `Agent.runTurn` or organize them differently.
+The smallest agent is one call:
 
-- `brain` is the provider-independent [model](/concepts/models/).
-- `tools` are the actions offered directly to the model.
-- `context` determines what information is presented to the model.
+```jo
+Agent.runTurn("hello")
+```
 
-The class does not own user identity, session storage, locking, or UI state.
-Those concerns stay in the driver.
-
-An assembly is ordinary Jo code:
+`Agent` there is a namespace, not a thing. A driver writes the same call with
+its own pieces supplied:
 
 ```jo
 val runCode = runCodeTool(workspace.sandboxDir, approvalDeadline = 610.0)
-
-val agent = new Agent:
-  brain = brain
-  tools = [runCode, ..MemoryTools.specs]
-  context = new WindowedContext:
-    baseSystem = workspace.read("AGENT.md").getOrElse("")
-    memory = memory
-    initial = history
-
+val specs = [runCode, ..MemoryTools.specs]
 val routes = MemoryTools.routes(memory) ++ runCode.routes()
 
+val context = new WindowedContext:
+  baseSystem = workspace.read("AGENT.md").getOrElse("")
+  memory = memory
+  initial = history
+
 with interact = channel in
-  agent.runTurn(userMsg, routes, maxToolRounds = 50, maxRetries = 4)
+  Agent.runTurn(userMsg, brain, specs, routes, context, maxToolRounds = 50, maxRetries = 4)
 ```
 
-Select another [model](/concepts/models/), add or remove
-[tools](/concepts/tools/), or replace the
-[context strategy](/concepts/context/). A driver can construct different
-assemblies for different roles or sessions.
+Nothing was assembled. The same function served both, and the difference
+between the two agents is entirely in the arguments.
+
+### What the defaults mean
+
+A default is evaluated at each call that omits it, so `context` defaulted is a
+fresh `NoHistory` per turn. It holds the turn it is given — the model sees the
+user's input and every tool result — and is discarded at the end. Two defaulted
+turns never see each other's transcript. Remembering across turns is what a
+driver's own `context` is for, and keeping one alive is the whole of it.
+
+`logger` and `interact` default too: unbound, a turn records nothing and reports
+to nobody rather than refusing to run.
+
+- `brain` is the provider-independent [model](/concepts/models/).
+- `tools` are the actions offered to the model, and `routes` is what runs when
+  it calls one — see [tools](/concepts/tools/).
+- `context` determines what the model is shown — see
+  [context](/concepts/context/).
+
+None of these owns user identity, session storage, locking, or UI state. Those
+stay in the driver.
 
 ## Turn execution
 
@@ -84,12 +115,9 @@ using the same core components.
 
 ## Custom execution
 
-The default turn loop can be used without constructing an `Agent`:
-
-```jo
-Agent.runTurn(userMsg, brain, tools, routes, context, maxToolRounds, maxRetries)
-```
-
-If the default coordination does not fit, build a loop over `Model` and
-`Tool.runSafely`. The same components can support parallel tool execution,
-planner and executor roles, or application-specific control between steps.
+`runTurn` is one coordination, not the only one. If it does not fit, build a
+loop over `Model` and `Tool.runSafely`. The same components support parallel
+tool execution, planner and executor roles, or application-specific control
+between steps — and because there was never an `Agent` to be outside of, such a
+loop is not a departure from the framework. It is the same parts, coordinated
+differently.

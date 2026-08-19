@@ -44,17 +44,25 @@ section Model
     ! provider's wire format. `Assistant` is also what a `Session.reply`
     ! returns.
     !
-    ! A `UserText` carries `attachments`: files the user shared this turn, which
+    ! A `UserInput` carries `attachments`: files the user shared this turn, which
     ! live in the agent's data directory. Their bytes are NOT in the transcript
     ! — only this metadata is. The model reads a file's content through
     ! `fs`/`runCode` (a provider render folds a manifest line into the user's
     ! text so the model knows the files are there — see `userContent`). A driver
-    ! with no file support passes the empty list: `UserText(text, [])`.
+    ! with no file support passes the empty list: `UserInput(text, [])`.
   //]
   union Message =
-      UserText(text: String, attachments: List[Attachment])
+      UserInput(text: String, attachments: List[Attachment])
     | Assistant(text: String, calls: List[ToolCall])
     | ToolResults(results: List[ToolResult])
+
+  //[ A bare string as the user's input, carrying no files
+    !
+    ! The coercion behind `runTurn`'s `input` parameter, so the plainest call is
+    ! `Agent.runTurn("hello")`. A driver that accepts uploads builds the
+    ! `UserInput` itself, with the attachments it saved.
+  //]
+  def stringInput(text: String): UserInput = UserInput(text, [])
 
   //[ Attachment
     !
@@ -82,7 +90,7 @@ section Model
   //]
   class Attachment(name: String, size: Int, mime: String, inline: Bool, path: String)
 
-  //[ The user text a provider sends for one `UserText`
+  //[ The user text a provider sends for one `UserInput`
     !
     ! With a manifest of any attachments appended so the model knows which files
     ! wait in its data directory (it reads them with `fs`). No attachments: the

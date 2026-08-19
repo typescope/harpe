@@ -154,19 +154,21 @@ end
 private def scenario(tools: List[TestTool], maxToolRounds: Int, maxRetries: Int, model: Model, state: State): String receives logger =
   val channel = new TestInteract(state)
   val context = new WindowedContext("", new Memory, [])
-  val agent = new Agent(model, specsOf(tools), context)
   val res =
     with interact = channel in
-      agent.runTurn:
-        UserText("dummy message", [])
+      Agent.runTurn:
+        "dummy message"
+        model
+        specsOf(tools)
         routesOf(tools)
+        context
         maxToolRounds = maxToolRounds
         maxRetries = maxRetries
   "\{resultTag(res)} | \{joinPy(channel.log)}"
 
 private def msgTag(m: Message): String =
   match m
-  case UserText(_, _) => "user"
+  case UserInput(_, _) => "user"
   case Assistant(_, calls) => if calls.isEmpty then "text" else "calls"
   case ToolResults(_) => "results"
 
@@ -229,11 +231,11 @@ def run(): Unit receives stdout, logger =
   // A failed turn retains its user message in the live context. Only the
   // provisional assistant/tool tail is rolled back.
   val failedContext = new WindowedContext("", new Memory, [])
-  val failedAgent = new Agent(base => (results, tools) => Fatal("bad key"), specsOf(tools), failedContext)
+  val failedBrain: Model = base => (results, tools) => Fatal("bad key")
   val failedChannel = new TestInteract(live)
   val failedResult =
     with interact = failedChannel in
-      failedAgent.runTurn(UserText("keep me", []), routesOf(tools), 50, 4)
+      Agent.runTurn("keep me", failedBrain, specsOf(tools), routesOf(tools), failedContext, 50, 4)
   val failedMessages = failedContext.render(failedChannel).messages
   check:
     "D failed user retained"
@@ -316,9 +318,15 @@ def run(): Unit receives stdout, logger =
 
   val capture = new CaptureLogger
   val toolsK = [loggingTool()]
-  val agentK = new Agent(askK, specsOf(toolsK), new WindowedContext("", new Memory, []))
   with logger = capture, interact = new TestInteract(live) in
-    val _ = agentK.runTurn(UserText("dummy text", []), routesOf(toolsK), 50, 4)
+    val _ = Agent.runTurn:
+      "dummy text"
+      askK
+      specsOf(toolsK)
+      routesOf(toolsK)
+      new WindowedContext("", new Memory, [])
+      50
+      4
 
   check:
     "K message-logged-before-tool"
@@ -329,9 +337,15 @@ def run(): Unit receives stdout, logger =
   // `runSafely` converts the exception into tool results and the turn continues.
   val captureFailure = new CaptureLogger
   val toolsL = [failingLoggingTool()]
-  val agentL = new Agent(askK, specsOf(toolsL), new WindowedContext("", new Memory, []))
   with logger = captureFailure, interact = new TestInteract(live) in
-    val _ = agentL.runTurn(UserText("dummy text", []), routesOf(toolsL), 50, 4)
+    val _ = Agent.runTurn:
+      "dummy text"
+      askK
+      specsOf(toolsL)
+      routesOf(toolsL)
+      new WindowedContext("", new Memory, [])
+      50
+      4
 
   check:
     "L message-kept-when-tool-fails"
@@ -354,3 +368,22 @@ def run(): Unit receives stdout, logger =
     "M assistant-text-before-tool"
     scenario: tools, 50, 4, askM, live
     expected = "Answered(Done.) | start,end,assistant:I will check.,tool+echo,tool-echo,start,end"
+
+  // Everything but the brain defaulted. Two things must hold: the model still
+  // sees the user's input (a defaulted context holds the turn it is given), and
+  // two defaulted turns do not share a transcript (the default is evaluated per
+  // call, so each turn gets its own). Both would read as "1" and "1,1" below —
+  // a shared context would report "1,2".
+  val sizes = py.list("")
+  val askN: Model = base =>
+    val prev = sizes.get(0).asString
+    sizes.set(0, if prev == "" then "\{base.messages.size}" else prev + ",\{base.messages.size}")
+    (results, tools) => textReply("ok")
+
+  val n1 = Agent.runTurn("first", askN)
+  val n2 = Agent.runTurn("second", askN)
+
+  check:
+    "N defaulted-turn-is-self-contained"
+    "\{resultTag(n1)} | \{resultTag(n2)} | \{sizes.get(0).asString}"
+    expected = "Answered(ok) | Answered(ok) | 1,1"

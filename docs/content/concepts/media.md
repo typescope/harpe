@@ -51,7 +51,7 @@ To add file input to another driver:
 1. create a data directory scoped to the user or session
 2. sanitize and de-duplicate inbound filenames
 3. save the bytes before calling `Agent.runTurn`
-4. add an `Attachment` for each saved file to `UserText`, with the `path` the
+4. add an `Attachment` for each saved file to `UserInput`, with the `path` the
    bytes were written to
 5. pass the directory to the routes that need it (`uploadMedia`, your `sendFile`)
    and to your sandbox runtime as its own environment variable

@@ -457,13 +457,10 @@ private class TelegramBot(
       val memory = Memory.load(memoryPath)
       // `Session.load` caps the replayed transcript (a RAM backstop). The full
       // transcript stays on disk.
-      val agent = new Agent:
-        brain = brain
-        tools = specs
-        context = new WindowedContext:
-          baseSystem = workspace.read("AGENT.md").getOrElse("")
-          memory = memory
-          initial = Session.load(chatId)
+      val context = new WindowedContext:
+        baseSystem = workspace.read("AGENT.md").getOrElse("")
+        memory = memory
+        initial = Session.load(chatId)
 
       // Each chat is its own session, rooted at its own data directory:
       // downloaded files land there, and files the agent writes and sends back
@@ -477,7 +474,7 @@ private class TelegramBot(
           ++ sendFile.routes(chatId, dataDir)
           ++ runTool.routes()
 
-      val session = new Session(chatId, log, agent, memory, memoryPath, dataDir, routes)
+      val session = new Session(chatId, log, brain, specs, context, memory, memoryPath, dataDir, routes)
       registryLock.acquire()
       registry.set(chatId, session)
       session.queue.put(incoming)

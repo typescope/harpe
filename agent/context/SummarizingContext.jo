@@ -135,7 +135,7 @@ private def distillRequest(summary: String, dropped: List[Message]): Message =
     if summary == "" then "Conversation excerpt to summarize:\n\n"
     else "Current summary:\n\n" + summary + "\n\nNew conversation excerpt to fold into it:\n\n"
 
-  UserText(lead + excerptText(dropped) + "\nReply with the updated summary.", [])
+  UserInput(lead + excerptText(dropped) + "\nReply with the updated summary.", [])
 
 //[ A plain-text rendering of transcript messages for the distiller. //]
 private def excerptText(ms: List[Message]): String =
@@ -143,7 +143,7 @@ private def excerptText(ms: List[Message]): String =
 
   for m in ms do
     match m
-    case UserText(t, _) =>
+    case UserInput(t, _) =>
       s = s + "User: " + t + "\n"
 
     case Assistant(text, calls) =>

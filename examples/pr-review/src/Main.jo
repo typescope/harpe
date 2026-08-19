@@ -9,7 +9,7 @@ import harpe.ffi.dotenv
 import harpe.logging.Logging
 import harpe.logging.JsonlLogger
 import harpe.logging.logger
-import harpe.Model.UserText
+import harpe.Model.UserInput
 import harpe.turns.Success
 import harpe.tools.runCodeTool
 import harpe.tools.SkillTools
@@ -37,7 +37,6 @@ private def review(pr: String): Unit receives stdout, workspace, logger =
   val specs: List[Tool] = [runCode, ..SkillTools.specs]
 
   val context = new FullContext(basePrompt, memory, [])
-  val agent = new Agent(Defaults.model(), specs, context)
   val channel = new PrintInteract(stdout)
 
   // This agent's own context reaches its tools as ordinary arguments: the guest
@@ -52,9 +51,12 @@ private def review(pr: String): Unit receives stdout, workspace, logger =
 
   val turn =
     with interact = channel in
-      agent.runTurn:
-        UserText("please start review the pr", [])
+      Agent.runTurn:
+        "please start review the pr"
+        Defaults.model()
+        specs
         routes
+        context
         maxToolRounds = 30
         maxRetries = 4
 

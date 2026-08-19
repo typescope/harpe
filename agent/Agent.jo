@@ -1,12 +1,15 @@
 //[ Agent.jo
   !
-  ! `Agent` — the bundle that constitutes an agent, and the turn engine that
-  ! drives it. An agent is: a **brain** (the model), its **capabilities** (the
-  ! tools, including the memory tools), its **context** (system prompt + memory +
-  ! transcript policy — see `harpe.context`), and its **turn policy** (the
-  ! tool-round budget).
+  ! The turn engine. `Agent` is a namespace, not a thing — an agent is not one
+  ! component but the way a model, its tools, and its context are coordinated
+  ! for a turn, so there is nothing here to instantiate. `runTurn` takes each of
+  ! those as an ordinary parameter with a default, which is what lets the
+  ! plainest agent be `Agent.runTurn("hello")` while a driver writes the same
+  ! call with its own components supplied. Drawing a boundary around any subset
+  ! of them and calling *that* the agent would be a choice the code cannot
+  ! justify.
   !
-  ! What is deliberately NOT the agent: session storage layout, locks, and
+  ! What is deliberately NOT here: session storage layout, locks, and
   ! presentation (spinners, streams, chat actions) — those belong to the drivers.
   ! The engine emits lifecycle/transcript entries through the ordinary logger
   ! channel, but knows nothing about their destination.
@@ -21,57 +24,50 @@ import harpe.Model.*
 import harpe.Tool
 import harpe.Tool.*
 
-//[ An simple agent: what thinks, what it can do, what it sees, and its turn policy.
-  !
-  ! If the user wants customization, just create a different agent class. There
-  ! is no need to inherit this class. In fact, Jo does not support inheritance.
-  !
-  ! To reuse the turn logic in a custom agent class, call `Agent.runTurn`
-  ! directly.
-//]
-class Agent(brain: Model, tools: List[Tool], context: Context)
-  def runTurn(
-      userMsg: Message, routes: Routes, maxToolRounds: Int, maxRetries: Int)
-  : TurnData receives logger, interact =
-    Agent.runTurn:
-      userMsg
-      brain
-      tools
-      routes
-      context
-      maxToolRounds
-      maxRetries
-end
-
 section Agent
   //[ Drive one user turn
     !
     ! Call the model (with retries), run any tool calls it requests, and repeat
     ! until it replies with plain text.
     !
-    ! The `context` owns the transcript: the engine appends each assistant reply
-    ! and tool-result batch to it, and asks it to compose `(system, messages)`
-    ! before every model request. The caller appends the turn's `UserText` (after
-    ! `context.mark()`) before calling. Structured transcript events use the
-    ! ambient logger.
-    ! On interruption/failure the provisional assistant/tool tail is rolled back,
-    ! while the user's message remains in the context.
+    ! Every input is a parameter with a default, so a turn is whatever the
+    ! caller says it is and no subset of these is privileged as "the agent":
+    !
+    !     Agent.runTurn("hello")
+    !
+    ! answers with a bare model and nothing else, while a driver passes its own
+    ! brain, tools, routes, and context. `input` coerces from a plain string
+    ! (see `stringInput`), so the short form needs no constructor.
+    !
+    ! The `context` owns the transcript: the engine marks it, appends the user's
+    ! input and then each assistant reply and tool-result batch, and asks it to
+    ! compose `(system, messages)` at the turn's start. Structured transcript
+    ! events use the ambient logger. On interruption/failure the provisional
+    ! assistant/tool tail is rolled back, while the user's message remains in the
+    ! context. Defaulted, it is a `NoHistory` built fresh for this call — the
+    ! model still sees this turn, and nothing survives into the next one. A
+    ! session that should remember keeps one context alive across turns.
     !
     ! A turn is bounded to `maxToolRounds` tool-call rounds. Once spent the model
     ! is asked once more with no tools, forcing a final answer. `maxRetries` is
-    ! transport policy — how often a transient model error is retried — so it is
-    ! an argument, not part of the agent.
+    ! transport policy — how often a transient model error is retried.
     !
     ! `tools` are the specs the model is offered. `routes` is what actually
-    ! runs, wired by tool name for THIS turn, so a handler closes over the
-    ! turn's interaction and the driver's own typed context. Every spec must
-    ! have a route: an unrouted name is a wiring bug and aborts before the model
-    ! is called, rather than surfacing mid-turn as a tool failure. (`Routes`
-    ! rejects the opposite mistake, one name wired twice, as it is built.)
+    ! runs, wired by tool name, so a handler closes over whatever typed context
+    ! the driver built it with — in practice one table per session, not per
+    ! turn. Every spec must have a route: an unrouted name is a wiring bug and
+    ! aborts before the model is called, rather than surfacing mid-turn as a
+    ! tool failure. (`Routes` rejects the opposite mistake, one name wired
+    ! twice, as it is built.)
   //]
   def runTurn(
-      userMsg: Message, brain: Model, tools: List[Tool], routes: Routes,
-      context: Context, maxToolRounds: Int, maxRetries: Int)
+      input: UserInput :- [stringInput],
+      brain: Model = Defaults.model,
+      tools: List[Tool] = NoTools,
+      routes: Routes = Routes.empty,
+      context: Context = NoHistory,
+      maxToolRounds: Int = 50,
+      maxRetries: Int = 4)
   : TurnData receives logger, interact =
 
     for t in tools do
@@ -86,8 +82,8 @@ section Agent
     var produced: List[Message] = []
 
     context.mark()
-    context.append(userMsg)
-    Transcript.start(userMsg)
+    context.append(input)
+    Transcript.start(input)
 
     // Compose what the model sees ONCE, at the turn's start. The Session then
     // owns the intra-turn tail. The engine feeds it tool results and never
@@ -102,7 +98,7 @@ section Agent
       if interact.cancelled then
         result = Interrupted
         context.rollback()
-        context.append(userMsg)
+        context.append(input)
         Transcript.interrupted()
         break
 
@@ -117,14 +113,14 @@ section Agent
         case Stopped =>
           result = Interrupted
           context.rollback()
-          context.append(userMsg)
+          context.append(input)
           Transcript.interrupted()
           break
 
         case GaveUp(detail) =>
           result = Failed(detail)
           context.rollback()
-          context.append(userMsg)
+          context.append(input)
           Transcript.failed(detail)
           break
 
@@ -166,7 +162,7 @@ section Agent
 
           if cancelled || interact.cancelled then
             context.rollback()
-            context.append(userMsg)
+            context.append(input)
             result = Interrupted
             Transcript.interrupted()
             break
@@ -183,8 +179,8 @@ section Agent
     // A rolled-back turn contributes nothing to history, and `Transcript.turns`
     // replays it with no messages — so drop them here too, and the live value and
     // the reloaded one agree.
-    if result is Success then TurnData(userMsg, produced, result)
-    else TurnData(userMsg, [], result)
+    if result is Success then TurnData(input, produced, result)
+    else TurnData(input, [], result)
 end
 
 //[ The result of fetching one model reply (after any retries)

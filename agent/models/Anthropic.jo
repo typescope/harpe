@@ -91,11 +91,11 @@ private def anthropicMediaBlocks(attachments: List[Attachment]): py.List =
   ! transcript prefix, and later requests in the same turn (which only append)
   ! read it back.
   !
-  ! A `UserText` is promoted to a one-element text-block list so it can carry
+  ! A `UserInput` is promoted to a one-element text-block list so it can carry
   ! the marker (Anthropic accepts either form).
   !
   ! An inline attachment only becomes a real image/document block when its
-  ! `UserText` is the NEWEST message in `history` (`i == lastIdx`) — an older
+  ! `UserInput` is the NEWEST message in `history` (`i == lastIdx`) — an older
   ! one's `inline` is inert here, so a past image is never resent (and re-billed)
   ! once a later turn rebuilds this same history from scratch. `dataDir` is the
   ! session's data directory (`""` if none), resolved once by the caller.
@@ -109,7 +109,7 @@ private def toMessages(history: List[Message], cache: AnthropicCache): py.List =
     val shouldCache = i == lastIdx && cache is !NoCache
 
     match m
-    case UserText(text, attachments) =>
+    case UserInput(text, attachments) =>
       val content = Model.userContent(text, attachments)
       val media = if i == lastIdx then anthropicMediaBlocks(attachments) else py.list()
 
@@ -263,7 +263,7 @@ end
 
 //[ A user turn carrying tool_result blocks for `results`.
   !
-  ! `r.attachments` inlines unconditionally here — unlike a `UserText`'s attachments,
+  ! `r.attachments` inlines unconditionally here — unlike a `UserInput`'s attachments,
   ! a tool result exists only for the round it was produced in: `toMessages`
   ! (rendering a PAST, already-committed turn) never re-derives a `tool_result`
   ! block from a `ToolResults` message's `attachments`, so a past tool-delivered image

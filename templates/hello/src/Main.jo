@@ -4,7 +4,7 @@ namespace hello
 
 import jo.IO.stdout
 import harpe.*
-import harpe.Model.UserText
+import harpe.Model.UserInput
 import harpe.context.FullContext
 import harpe.ffi.dotenv
 import harpe.ffi.os
@@ -23,13 +23,14 @@ def main(): Unit receives stdout =
 private def chat(): Unit receives stdout, harpe.workspace, logger =
   val runCode = runCodeTool(workspace.sandboxDir, approvalDeadline = 610.0)
 
-  val agent = new Agent:
-    brain = Defaults.model()
-    tools = [runCode]
-    context = new FullContext:
-      baseSystem = workspace.read("AGENT.md").getOrElse("")
-      memory = new Memory
-      initial = []
+  val brain = Defaults.model()
+
+  // The context is the one piece that must outlive a turn: it carries the
+  // conversation from one turn to the next.
+  val context = new FullContext:
+    baseSystem = workspace.read("AGENT.md").getOrElse("")
+    memory = new Memory
+    initial = []
 
   // What runs when the model calls a tool, wired by name.
   val routes = runCode.routes()
@@ -48,9 +49,12 @@ private def chat(): Unit receives stdout, harpe.workspace, logger =
 
     val result =
       with interact = channel in
-        agent.runTurn:
-          UserText(input, [])
+        Agent.runTurn:
+          input
+          brain
+          [runCode]
           routes
+          context
           maxToolRounds = 10
           maxRetries = 2
 

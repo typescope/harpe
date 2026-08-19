@@ -28,7 +28,7 @@ import harpe.logging.JsonlLogger
 import harpe.logging.Entry
 import harpe.logging.entryFromDict
 import harpe.logging.logger
-import harpe.Model.UserText
+import harpe.Model.UserInput
 import harpe.Model.Message
 import harpe.tools.*
 import harpe.context.WindowedContext
@@ -60,13 +60,14 @@ private def runChat(): Unit receives stdout, workspace =
   val specs: List[Tool] =
     [runCode, UploadMediaTool.spec, bash, ..SkillTools.specs, ..MemoryTools.specs]
 
-  val agent = new Agent:
-    brain = Defaults.model()
-    tools = specs
-    context = new WindowedContext:
-      baseSystem = workspace.read("AGENT.md").getOrElse("")
-      memory = memory
-      initial = Session.load(sessionPath)
+  val brain = Defaults.model()
+
+  // The context is what carries the conversation between turns, so it is built
+  // once here and handed to every turn below.
+  val context = new WindowedContext:
+    baseSystem = workspace.read("AGENT.md").getOrElse("")
+    memory = memory
+    initial = Session.load(sessionPath)
 
   // One local working directory for the whole run.
   val data = workspace.relative("data")
@@ -92,12 +93,15 @@ private def runChat(): Unit receives stdout, workspace =
 
     if userInput == "" then continue
 
-    val userMsg = UserText(userInput, [])
+    val userMsg = UserInput(userInput, [])
     val runTurn = (turnInteract: Interact) =>
       with logger = sessionLog, interact = turnInteract in
-        agent.runTurn:
+        Agent.runTurn:
           userMsg
+          brain
+          specs
           routes
+          context
           maxToolRounds = 50
           maxRetries = 4
 

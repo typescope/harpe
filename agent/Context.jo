@@ -24,6 +24,7 @@ import harpe.Model.Message
 import harpe.Model.Rendered
 import harpe.Model.Usage
 import harpe.logging.logger
+import harpe.context.FullContext
 
 //[ A context-management strategy: owns the transcript, composes each request. //]
 interface Context
@@ -60,3 +61,16 @@ interface Context
   //[ Drop transcript events recorded since `mark`.   //]
   def rollback(): Unit
 end
+
+//[ A context that carries nothing in and nothing out
+  !
+  ! The default for `runTurn`'s `context`. It holds the turn it is given — the
+  ! model still sees the user's input and each tool result — but starts empty
+  ! and is discarded when the turn ends, so nothing survives into the next call.
+  ! Because a default expression is evaluated per call, every defaulted turn
+  ! gets its own, and two such turns never see each other's transcript.
+  !
+  ! A session that should remember its past turns supplies a real strategy —
+  ! `WindowedContext` or `SummarizingContext` — and keeps it alive across turns.
+//]
+def NoHistory: Context = new FullContext("", new Memory, [])

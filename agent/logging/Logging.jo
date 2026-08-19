@@ -23,8 +23,11 @@ namespace harpe.logging
   !
   ! Provided by `Logging.withLogger`. Picked up by producers via `receives
   ! logger`.
+  !
+  ! Unbound it is `Logging.discard`, so nothing is recorded and nothing fails.
+  ! An application that wants a journal installs a backend.
 //]
-param logger: Logger
+param logger: Logger = Logging.discard
 
 section Logging
   //[ A no-op logger — nothing is recorded (see `NullLogger`). //]
@@ -47,7 +50,7 @@ section Logging
     ! The key and content are the app's to choose. A driver wraps its turn:
     !
     ! Logging.withContext("context", Map("session" ~ id), () =>
-    ! agent.runTurn(...))
+    ! Agent.runTurn(...))
   //]
   def withContext[T](key: String, context: Map[String, Value], work: () => T receives logger): T =
     with logger = new ContextLogger(logger, key, context) in work()

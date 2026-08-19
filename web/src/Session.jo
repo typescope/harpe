@@ -26,6 +26,8 @@ import harpe.ApprovalTimedOut
 import harpe.ApprovalCancelled
 import harpe.Memory
 import harpe.Routes
+import harpe.Tool
+import harpe.Context
 import harpe.interact
 import harpe.Transcript
 import harpe.TurnData
@@ -37,7 +39,7 @@ import harpe.logging.Entry
 import harpe.logging.entryFromDict
 import harpe.Model
 import harpe.Model.Message
-import harpe.Model.UserText
+import harpe.Model.UserInput
 import harpe.Model.Attachment
 import harpe.turns.Success
 import harpe.turns.Interrupted
@@ -46,12 +48,12 @@ import harpe.turns.Failed
 
 //[ Whether a session has a turn in flight.
   !
-  ! `Active` carries the `UserText` that started the turn — the same message value
+  ! `Active` carries the `UserInput` that started the turn — the same message value
   ! the engine runs and later commits — so a tab loading (or reloading) mid-turn can
   ! render the pending user message immediately, before it is in the transcript, and
   ! then subscribe to the turn's events.
 //]
-union SessionState = Idle | Active(input: UserText)
+union SessionState = Idle | Active(input: UserInput)
 
 //[ One attached event sink
   !
@@ -67,11 +69,16 @@ end
 
 //[ One live conversation
   !
-  ! Its id, its append log, its agent (which owns the context and therefore the
-  ! running transcript window), and its working memory. A lock serializes turns
-  ! within the session so its state stays consistent under concurrent requests.
+  ! Its id, its append log, and the pieces each of its turns is run with: the
+  ! `brain`, the `tools` it is offered, the `routes` that run them, and the
+  ! `context`, which owns the running transcript window and is therefore the one
+  ! piece that must survive between turns. Plus its working memory. A lock
+  ! serializes turns within the session so its state stays consistent under
+  ! concurrent requests.
 //]
-class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath: String, routes: Routes)
+class Session(
+    id: String, log: Logger, brain: Model, tools: List[Tool], context: Context,
+    memory: Memory, memoryPath: String, routes: Routes)
   val lock = threading.lock()
 
   //[ Set (via `POST /api/stop`) to request cancellation of the running turn
@@ -201,7 +208,7 @@ class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath:
     ! other tabs may attach via `addSink`. All of them see the same stream. When
     ! the turn finishes, `idle` is set, which releases every subscriber.
   //]
-  def runTurn(input: UserText, initiatorSink: Sink, maxToolRounds: Int, maxRetries: Int): Unit =
+  def runTurn(input: UserInput, initiatorSink: Sink, maxToolRounds: Int, maxRetries: Int): Unit =
     lastActive = time.now()
 
     this.lock.acquire()
@@ -213,7 +220,7 @@ class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath:
     val channel = new WebInteract(emit, this.stop, (id, request) => requestApproval(id, request))
 
     val turn = with logger = log, interact = channel in
-      agent.runTurn(input, routes, maxToolRounds, maxRetries)
+      Agent.runTurn(input, brain, tools, routes, context, maxToolRounds, maxRetries)
 
     match turn.result
     case Success =>
