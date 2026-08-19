@@ -31,14 +31,13 @@ import harpe.Tool.*
 //]
 class Agent(brain: Model, tools: List[Tool], context: Context)
   def runTurn(
-      userMsg: Message, handlers: Map[String, Handler],
-      maxToolRounds: Int, maxRetries: Int)
+      userMsg: Message, routes: Routes, maxToolRounds: Int, maxRetries: Int)
   : TurnData receives logger, interact =
     Agent.runTurn:
       userMsg
       brain
       tools
-      handlers
+      routes
       context
       maxToolRounds
       maxRetries
@@ -63,19 +62,20 @@ section Agent
     ! transport policy — how often a transient model error is retried — so it is
     ! an argument, not part of the agent.
     !
-    ! `tools` are the specs the model is offered. `handlers` is what actually
+    ! `tools` are the specs the model is offered. `routes` is what actually
     ! runs, wired by tool name for THIS turn, so a handler closes over the
     ! turn's interaction and the driver's own typed context. Every spec must
     ! have a route: an unrouted name is a wiring bug and aborts before the model
-    ! is called, rather than surfacing mid-turn as a tool failure.
+    ! is called, rather than surfacing mid-turn as a tool failure. (`Routes`
+    ! rejects the opposite mistake, one name wired twice, as it is built.)
   //]
   def runTurn(
-      userMsg: Message, brain: Model, tools: List[Tool], handlers: Map[String, Handler],
+      userMsg: Message, brain: Model, tools: List[Tool], routes: Routes,
       context: Context, maxToolRounds: Int, maxRetries: Int)
   : TurnData receives logger, interact =
 
     for t in tools do
-      if !handlers.contains(t.name) then
+      if !routes.contains(t.name) then
         abort "no handler is wired for the tool '\{t.name}'"
 
     var rounds = 0
@@ -154,8 +154,8 @@ section Agent
             interact.emit: ToolCallStarted(toolName)
 
             val outcome =
-              if handlers.contains(toolName) then
-                runSafely(toolName, handlers[toolName], call.input)
+              if routes.contains(toolName) then
+                runSafely(toolName, routes.handler(toolName), call.input)
               else
                 RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}", attachments = [])
 

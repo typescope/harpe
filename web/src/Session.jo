@@ -25,7 +25,7 @@ import harpe.ApprovalDecision
 import harpe.ApprovalTimedOut
 import harpe.ApprovalCancelled
 import harpe.Memory
-import harpe.Handler
+import harpe.Routes
 import harpe.interact
 import harpe.Transcript
 import harpe.TurnData
@@ -71,7 +71,7 @@ end
   ! running transcript window), and its working memory. A lock serializes turns
   ! within the session so its state stays consistent under concurrent requests.
 //]
-class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath: String, handlers: Map[String, Handler])
+class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath: String, routes: Routes)
   val lock = threading.lock()
 
   //[ Set (via `POST /api/stop`) to request cancellation of the running turn
@@ -213,7 +213,7 @@ class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath:
     val channel = new WebInteract(emit, this.stop, (id, request) => requestApproval(id, request))
 
     val turn = with logger = log, interact = channel in
-      agent.runTurn(input, handlers, maxToolRounds, maxRetries)
+      agent.runTurn(input, routes, maxToolRounds, maxRetries)
 
     match turn.result
     case Success =>

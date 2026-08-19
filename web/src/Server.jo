@@ -49,6 +49,7 @@ import harpe.tools.*
 import harpe.context.WindowedContext
 import harpe.Tool
 import harpe.Handler
+import harpe.Routes
 import harpe.Tool.ToolInput
 import harpe.turns.Failed
 
@@ -65,6 +66,10 @@ import harpe.turns.Failed
   ! typo) rather than silently failing.
 //]
 section SendFileTool
+  //[ This tool's route, delivering files from `dataDir`. //]
+  def routes(dataDir: String): Routes =
+    Routes.of: spec.name, (i: ToolInput) => send(i["fileName"], dataDir)
+
   //[ The spec, for the agent's tool list. //]
   def spec: Tool =
     Tool:
@@ -332,19 +337,13 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! readers) are rooted per session. Uploads land there, agent output surfaces
     ! there, and these routes are where that directory reaches the tools.
   //]
-  private def routes(memory: Memory, id: String): Map[String, Handler] =
+  private def routes(memory: Memory, id: String): Routes =
     val dataDir = os.path.abspath(Session.dataDir(id))
-    val skillsDir = wspace.skillsDir
-    Map:
-      runTool.name                ~ (i => runTool.run(i["code"]))
-      UploadMediaTool.spec.name   ~ (i => UploadMediaTool.show(i["fileName"], dataDir))
-      SendFileTool.spec.name      ~ (i => SendFileTool.send(i["fileName"], dataDir))
-      SkillTools.listSpec.name    ~ (i => SkillTools.list(skillsDir))
-      SkillTools.readSpec.name    ~ (i => SkillTools.read(skillsDir, i["name"]))
-      SkillTools.searchSpec.name  ~ (i => SkillTools.search(skillsDir, i["query"]))
-      MemoryTools.updateSpec.name ~ (i => MemoryTools.update(memory, i["key"], i["value"]))
-      MemoryTools.readSpec.name   ~ (i => MemoryTools.read(memory, i["key"]))
-      MemoryTools.listSpec.name   ~ (i => MemoryTools.list(memory))
+    MemoryTools.routes(memory)
+      .addAll: SkillTools.routes(wspace.skillsDir)
+      .addAll: UploadMediaTool.routes(dataDir)
+      .addAll: SendFileTool.routes(dataDir)
+      .add: runTool.name, (i: ToolInput) => runTool.run(i["code"])
 
   //[ A fresh session under a newly-minted, time-sortable id. //]
   private def createSession(): Session receives workspace =

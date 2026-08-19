@@ -79,9 +79,9 @@ private def specsOf(tools: List[TestTool]): List[Tool] =
   for t in tools do out = out + t
   out
 
-private def routesOf(tools: List[TestTool]): Map[String, Handler] =
-  var out: Map[String, Handler] = Map.empty[String, Handler]
-  for t in tools do out = out ++ Map(t.name ~ ((i: ToolInput) => t.run()))
+private def routesOf(tools: List[TestTool]): Routes =
+  var out = Routes.empty
+  for t in tools do out = out.add: t.name, (i: ToolInput) => t.run()
   out
 
 // A trivial tool that always succeeds, for exercising the tool-call path.

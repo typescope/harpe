@@ -50,14 +50,12 @@ val agent = new Agent:
     memory = memory
     initial = history
 
-val handlers: Map[String, Handler] = Map:
-  runCode.name                ~ (i => runCode.run(i["code"]))
-  MemoryTools.updateSpec.name ~ (i => MemoryTools.update(memory, i["key"], i["value"]))
-  MemoryTools.readSpec.name   ~ (i => MemoryTools.read(memory, i["key"]))
-  MemoryTools.listSpec.name   ~ (i => MemoryTools.list(memory))
+val routes =
+  MemoryTools.routes(memory)
+    .add: runCode.name, (i: ToolInput) => runCode.run(i["code"])
 
 with interact = channel in
-  agent.runTurn(userMsg, handlers, maxToolRounds = 50, maxRetries = 4)
+  agent.runTurn(userMsg, routes, maxToolRounds = 50, maxRetries = 4)
 ```
 
 Select another [model](/concepts/models/), add or remove
@@ -92,7 +90,7 @@ The default turn loop can be used without constructing an `Agent`:
 
 ```jo
 Agent.runTurn(
-  userMsg, brain, tools, handlers, context,
+  userMsg, brain, tools, routes, context,
   maxToolRounds, maxRetries)
 ```
 

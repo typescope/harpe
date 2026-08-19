@@ -60,13 +60,12 @@ val agent = new Agent:
     initial = []
 
 // What runs when the model calls a tool, wired by name.
-val handlers: Map[String, Handler] = Map:
-  runCode.name ~ (i => runCode.run(i["code"]))
+val routes = Routes.of: runCode.name, (i: ToolInput) => runCode.run(i["code"])
 ```
 
-The agent is offered one tool spec, and the map says what happens when the model
+The agent is offered one tool spec, and `routes` says what happens when the model
 calls it. The rest of the file reads terminal input, passes it to
-`agent.runTurn` along with the handlers, and prints the answer.
+`agent.runTurn` along with the routes, and prints the answer.
 
 `SimpleInteract` implements the interface through which the engine reports turn
 events and asks whether a turn was cancelled:

@@ -24,6 +24,13 @@ section MemoryTools
   //[ Every spec in this group, for the agent's tool list. //]
   def specs: List[Tool] = [updateSpec, readSpec, listSpec]
 
+  //[ Every route in this group, acting on `memory`. //]
+  def routes(memory: Memory): Routes =
+    Routes.empty
+      .add: updateSpec.name, (i: ToolInput) => update(memory, i["key"], i["value"])
+      .add: readSpec.name, (i: ToolInput) => read(memory, i["key"])
+      .add: listSpec.name, (i: ToolInput) => list(memory)
+
   def updateSpec: Tool =
     Tool:
       "updateMemory"

@@ -31,6 +31,7 @@ import harpe.logging.logger
 import harpe.Model.UserText
 import harpe.Model.Message
 import harpe.tools.*
+import harpe.Tool.ToolInput
 import harpe.context.WindowedContext
 import harpe.turns.Success
 import harpe.turns.Failed
@@ -76,16 +77,12 @@ private def runChat(): Unit receives stdout, workspace =
   // What actually runs for each name the model can call. The CLI grants the
   // guest no configuration of its own, so `runCode` takes its default (empty)
   // environment.
-  val handlers: Map[String, Handler] = Map:
-    runCode.name                ~ (i => runCode.run(i["code"]))
-    UploadMediaTool.spec.name   ~ (i => UploadMediaTool.show(i["fileName"], dataDir))
-    bash.name                   ~ (i => bash.run(i["command"]))
-    SkillTools.listSpec.name    ~ (i => SkillTools.list(skillsDir))
-    SkillTools.readSpec.name    ~ (i => SkillTools.read(skillsDir, i["name"]))
-    SkillTools.searchSpec.name  ~ (i => SkillTools.search(skillsDir, i["query"]))
-    MemoryTools.updateSpec.name ~ (i => MemoryTools.update(memory, i["key"], i["value"]))
-    MemoryTools.readSpec.name   ~ (i => MemoryTools.read(memory, i["key"]))
-    MemoryTools.listSpec.name   ~ (i => MemoryTools.list(memory))
+  val routes =
+    MemoryTools.routes(memory)
+      .addAll: SkillTools.routes(skillsDir)
+      .addAll: UploadMediaTool.routes(dataDir)
+      .add: runCode.name, (i: ToolInput) => runCode.run(i["code"])
+      .add: bash.name, (i: ToolInput) => bash.run(i["command"])
 
   while true do
     // `None` is end-of-input (Ctrl-D). A blank line or a Ctrl-C'd prompt is
@@ -101,7 +98,7 @@ private def runChat(): Unit receives stdout, workspace =
       with logger = sessionLog, interact = turnInteract in
         agent.runTurn:
           userMsg
-          handlers
+          routes
           maxToolRounds = 50
           maxRetries = 4
 

@@ -36,7 +36,8 @@ import harpe.Defaults
 import harpe.Model
 import harpe.Tool
 import harpe.tools.*
-import harpe.Handler
+import harpe.Routes
+import harpe.Tool.ToolInput
 import harpe.context.WindowedContext
 
 //[ The entry point //]
@@ -112,6 +113,10 @@ private def serve(): Unit receives stdout, workspace =
   ! they arrive as arguments from the route.
 //]
 private class SendFileTool(client: TelegramClient)
+  //[ This tool's route, sending files from `dir` to `chatId`. //]
+  def routes(chatId: String, dir: String): Routes =
+    Routes.of: spec.name, (i: Tool.ToolInput) => send(chatId, i["fileName"], dir)
+
   //[ The spec, for the agent's tool list. //]
   def spec: Tool =
     Tool:
@@ -465,19 +470,14 @@ private class TelegramBot(
       // surface there too. These routes are where that directory reaches the
       // tools.
       val dataDir = os.path.abspath(Session.dataDir(chatId))
-      val skillsDir = harpe.workspace.skillsDir
-      val handlers: Map[String, Handler] = Map:
-        runTool.name                ~ (i => runTool.run(i["code"]))
-        UploadMediaTool.spec.name   ~ (i => UploadMediaTool.show(i["fileName"], dataDir))
-        sendFile.spec.name          ~ (i => sendFile.send(chatId, i["fileName"], dataDir))
-        SkillTools.listSpec.name    ~ (i => SkillTools.list(skillsDir))
-        SkillTools.readSpec.name    ~ (i => SkillTools.read(skillsDir, i["name"]))
-        SkillTools.searchSpec.name  ~ (i => SkillTools.search(skillsDir, i["query"]))
-        MemoryTools.updateSpec.name ~ (i => MemoryTools.update(memory, i["key"], i["value"]))
-        MemoryTools.readSpec.name   ~ (i => MemoryTools.read(memory, i["key"]))
-        MemoryTools.listSpec.name   ~ (i => MemoryTools.list(memory))
+      val routes =
+        MemoryTools.routes(memory)
+          .addAll: SkillTools.routes(harpe.workspace.skillsDir)
+          .addAll: UploadMediaTool.routes(dataDir)
+          .addAll: sendFile.routes(chatId, dataDir)
+          .add: runTool.name, (i: ToolInput) => runTool.run(i["code"])
 
-      val session = new Session(chatId, log, agent, memory, memoryPath, dataDir, handlers)
+      val session = new Session(chatId, log, agent, memory, memoryPath, dataDir, routes)
       registryLock.acquire()
       registry.set(chatId, session)
       session.queue.put(incoming)

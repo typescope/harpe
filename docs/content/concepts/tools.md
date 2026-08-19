@@ -63,11 +63,14 @@ The **handler** is the executor — what actually runs — and is wired per turn
 type Handler = ToolInput => RunOutcome receives logger, interact
 ```
 
-Your driver hands `runTurn` a `Map[String, Handler]` pairing each spec's name with
-the code to run. Because you write that map, a handler closes over whatever the
-turn needs — a session's data directory, an API token, your own typed context —
-with nothing passed through the framework to get there. Every spec must have a
-route: an unrouted name aborts the turn before the model is called.
+Your driver hands `runTurn` a `Routes`, which pairs each spec's name with the
+code to run. Because you build it, a handler closes over whatever the turn needs
+— a session's data directory, an API token, your own typed context — with
+nothing passed through the framework to get there.
+
+`Routes` catches both wiring mistakes. Adding a name twice aborts as the table is
+built, rather than silently keeping one of two tools that answer to the same
+name. A spec with no route aborts the turn before the model is called.
 
 You describe the spec in Jo. Each provider renders its own wire spec from it, so
 you never hand-write JSON schema.
@@ -89,8 +92,8 @@ The framework provides the tools, and your driver wires them:
 - **`MemoryTools`** — `updateMemory` / `readMemory` / `listMemory`, the agent's
   working memory.
 
-Each offers `spec` (or `specs`, for a group) plus one typed method per verb that
-your routes call. Only `runCodeTool` is a constructor: it is the one tool that
+Each offers `spec` (or `specs`, for a group), a `routes(...)` that wires them,
+and one typed method per verb if you would rather wire them yourself. Only `runCodeTool` is a constructor: it is the one tool that
 owns something with a lifetime — the semaphore bounding concurrent sandbox runs
 — while the others own nothing, so they are sections and their per-session
 values arrive as arguments.
@@ -232,16 +235,17 @@ go on the agent:
 val specs: List[Tool] = [runCode, weather, ..SkillTools.specs, ..MemoryTools.specs]
 ```
 
-and the routes go to each turn:
+and the routes go to each turn. A group contributes its own in one line, and you
+add your own on top:
 
 ```jo
-val handlers: Map[String, Handler] = Map:
-  runCode.name                ~ (i => runCode.run(i["code"]))
-  weather.name                ~ (i => weather.lookUp(i["city"]))
-  SkillTools.readSpec.name    ~ (i => SkillTools.read(skillsDir, i["name"]))
-  MemoryTools.updateSpec.name ~ (i => MemoryTools.update(memory, i["key"], i["value"]))
+val routes =
+  MemoryTools.routes(memory)
+    .addAll: SkillTools.routes(skillsDir)
+    .add: runCode.name, (i: ToolInput) => runCode.run(i["code"])
+    .add: weather.name, (i: ToolInput) => weather.lookUp(i["city"])
 
-agent.runTurn(userMsg, handlers, maxToolRounds = 50, maxRetries = 4)
+agent.runTurn(userMsg, routes, maxToolRounds = 50, maxRetries = 4)
 ```
 
 That is the whole wiring: the model now sees `weather` in its toolset, and the map

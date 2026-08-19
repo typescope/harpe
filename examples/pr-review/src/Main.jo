@@ -3,6 +3,7 @@ namespace harpe.examples.prreview
 import jo.IO.stdout
 import jo.IO.args
 import harpe.*
+import harpe.Tool.ToolInput
 import harpe.ffi.os
 import harpe.ffi.time
 import harpe.ffi.dotenv
@@ -46,17 +47,15 @@ private def review(pr: String): Unit receives stdout, workspace, logger =
     "PR_URL" ~ pr
     "GITHUB_TOKEN" ~ os.getenv("GITHUB_TOKEN", "")
 
-  val handlers: Map[String, Handler] = Map:
-    runCode.name               ~ (i => runCode.run(i["code"], guestEnv))
-    SkillTools.listSpec.name   ~ (i => SkillTools.list(skillsDir))
-    SkillTools.readSpec.name   ~ (i => SkillTools.read(skillsDir, i["name"]))
-    SkillTools.searchSpec.name ~ (i => SkillTools.search(skillsDir, i["query"]))
+  val routes =
+    SkillTools.routes(skillsDir)
+      .add: runCode.name, (i: ToolInput) => runCode.run(i["code"], guestEnv)
 
   val turn =
     with interact = channel in
       agent.runTurn:
         UserText("please start review the pr", [])
-        handlers
+        routes
         maxToolRounds = 30
         maxRetries = 4
 
