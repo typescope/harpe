@@ -98,7 +98,7 @@ Add the spec to the agent and the route to the turn:
 
 ```jo
 tools = [runCode, weather]
-routes = runCode.routes().addAll: weather.routes()
+routes = runCode.routes() ++ weather.routes()
 ```
 
 Now every call to your tool writes a `myagent.tools.weather` record, already

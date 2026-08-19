@@ -78,10 +78,10 @@ private def runChat(): Unit receives stdout, workspace =
   // environment.
   val routes =
     MemoryTools.routes(memory)
-      .addAll: SkillTools.routes(skillsDir)
-      .addAll: UploadMediaTool.routes(dataDir)
-      .addAll: runCode.routes()
-      .addAll: bash.routes()
+      ++ SkillTools.routes(skillsDir)
+      ++ UploadMediaTool.routes(dataDir)
+      ++ runCode.routes()
+      ++ bash.routes()
 
   while true do
     // `None` is end-of-input (Ctrl-D). A blank line or a Ctrl-C'd prompt is

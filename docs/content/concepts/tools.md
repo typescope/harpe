@@ -68,9 +68,10 @@ code to run. Because you build it, a handler closes over whatever the turn needs
 — a session's data directory, an API token, your own typed context — with
 nothing passed through the framework to get there.
 
-`Routes` catches both wiring mistakes. Adding a name twice aborts as the table is
-built, rather than silently keeping one of two tools that answer to the same
-name. A spec with no route aborts the turn before the model is called.
+`Routes` catches both wiring mistakes. Wiring a name twice aborts as the table is
+built — whether through `add` or by joining two tools that share a name — rather
+than silently keeping one of them. A spec with no route aborts the turn before
+the model is called.
 
 You describe the spec in Jo. Each provider renders its own wire spec from it, so
 you never hand-write JSON schema.
@@ -244,9 +245,9 @@ declares it:
 ```jo
 val routes =
   MemoryTools.routes(memory)
-    .addAll: SkillTools.routes(skillsDir)
-    .addAll: runCode.routes()
-    .addAll: weather.routes(preferredUnits)
+    ++ SkillTools.routes(skillsDir)
+    ++ runCode.routes()
+    ++ weather.routes(preferredUnits)
 
 agent.runTurn(userMsg, routes, maxToolRounds = 50, maxRetries = 4)
 ```

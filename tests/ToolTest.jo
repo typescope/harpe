@@ -78,16 +78,16 @@ def run(): Unit receives stdout, logger, interact =
   check("routes accumulate", two.contains("alpha") && two.contains("beta"))
   check("routes report their names", two.names.size == 2)
 
-  val merged = two.addAll(Routes.of("gamma", noop))
-  check("addAll merges a group", merged.names.size == 3 && merged.contains("gamma"))
+  val merged = two ++ Routes.of("gamma", noop)
+  check("++ merges a group", merged.names.size == 3 && merged.contains("gamma"))
 
   match py.try(two.add("alpha", noop))
   case Ok(_)  => check("a name wired twice is rejected", false)
   case Err(e) => check("a name wired twice is rejected", e.message.contains("alpha"))
 
-  match py.try(two.addAll(Routes.of("beta", noop)))
-  case Ok(_)  => check("addAll rejects a clash too", false)
-  case Err(e) => check("addAll rejects a clash too", e.message.contains("beta"))
+  match py.try(two ++ Routes.of("beta", noop))
+  case Ok(_)  => check("++ rejects a clash too", false)
+  case Err(e) => check("++ rejects a clash too", e.message.contains("beta"))
 
   // --- elide: bound a large tool result, keeping head + tail ---
   check("elide leaves short text unchanged", elide("hello", 100) == "hello")

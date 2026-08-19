@@ -340,10 +340,10 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
   private def routes(memory: Memory, id: String): Routes =
     val dataDir = os.path.abspath(Session.dataDir(id))
     MemoryTools.routes(memory)
-      .addAll: SkillTools.routes(wspace.skillsDir)
-      .addAll: UploadMediaTool.routes(dataDir)
-      .addAll: SendFileTool.routes(dataDir)
-      .addAll: runTool.routes()
+      ++ SkillTools.routes(wspace.skillsDir)
+      ++ UploadMediaTool.routes(dataDir)
+      ++ SendFileTool.routes(dataDir)
+      ++ runTool.routes()
 
   //[ A fresh session under a newly-minted, time-sortable id. //]
   private def createSession(): Session receives workspace =
