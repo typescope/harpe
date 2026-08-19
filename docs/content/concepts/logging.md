@@ -83,7 +83,7 @@ import harpe.Tool
 import harpe.Tool.*
 
 def weatherTool(): Tool =
-  new Tool:
+  Tool:
     name = "weather"
     description = "Look up the weather in a city"
     params = [Tool.strParam("city", "the city")]

@@ -19,44 +19,64 @@ import harpe.ffi.os
 import harpe.ffi.mimetypes
 
 import harpe.Tool
+import harpe.Tool.*
 import harpe.Model.Attachment
 import harpe.callContext
 import harpe.models.*
 
 //[ Show a file in the data directory to the model directly
   !
-  ! `fileName` in the session's data directory and, if its type is inlinable,
-  ! returns it as `media` so the render layer shows it to the model directly.
-  ! Mirrors `sendFile`'s name handling (basename only, no `..`/`.`).
+  ! Takes `fileName` in the session's data directory and, if its type is
+  ! inlinable, returns it as `media` so the render layer shows it to the model
+  ! directly. Mirrors `sendFile`'s name handling (basename only, no `..`/`.`).
 //]
-def uploadMediaTool(): Tool = new Tool:
-  name = "uploadMedia"
-  description = "Show an image or PDF from your data directory to yourself, as a real picture — not just its text. Use this only when you need to actually SEE it (colors, layout, a chart, a diagram, a scan with no legible text); for reading text out of a file, prefer `ocr`/`pdf`/`fs` — cheaper, and usually enough. Write the file to the data directory first if you haven't already."
-  params = [Tool.strParam("fileName", "The name of the image or PDF file in your data directory to view")]
-  run = input =>
+private class UploadMediaTool
+  view Tool
+
+  def name: String = "uploadMedia"
+
+  def description: String =
+    "Show an image or PDF from your data directory to yourself, as a real picture — not just its text. Use this only when you need to actually SEE it (colors, layout, a chart, a diagram, a scan with no legible text); for reading text out of a file, prefer `ocr`/`pdf`/`fs` — cheaper, and usually enough. Write the file to the data directory first if you haven't already."
+
+  def params: List[ToolParam] =
+    [strParam("fileName", "The name of the image or PDF file in your data directory to view")]
+
+  def run(input: ToolInput): RunOutcome =
     val fileName = input.string("fileName")
     val dir = callContext.getOrElse("HARPE_DATA_DIR", "")
-    val name = os.path.basename(fileName.replace("\\", "/"))
+    val baseName = os.path.basename(fileName.replace("\\", "/"))
 
     if dir == "" then
-      new Tool.RunOutcome("No data directory is available to upload from.", "uploadMedia · no data dir", [])
+      new RunOutcome("No data directory is available to upload from.", "uploadMedia · no data dir", [])
 
-    else if name == "" || name == "." || name == ".." || !os.path.isfile(os.path.join(dir, name)) then
-      new Tool.RunOutcome(
+    else if !isDataFile(dir, baseName) then
+      new RunOutcome(
         "No such file: '\{fileName}'. Write it to your data directory first, then upload it.",
         "uploadMedia · no such file", [])
 
     else
-      val mime = mimetypes.guessType(name).getOrElse("application/octet-stream")
+      inline(dir, baseName)
 
-      if !isInlineImage(mime) && !isInlinePdf(mime) then
-        new Tool.RunOutcome(
-          "'\{name}' is \{mime}, which cannot be shown directly — only JPEG/PNG/GIF/WebP images and PDFs can. Use `ocr`/`pdf`/`fs` to read it instead.",
-          "uploadMedia · unsupported · \{mime}", [])
+  //[ Is `baseName` a real file in the data directory, and not a traversal attempt? //]
+  private def isDataFile(dir: String, baseName: String): Bool =
+    baseName != "" && baseName != "." && baseName != ".." && os.path.isfile(os.path.join(dir, baseName))
 
-      else
-        val size = os.path.getsize(os.path.join(dir, name))
-        new Tool.RunOutcome(
-          "'\{name}' is attached below — look at it directly in your next reply.",
-          "uploadMedia · \{name}",
-          [Attachment(name, size, mime, true)])
+  //[ Attach `baseName` for the model to see, or explain why its type cannot be. //]
+  private def inline(dir: String, baseName: String): RunOutcome =
+    val mime = mimetypes.guessType(baseName).getOrElse("application/octet-stream")
+
+    if !isInlineImage(mime) && !isInlinePdf(mime) then
+      new RunOutcome(
+        "'\{baseName}' is \{mime}, which cannot be shown directly — only JPEG/PNG/GIF/WebP images and PDFs can. Use `ocr`/`pdf`/`fs` to read it instead.",
+        "uploadMedia · unsupported · \{mime}", [])
+
+    else
+      val size = os.path.getsize(os.path.join(dir, baseName))
+      new RunOutcome(
+        "'\{baseName}' is attached below — look at it directly in your next reply.",
+        "uploadMedia · \{baseName}",
+        [Attachment(baseName, size, mime, true)])
+end
+
+//[ The `uploadMedia` tool. //]
+def uploadMediaTool(): Tool = new UploadMediaTool

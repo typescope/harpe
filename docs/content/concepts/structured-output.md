@@ -63,7 +63,7 @@ The tool call itself carries the structure. The web agent delivers files this
 way, with a tool that moves no bytes at all:
 
 ```jo
-def sendFileTool(): Tool = new Tool:
+def sendFileTool(): Tool = Tool:
   name = "sendFile"
   description = "Deliver a file to the user — it appears as an attachment in your reply."
   params = [Tool.strParam("fileName", "The name of the file in your data directory to send")]

@@ -23,16 +23,31 @@ tool schema. The compiler checks its use before the program runs.
 
 ## What a tool is
 
+`Tool` is an interface with four members:
+
 ```jo
-class Tool(name, description, params, run)
+interface Tool
+  def name: String
+  def description: String
+  def params: List[ToolParam]
+  def run(input: ToolInput): RunOutcome receives logger, callContext, currentInteract
+end
 ```
 
 - **`name`** — how the model calls it.
 - **`description`** — prose the model reads to decide *when* to call it. Write it
   for the model, not for yourself.
-- **`params`** — the typed inputs it accepts (below).
+- **`params`** — the typed inputs it accepts (below). Read every time a request is
+  rendered, so a tool may derive its schema from live state.
 - **`run`** — your host-side handler: it gets the call's typed input and returns a
-  `RunOutcome`.
+  `RunOutcome`. Its `receives` clause is what puts the ambient `logger`, the
+  driver's `callContext`, and `currentInteract` in scope inside the handler, as
+  of the turn the call belongs to.
+
+Most tools are nothing but those four parts, and the `Tool(...)` factory builds one
+from them — that is the next section. A tool with logic of its own implements the
+interface directly instead, which [Tools that own their
+logic](#tools-that-own-their-logic) covers.
 
 You describe all of this in Jo. Each provider renders its own wire spec from it, so
 you never hand-write JSON schema.
@@ -64,13 +79,14 @@ import harpe.Tool
 import harpe.Tool.*
 
 def weatherTool(): Tool =
-  new Tool:
+  Tool:
     name = "weather"
     description = "Look up the current weather in a city"
     params = [strParam("city", "the city to look up")]
     run = input => lookUp(input.string("city"))
 
 // Keep the handler body in a small function. It may use `logger` freely.
+// Once a tool grows past that, give it a class instead — see below.
 private def lookUp(city: String): RunOutcome =
   new RunOutcome("Sunny in \{city}, 22°C", "weather · \{city}", [])
 ```
@@ -120,6 +136,45 @@ result to the model and the whole output to the session's structured log. See
 ```jo
 new RunOutcome(elide(output, 4000), "ran · 3.1s", [])
 ```
+
+## Tools that own their logic
+
+Most of an agent's logic ends up inside its tools, and a tool grows: helper
+functions, a resource it holds open, state it keeps between calls. Implement
+`Tool` directly and all of that lives in one class, instead of in
+namespace-level functions threading captured values through a closure.
+
+```jo
+class WeatherTool(apiKey: String)
+  view Tool
+
+  private var lookups: Int = 0
+
+  def name: String = "weather"
+  def description: String = "Look up the current weather in a city"
+  def params: List[ToolParam] = [strParam("city", "the city to look up")]
+
+  def run(input: ToolInput): RunOutcome =
+    lookups = lookups + 1
+    report(input.string("city"))
+
+  private def report(city: String): RunOutcome =
+    new RunOutcome("Sunny in \{city}, 22°C", "weather · \{city}", [])
+end
+```
+
+Two things to know:
+
+- `run` does not restate `receives`. It inherits the interface's declaration, so
+  the handler reads the ambient `logger` and `callContext` exactly as a
+  factory-built tool does — the current turn's, not the ones in scope when the
+  tool was constructed.
+- A class parameter does not implement an interface member, so name the
+  parameters apart from `name` / `description` / `params` and let the members
+  read them.
+
+Because `description` and `params` are methods, a tool written this way can also
+compute its schema per turn rather than freezing it at construction.
 
 ## Errors are safe
 
