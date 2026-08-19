@@ -52,27 +52,22 @@ section Agent
     ! is asked once more with no tools, forcing a final answer. `maxRetries` is
     ! transport policy — how often a transient model error is retried.
     !
-    ! `tools` are the specs the model is offered. `routes` is what actually
-    ! runs, wired by tool name, so a handler closes over whatever typed context
-    ! the driver built it with — in practice one table per session, not per
-    ! turn. Every spec must have a route: an unrouted name is a wiring bug and
-    ! aborts before the model is called, rather than surfacing mid-turn as a
-    ! tool failure. (`Routes` rejects the opposite mistake, one name wired
-    ! twice, as it is built.)
+    ! `tools` is both halves at once: the specs the model is offered and the
+    ! code that answers each call, wired together by name. A handler closes over
+    ! whatever typed context the driver built it with — in practice one toolset
+    ! per session, not per turn. There is no way to offer a tool nobody answers,
+    ! so the engine has nothing to check here. (`Toolset` rejects the one
+    ! mistake still possible, the same name wired twice, as it is built.) A name
+    ! the model invents anyway comes back to it as an unknown tool.
   //]
   def runTurn(
       input: UserInput :- [stringInput],
       brain: Model = Defaults.model,
-      tools: List[Tool] = NoTools,
-      routes: Routes = Routes.empty,
+      tools: Toolset = Toolset.empty,
       context: Context = NoHistory,
       maxToolRounds: Int = 50,
       maxRetries: Int = 4)
   : TurnData receives logger, interact =
-
-    for t in tools do
-      if !routes.contains(t.name) then
-        abort "no handler is wired for the tool '\{t.name}'"
 
     var rounds = 0
     var result: TurnResult = Failed("")
@@ -104,7 +99,7 @@ section Agent
 
       // Once the tool budget is spent, offer no tools so the model must reply with
       // a final text answer rather than calling another tool.
-      val offer: List[Tool] = if rounds >= maxToolRounds then [] else tools
+      val offer: List[Tool] = if rounds >= maxToolRounds then [] else tools.specs
 
       if rounds == maxToolRounds then
         interact.emit: ToolBudgetReached(maxToolRounds)
@@ -150,8 +145,8 @@ section Agent
             interact.emit: ToolCallStarted(toolName)
 
             val outcome =
-              if routes.contains(toolName) then
-                runSafely(toolName, routes.handler(toolName), call.input)
+              if tools.contains(toolName) then
+                runSafely(toolName, tools.handler(toolName), call.input)
               else
                 RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}", attachments = [])
 

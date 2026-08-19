@@ -72,20 +72,26 @@ def run(): Unit receives stdout, logger, interact =
   check("runSafely summary names the tool", badOut.summary == "error · boom")
   check("runSafely result carries the message", badOut.result.contains("kaboom"))
 
-  // --- Routes: names accumulate, and wiring one twice is caught as it is built ---
+  // --- Toolset: tools accumulate, and wiring one name twice is caught as it is built ---
   val noop: Handler = (i: ToolInput) => new RunOutcome("x", "x", attachments = [])
-  val two = Routes.of("alpha", noop).add("beta", noop)
-  check("routes accumulate", two.contains("alpha") && two.contains("beta"))
-  check("routes report their names", two.names.size == 2)
+  val spec = (n: String) => Tool(n, "a test tool", [])
+  val two = Toolset.of(spec("alpha"), noop).add(spec("beta"), noop)
+  check("tools accumulate", two.contains("alpha") && two.contains("beta"))
+  check("tools report their names", two.names.size == 2)
 
-  val merged = two ++ Routes.of("gamma", noop)
+  // The specs the model is offered come from the same entries as the handlers,
+  // so a wired tool is offered and an offered tool is answered, by construction.
+  check("specs match the wiring", two.specs.size == 2)
+  check("specs keep wiring order", two.specs.get(0).name == "alpha")
+
+  val merged = two ++ Toolset.of(spec("gamma"), noop)
   check("++ merges a group", merged.names.size == 3 && merged.contains("gamma"))
 
-  match py.try(two.add("alpha", noop))
+  match py.try(two.add(spec("alpha"), noop))
   case Ok(_)  => check("a name wired twice is rejected", false)
   case Err(e) => check("a name wired twice is rejected", e.message.contains("alpha"))
 
-  match py.try(two ++ Routes.of("beta", noop))
+  match py.try(two ++ Toolset.of(spec("beta"), noop))
   case Ok(_)  => check("++ rejects a clash too", false)
   case Err(e) => check("++ rejects a clash too", e.message.contains("beta"))
 
@@ -102,7 +108,7 @@ def run(): Unit receives stdout, logger, interact =
 
   // --- MemoryTools: the LLM's read/write/list interface to a Memory store ---
   val mem = new Memory
-  check("MemoryTools offers three specs", MemoryTools.specs.size == 3)
+  check("MemoryTools offers three tools", MemoryTools.toolset(mem).specs.size == 3)
 
   val r1 = MemoryTools.update(mem, "goal", "win")
   check("updateMemory writes the store", mem.get("goal") == "win")

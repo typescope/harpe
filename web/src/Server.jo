@@ -49,7 +49,7 @@ import harpe.tools.*
 import harpe.context.WindowedContext
 import harpe.Tool
 import harpe.Handler
-import harpe.Routes
+import harpe.Toolset
 import harpe.Tool.ToolInput
 import harpe.turns.Failed
 
@@ -66,12 +66,12 @@ import harpe.turns.Failed
   ! typo) rather than silently failing.
 //]
 section SendFileTool
-  //[ This tool's route, delivering files from `dataDir`. //]
-  def routes(dataDir: String): Routes =
-    Routes.of: spec.name, (i: ToolInput) => send(i["fileName"], dataDir)
+  //[ This tool, delivering files from `dataDir`. //]
+  def toolset(dataDir: String): Toolset =
+    Toolset.of: spec, (i: ToolInput) => send(i["fileName"], dataDir)
 
-  //[ The spec, for the agent's tool list. //]
-  def spec: Tool =
+  //[ The spec the model is offered. //]
+  private def spec: Tool =
     Tool:
       "sendFile"
       "Deliver a file to the user — it appears as an attachment in your reply. Write the file to the data directory first (e.g. with `fs`)."
@@ -113,14 +113,6 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
   // `runTool` holds the build semaphore, so one instance bounds concurrent
   // sandbox runs across the whole server. The other tools own nothing.
   private val runTool: RunCodeTool = runCodeTool(wspace.sandboxDir, 610.0)
-
-  //[ Every spec the model is offered — identical for every session. //]
-  private def specs: List[Tool] =
-    [runTool,
-     UploadMediaTool.spec,
-     SendFileTool.spec,
-     ..SkillTools.specs,
-     ..MemoryTools.specs]
 
   //[ The WSGI application: establish the request context, then route
     !
@@ -330,20 +322,20 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     case Some(session) => session.state
     case None          => Idle
 
-  //[ What runs for each tool name, for one session
+  //[ The tools one session is run with — what the model is offered, and what runs
     !
     ! Every session gets its own data directory — a multi-session server must
     ! not hand one shared directory to every session, so `fs` (and the document
     ! readers) are rooted per session. Uploads land there, agent output surfaces
-    ! there, and these routes are where that directory reaches the tools.
+    ! there, and this is where that directory reaches the tools.
   //]
-  private def routes(memory: Memory, id: String): Routes =
+  private def tools(memory: Memory, id: String): Toolset =
     val dataDir = os.path.abspath(Session.dataDir(id))
-    MemoryTools.routes(memory)
-      ++ SkillTools.routes(wspace.skillsDir)
-      ++ UploadMediaTool.routes(dataDir)
-      ++ SendFileTool.routes(dataDir)
-      ++ runTool.routes()
+    MemoryTools.toolset(memory)
+      ++ SkillTools.toolset(wspace.skillsDir)
+      ++ UploadMediaTool.toolset(dataDir)
+      ++ SendFileTool.toolset(dataDir)
+      ++ runTool.toolset()
 
   //[ A fresh session under a newly-minted, time-sortable id. //]
   private def createSession(): Session receives workspace =
@@ -358,11 +350,10 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       id
       Session.forSession(id)
       brain
-      specs
+      tools(memory, id)
       context
       memory
       Session.memoryPath(id)
-      routes(memory, id)
 
     registryLock.acquire()
     registry.set(id, session)
@@ -395,7 +386,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
         memory = memory
         initial = Session.load(id)
 
-      val session = new Session(id, log, brain, specs, context, memory, Session.memoryPath(id), routes(memory, id))
+      val session = new Session(id, log, brain, tools(memory, id), context, memory, Session.memoryPath(id))
 
       registryLock.acquire()
       val winner =

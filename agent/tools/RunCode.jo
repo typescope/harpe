@@ -184,13 +184,13 @@ class RunCodeTool(
   def params: List[ToolParam] =
     [strParam("code", "The Jo source code to compile and run")]
 
-  //[ This tool's route, granting the guest `guestEnv`
+  //[ This tool, granting the guest `guestEnv`
     !
     ! The parameter name the model fills in lives with the spec that declares
     ! it, so a driver never repeats it.
   //]
-  def routes(guestEnv: Map[String, String] = noGuestEnv): Routes =
-    Routes.of: name, (i: ToolInput) => run(i["code"], guestEnv)
+  def toolset(guestEnv: Map[String, String] = noGuestEnv): Toolset =
+    Toolset.of: this, (i: ToolInput) => run(i["code"], guestEnv)
 
   //[ One bounded, isolated run of `code`
     !

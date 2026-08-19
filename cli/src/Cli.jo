@@ -57,9 +57,6 @@ private def runChat(): Unit receives stdout, workspace =
   val bash    = new RunBashTool
   val skillsDir = workspace.skillsDir
 
-  val specs: List[Tool] =
-    [runCode, UploadMediaTool.spec, bash, ..SkillTools.specs, ..MemoryTools.specs]
-
   val brain = Defaults.model()
 
   // The context is what carries the conversation between turns, so it is built
@@ -74,15 +71,16 @@ private def runChat(): Unit receives stdout, workspace =
   if !os.path.isdir(data) then os.makedirs(data)
   val dataDir = os.path.abspath(data)
 
-  // What actually runs for each name the model can call. The CLI grants the
-  // guest no configuration of its own, so `runCode` takes its default (empty)
+  // What the model is offered, and what actually runs for each name — one
+  // table, so the two can never disagree. The CLI grants the guest no
+  // configuration of its own, so `runCode` takes its default (empty)
   // environment.
-  val routes =
-    MemoryTools.routes(memory)
-      ++ SkillTools.routes(skillsDir)
-      ++ UploadMediaTool.routes(dataDir)
-      ++ runCode.routes()
-      ++ bash.routes()
+  val tools =
+    MemoryTools.toolset(memory)
+      ++ SkillTools.toolset(skillsDir)
+      ++ UploadMediaTool.toolset(dataDir)
+      ++ runCode.toolset()
+      ++ bash.toolset()
 
   while true do
     // `None` is end-of-input (Ctrl-D). A blank line or a Ctrl-C'd prompt is
@@ -99,8 +97,7 @@ private def runChat(): Unit receives stdout, workspace =
         Agent.runTurn:
           userMsg
           brain
-          specs
-          routes
+          tools
           context
           maxToolRounds = 50
           maxRetries = 4

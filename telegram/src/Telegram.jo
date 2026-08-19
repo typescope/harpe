@@ -36,7 +36,7 @@ import harpe.Defaults
 import harpe.Model
 import harpe.Tool
 import harpe.tools.*
-import harpe.Routes
+import harpe.Toolset
 import harpe.Tool.ToolInput
 import harpe.context.WindowedContext
 
@@ -113,12 +113,12 @@ private def serve(): Unit receives stdout, workspace =
   ! they arrive as arguments from the route.
 //]
 private class SendFileTool(client: TelegramClient)
-  //[ This tool's route, sending files from `dir` to `chatId`. //]
-  def routes(chatId: String, dir: String): Routes =
-    Routes.of: spec.name, (i: Tool.ToolInput) => send(chatId, i["fileName"], dir)
+  //[ This tool, sending files from `dir` to `chatId`. //]
+  def toolset(chatId: String, dir: String): Toolset =
+    Toolset.of: spec, (i: Tool.ToolInput) => send(chatId, i["fileName"], dir)
 
-  //[ The spec, for the agent's tool list. //]
-  def spec: Tool =
+  //[ The spec the model is offered. //]
+  private def spec: Tool =
     Tool:
       "sendFile"
       "Deliver a file to the user — it is sent to the chat as a document. Write the file to the data directory first (e.g. with `fs`)."
@@ -174,13 +174,6 @@ private class TelegramBot(
   private val runTool: RunCodeTool = runCodeTool(harpe.workspace.sandboxDir, 610.0)
   private val sendFile: SendFileTool = new SendFileTool(client)
 
-  //[ Every spec the model is offered — identical for every chat. //]
-  private def specs: List[Tool] =
-    [runTool,
-     UploadMediaTool.spec,
-     sendFile.spec,
-     ..SkillTools.specs,
-     ..MemoryTools.specs]
   private val approvalLock = threading.lock()
   private val pendingApprovals = py.dict()
 
@@ -464,17 +457,17 @@ private class TelegramBot(
 
       // Each chat is its own session, rooted at its own data directory:
       // downloaded files land there, and files the agent writes and sends back
-      // surface there too. These routes are where that directory reaches the
+      // surface there too. This toolset is where that directory reaches the
       // tools.
       val dataDir = os.path.abspath(Session.dataDir(chatId))
-      val routes =
-        MemoryTools.routes(memory)
-          ++ SkillTools.routes(harpe.workspace.skillsDir)
-          ++ UploadMediaTool.routes(dataDir)
-          ++ sendFile.routes(chatId, dataDir)
-          ++ runTool.routes()
+      val tools =
+        MemoryTools.toolset(memory)
+          ++ SkillTools.toolset(harpe.workspace.skillsDir)
+          ++ UploadMediaTool.toolset(dataDir)
+          ++ sendFile.toolset(chatId, dataDir)
+          ++ runTool.toolset()
 
-      val session = new Session(chatId, log, brain, specs, context, memory, memoryPath, dataDir, routes)
+      val session = new Session(chatId, log, brain, tools, context, memory, memoryPath, dataDir)
       registryLock.acquire()
       registry.set(chatId, session)
       session.queue.put(incoming)

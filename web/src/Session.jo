@@ -25,7 +25,7 @@ import harpe.ApprovalDecision
 import harpe.ApprovalTimedOut
 import harpe.ApprovalCancelled
 import harpe.Memory
-import harpe.Routes
+import harpe.Toolset
 import harpe.Tool
 import harpe.Context
 import harpe.interact
@@ -77,8 +77,8 @@ end
   ! concurrent requests.
 //]
 class Session(
-    id: String, log: Logger, brain: Model, tools: List[Tool], context: Context,
-    memory: Memory, memoryPath: String, routes: Routes)
+    id: String, log: Logger, brain: Model, tools: Toolset, context: Context,
+    memory: Memory, memoryPath: String)
   val lock = threading.lock()
 
   //[ Set (via `POST /api/stop`) to request cancellation of the running turn
@@ -220,7 +220,7 @@ class Session(
     val channel = new WebInteract(emit, this.stop, (id, request) => requestApproval(id, request))
 
     val turn = with logger = log, interact = channel in
-      Agent.runTurn(input, brain, tools, routes, context, maxToolRounds, maxRetries)
+      Agent.runTurn(input, brain, tools, context, maxToolRounds, maxRetries)
 
     match turn.result
     case Success =>

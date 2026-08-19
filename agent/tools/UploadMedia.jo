@@ -19,7 +19,7 @@ import harpe.ffi.os
 import harpe.ffi.mimetypes
 
 import harpe.Tool
-import harpe.Routes
+import harpe.Toolset
 import harpe.Tool.*
 import harpe.Model.Attachment
 import harpe.models.*
@@ -35,16 +35,16 @@ import harpe.models.*
   ! directly. Mirrors `sendFile`'s name handling (basename only, no `..`/`.`).
 //]
 section UploadMediaTool
-  //[ The spec, for the agent's tool list. //]
-  def spec: Tool =
+  //[ The spec the model is offered. //]
+  private def spec: Tool =
     Tool:
       "uploadMedia"
       "Show an image or PDF from your data directory to yourself, as a real picture — not just its text. Use this only when you need to actually SEE it (colors, layout, a chart, a diagram, a scan with no legible text); for reading text out of a file, prefer `ocr`/`pdf`/`fs` — cheaper, and usually enough. Write the file to the data directory first if you haven't already."
       [strParam("fileName", "The name of the image or PDF file in your data directory to view")]
 
-  //[ This tool's route, showing files from `dataDir`. //]
-  def routes(dataDir: String): Routes =
-    Routes.of: spec.name, (i: ToolInput) => show(i["fileName"], dataDir)
+  //[ This tool, showing files from `dataDir`. //]
+  def toolset(dataDir: String): Toolset =
+    Toolset.of: spec, (i: ToolInput) => show(i["fileName"], dataDir)
 
   //[ Attach the data-directory file `fileName` for the model to look at. //]
   def show(fileName: String, dir: String): RunOutcome =

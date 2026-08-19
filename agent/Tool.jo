@@ -3,8 +3,9 @@
   ! The tool abstraction
   !
   ! A `Tool` is a name + prose + typed parameters: the spec the model is offered.
-  ! What runs when the model calls it is a `Handler`, which the driver wires to
-  ! the name for each turn.
+  ! What runs when the model calls it is a `Handler`. Neither travels alone — a
+  ! `Toolset` wires each spec to its handler, and that pair is what a turn is
+  ! given.
   !
   ! Tool authors describe inputs in Jo. Each provider renders its own wire spec
   ! from this model, so `Tool` stays provider-neutral and authors never
@@ -22,8 +23,9 @@ import harpe.logging.logger
 //[ A tool spec
   !
   ! One LLM-facing tool as the model sees it: a Jo description of its name,
-  ! prose, and typed params. It carries no behaviour — see `Handler` — so a spec
-  ! can live as long as the agent while what runs is rewired every turn.
+  ! prose, and typed params. It carries no behaviour — see `Handler` — so the
+  ! same spec can be answered differently by two sessions, each wiring it into
+  ! its own `Toolset`.
   !
   ! A spec that is just its three parts comes from the `Tool(...)` factory
   ! below. A tool with logic of its own — helpers, state it owns, a resource it
@@ -45,16 +47,16 @@ interface Tool
   def params: List[ToolParam]
 end
 
-//[ What a driver wires a tool's name to for one turn
+//[ What a driver wires a tool's spec to
   !
-  ! The host-side code that actually runs when the model calls a tool. It is
-  ! NOT part of `Tool`: the spec is what the model sees and lives as long as the
-  ! agent, while the handler is written per turn, where the turn's `Interact`
-  ! and the driver's own context are in scope. That is what lets a handler close
-  ! over typed, per-turn values instead of receiving them through an untyped bag.
+  ! The host-side code that actually runs when the model calls a tool. It is NOT
+  ! part of `Tool`: the spec is a constant the model reads, while the handler is
+  ! written where the driver's own context is in scope — a session's data
+  ! directory, its memory store, its chat id. That is what lets a handler close
+  ! over typed values instead of receiving them through an untyped bag.
   !
-  ! `logger` and `interact` stay ambient so a driver MAY hoist its map to
-  ! session scope and still see the current turn's channel and interaction.
+  ! `logger` and `interact` stay ambient, so a driver builds its `Toolset` once
+  ! per session and every turn still sees its own channel and interaction.
 //]
 type Handler = ToolInput => RunOutcome receives logger, interact
 
@@ -69,17 +71,11 @@ type Handler = ToolInput => RunOutcome receives logger, interact
   !   [Tool.strParam("city", "the city to look up")]
   ! ```
   !
-  ! What runs when the model calls it is the driver's `Handler`, wired by name.
+  ! What runs when the model calls it is the driver's `Handler`, wired to this
+  ! spec in a `Toolset`.
 //]
 def Tool(name: String, description: String, params: List[ToolParam]): Tool =
   new Tool.SimpleTool(name, description, params)
-
-//[ No tools at all
-  !
-  ! The default for `runTurn`'s `tools`, and what the engine offers once the
-  ! tool budget is spent.
-//]
-def NoTools: List[Tool] = []
 
 section Tool
   //[ A tool result

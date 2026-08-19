@@ -73,15 +73,10 @@ private class TestTool(toolName: String, act: () => RunOutcome receives logger)
   def run(): RunOutcome receives logger = act()
 end
 
-// The specs and the routes for a set of test tools, as the engine wants them.
-private def specsOf(tools: List[TestTool]): List[Tool] =
-  var out: List[Tool] = List.empty[Tool]
-  for t in tools do out = out + t
-  out
-
-private def routesOf(tools: List[TestTool]): Routes =
-  var out = Routes.empty
-  for t in tools do out = out.add: t.name, (i: ToolInput) => t.run()
+// A set of test tools, wired as the engine wants them.
+private def toolsetOf(tools: List[TestTool]): Toolset =
+  var out = Toolset.empty
+  for t in tools do out = out.add: t, (i: ToolInput) => t.run()
   out
 
 // A trivial tool that always succeeds, for exercising the tool-call path.
@@ -159,8 +154,7 @@ private def scenario(tools: List[TestTool], maxToolRounds: Int, maxRetries: Int,
       Agent.runTurn:
         "dummy message"
         model
-        specsOf(tools)
-        routesOf(tools)
+        toolsetOf(tools)
         context
         maxToolRounds = maxToolRounds
         maxRetries = maxRetries
@@ -235,7 +229,7 @@ def run(): Unit receives stdout, logger =
   val failedChannel = new TestInteract(live)
   val failedResult =
     with interact = failedChannel in
-      Agent.runTurn("keep me", failedBrain, specsOf(tools), routesOf(tools), failedContext, 50, 4)
+      Agent.runTurn("keep me", failedBrain, toolsetOf(tools), failedContext, 50, 4)
   val failedMessages = failedContext.render(failedChannel).messages
   check:
     "D failed user retained"
@@ -322,8 +316,7 @@ def run(): Unit receives stdout, logger =
     val _ = Agent.runTurn:
       "dummy text"
       askK
-      specsOf(toolsK)
-      routesOf(toolsK)
+      toolsetOf(toolsK)
       new WindowedContext("", new Memory, [])
       50
       4
@@ -341,8 +334,7 @@ def run(): Unit receives stdout, logger =
     val _ = Agent.runTurn:
       "dummy text"
       askK
-      specsOf(toolsL)
-      routesOf(toolsL)
+      toolsetOf(toolsL)
       new WindowedContext("", new Memory, [])
       50
       4

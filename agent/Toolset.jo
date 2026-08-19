@@ -1,0 +1,65 @@
+//[ Toolset.jo
+  !
+  ! The tools one turn is run with: which tool the model is offered, and what
+  ! runs when it calls it.
+  !
+  ! A `Tool` spec says what the model may call. A `Handler` says what happens
+  ! when it does. They are wired together here, as one entry, because nothing
+  ! sensible can be done with half a pair — a spec with no handler is a tool the
+  ! model can call and nobody answers, and a handler with no spec is code the
+  ! model is never told about. Keeping them apart made every driver name its
+  ! tool groups twice, and made "every spec has a handler" a rule the engine had
+  ! to check at run time. Here it is not a rule, just the shape of the thing.
+//]
+
+namespace harpe
+
+import harpe.Tool.ToolInput
+
+//[ The tools a turn is run with
+  !
+  ! The driver assembles one by joining what each tool contributes —
+  ! `MemoryTools.toolset(store) ++ runCode.toolset()` — so a tool's verbs, the
+  ! argument names they read, and the code behind them are wired once, where
+  ! they are declared, rather than repeated at every driver.
+  !
+  ! Wiring the same name twice aborts. Two tools answering to one name is a
+  ! wiring bug, and a plain map would silently keep one of them, which surfaces
+  ! much later as the wrong tool running.
+//]
+class Toolset(entries: Map[String, Toolset.Wiring])
+  //[ These tools plus one more. //]
+  def add(spec: Tool, handler: Handler): Toolset =
+    if entries.contains(spec.name) then
+      abort "two tools are wired to the name '\{spec.name}'"
+    new Toolset(entries.add(spec.name, new Toolset.Wiring(spec, handler)))
+
+  //[ These tools plus every tool in `other`, clashes rejected as above. //]
+  def ++(other: Toolset): Toolset =
+    var out = this
+    for name ~ wiring in other.entries.toList do out = out.add(wiring.spec, wiring.handler)
+    out
+
+  //[ Is anything wired to `name`? //]
+  def contains(name: String): Bool = entries.contains(name)
+
+  //[ What runs for `name`. Check `contains` first. //]
+  def handler(name: String): Handler = entries[name].handler
+
+  //[ Every spec the model is offered, in the order they were wired. //]
+  def specs: List[Tool] = entries.toList.map(pair => pair.snd.spec)
+
+  //[ Every name wired. //]
+  def names: List[String] = entries.toList.map(pair => pair.fst)
+end
+
+section Toolset
+  //[ One wired tool: the spec the model sees, and the code that answers it. //]
+  class Wiring(spec: Tool, handler: Handler)
+
+  //[ Nothing wired yet. //]
+  def empty: Toolset = new Toolset(Map.empty[String, Wiring])
+
+  //[ One tool — what a single-tool group contributes. //]
+  def of(spec: Tool, handler: Handler): Toolset = empty.add(spec, handler)
+end

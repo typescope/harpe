@@ -32,8 +32,8 @@ private def chat(): Unit receives stdout, harpe.workspace, logger =
     memory = new Memory
     initial = []
 
-  // What runs when the model calls a tool, wired by name.
-  val routes = runCode.routes()
+  // The one tool this agent has: what the model is offered, and what runs.
+  val tools = runCode.toolset()
 
   val data = workspace.relative("data")
   os.makedirs(data)
@@ -52,8 +52,7 @@ private def chat(): Unit receives stdout, harpe.workspace, logger =
         Agent.runTurn:
           input
           brain
-          [runCode]
-          routes
+          tools
           context
           maxToolRounds = 10
           maxRetries = 2

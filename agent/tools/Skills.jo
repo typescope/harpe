@@ -15,7 +15,7 @@ import harpe.ffi.os
 import harpe.ffi.builtins
 
 import harpe.Tool
-import harpe.Routes
+import harpe.Toolset
 import harpe.Tool.*
 import harpe.logging.logger
 
@@ -71,15 +71,12 @@ private def readTextOrEmpty(path: String): String =
   ! reads arrives as an argument from the driver's route.
 //]
 section SkillTools
-  //[ Every spec in this group, for the agent's tool list. //]
-  def specs: List[Tool] = [listSpec, readSpec, searchSpec]
-
-  //[ Every route in this group, reading under `skillsDir`. //]
-  def routes(skillsDir: String): Routes =
-    Routes.empty
-      .add: listSpec.name, (i: ToolInput) => list(skillsDir)
-      .add: readSpec.name, (i: ToolInput) => read(skillsDir, i["name"])
-      .add: searchSpec.name, (i: ToolInput) => search(skillsDir, i["query"])
+  //[ Every tool in this group, reading under `skillsDir`. //]
+  def toolset(skillsDir: String): Toolset =
+    Toolset.empty
+      .add: listSpec, (i: ToolInput) => list(skillsDir)
+      .add: readSpec, (i: ToolInput) => read(skillsDir, i["name"])
+      .add: searchSpec, (i: ToolInput) => search(skillsDir, i["query"])
 
   def listSpec: Tool =
     Tool:

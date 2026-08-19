@@ -19,7 +19,7 @@ import harpe.ffi.mimetypes
 import harpe.ffi.builtins
 
 import harpe.Agent
-import harpe.Routes
+import harpe.Toolset
 import harpe.interact
 import harpe.Memory
 import harpe.Transcript
@@ -72,8 +72,8 @@ class Incoming(text: String, files: List[FileSpec], senderId: String)
   ! so no lock is needed around it.
 //]
 private class Session(
-    id: String, log: Logger, brain: Model, tools: List[Tool], context: Context,
-    memory: Memory, memoryPath: String, dataDir: String, routes: Routes)
+    id: String, log: Logger, brain: Model, tools: Toolset, context: Context,
+    memory: Memory, memoryPath: String, dataDir: String)
   val queue = py.module("queue").Queue()
 
   //[ Begin a user turn
@@ -94,7 +94,7 @@ private class Session(
     val channel = new TelegramInteract(client, this.id, approvalHandler)
 
     val result = with logger = log, interact = channel in
-      Agent.runTurn(userMsg, brain, tools, routes, context, maxToolRounds, maxRetries)
+      Agent.runTurn(userMsg, brain, tools, context, maxToolRounds, maxRetries)
 
     match result.result
     case Success =>
