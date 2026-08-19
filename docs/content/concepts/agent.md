@@ -50,9 +50,7 @@ val agent = new Agent:
     memory = memory
     initial = history
 
-val routes =
-  MemoryTools.routes(memory)
-    .add: runCode.name, (i: ToolInput) => runCode.run(i["code"])
+val routes = MemoryTools.routes(memory).addAll: runCode.routes()
 
 with interact = channel in
   agent.runTurn(userMsg, routes, maxToolRounds = 50, maxRetries = 4)

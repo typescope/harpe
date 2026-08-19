@@ -4,7 +4,6 @@ namespace hello
 
 import jo.IO.stdout
 import harpe.*
-import harpe.Tool.ToolInput
 import harpe.Model.UserText
 import harpe.context.FullContext
 import harpe.ffi.dotenv
@@ -33,7 +32,7 @@ private def chat(): Unit receives stdout, harpe.workspace, logger =
       initial = []
 
   // What runs when the model calls a tool, wired by name.
-  val routes = Routes.of: runCode.name, (i: ToolInput) => runCode.run(i["code"])
+  val routes = runCode.routes()
 
   val data = workspace.relative("data")
   os.makedirs(data)

@@ -31,7 +31,6 @@ import harpe.logging.logger
 import harpe.Model.UserText
 import harpe.Model.Message
 import harpe.tools.*
-import harpe.Tool.ToolInput
 import harpe.context.WindowedContext
 import harpe.turns.Success
 import harpe.turns.Failed
@@ -81,8 +80,8 @@ private def runChat(): Unit receives stdout, workspace =
     MemoryTools.routes(memory)
       .addAll: SkillTools.routes(skillsDir)
       .addAll: UploadMediaTool.routes(dataDir)
-      .add: runCode.name, (i: ToolInput) => runCode.run(i["code"])
-      .add: bash.name, (i: ToolInput) => bash.run(i["command"])
+      .addAll: runCode.routes()
+      .addAll: bash.routes()
 
   while true do
     // `None` is end-of-input (Ctrl-D). A blank line or a Ctrl-C'd prompt is

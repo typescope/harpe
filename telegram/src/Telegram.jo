@@ -475,7 +475,7 @@ private class TelegramBot(
           .addAll: SkillTools.routes(harpe.workspace.skillsDir)
           .addAll: UploadMediaTool.routes(dataDir)
           .addAll: sendFile.routes(chatId, dataDir)
-          .add: runTool.name, (i: ToolInput) => runTool.run(i["code"])
+          .addAll: runTool.routes()
 
       val session = new Session(chatId, log, agent, memory, memoryPath, dataDir, routes)
       registryLock.acquire()

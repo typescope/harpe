@@ -198,10 +198,12 @@ class WeatherTool(apiKey: String)
 end
 ```
 
-The object goes in the agent's spec list and its method goes in the handler map:
+The object goes in the agent's spec list, and its own `routes` says how the
+call's arguments reach its method:
 
 ```jo
-weather.name ~ (i => weather.lookUp(i["city"], preferredUnits))
+  def routes(units: String): Routes =
+    Routes.of: name, (i: ToolInput) => lookUp(i["city"], units)
 ```
 
 Three things to know:
@@ -235,18 +237,22 @@ go on the agent:
 val specs: List[Tool] = [runCode, weather, ..SkillTools.specs, ..MemoryTools.specs]
 ```
 
-and the routes go to each turn. A group contributes its own in one line, and you
-add your own on top:
+and the routes go to each turn. Every tool contributes its own, so the driver
+never repeats a parameter name — that knowledge stays with the spec that
+declares it:
 
 ```jo
 val routes =
   MemoryTools.routes(memory)
     .addAll: SkillTools.routes(skillsDir)
-    .add: runCode.name, (i: ToolInput) => runCode.run(i["code"])
-    .add: weather.name, (i: ToolInput) => weather.lookUp(i["city"])
+    .addAll: runCode.routes()
+    .addAll: weather.routes(preferredUnits)
 
 agent.runTurn(userMsg, routes, maxToolRounds = 50, maxRetries = 4)
 ```
+
+`.add: name, handler` is there for a one-off, but a tool worth naming is worth
+giving a `routes(...)` of its own.
 
 That is the whole wiring: the model now sees `weather` in its toolset, and the map
 says exactly what happens when it calls it. The map is also where per-turn and

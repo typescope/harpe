@@ -60,7 +60,7 @@ val agent = new Agent:
     initial = []
 
 // What runs when the model calls a tool, wired by name.
-val routes = Routes.of: runCode.name, (i: ToolInput) => runCode.run(i["code"])
+val routes = runCode.routes()
 ```
 
 The agent is offered one tool spec, and `routes` says what happens when the model
