@@ -34,7 +34,7 @@ import harpe.ffi.builtins
 import harpe.Agent
 import harpe.callContext
 import harpe.Interact
-import harpe.currentInteract
+import harpe.interact
 import harpe.Defaults
 import harpe.Memory
 import harpe.Workspace
@@ -693,7 +693,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       val outcome =
         with logger = session.log,
              callContext = session.callCtx,
-             currentInteract = Interact.unattended
+             interact = Interact.unattended
         in runTool.run(ToolInput(py.dict("code" ~ code)))
       respondJson: startResp, py.dict("session" ~ sessionId, "result" ~ outcome.result, "summary" ~ outcome.summary)
 
