@@ -87,9 +87,7 @@ using the same core components.
 The default turn loop can be used without constructing an `Agent`:
 
 ```jo
-Agent.runTurn(
-  userMsg, brain, tools, routes, context,
-  maxToolRounds, maxRetries)
+Agent.runTurn(userMsg, brain, tools, routes, context, maxToolRounds, maxRetries)
 ```
 
 If the default coordination does not fit, build a loop over `Model` and
