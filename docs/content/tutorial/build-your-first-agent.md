@@ -60,17 +60,18 @@ val context = new FullContext:
   memory = new Memory
   initial = []
 
-// What runs when the model calls a tool, wired by name.
-val routes = runCode.routes()
+// The one tool this agent has: what the model is offered, and what runs.
+val tools = runCode.toolset()
 ```
 
 There is no `Agent` object to build — these are just values, and a turn is the
-call that brings them together. The model is offered one tool spec, and `routes`
-says what happens when it calls it. The rest of the file reads terminal input,
-hands it to `Agent.runTurn` with these pieces, and prints the answer:
+call that brings them together. The `Toolset` holds both halves of a tool: the
+spec the model is offered, and the code that runs when it calls. The rest of the
+file reads terminal input, hands it to `Agent.runTurn` with these pieces, and
+prints the answer:
 
 ```jo
-Agent.runTurn(input, brain, [runCode], routes, context, maxToolRounds = 10, maxRetries = 2)
+Agent.runTurn(input, brain, tools, context, maxToolRounds = 10, maxRetries = 2)
 ```
 
 `input` is the raw string from the terminal — `runTurn` accepts one directly,

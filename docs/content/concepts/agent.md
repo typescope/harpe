@@ -26,10 +26,8 @@ Harpe has no `Agent` class, and this is the reason why.
 Suppose there were one. It would hold some of what a turn needs — a model, some
 tools, a context — while the rest stayed arguments. Ask why the boundary falls
 there and the answer runs out. Why is the tool budget a turn policy but the
-toolset the agent? Why does the routing table, which every driver builds beside
-its tools and keeps for exactly as long, live on the other side of the line?
-Any answer describes a habit, not a distinction. Naming a subset "the agent" is
-pointing at a fourth building.
+toolset the agent? Any answer describes a habit, not a distinction. Naming a
+subset "the agent" is pointing at a fourth building.
 
 So a turn takes what a turn needs, and each input is an ordinary parameter with
 a default:
@@ -38,8 +36,7 @@ a default:
 def runTurn(
     input: UserInput :- [stringInput],
     brain: Model = Defaults.model,
-    tools: List[Tool] = NoTools,
-    routes: Routes = Routes.empty,
+    tools: Toolset = Toolset.empty,
     context: Context = NoHistory,
     maxToolRounds: Int = 50,
     maxRetries: Int = 4)
@@ -57,8 +54,7 @@ its own pieces supplied:
 
 ```jo
 val runCode = runCodeTool(workspace.sandboxDir, approvalDeadline = 610.0)
-val specs = [runCode, ..MemoryTools.specs]
-val routes = MemoryTools.routes(memory) ++ runCode.routes()
+val tools = MemoryTools.toolset(memory) ++ runCode.toolset()
 
 val context = new WindowedContext:
   baseSystem = workspace.read("AGENT.md").getOrElse("")
@@ -66,7 +62,7 @@ val context = new WindowedContext:
   initial = history
 
 with interact = channel in
-  Agent.runTurn(userMsg, brain, specs, routes, context, maxToolRounds = 50, maxRetries = 4)
+  Agent.runTurn(userMsg, brain, tools, context, maxToolRounds = 50, maxRetries = 4)
 ```
 
 Nothing was assembled. The same function served both, and the difference
@@ -84,8 +80,8 @@ driver's own `context` is for, and keeping one alive is the whole of it.
 to nobody rather than refusing to run.
 
 - `brain` is the provider-independent [model](/concepts/models/).
-- `tools` are the actions offered to the model, and `routes` is what runs when
-  it calls one — see [tools](/concepts/tools/).
+- `tools` is a [`Toolset`](/concepts/tools/): each entry is a spec the model is
+  offered wired to the code that answers it.
 - `context` determines what the model is shown — see
   [context](/concepts/context/).
 
