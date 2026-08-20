@@ -1,5 +1,86 @@
 # Changelog
 
+## 0.4.0 — 2026-08-20
+
+Fourth developer-preview release. It removes the `Agent` class and wires a
+tool's spec to the code behind it, so a driver written against 0.3.0 needs the
+changes listed below.
+
+0.3.0 split a tool in two and asked the driver to carry both halves: a
+`List[Tool]` of specs the model was offered, and a separate `Map[String,
+Handler]` the engine dispatched on. That made every driver name its tool groups
+twice, and left "every spec has a handler" as a rule the engine checked at run
+time. A `Toolset` holds the pair as one entry, built where the tool is declared.
+
+### harpe-caps 0.4.0
+
+- No changes. The capability interfaces are identical to 0.3.0. The version
+  moves with `harpe` so the two packages a project depends on always carry the
+  same number — a mismatched pair reads like a mistake even when it is correct.
+
+### harpe 0.4.0
+
+Breaking changes:
+
+- `Agent` is a section, not a class. An agent is not one component but the way a
+  model, its tools, and its context are coordinated for a turn, so there is
+  nothing left to instantiate. `new Agent(brain, tools, context)` followed by
+  `agent.runTurn(...)` becomes a single `Agent.runTurn(...)`, and every input is
+  a parameter with a default:
+
+  ```jo
+  val tools = MemoryTools.toolset(store) ++ runCode.toolset()
+
+  Agent.runTurn:
+    input
+    brain
+    tools
+    context
+    maxToolRounds = 10
+    maxRetries = 2
+  ```
+
+  The plainest turn is now `Agent.runTurn("hello")`.
+
+- `Toolset` replaces the `tools: List[Tool]` and `handlers: Map[String,
+  Handler]` argument pair. A `Toolset` maps each name to its spec and its
+  handler together, and drivers join what each tool contributes with `++`.
+  Wiring one name twice aborts as the toolset is built, rather than silently
+  keeping one of the two. Because no spec can be offered without a handler, the
+  engine's run-time check that every tool was wired is gone.
+- Each shipped tool contributes its own wiring, so a driver no longer repeats
+  the argument names the model fills in. `MemoryTools.toolset(store)`,
+  `SkillTools.toolset(dir)`, `UploadMediaTool.toolset(dataDir)`, and
+  `runCode.toolset(guestEnv)` each return a `Toolset`.
+- The stateless shipped tools are sections rather than classes. `new
+  MemoryTools(store)` and `new SkillTools(dir)` are gone, and their verbs take
+  what they work on as an argument — `MemoryTools.read(store, key)`,
+  `SkillTools.search(dir, query)`. `runCodeTool(...)` still returns a
+  `RunCodeTool`, which owns its build semaphore and sandbox directory.
+- `Model.Message.UserText` is renamed `UserInput`, matching the `input`
+  parameter it is passed as. A transcript written by 0.3.0 reads back unchanged
+  — only the Jo constructor name moves.
+- `runTurn`'s `input` coerces from a plain string, so a driver with no file
+  support writes `Agent.runTurn(text)` instead of `UserText(text, [])`. A driver
+  that accepts uploads builds the `UserInput` itself, with the attachments it
+  saved.
+
+Other changes:
+
+- `param interact` defaults to `Interact.unattended` and `param logger` to
+  `Logging.discard`. A turn with neither bound runs with nobody watching and
+  nothing recorded, rather than failing on an unbound parameter. A driver with a
+  user to answer to still binds its own.
+- `runTurn`'s `context` defaults to `NoHistory`, a fresh context that holds the
+  turn it is given and is discarded when the turn ends. A session that should
+  remember keeps a real strategy alive across turns.
+- The agent, tools, logging, media, memory, and skills guides and the tutorial
+  are revised for the merged toolset, and the design doc records why the spec
+  and its handler are kept together.
+
+This release remains a developer preview, with the same guidance as 0.1.0 on
+irreversible actions.
+
 ## 0.3.0 — 2026-08-19
 
 Third developer-preview release. It separates a tool's description from its
