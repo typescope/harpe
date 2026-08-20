@@ -58,24 +58,29 @@ section Model
 
   //[ Attachment
     !
-    ! One file the user shared, referenced by name within the agent's data
-    ! directory (the sandbox roots `fs` there). It rides in the transcript as
-    ! pure metadata — `name` (the basename in the data dir), `size` in bytes,
-    ! and `mime` type — so the UI can show a file card and the model can be told
-    ! the file exists. The bytes stay on disk. The model fetches them with `fs`.
+    ! One file the user shared. It rides in the transcript as pure metadata —
+    ! `name` (what the model and the UI call it, the basename in the agent's
+    ! data directory), `size` in bytes, `mime` type, and `path`, where the bytes
+    ! actually live on the host — so the UI can show a file card and the model
+    ! can be told the file exists. The bytes stay on disk. The model fetches
+    ! them with `fs`.
+    !
+    ! `path` is what makes the data directory a driver concern rather than the
+    ! framework's: whoever creates an attachment knows where the file is, so no
+    ! layer below has to be told the directory to resolve it against.
     !
     ! `inline` marks that this attachment should ALSO be shown to the model
     ! directly, as a real image/document content block, rather than only by
     ! reference. It is honored only when the carrying message is the newest one
     ! in the rendered window (see `agent/models/Anthropic.jo`, `OpenAI.jo`) — an
     ! older message's `inline` is inert, so a past image is never silently
-    ! re-sent (and re-billed) on a later turn. `Tool.ToolResult.media` uses the
+    ! re-sent (and re-billed) on a later turn. `Tool.ToolResult.attachments` uses the
     ! same type and is always fresh (a tool result exists only for the turn it
     ! was produced in), so it inlines unconditionally within that turn. Never
     ! persisted differently: `inline` is stored as given, the render layer alone
     ! decides whether to act on it.
   //]
-  class Attachment(name: String, size: Int, mime: String, inline: Bool)
+  class Attachment(name: String, size: Int, mime: String, inline: Bool, path: String)
 
   //[ The user text a provider sends for one `UserText`
     !
@@ -145,8 +150,8 @@ section Model
     !
     ! `reply` `receives logger` — read at call time — so a provider can emit its
     ! token usage to the turn's logging context (see `harpe.models.logUsage`).
-    ! `receives callContext` lets the provider resolve inline attachment bytes
-    ! from the session's data directory.
+    ! An inline attachment carries its own `path`, so nothing here needs to be
+    ! told a data directory to resolve it against.
     !
     ! Retry contract: `reply` is IDEMPOTENT. `results` are committed to the tail
     ! only on a successful `Reply` (atomically with the assistant message), so a
@@ -154,7 +159,7 @@ section Model
     ! failed attempt mutates nothing. The caller never tracks what it committed.
   //]
   interface Session
-    def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger, callContext
+    def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger
 
   //[ SimpleSession
     !
@@ -164,12 +169,12 @@ section Model
     ! Providers that carry intra-turn state (e.g. reasoning handles) implement
     ! `Session` directly instead.
   //]
-  class SimpleSession(base: Rendered, send: (Rendered, List[Tool]) => ReplyResult receives logger, callContext)
+  class SimpleSession(base: Rendered, send: (Rendered, List[Tool]) => ReplyResult receives logger)
     view Session
 
     private var messages: List[Message] = base.messages
 
-    def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger, callContext =
+    def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
       // Build the request WITHOUT committing, so a failed attempt leaves the tail
       // untouched and a retry (same results) re-sends identically.
       val outgoing =

@@ -29,14 +29,14 @@ import harpe.ApprovalRequest
 import harpe.ApprovalDecision
 import harpe.ApprovalTimedOut
 import harpe.ApprovalCancelled
-import harpe.callContext
 import harpe.workspace
 import harpe.Workspace
 import harpe.Memory
 import harpe.Defaults
 import harpe.Model
 import harpe.Tool
-import harpe.tools.memoryTools
+import harpe.tools.*
+import harpe.Handler
 import harpe.context.WindowedContext
 
 //[ The entry point //]
@@ -105,26 +105,34 @@ private def serve(): Unit receives stdout, workspace =
   ! A clean error comes back if the name does not resolve,
   ! so the model can correct it rather than silently failing.
 //]
-private def sendFileTool(client: TelegramClient, chatId: String): Tool = Tool:
-  name = "sendFile"
-  description = "Deliver a file to the user — it is sent to the chat as a document. Write the file to the data directory first (e.g. with `fs`)."
-  params = [Tool.strParam("fileName", "The name of the file in your data directory to send to the user")]
-  run = input =>
-    val fileName = input.string("fileName")
-    val dir = callContext.getOrElse("HARPE_DATA_DIR", "")
-    val name = os.path.basename(fileName.replace("\\", "/"))
+private class SendFileTool(client: TelegramClient, chatId: String)
+  view Tool
+
+  def name: String = "sendFile"
+
+  def description: String =
+    "Deliver a file to the user — it is sent to the chat as a document. Write the file to the data directory first (e.g. with `fs`)."
+
+  def params: List[Tool.ToolParam] =
+    [Tool.strParam("fileName", "The name of the file in your data directory to send to the user")]
+
+  //[ Send `fileName` from the chat's data directory `dir` as a document. //]
+  def send(fileName: String, dir: String): Tool.RunOutcome =
+    val baseName = os.path.basename(fileName.replace("\\", "/"))
 
     if dir == "" then
-      new Tool.RunOutcome("No data directory is available to send from.", "sendFile · no data dir", [])
+      new Tool.RunOutcome("No data directory is available to send from.", "sendFile · no data dir", attachments = [])
 
-    else if name == "" || name == "." || name == ".." || !os.path.isfile(os.path.join(dir, name)) then
-      new Tool.RunOutcome(
-        "No such file: '\{fileName}'. Write it to your data directory first, then send it.",
-        "sendFile · no such file", [])
+    else if baseName == "" || baseName == "." || baseName == ".." || !os.path.isfile(os.path.join(dir, baseName)) then
+      new Tool.RunOutcome:
+        "No such file: '\{fileName}'. Write it to your data directory first, then send it."
+        "sendFile · no such file"
+        attachments = []
 
     else
-      client.sendDocument(chatId, os.path.join(dir, name), "")
-      new Tool.RunOutcome("Sent '\{name}' to the user.", "sendFile · \{name}", [])
+      client.sendDocument(chatId, os.path.join(dir, baseName), "")
+      new Tool.RunOutcome("Sent '\{baseName}' to the user.", "sendFile · \{baseName}", attachments = [])
+end
 
 //[ The bot
   !
@@ -152,6 +160,12 @@ private class TelegramBot(
   // versus a worker reaping its idle session (see `dispatch`/`workerLoop`).
   private val registry = py.dict()
   private val registryLock = threading.lock()
+
+  // The tools every chat shares. `runTool` holds the build semaphore, so one
+  // instance bounds concurrent sandbox runs across every chat.
+  private val runTool: RunCodeTool = runCodeTool(harpe.workspace.sandboxDir, 610.0)
+  private val upload: UploadMediaTool = uploadMediaTool()
+  private val skills: SkillTools = new SkillTools(harpe.workspace.skillsDir)
   private val approvalLock = threading.lock()
   private val pendingApprovals = py.dict()
 
@@ -428,19 +442,33 @@ private class TelegramBot(
       val memory = Memory.load(memoryPath)
       // `Session.load` caps the replayed transcript (a RAM backstop). The full
       // transcript stays on disk.
+      val mem = new MemoryTools(memory)
+      val sendFile = new SendFileTool(client, chatId)
       val agent = new Agent:
         brain = brain
-        tools = Defaults.tools(610.0) ++ memoryTools(memory) ++ [sendFileTool(client, chatId)]
+        tools = [runTool, upload, sendFile, ..skills.specs, ..mem.specs]
         context = new WindowedContext:
           baseSystem = workspace.read("AGENT.md").getOrElse("")
           memory = memory
           initial = Session.load(chatId)
 
-      // Each chat is its own session, rooted at its own data directory (granted to
-      // the sandbox as HARPE_DATA_DIR): downloaded files land there, and files the
-      // agent writes and sends back surface there too.
-      val callCtx = Map("HARPE_DATA_DIR" ~ os.path.abspath(Session.dataDir(chatId)))
-      val session = new Session(chatId, log, agent, memory, memoryPath, callCtx)
+      // Each chat is its own session, rooted at its own data directory:
+      // downloaded files land there, and files the agent writes and sends back
+      // surface there too. These routes are where that directory reaches the
+      // tools.
+      val dataDir = os.path.abspath(Session.dataDir(chatId))
+      val handlers: Map[String, Handler] = Map:
+        runTool.name           ~ (i => runTool.run(i["code"]))
+        upload.name            ~ (i => upload.show(i["fileName"], dataDir))
+        sendFile.name          ~ (i => sendFile.send(i["fileName"], dataDir))
+        skills.listSpec.name   ~ (i => skills.list())
+        skills.readSpec.name   ~ (i => skills.read(i["name"]))
+        skills.searchSpec.name ~ (i => skills.search(i["query"]))
+        mem.updateSpec.name    ~ (i => mem.update(i["key"], i["value"]))
+        mem.readSpec.name      ~ (i => mem.read(i["key"]))
+        mem.listSpec.name      ~ (i => mem.list())
+
+      val session = new Session(chatId, log, agent, memory, memoryPath, dataDir, handlers)
       registryLock.acquire()
       registry.set(chatId, session)
       session.queue.put(incoming)

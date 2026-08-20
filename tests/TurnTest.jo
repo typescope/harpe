@@ -63,14 +63,35 @@ private def joinPy(xs: py.List): String =
     i = i + 1
   s
 
+// A test tool: the spec the model is offered, plus what its route runs.
+private class TestTool(toolName: String, act: () => RunOutcome receives logger)
+  view Tool
+
+  def name: String = toolName
+  def description: String = "test tool"
+  def params: List[ToolParam] = []
+  def run(): RunOutcome receives logger = act()
+end
+
+// The specs and the routes for a set of test tools, as the engine wants them.
+private def specsOf(tools: List[TestTool]): List[Tool] =
+  var out: List[Tool] = List.empty[Tool]
+  for t in tools do out = out + t
+  out
+
+private def routesOf(tools: List[TestTool]): Map[String, Handler] =
+  var out: Map[String, Handler] = Map.empty[String, Handler]
+  for t in tools do out = out ++ Map(t.name ~ ((i: ToolInput) => t.run()))
+  out
+
 // A trivial tool that always succeeds, for exercising the tool-call path.
-private def echoTool(): Tool =
-  Tool("echo", "echo tool", [], input => new RunOutcome("echoed", "echo · ran", []))
+private def echoTool(): TestTool =
+  new TestTool("echo", () => new RunOutcome("echoed", "echo · ran", []))
 
 // A tool that raises instead of returning — the engine must contain it via
 // `runSafely` and keep the turn going.
-private def boomTool(): Tool =
-  Tool("boom", "always throws", [], input => abort "kaboom")
+private def boomTool(): TestTool =
+  new TestTool("boom", () => abort "kaboom")
 
 private class CaptureLogger
   view Logger
@@ -93,21 +114,17 @@ private class CaptureLogger
   def close(): Unit = pass
 end
 
-private def loggingTool(): Tool =
-  Tool:
+private def loggingTool(): TestTool =
+  new TestTool:
     "logged"
-    "logs when invoked"
-    []
-    input =>
+    () =>
       logger.log("tool-invoked")
-      new RunOutcome("done", "logged · ran", [])
+      new RunOutcome("done", "logged · ran", attachments = [])
 
-private def failingLoggingTool(): Tool =
-  Tool:
+private def failingLoggingTool(): TestTool =
+  new TestTool:
     "logged"
-    "logs and then fails"
-    []
-    input =>
+    () =>
       logger.log("tool-failed")
       abort "tool failure"
 
@@ -134,12 +151,18 @@ end
 
 // Drive one turn and summarize it as "<result> | <events>". The agent's brain is
 // the no-network echo model — the scripted TestInteract.ask never touches it.
-private def scenario(tools: List[Tool], maxToolRounds: Int, maxRetries: Int, model: Model, state: State): String receives logger, callContext =
-  val interact = new TestInteract(state)
+private def scenario(tools: List[TestTool], maxToolRounds: Int, maxRetries: Int, model: Model, state: State): String receives logger =
+  val channel = new TestInteract(state)
   val context = new WindowedContext("", new Memory, [])
-  val agent = new Agent(model, tools, context)
-  val res = agent.runTurn(UserText("dummy message", []), interact, maxToolRounds, maxRetries)
-  "\{resultTag(res)} | \{joinPy(interact.log)}"
+  val agent = new Agent(model, specsOf(tools), context)
+  val res =
+    with interact = channel in
+      agent.runTurn:
+        UserText("dummy message", [])
+        routesOf(tools)
+        maxToolRounds = maxToolRounds
+        maxRetries = maxRetries
+  "\{resultTag(res)} | \{joinPy(channel.log)}"
 
 private def msgTag(m: Message): String =
   match m
@@ -151,7 +174,7 @@ private def check(label: String, actual: String, expected: String): Unit receive
   assert: actual == expected, "\{label}: expected [\{expected}] but got [\{actual}]"
   println "  ok \{label}"
 
-def run(): Unit receives stdout, logger, callContext =
+def run(): Unit receives stdout, logger =
   val tools = [echoTool()]
 
   val live: State = State(cancelled = false, pause = false)
@@ -206,10 +229,12 @@ def run(): Unit receives stdout, logger, callContext =
   // A failed turn retains its user message in the live context. Only the
   // provisional assistant/tool tail is rolled back.
   val failedContext = new WindowedContext("", new Memory, [])
-  val failedAgent = new Agent(base => (results, tools) => Fatal("bad key"), tools, failedContext)
-  val failedInteract = new TestInteract(live)
-  val failedResult = failedAgent.runTurn(UserText("keep me", []), failedInteract, 50, 4)
-  val failedMessages = failedContext.render(failedInteract).messages
+  val failedAgent = new Agent(base => (results, tools) => Fatal("bad key"), specsOf(tools), failedContext)
+  val failedChannel = new TestInteract(live)
+  val failedResult =
+    with interact = failedChannel in
+      failedAgent.runTurn(UserText("keep me", []), routesOf(tools), 50, 4)
+  val failedMessages = failedContext.render(failedChannel).messages
   check:
     "D failed user retained"
     "\{resultTag(failedResult)} | \{failedMessages.size} | \{msgTag(failedMessages.get(0))}"
@@ -290,9 +315,10 @@ def run(): Unit receives stdout, logger, callContext =
       if n == 0 then toolReply("logged") else textReply("done")
 
   val capture = new CaptureLogger
-  val agentK = new Agent(askK, [loggingTool()], new WindowedContext("", new Memory, []))
-  with logger = capture in
-    val _ = agentK.runTurn(UserText("dummy text", []), new TestInteract(live), 50, 4)
+  val toolsK = [loggingTool()]
+  val agentK = new Agent(askK, specsOf(toolsK), new WindowedContext("", new Memory, []))
+  with logger = capture, interact = new TestInteract(live) in
+    val _ = agentK.runTurn(UserText("dummy text", []), routesOf(toolsK), 50, 4)
 
   check:
     "K message-logged-before-tool"
@@ -302,9 +328,10 @@ def run(): Unit receives stdout, logger, callContext =
   // A tool exception must not erase the assistant message that requested it.
   // `runSafely` converts the exception into tool results and the turn continues.
   val captureFailure = new CaptureLogger
-  val agentL = new Agent(askK, [failingLoggingTool()], new WindowedContext("", new Memory, []))
-  with logger = captureFailure in
-    val _ = agentL.runTurn(UserText("dummy text", []), new TestInteract(live), 50, 4)
+  val toolsL = [failingLoggingTool()]
+  val agentL = new Agent(askK, specsOf(toolsL), new WindowedContext("", new Memory, []))
+  with logger = captureFailure, interact = new TestInteract(live) in
+    val _ = agentL.runTurn(UserText("dummy text", []), routesOf(toolsL), 50, 4)
 
   check:
     "L message-kept-when-tool-fails"

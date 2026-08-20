@@ -19,8 +19,8 @@ import harpe.ffi.mimetypes
 import harpe.ffi.builtins
 
 import harpe.Agent
-import harpe.CallContext
-import harpe.callContext
+import harpe.Handler
+import harpe.interact
 import harpe.Memory
 import harpe.Transcript
 import harpe.workspace
@@ -67,7 +67,9 @@ class Incoming(text: String, files: List[FileSpec], senderId: String)
   ! stay ordered and serialized. Only that worker touches the session's state,
   ! so no lock is needed around it.
 //]
-private class Session(id: String, log: Logger, agent: Agent, memory: Memory, memoryPath: String, callCtx: CallContext)
+private class Session(
+    id: String, log: Logger, agent: Agent, memory: Memory, memoryPath: String,
+    dataDir: String, handlers: Map[String, Handler])
   val queue = py.module("queue").Queue()
 
   //[ Begin a user turn
@@ -85,10 +87,10 @@ private class Session(id: String, log: Logger, agent: Agent, memory: Memory, mem
   : Unit =
     val attachments = materialize(incoming, client)
     val userMsg = UserText(incoming.text, attachments)
-    val interact = new TelegramInteract(client, this.id, approvalHandler)
+    val channel = new TelegramInteract(client, this.id, approvalHandler)
 
-    val result = with logger = log, callContext = callCtx in
-      agent.runTurn(userMsg, interact, maxToolRounds, maxRetries)
+    val result = with logger = log, interact = channel in
+      agent.runTurn(userMsg, handlers, maxToolRounds, maxRetries)
 
     match result.result
     case Success =>
@@ -116,7 +118,7 @@ private class Session(id: String, log: Logger, agent: Agent, memory: Memory, mem
     ! loop.
   //]
   private def materialize(incoming: Incoming, client: TelegramClient): List[Attachment] =
-    val dir = callCtx.getOrElse("HARPE_DATA_DIR", "")
+    val dir = dataDir
 
     if dir == "" || incoming.files.isEmpty then []
     else
@@ -135,7 +137,13 @@ private class Session(id: String, log: Logger, agent: Agent, memory: Memory, mem
               file.writeBytes(os.path.join(dir, name), data)
               val mime = if spec.mime != "" then spec.mime
                          else mimetypes.guessType(name).getOrElse("application/octet-stream")
-              atts = atts + Attachment(name, builtins.len(data), mime, false)
+              val att = Attachment:
+                name
+                builtins.len(data)
+                mime
+                inline = false
+                path = os.path.join(dir, name)
+              atts = atts + att
 
       atts
 

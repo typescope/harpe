@@ -63,20 +63,26 @@ The tool call itself carries the structure. The web agent delivers files this
 way, with a tool that moves no bytes at all:
 
 ```jo
-def sendFileTool(): Tool = Tool:
-  name = "sendFile"
-  description = "Deliver a file to the user — it appears as an attachment in your reply."
-  params = [Tool.strParam("fileName", "The name of the file in your data directory to send")]
-  run = input =>
-    val name = os.path.basename(input.string("fileName"))
+class SendFileTool
+  view Tool
+
+  def name: String = "sendFile"
+  def description: String =
+    "Deliver a file to the user — it appears as an attachment in your reply."
+  def params: List[Tool.ToolParam] =
+    [Tool.strParam("fileName", "The name of the file in your data directory to send")]
+
+  def send(fileName: String, dir: String): Tool.RunOutcome =
+    val baseName = os.path.basename(fileName)
     // validation elided
     new Tool.RunOutcome:
-      "Sent '\{name}' to the user."
-      "sendFile · \{name}"
+      "Sent '\{baseName}' to the user."
+      "sendFile · \{baseName}"
       media = []
+end
 ```
 
-The handler validates the name and returns prose for the model. The *delivery* is
+The route validates the name and returns prose for the model. The *delivery* is
 not something the handler does. The call is recorded in the transcript, and the
 driver reads it back when rendering the conversation:
 

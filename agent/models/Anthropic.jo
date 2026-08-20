@@ -15,7 +15,6 @@ import harpe.Model.*
 import harpe.Tool
 import harpe.Tool.*
 import harpe.logging.logger
-import harpe.callContext
 
 
 //[ Cache
@@ -61,12 +60,12 @@ private def toolSpec(t: Tool): py.Dict =
   ! silently skipped — it still rides in the text manifest
   ! (`Model.userContent`), just not as a direct content block.
 //]
-private def anthropicMediaBlocks(attachments: List[Attachment], dataDir: String): py.List =
+private def anthropicMediaBlocks(attachments: List[Attachment]): py.List =
   val blocks = py.list()
 
   for a in attachments if a.inline do
     if isInlineImage(a.mime) then
-      match readInlineBase64(dataDir, a.name)
+      match readInlineBase64(a.path)
       case Some(data) =>
         blocks.append:
           py.dict:
@@ -75,7 +74,7 @@ private def anthropicMediaBlocks(attachments: List[Attachment], dataDir: String)
       case None => pass
 
     else if isInlinePdf(a.mime) then
-      match readInlineBase64(dataDir, a.name)
+      match readInlineBase64(a.path)
       case Some(data) =>
         blocks.append:
           py.dict:
@@ -101,7 +100,7 @@ private def anthropicMediaBlocks(attachments: List[Attachment], dataDir: String)
   ! once a later turn rebuilds this same history from scratch. `dataDir` is the
   ! session's data directory (`""` if none), resolved once by the caller.
 //]
-private def toMessages(history: List[Message], cache: AnthropicCache, dataDir: String): py.List =
+private def toMessages(history: List[Message], cache: AnthropicCache): py.List =
   val msgs = py.list()
   val lastIdx = history.size - 1
   var i = 0
@@ -112,7 +111,7 @@ private def toMessages(history: List[Message], cache: AnthropicCache, dataDir: S
     match m
     case UserText(text, attachments) =>
       val content = Model.userContent(text, attachments)
-      val media = if i == lastIdx then anthropicMediaBlocks(attachments, dataDir) else py.list()
+      val media = if i == lastIdx then anthropicMediaBlocks(attachments) else py.list()
 
       if media.size == 0 && !shouldCache then
         msgs.append(py.dict("role" ~ "user", "content" ~ content))
@@ -202,16 +201,14 @@ private class AnthropicSession(
     extraBody: py.Dict, base: Rendered)
   view Session
 
-  // The wire messages, accumulated across the turn. They are seeded lazily on
-  // the first reply, when the session's data directory is available, then grown
-  // with raw tool_result and assistant turns.
+  // The wire messages, accumulated across the turn. They are seeded on the
+  // first reply, then grown with raw tool_result and assistant turns.
   private var messages: py.List = py.list()
   private var initialized: Bool = false
 
-  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger, callContext =
-    val dataDir = callContext.getOrElse("HARPE_DATA_DIR", "")
+  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
     if !initialized then
-      messages = toMessages(base.messages, cache, dataDir)
+      messages = toMessages(base.messages, cache)
       initialized = true
 
     val toolSpecs = py.list()
@@ -223,7 +220,7 @@ private class AnthropicSession(
     for m in messages do committed.append(m)
 
     if !results.isEmpty then
-      committed.append(toolResultMessage(results, dataDir))
+      committed.append(toolResultMessage(results))
 
     // The request adds the transient tail (working memory) after the transcript —
     // request-only, never committed, so editing memory reprocesses only the tail.
@@ -266,17 +263,17 @@ end
 
 //[ A user turn carrying tool_result blocks for `results`.
   !
-  ! `r.media` inlines unconditionally here — unlike a `UserText`'s attachments,
+  ! `r.attachments` inlines unconditionally here — unlike a `UserText`'s attachments,
   ! a tool result exists only for the round it was produced in: `toMessages`
   ! (rendering a PAST, already-committed turn) never re-derives a `tool_result`
-  ! block from a `ToolResults` message's `media`, so a past tool-delivered image
+  ! block from a `ToolResults` message's `attachments`, so a past tool-delivered image
   ! is never resent once this turn ends — no positional guard needed here.
 //]
-private def toolResultMessage(results: List[ToolResult], dataDir: String): py.Dict =
+private def toolResultMessage(results: List[ToolResult]): py.Dict =
   val content = py.list()
 
   for r in results do
-    val media = anthropicMediaBlocks(r.media, dataDir)
+    val media = anthropicMediaBlocks(r.attachments)
 
     if media.size == 0 then
       content.append:

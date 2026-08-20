@@ -51,6 +51,9 @@ private def tempfileMod: py.Dynamic = py.module("tempfile")
 //]
 private def runCodeCategory: String = "harpe.tools.runCode"
 
+//[ The default: the driver grants the guest no configuration of its own. //]
+private def noGuestEnv: Map[String, String] = Map.empty[String, String]
+
 //[ Replay the recorded invocation with this run's paths swapped in
   !
   ! The source file (the lone `.jo` positional), the `-o` output, and the
@@ -129,11 +132,12 @@ private def handleBroker(
         case Ok(value)   => value
         case Err(error) => abort error.message
 
-      Frame.of(json.dumps(py.dict(
-        "ok" ~ true,
-        "id" ~ id,
-        "decision" ~ ApprovalDecision.wire(decision)
-      )))
+      Frame.of:
+        json.dumps:
+          py.dict:
+            "ok"       ~ true
+            "id"       ~ id
+            "decision" ~ ApprovalDecision.wire(decision)
 
 //[ Replay the sandbox's audit log through the ambient (contextual) `logger`.
   !
@@ -157,7 +161,7 @@ private def replayAudit(path: String): Unit receives logger =
   ! compiler invocation each run replays. Until then, calls return a "sandbox
   ! not built" message rather than building anything themselves.
 //]
-private class RunCodeTool(
+class RunCodeTool(
     sandboxDir: String,
     approvalDeadline: Float,
     buildTimeout: Float,
@@ -180,31 +184,39 @@ private class RunCodeTool(
   def params: List[ToolParam] =
     [strParam("code", "The Jo source code to compile and run")]
 
-  //[ One bounded, isolated run
+  //[ One bounded, isolated run of `code`
     !
     ! Acquire a build slot, compile+run in a fresh temp directory, then delete
     ! it and release the slot — always, even on failure. If the guest has not
     ! been built, return a clear message instead (no build here).
+    !
+    ! `guestEnv` is the driver's per-run configuration for the guest process,
+    ! copied into its environment verbatim — this tool interprets none of it.
+    ! The keys are guest env-var names the driver and its own sandbox runtime
+    ! agree on, an application protocol rather than the framework's. It arrives
+    ! from the driver's route, so the values are whatever that turn should see.
   //]
-  def run(input: ToolInput): RunOutcome =
+  def run(code: String, guestEnv: Map[String, String] = noGuestEnv)
+  : RunOutcome receives logger, interact =
     match findDoneFile
     case None =>
-      new RunOutcome(
-        "The sandbox is not built. Run `jo build` in the sandbox project once before starting the agent.",
-        "sandbox not built", [])
+      new RunOutcome:
+        "The sandbox is not built. Run `jo build` in the sandbox project once before starting the agent."
+        "sandbox not built"
+        attachments = []
 
     case Some(donePath) =>
       gate.acquire()
       val runDir = tempfileMod.mkdtemp(prefix = "run-").asString
-      val outcome = py.try(buildAndRun(input.string("code"), donePath, runDir))
+      val outcome = py.try(buildAndRun(code, donePath, runDir, guestEnv))
       val _ = py.try(shutilMod.rmtree(runDir, ignore_errors = true))
       gate.release()
 
       // Bound only the text the model sees. `buildAndRun` has already logged the
       // full output/error to the run log, so nothing is lost from the record.
       match outcome
-      case Ok(outc) => new RunOutcome(elide(outc.result, maxResultChars), outc.summary, outc.media)
-      case Err(e)   => new RunOutcome("The run failed unexpectedly: \{e.message}", "internal error", [])
+      case Ok(outc) => new RunOutcome(elide(outc.result, maxResultChars), outc.summary, outc.attachments)
+      case Err(e)   => new RunOutcome("The run failed unexpectedly: \{e.message}", "internal error", attachments = [])
 
   //[ Locate the compiler-invocation record left by `jo build` for the guest
     !
@@ -219,8 +231,9 @@ private class RunCodeTool(
     !
     ! By replaying the recorded invocation from `donePath`, logging the outcome.
   //]
-  private def buildAndRun(code: String, donePath: String, runDir: String)
-  : RunOutcome receives logger, currentInteract, callContext =
+  private def buildAndRun(
+      code: String, donePath: String, runDir: String, guestEnv: Map[String, String])
+  : RunOutcome receives logger, interact =
     // Each run emits one `harpe.tools.runCode` log entry — the program under test
     // plus the fields specific to how it ended — to the injected channel. What
     // becomes of the entry (format, destination) is the Logger backend's policy.
@@ -245,9 +258,10 @@ private class RunCodeTool(
         "compileSeconds" ~ compileSeconds
         "timedOut"       ~ true
         "phase"          ~ "compile"
-      return new RunOutcome(
-        "The build timed out after \{buildTimeout}s.",
-        "build timed out · \{buildTimeout}s", [])
+      return new RunOutcome:
+        "The build timed out after \{buildTimeout}s."
+        "build timed out · \{buildTimeout}s"
+        attachments = []
 
     if build.returnCode != 0 then
       val compileError = compilerErrorText(build.out, build.err)
@@ -257,13 +271,14 @@ private class RunCodeTool(
         "compiled"       ~ false
         "compileSeconds" ~ compileSeconds
         "compileError"   ~ compileError
-      return new RunOutcome(
-        "The program did not compile (\{compileSeconds}s):\n\{compileError}",
-        "did not compile · \{compileSeconds}s", [])
+      return new RunOutcome:
+        "The program did not compile (\{compileSeconds}s):\n\{compileError}"
+        "did not compile · \{compileSeconds}s"
+        attachments = []
 
     // 2. Run the compiled program (its path is the `-o` we just supplied).
     if !os.path.isfile(runOut) then
-      return new RunOutcome("The program compiled but no executable was found.", "no executable produced", [])
+      return new RunOutcome("The program compiled but no executable was found.", "no executable produced", attachments = [])
 
     // A `sandbox/run.sh` wrapper (defense in depth) owns how the program runs — the
     // interpreter, any uid drop, and OS-level confinement (ulimit/landrun/bwrap/…).
@@ -285,7 +300,7 @@ private class RunCodeTool(
                  else py.list("python3", runOut)
 
     // Start the untrusted guest with PATH only, then add the audit-log path and
-    // the application-selected callContext values below. It inherits no other
+    // the driver's selected `guestEnv` values below. It inherits no other
     // host variables. The trusted compiler above keeps the full toolchain env.
     val runEnv = subprocess.guestEnv()
     runEnv.set("HARPE_AUDIT_LOG", runAudit)
@@ -295,31 +310,30 @@ private class RunCodeTool(
     // transcript.
     val brokerPath = os.path.join(runDir, "broker.sock")
     val approvalActive = threading.event()
-    val broker = Broker.start(
-      brokerPath,
-      frame => handleBroker(frame, currentInteract, approvalActive)
-    )
+    val broker = Broker.start:
+      brokerPath
+      frame => handleBroker(frame, interact, approvalActive)
     runEnv.set("HARPE_BROKER_SOCKET", brokerPath)
 
-    // The driver's per-turn config, copied in verbatim — `runCode` interprets
-    // none of it: the keys are guest env-var names the driver chose (an
-    // application protocol between the driver and its own sandbox runtime, not
-    // the framework's). This is the host→guest "state" channel. See
+    // The driver's config, copied in verbatim — `runCode` interprets none of
+    // it: the keys are guest env-var names the driver chose (an application
+    // protocol between the driver and its own sandbox runtime, not the
+    // framework's). This is the host→guest "state" channel. See
     // host-guest-boundary.md.
-    for k ~ v in callContext.toList do
+    for k ~ v in guestEnv.toList do
       runEnv.set(k, v)
 
     // Run the guest IN its own run dir, so its working directory (`.`) is that
     // isolated scratch — never the host's agent dir — with no env var needed to name it.
     val t1 = time.now()
-    val attemptedRun = py.try(subprocess.runCappedWithPauses(
-      runCmd,
-      runTimeout,
-      approvalActive,
-      approvalDeadline,
-      env = runEnv,
-      cwd = runDir
-    ))
+    val attemptedRun = py.try:
+      subprocess.runCappedWithPauses:
+        runCmd
+        runTimeout
+        approvalActive
+        approvalDeadline
+        env = runEnv
+        cwd = runDir
     broker.stop()
     val run =
       match attemptedRun
@@ -338,13 +352,15 @@ private class RunCodeTool(
         "phase"          ~ (if run.pauseTimedOut then "approval" else "run")
 
       if run.pauseTimedOut then
-        return new RunOutcome(
-          "The approval did not finish within \{approvalDeadline}s, so the program was stopped.",
-          "approval timed out · \{runSeconds}s", [])
+        return new RunOutcome:
+          "The approval did not finish within \{approvalDeadline}s, so the program was stopped."
+          "approval timed out · \{runSeconds}s"
+          attachments = []
       else
-        return new RunOutcome(
-          "The program ran too long and was stopped after \{runTimeout}s (possible infinite loop).",
-          "timed out · ran \{runSeconds}s", [])
+        return new RunOutcome:
+          "The program ran too long and was stopped after \{runTimeout}s (possible infinite loop)."
+          "timed out · ran \{runSeconds}s"
+          attachments = []
 
     val runReturnCode = run.returnCode
     val runOutText = run.out.trim
@@ -371,7 +387,7 @@ private class RunCodeTool(
       "runSeconds"     ~ runSeconds
       "exitCode"       ~ runReturnCode
       "output"         ~ result
-    new RunOutcome(result, summary, [])
+    new RunOutcome(result, summary, attachments = [])
 end
 
 //[ The core "act" tool: compile + run a Jo program against the agent sandbox.
@@ -424,7 +440,7 @@ def runCodeTool(
     runTimeout: Float = 30.0,
     maxConcurrent: Int = 4,
     maxResultChars: Int = 4000)
-: Tool =
+: RunCodeTool =
   val runScript = os.path.join(sandboxDir, "run.sh")
 
   if os.path.isfile(runScript) then
@@ -432,5 +448,10 @@ def runCodeTool(
     if !osMod.access(runScript, osMod.X_OK).asBool then
       abort "sandbox run.sh exists but is not executable — run `chmod +x \{runScript}` (see docs/concepts/sandbox.md)"
 
-  new RunCodeTool(
-    sandboxDir, approvalDeadline, buildTimeout, runTimeout, maxConcurrent, maxResultChars)
+  new RunCodeTool:
+    sandboxDir
+    approvalDeadline
+    buildTimeout
+    runTimeout
+    maxConcurrent
+    maxResultChars

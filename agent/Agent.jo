@@ -30,8 +30,18 @@ import harpe.Tool.*
   ! directly.
 //]
 class Agent(brain: Model, tools: List[Tool], context: Context)
-  def runTurn(userMsg: Message, interact: Interact, maxToolRounds: Int, maxRetries: Int): TurnData receives logger, callContext =
-    Agent.runTurn(userMsg, brain, tools, context, interact, maxToolRounds, maxRetries)
+  def runTurn(
+      userMsg: Message, handlers: Map[String, Handler],
+      maxToolRounds: Int, maxRetries: Int)
+  : TurnData receives logger, interact =
+    Agent.runTurn:
+      userMsg
+      brain
+      tools
+      handlers
+      context
+      maxToolRounds
+      maxRetries
 end
 
 section Agent
@@ -52,11 +62,21 @@ section Agent
     ! is asked once more with no tools, forcing a final answer. `maxRetries` is
     ! transport policy — how often a transient model error is retried — so it is
     ! an argument, not part of the agent.
+    !
+    ! `tools` are the specs the model is offered. `handlers` is what actually
+    ! runs, wired by tool name for THIS turn, so a handler closes over the
+    ! turn's interaction and the driver's own typed context. Every spec must
+    ! have a route: an unrouted name is a wiring bug and aborts before the model
+    ! is called, rather than surfacing mid-turn as a tool failure.
   //]
   def runTurn(
-      userMsg: Message, brain: Model, tools: List[Tool], context: Context,
-      interact: Interact, maxToolRounds: Int, maxRetries: Int)
-  : TurnData receives logger, callContext =
+      userMsg: Message, brain: Model, tools: List[Tool], handlers: Map[String, Handler],
+      context: Context, maxToolRounds: Int, maxRetries: Int)
+  : TurnData receives logger, interact =
+
+    for t in tools do
+      if !handlers.contains(t.name) then
+        abort "no handler is wired for the tool '\{t.name}'"
 
     var rounds = 0
     var result: TurnResult = Failed("")
@@ -134,14 +154,14 @@ section Agent
             interact.emit: ToolCallStarted(toolName)
 
             val outcome =
-              if tools.find(t => t.name == toolName) is Some(t) then
-                with currentInteract = interact in runSafely(t, call.input)
+              if handlers.contains(toolName) then
+                runSafely(toolName, handlers[toolName], call.input)
               else
-                RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}", [])
+                RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}", attachments = [])
 
             interact.emit: ToolCallEnded(toolName, outcome.summary)
 
-            toolResults = toolResults + ToolResult(call.id, outcome.result, outcome.media)
+            toolResults = toolResults + ToolResult(call.id, outcome.result, outcome.attachments)
           end
 
           if cancelled || interact.cancelled then
@@ -199,7 +219,7 @@ private def backoffSeconds(attempt: Int): Float =
 private def fetchReply(
     session: Session, results: List[ToolResult], tools: List[Tool],
     maxRetries: Int, interact: Interact)
-: Fetched receives logger, callContext =
+: Fetched receives logger =
 
   var attempt = 0
   var outcome: Fetched = GaveUp("")

@@ -21,20 +21,17 @@ def isInlineImage(mime: String): Bool =
 //[ A document format accepted inline — PDF only, on both providers. //]
 def isInlinePdf(mime: String): Bool = mime == "application/pdf"
 
-//[ The base64 bytes of attachment `name` under the session's `dataDir`
+//[ The base64 bytes of the attachment stored at `path`
   !
-  ! Or `None` if there is no data directory, the file is gone, or it cannot be
-  ! read. A silent `None` (not a crash) is deliberate: an inline attachment is
-  ! always ALSO referenced in the text manifest, so a render still succeeds —
+  ! Or `None` if the attachment carries no path, the file is gone, or it cannot
+  ! be read. A silent `None` (not a crash) is deliberate: an inline attachment
+  ! is always ALSO referenced in the text manifest, so a render still succeeds —
   ! just without the direct content block — if the file disappeared between
   ! attachment and render.
 //]
-def readInlineBase64(dataDir: String, name: String): Option[String] =
-  if dataDir == "" then None
+def readInlineBase64(path: String): Option[String] =
+  if path == "" || !os.path.isfile(path) then None
   else
-    val path = os.path.join(dataDir, name)
-    if !os.path.isfile(path) then None
-    else
-      match py.try(file.readBytes(path))
-      case Ok(data) => Some(data.cast[Bytes].toBase64)
-      case Err(_)   => None
+    match py.try(file.readBytes(path))
+    case Ok(data) => Some(data.cast[Bytes].toBase64)
+    case Err(_)   => None

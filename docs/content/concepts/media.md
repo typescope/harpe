@@ -8,8 +8,10 @@ user.
 
 ## One data directory per session
 
-The driver sets `HARPE_DATA_DIR` in the turn's `CallContext`. The shipped agents
-scope it differently:
+The driver owns the data directory: it passes the path to the tools that need it
+when it wires their routes, and gives each `Attachment` the path its bytes live
+at. Nothing in the framework has to be told where the directory is. The shipped
+agents scope it differently:
 
 - CLI uses the application's `data/` directory.
 - Web creates `data/<session-id>/`.
@@ -49,8 +51,10 @@ To add file input to another driver:
 1. create a data directory scoped to the user or session
 2. sanitize and de-duplicate inbound filenames
 3. save the bytes before calling `Agent.runTurn`
-4. add an `Attachment` for each saved file to `UserText`
-5. put the directory in `CallContext` as `HARPE_DATA_DIR`
+4. add an `Attachment` for each saved file to `UserText`, with the `path` the
+   bytes were written to
+5. pass the directory to the routes that need it (`uploadMedia`, your `sendFile`)
+   and to your sandbox runtime as its own environment variable
 
 Do not put file bytes, credentials, storage keys, or host paths in the
 transcript. For remote storage, materialize only the files granted to this
@@ -115,7 +119,9 @@ Remove capabilities the agent does not need. Generated code that names an
 omitted capability will not compile.
 
 `sandbox/SandboxRuntime.jo` binds each interface to a trusted implementation,
-all rooted at `HARPE_DATA_DIR`. Replace a backend there without changing the
+all rooted at the guest's data directory (named by whatever environment variable
+the driver and its runtime agree on, passed through `runCode`'s `guestEnv`).
+Replace a backend there without changing the
 guest API. Keep credentials and remote clients in the trusted runtime.
 
 Parsers and OCR engines still process untrusted input. Use the optional runtime

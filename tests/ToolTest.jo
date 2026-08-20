@@ -31,13 +31,14 @@ private def rep(c: String, n: Int): String =
 private def toolNamed(ts: List[Tool], name: String): Tool =
   ts.find(t => t.name == name) rescue None => abort "no tool named \{name}"
 
-def run(): Unit receives stdout, logger, callContext, currentInteract =
+def run(): Unit receives stdout, logger, interact =
   // --- typed ToolInput accessors read values of each schema type ---
   val full = ToolInput(py.dict("s" ~ "hi", "n" ~ 42, "b" ~ true, "f" ~ 3.5))
   check("string reads a string", full.string("s") == "hi")
   check("int reads an integer", full.int("n") == 42)
   check("bool reads a boolean", full.bool("b") == true)
   check("num reads a number", full.num("f") == 3.5)
+  check("indexing reads a string", full["s"] == "hi")
 
   // --- missing keys fall back: explicit fallback, then bare defaults ---
   val empty = ToolInput(py.dict())
@@ -49,6 +50,7 @@ def run(): Unit receives stdout, logger, callContext, currentInteract =
   check("int default is zero", empty.int("x") == 0)
   check("bool default is false", empty.bool("x") == false)
   check("num default is zero", empty.num("x") == 0.0)
+  check("indexing default is empty", empty["x"] == "")
 
   // --- parameter constructors carry the right type, all required ---
   val sp = strParam("a", "d")
@@ -61,14 +63,12 @@ def run(): Unit receives stdout, logger, callContext, currentInteract =
   check("numParam type", np.paramType is NumParam)
   check("constructed params are required", sp.required && ip.required && bp.required && np.required)
 
-  // --- runSafely: a normal tool's outcome passes through unchanged ---
-  val okTool = Tool("ok", "ok tool", [], input => new RunOutcome("done", "ran", []))
-  val okOut = runSafely(okTool, empty)
+  // --- runSafely: a normal handler's outcome passes through unchanged ---
+  val okOut = runSafely("ok", input => new RunOutcome("done", "ran", []), empty)
   check("runSafely passes success through", okOut.result == "done" && okOut.summary == "ran")
 
-  // --- runSafely: a throwing tool becomes an error RunOutcome, not a crash ---
-  val badTool = Tool("boom", "always throws", [], input => abort "kaboom")
-  val badOut = runSafely(badTool, empty)
+  // --- runSafely: a throwing handler becomes an error RunOutcome, not a crash ---
+  val badOut = runSafely("boom", input => abort "kaboom", empty)
   check("runSafely summary names the tool", badOut.summary == "error · boom")
   check("runSafely result carries the message", badOut.result.contains("kaboom"))
 
@@ -83,27 +83,27 @@ def run(): Unit receives stdout, logger, callContext, currentInteract =
   check("elide keeps the tail", small.endsWith("b"))
   check("elide marks the omission", small.contains("100 characters elided"))
 
-  // --- memoryTools: the LLM's read/write/list interface to a Memory store ---
+  // --- MemoryTools: the LLM's read/write/list interface to a Memory store ---
   val mem = new Memory
-  val mtools = memoryTools(mem)
-  check("memoryTools builds three tools", mtools.size == 3)
+  val mtools = new MemoryTools(mem)
+  check("MemoryTools offers three specs", mtools.specs.size == 3)
 
-  val r1 = toolNamed(mtools, "updateMemory").run(ToolInput(py.dict("key" ~ "goal", "value" ~ "win")))
+  val r1 = mtools.update("goal", "win")
   check("updateMemory writes the store", mem.get("goal") == "win")
   check("updateMemory summary names the key", r1.summary == "memory ← goal")
 
-  val r2 = toolNamed(mtools, "readMemory").run(ToolInput(py.dict("key" ~ "goal")))
+  val r2 = mtools.read("goal")
   check("readMemory returns the value", r2.result == "win")
 
-  val r3 = toolNamed(mtools, "readMemory").run(ToolInput(py.dict("key" ~ "absent")))
+  val r3 = mtools.read("absent")
   check("readMemory notes an empty key", r3.result.contains("empty"))
 
   mem.set("plan", "do X")
-  val r4 = toolNamed(mtools, "listMemory").run(ToolInput(py.dict()))
+  val r4 = mtools.list()
   check("listMemory reports the keys", r4.result.contains("goal") && r4.result.contains("plan"))
 
   // --- persistence flow: a tool writes memory, it survives save + reload ---
   val ppath = os.path.join(tempfile.mkdtemp(), "s.memory.json")
-  val _ = toolNamed(mtools, "updateMemory").run(ToolInput(py.dict("key" ~ "note", "value" ~ "remember this")))
+  val _ = mtools.update("note", "remember this")
   Memory.save(ppath, mem)
   check("tool-written memory persists across save/load", Memory.load(ppath).get("note") == "remember this")

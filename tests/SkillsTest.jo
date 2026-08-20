@@ -23,24 +23,15 @@ import harpe.logging.Logging
 import harpe.logging.logger
 
 
-private def callResult(tools: List[Tool], toolName: String, args: py.Dict): String =
-  // A no-op logger for the tool run. These tests assert on results, not logs.
-  with
-    logger = Logging.discard,
-    callContext = CallContext.empty,
-    currentInteract = Interact.unattended
-  in
-    if tools.find(t => t.name == toolName) is Some(t) then t.run(ToolInput(args)).result
-    else "no-such-tool"
+// A no-op logger for the tool run. These tests assert on results, not logs.
+private def listSkills(skills: SkillTools): String =
+  with logger = Logging.discard in skills.list().result
 
-private def listSkills(tools: List[Tool]): String =
-  callResult(tools, "skillsList", py.dict())
+private def readSkill(skills: SkillTools, name: String): String =
+  with logger = Logging.discard in skills.read(name).result
 
-private def readSkill(tools: List[Tool], name: String): String =
-  callResult(tools, "skillsRead", py.dict("name" ~ name))
-
-private def searchSkills(tools: List[Tool], query: String): String =
-  callResult(tools, "skillsSearch", py.dict("query" ~ query))
+private def searchSkills(skills: SkillTools, query: String): String =
+  with logger = Logging.discard in skills.search(query).result
 
 private def check(label: String, cond: Bool): Unit receives stdout =
   assert: cond, "skills: \{label} failed"
@@ -67,7 +58,7 @@ def run(): Unit receives stdout =
   file.write(os.path.join(tmp, "shared/ref.md"), "linked reference")
   os.symlink(os.path.join(tmp, "shared"), os.path.join(skillsDir, "linked"))
 
-  val tools = skillTools(skillsDir)
+  val tools = new SkillTools(skillsDir)
 
   // Listing surfaces nested files, names carrying their sub-directory path —
   // including files inside a symlinked directory.
