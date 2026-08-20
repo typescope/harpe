@@ -21,6 +21,10 @@ class RunBashTool
   def params: List[Tool.ToolParam] =
     [Tool.strParam("command", "The exact Bash command to run")]
 
+  //[ This tool, wired. The parameter name lives with the spec above. //]
+  def toolset(): Toolset =
+    Toolset.of: this, (i: Tool.ToolInput) => run(i["command"])
+
   def run(command: String): Tool.RunOutcome receives workspace, interact =
     runBash(command)
 end

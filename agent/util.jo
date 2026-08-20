@@ -14,7 +14,7 @@ import harpe.ffi.json
 
 import harpe.Model.*
 
-//[ Bound the transcript to `maxChars` by dropping whole oldest *turns* (a turn begins at a `UserText`)
+//[ Bound the transcript to `maxChars` by dropping whole oldest *turns* (a turn begins at a `UserInput`)
   !
   ! This never splits an `Assistant`+`ToolResults` pair, always leaves the
   ! window starting at a user turn, and keeps at least the most recent turn
@@ -28,13 +28,13 @@ def truncate(transcript: List[Message], maxChars: Int): List[Message] =
 
   flatten(groups)
 
-//[ Group messages into turns. Each group begins at a `UserText`. //]
+//[ Group messages into turns. Each group begins at a `UserInput`. //]
 private def splitTurns(ms: List[Message]): List[List[Message]] =
   var groups: List[List[Message]] = []
   var current: List[Message] = []
 
   for m in ms do
-    if m is UserText(_, _) && !current.isEmpty then
+    if m is UserInput(_, _) && !current.isEmpty then
       groups = groups + current
       current = [m]
 
@@ -63,7 +63,7 @@ private def groupsChars(groups: List[List[Message]]): Int =
 //]
 private def messageChars(m: Message): Int =
   match m
-  case UserText(t, _) => t.size
+  case UserInput(t, _) => t.size
 
   case Assistant(text, calls) =>
     var n = text.size

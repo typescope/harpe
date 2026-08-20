@@ -64,13 +64,36 @@ def run(): Unit receives stdout, logger, interact =
   check("constructed params are required", sp.required && ip.required && bp.required && np.required)
 
   // --- runSafely: a normal handler's outcome passes through unchanged ---
-  val okOut = runSafely("ok", input => new RunOutcome("done", "ran", []), empty)
+  val okOut = runSafely("ok", input => new RunOutcome("done", "ran", attachments = []), empty)
   check("runSafely passes success through", okOut.result == "done" && okOut.summary == "ran")
 
   // --- runSafely: a throwing handler becomes an error RunOutcome, not a crash ---
   val badOut = runSafely("boom", input => abort "kaboom", empty)
   check("runSafely summary names the tool", badOut.summary == "error · boom")
   check("runSafely result carries the message", badOut.result.contains("kaboom"))
+
+  // --- Toolset: tools accumulate, and wiring one name twice is caught as it is built ---
+  val noop: Handler = (i: ToolInput) => new RunOutcome("x", "x", attachments = [])
+  val spec = (n: String) => Tool(n, "a test tool", [])
+  val two = Toolset.of(spec("alpha"), noop).add(spec("beta"), noop)
+  check("tools accumulate", two.contains("alpha") && two.contains("beta"))
+  check("tools report their names", two.names.size == 2)
+
+  // The specs the model is offered come from the same entries as the handlers,
+  // so a wired tool is offered and an offered tool is answered, by construction.
+  check("specs match the wiring", two.specs.size == 2)
+  check("specs keep wiring order", two.specs.get(0).name == "alpha")
+
+  val merged = two ++ Toolset.of(spec("gamma"), noop)
+  check("++ merges a group", merged.names.size == 3 && merged.contains("gamma"))
+
+  match py.try(two.add(spec("alpha"), noop))
+  case Ok(_)  => check("a name wired twice is rejected", false)
+  case Err(e) => check("a name wired twice is rejected", e.message.contains("alpha"))
+
+  match py.try(two ++ Toolset.of(spec("beta"), noop))
+  case Ok(_)  => check("++ rejects a clash too", false)
+  case Err(e) => check("++ rejects a clash too", e.message.contains("beta"))
 
   // --- elide: bound a large tool result, keeping head + tail ---
   check("elide leaves short text unchanged", elide("hello", 100) == "hello")
@@ -85,25 +108,24 @@ def run(): Unit receives stdout, logger, interact =
 
   // --- MemoryTools: the LLM's read/write/list interface to a Memory store ---
   val mem = new Memory
-  val mtools = new MemoryTools(mem)
-  check("MemoryTools offers three specs", mtools.specs.size == 3)
+  check("MemoryTools offers three tools", MemoryTools.toolset(mem).specs.size == 3)
 
-  val r1 = mtools.update("goal", "win")
+  val r1 = MemoryTools.update(mem, "goal", "win")
   check("updateMemory writes the store", mem.get("goal") == "win")
   check("updateMemory summary names the key", r1.summary == "memory ← goal")
 
-  val r2 = mtools.read("goal")
+  val r2 = MemoryTools.read(mem, "goal")
   check("readMemory returns the value", r2.result == "win")
 
-  val r3 = mtools.read("absent")
+  val r3 = MemoryTools.read(mem, "absent")
   check("readMemory notes an empty key", r3.result.contains("empty"))
 
   mem.set("plan", "do X")
-  val r4 = mtools.list()
+  val r4 = MemoryTools.list(mem)
   check("listMemory reports the keys", r4.result.contains("goal") && r4.result.contains("plan"))
 
   // --- persistence flow: a tool writes memory, it survives save + reload ---
   val ppath = os.path.join(tempfile.mkdtemp(), "s.memory.json")
-  val _ = mtools.update("note", "remember this")
+  val _ = MemoryTools.update(mem, "note", "remember this")
   Memory.save(ppath, mem)
   check("tool-written memory persists across save/load", Memory.load(ppath).get("note") == "remember this")

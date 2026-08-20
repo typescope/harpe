@@ -102,7 +102,7 @@ section Transcript
 
   private def messageDict(message: Message): py.Dict =
     match message
-    case UserText(text, attachments) =>
+    case UserInput(text, attachments) =>
       py.dict("role" ~ "user", "text" ~ text, "attachments" ~ attachmentsDict(attachments))
     case Assistant(text, calls) =>
       val list = py.list()
@@ -144,7 +144,7 @@ section Transcript
   private def messageFromDict(d: py.Dict): Message =
     val role = d.get("role", "").asString
     if role == "user" then
-      UserText(d.get("text", "").asString, attachmentsFrom(d.get("attachments", py.list()).cast[py.List]))
+      UserInput(d.get("text", "").asString, attachmentsFrom(d.get("attachments", py.list()).cast[py.List]))
     else if role == "assistant" then
       var calls: List[ToolCall] = []
       for item in d.get("calls", py.list()).cast[py.List] do

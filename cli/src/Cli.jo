@@ -28,7 +28,7 @@ import harpe.logging.JsonlLogger
 import harpe.logging.Entry
 import harpe.logging.entryFromDict
 import harpe.logging.logger
-import harpe.Model.UserText
+import harpe.Model.UserInput
 import harpe.Model.Message
 import harpe.tools.*
 import harpe.context.WindowedContext
@@ -51,42 +51,36 @@ private def runChat(): Unit receives stdout, workspace =
   val sessionLog = new JsonlLogger(sessionPath)
   val memoryPath = Session.memoryPath(sessionPath)
   val memory = Memory.load(memoryPath)
-  // The tools this agent can act with. Each is built once, here, and holds
-  // whatever it needs to live for the whole session.
+  // `runCode` owns a build semaphore, so it is an object built once here. The
+  // rest own nothing and are reached through their sections.
   val runCode = runCodeTool(workspace.sandboxDir, 610.0)
-  val upload  = uploadMediaTool()
   val bash    = new RunBashTool
-  val skills  = new SkillTools(workspace.skillsDir)
-  val mem     = new MemoryTools(memory)
+  val skillsDir = workspace.skillsDir
 
-  val specs: List[Tool] = [runCode, upload, bash, ..skills.specs, ..mem.specs]
+  val brain = Defaults.model()
 
-  val agent = new Agent:
-    brain = Defaults.model()
-    tools = specs
-    context = new WindowedContext:
-      baseSystem = workspace.read("AGENT.md").getOrElse("")
-      memory = memory
-      initial = Session.load(sessionPath)
+  // The context is what carries the conversation between turns, so it is built
+  // once here and handed to every turn below.
+  val context = new WindowedContext:
+    baseSystem = workspace.read("AGENT.md").getOrElse("")
+    memory = memory
+    initial = Session.load(sessionPath)
 
   // One local working directory for the whole run.
   val data = workspace.relative("data")
   if !os.path.isdir(data) then os.makedirs(data)
   val dataDir = os.path.abspath(data)
 
-  // What actually runs for each name the model can call. The CLI grants the
-  // guest no configuration of its own, so `runCode` takes its default (empty)
+  // What the model is offered, and what actually runs for each name — one
+  // table, so the two can never disagree. The CLI grants the guest no
+  // configuration of its own, so `runCode` takes its default (empty)
   // environment.
-  val handlers: Map[String, Handler] = Map:
-    runCode.name           ~ (i => runCode.run(i["code"]))
-    upload.name            ~ (i => upload.show(i["fileName"], dataDir))
-    bash.name              ~ (i => bash.run(i["command"]))
-    skills.listSpec.name   ~ (i => skills.list())
-    skills.readSpec.name   ~ (i => skills.read(i["name"]))
-    skills.searchSpec.name ~ (i => skills.search(i["query"]))
-    mem.updateSpec.name    ~ (i => mem.update(i["key"], i["value"]))
-    mem.readSpec.name      ~ (i => mem.read(i["key"]))
-    mem.listSpec.name      ~ (i => mem.list())
+  val tools =
+    MemoryTools.toolset(memory)
+      ++ SkillTools.toolset(skillsDir)
+      ++ UploadMediaTool.toolset(dataDir)
+      ++ runCode.toolset()
+      ++ bash.toolset()
 
   while true do
     // `None` is end-of-input (Ctrl-D). A blank line or a Ctrl-C'd prompt is
@@ -97,12 +91,14 @@ private def runChat(): Unit receives stdout, workspace =
 
     if userInput == "" then continue
 
-    val userMsg = UserText(userInput, [])
+    val userMsg = UserInput(userInput, [])
     val runTurn = (turnInteract: Interact) =>
       with logger = sessionLog, interact = turnInteract in
-        agent.runTurn:
+        Agent.runTurn:
           userMsg
-          handlers
+          brain
+          tools
+          context
           maxToolRounds = 50
           maxRetries = 4
 

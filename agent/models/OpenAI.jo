@@ -72,7 +72,7 @@ private section OpenAIResponses
     ! keyed by the same `call_id`.
     !
     ! An inline attachment only becomes a real `input_image`/`input_file` item
-    ! when its `UserText` is the NEWEST message in `history` (`i == lastIdx`) —
+    ! when its `UserInput` is the NEWEST message in `history` (`i == lastIdx`) —
     ! same reasoning as `Anthropic.toMessages`: an older one's `inline` is inert,
     ! so a past image is never resent (and re-billed) once a later turn rebuilds
     ! this same history from scratch. `dataDir` is the session's data directory
@@ -85,7 +85,7 @@ private section OpenAIResponses
 
     for m in history do
       match m
-      case UserText(text, attachments) =>
+      case UserInput(text, attachments) =>
         val media = if i == lastIdx then openaiMediaBlocks(attachments) else py.list()
 
         if media.size == 0 then
@@ -201,7 +201,7 @@ private class OpenAIResponsesSession(
       else
         py.list()
 
-    // A fresh tool result's media inlines unconditionally (unlike a `UserText`'s
+    // A fresh tool result's media inlines unconditionally (unlike a `UserInput`'s
     // attachments) — a tool result exists only for the round it was produced in,
     // and `OpenAIResponses.toInput` never re-derives an item from a PAST
     // `ToolResults` message's `attachments`, so no positional guard is needed here.

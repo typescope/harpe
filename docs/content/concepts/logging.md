@@ -98,9 +98,7 @@ Add the spec to the agent and the route to the turn:
 
 ```jo
 tools = [runCode, weather]
-handlers = Map:
-  runCode.name ~ (i => runCode.run(i["code"]))
-  weather.name ~ (i => lookUp(i["city"]))
+tools = runCode.toolset() ++ weather.toolset()
 ```
 
 Now every call to your tool writes a `myagent.tools.weather` record, already

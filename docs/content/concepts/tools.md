@@ -41,7 +41,8 @@ whenever the context changes — a fresh toolset per session, per turn — or th
 contextual values must reach the object some other way, because an object built
 at startup cannot know where this turn's files live.
 
-Keeping them apart costs one map. The spec is what the model is offered:
+Harpe keeps the two halves distinct without letting either travel alone. The
+spec is what the model is offered:
 
 ```jo
 interface Tool
@@ -57,17 +58,26 @@ end
 - **`params`** — the typed inputs it accepts (below). Read every time a request is
   rendered, so a tool may derive its schema from live state.
 
-The **handler** is the executor — what actually runs — and is wired per turn:
+The **handler** is the executor — what actually runs:
 
 ```jo
 type Handler = ToolInput => RunOutcome receives logger, interact
 ```
 
-Your driver hands `runTurn` a `Map[String, Handler]` pairing each spec's name with
-the code to run. Because you write that map, a handler closes over whatever the
-turn needs — a session's data directory, an API token, your own typed context —
-with nothing passed through the framework to get there. Every spec must have a
-route: an unrouted name aborts the turn before the model is called.
+A **`Toolset`** wires each spec to its handler, and that is what `runTurn` takes.
+Because you build it, a handler closes over whatever the turn needs — a session's
+data directory, an API token, your own typed context — with nothing passed
+through the framework to get there.
+
+Pairing them at the point of wiring is what makes the two halves safe to
+separate. A spec with no handler would be a tool the model can call and nobody
+answers. A handler with no spec would be code the model is never told about.
+Neither is expressible: you add both or you add neither, so there is no rule for
+the engine to enforce and no way to get it wrong.
+
+One wiring mistake does remain possible, and `Toolset` rejects it as the table is
+built: wiring the same name twice — whether through `add` or by joining two
+groups that share a name — rather than silently keeping one of them.
 
 You describe the spec in Jo. Each provider renders its own wire spec from it, so
 you never hand-write JSON schema.
@@ -82,17 +92,21 @@ The framework provides the tools, and your driver wires them:
 
 - **`runCodeTool(sandboxDir, approvalDeadline)`** — `runCode`, which compiles and
   runs a Jo program in the sandbox. This is the agent's main way to act.
-- **`uploadMediaTool()`** — `uploadMedia`, which shows an image or PDF from the
+- **`UploadMediaTool`** — `uploadMedia`, which shows an image or PDF from the
   data directory directly to the chat model.
-- **`new SkillTools(skillsDir)`** — `skillsList` / `skillsRead` / `skillsSearch`,
-  read-only access to the agent's `skills/`.
-- **`new MemoryTools(memory)`** — `updateMemory` / `readMemory` / `listMemory`,
-  the agent's working memory.
+- **`SkillTools`** — `skillsList` / `skillsRead` / `skillsSearch`, read-only
+  access to the agent's `skills/`.
+- **`MemoryTools`** — `updateMemory` / `readMemory` / `listMemory`, the agent's
+  working memory.
 
-Each is an object holding its own configuration, offering `specs` (or being a
-spec itself) plus typed methods your routes call. There is deliberately no
-default toolset: a driver names what its agent can do, so the whole surface is
-readable in one place.
+Each offers a `toolset(...)` that wires its specs to its handlers, and one typed
+method per verb if you would rather wire them yourself. Only `runCodeTool` is a constructor: it is the one tool that
+owns something with a lifetime — the semaphore bounding concurrent sandbox runs
+— while the others own nothing, so they are sections and their per-session
+values arrive as arguments.
+
+There is deliberately no default toolset: a driver names what its agent can do,
+so the whole surface is readable in one place.
 
 ## Writing a tool
 
@@ -191,19 +205,23 @@ class WeatherTool(apiKey: String)
 end
 ```
 
-The object goes in the agent's spec list and its method goes in the handler map:
+Its own `toolset` wires the spec — the object itself — to the code, and says how
+the call's arguments reach its method:
 
 ```jo
-weather.name ~ (i => weather.lookUp(i["city"], preferredUnits))
+  def toolset(units: String): Toolset =
+    Toolset.of: this, (i: ToolInput) => lookUp(i["city"], units)
 ```
 
 Three things to know:
 
-- The object holds only what is as timeless as its spec — an API key, a
-  connection, a semaphore. Everything contextual is an argument its route
-  supplies, which is what lets one object serve every session at once. The web
-  server relies on this: a single `runCode` bounds sandbox concurrency across the
-  whole process, while each session's route hands it that session's settings.
+- **A class only if the tool owns something.** An API key, a connection, a
+  semaphore — something with a lifetime. Everything contextual is an argument
+  its wiring supplies, which is what lets one object serve every session at once:
+  a single `runCode` bounds sandbox concurrency across the whole process, while
+  each session's toolset hands it that session's settings. A tool that owns
+  nothing is a `section` instead, with its spec as a constant and every value it
+  needs passed in — that is what `SkillTools` and `MemoryTools` are.
 - A class parameter does not implement an interface member, so name the
   parameters apart from `name` / `description` / `params` and let the members
   read them.
@@ -219,27 +237,25 @@ crashes. Return a clear message for expected failures. Let unexpected ones raise
 
 ## Adding your tool
 
-Wiring happens in two places where your driver constructs its `Agent`. The specs
-go on the agent:
+Wiring happens in one place. Every tool contributes its own, so the driver never
+repeats a tool's name or a parameter name — that knowledge stays with the spec
+that declares it:
 
 ```jo
-val specs: List[Tool] = [runCode, weather, ..skills.specs, ..mem.specs]
+val tools =
+  MemoryTools.toolset(memory)
+    ++ SkillTools.toolset(skillsDir)
+    ++ runCode.toolset()
+    ++ weather.toolset(preferredUnits)
+
+Agent.runTurn(userMsg, brain, tools, context, maxToolRounds = 50, maxRetries = 4)
 ```
 
-and the routes go to each turn:
+`.add: spec, handler` is there for a one-off, but a tool worth naming is worth
+giving a `toolset(...)` of its own.
 
-```jo
-val handlers: Map[String, Handler] = Map:
-  runCode.name         ~ (i => runCode.run(i["code"]))
-  weather.name         ~ (i => weather.lookUp(i["city"]))
-  skills.readSpec.name ~ (i => skills.read(i["name"]))
-  mem.updateSpec.name  ~ (i => mem.update(i["key"], i["value"]))
-
-agent.runTurn(userMsg, handlers, maxToolRounds = 50, maxRetries = 4)
-```
-
-That is the whole wiring: the model now sees `weather` in its toolset, and the map
-says exactly what happens when it calls it. The map is also where per-turn and
+That is the whole wiring: the model now sees `weather` in its toolset, and the
+same entry says exactly what happens when it calls it. The toolset is also where per-turn and
 per-session values enter — the CLI passes its data directory to `uploadMedia`
 this way, and the `pr-review` example passes a PR URL and a GitHub token into
 `runCode`'s guest environment.

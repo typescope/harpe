@@ -184,6 +184,14 @@ class RunCodeTool(
   def params: List[ToolParam] =
     [strParam("code", "The Jo source code to compile and run")]
 
+  //[ This tool, granting the guest `guestEnv`
+    !
+    ! The parameter name the model fills in lives with the spec that declares
+    ! it, so a driver never repeats it.
+  //]
+  def toolset(guestEnv: Map[String, String] = noGuestEnv): Toolset =
+    Toolset.of: this, (i: ToolInput) => run(i["code"], guestEnv)
+
   //[ One bounded, isolated run of `code`
     !
     ! Acquire a build slot, compile+run in a fresh temp directory, then delete

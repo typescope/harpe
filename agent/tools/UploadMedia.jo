@@ -19,26 +19,32 @@ import harpe.ffi.os
 import harpe.ffi.mimetypes
 
 import harpe.Tool
+import harpe.Toolset
 import harpe.Tool.*
 import harpe.Model.Attachment
 import harpe.models.*
 
 //[ Show a file in the data directory to the model directly
   !
-  ! Takes `fileName` in the session's data directory and, if its type is
-  ! inlinable, returns it as an attachment so the render layer shows it to the model
+  ! Nothing here is stateful, so this is a section rather than a class: the spec
+  ! is a constant, and the data directory arrives as an argument from the
+  ! driver's route.
+  !
+  ! `show` takes `fileName` in that directory and, if its type is inlinable,
+  ! returns it as an attachment so the render layer shows it to the model
   ! directly. Mirrors `sendFile`'s name handling (basename only, no `..`/`.`).
 //]
-class UploadMediaTool
-  view Tool
+section UploadMediaTool
+  //[ The spec the model is offered. //]
+  private def spec: Tool =
+    Tool:
+      "uploadMedia"
+      "Show an image or PDF from your data directory to yourself, as a real picture — not just its text. Use this only when you need to actually SEE it (colors, layout, a chart, a diagram, a scan with no legible text); for reading text out of a file, prefer `ocr`/`pdf`/`fs` — cheaper, and usually enough. Write the file to the data directory first if you haven't already."
+      [strParam("fileName", "The name of the image or PDF file in your data directory to view")]
 
-  def name: String = "uploadMedia"
-
-  def description: String =
-    "Show an image or PDF from your data directory to yourself, as a real picture — not just its text. Use this only when you need to actually SEE it (colors, layout, a chart, a diagram, a scan with no legible text); for reading text out of a file, prefer `ocr`/`pdf`/`fs` — cheaper, and usually enough. Write the file to the data directory first if you haven't already."
-
-  def params: List[ToolParam] =
-    [strParam("fileName", "The name of the image or PDF file in your data directory to view")]
+  //[ This tool, showing files from `dataDir`. //]
+  def toolset(dataDir: String): Toolset =
+    Toolset.of: spec, (i: ToolInput) => show(i["fileName"], dataDir)
 
   //[ Attach the data-directory file `fileName` for the model to look at. //]
   def show(fileName: String, dir: String): RunOutcome =
@@ -54,14 +60,14 @@ class UploadMediaTool
         attachments = []
 
     else
-      inline(dir, baseName)
+      attach(dir, baseName)
 
   //[ Is `baseName` a real file in the data directory, and not a traversal attempt? //]
   private def isDataFile(dir: String, baseName: String): Bool =
     baseName != "" && baseName != "." && baseName != ".." && os.path.isfile(os.path.join(dir, baseName))
 
   //[ Attach `baseName` for the model to see, or explain why its type cannot be. //]
-  private def inline(dir: String, baseName: String): RunOutcome =
+  private def attach(dir: String, baseName: String): RunOutcome =
     val mime = mimetypes.guessType(baseName).getOrElse("application/octet-stream")
 
     if !isInlineImage(mime) && !isInlinePdf(mime) then
@@ -75,8 +81,5 @@ class UploadMediaTool
       new RunOutcome:
         "'\{baseName}' is attached below — look at it directly in your next reply."
         "uploadMedia · \{baseName}"
-        [Attachment(baseName, os.path.getsize(path), mime, inline = true, path = path)]
+        attachments = [Attachment(baseName, os.path.getsize(path), mime, inline = true, path = path)]
 end
-
-//[ The `uploadMedia` tool. //]
-def uploadMediaTool(): UploadMediaTool = new UploadMediaTool

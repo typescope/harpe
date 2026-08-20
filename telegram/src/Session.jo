@@ -19,7 +19,7 @@ import harpe.ffi.mimetypes
 import harpe.ffi.builtins
 
 import harpe.Agent
-import harpe.Handler
+import harpe.Toolset
 import harpe.interact
 import harpe.Memory
 import harpe.Transcript
@@ -30,8 +30,10 @@ import harpe.logging.logger
 import harpe.logging.Entry
 import harpe.logging.entryFromDict
 import harpe.Model
+import harpe.Tool
+import harpe.Context
 import harpe.Model.Message
-import harpe.Model.UserText
+import harpe.Model.UserInput
 import harpe.Model.Assistant
 import harpe.Model.Attachment
 import harpe.turns.Success
@@ -59,8 +61,10 @@ class Incoming(text: String, files: List[FileSpec], senderId: String)
 
 //[ One live conversation
   !
-  ! Its chat id, its append log, its agent (which owns the context and therefore
-  ! the running transcript window), and its working memory.
+  ! Its chat id, its append log, and the pieces each of its turns is run with:
+  ! the `brain`, the `tools` it is offered, the `routes` that run them, and the
+  ! `context`, which owns the running transcript window and is therefore the one
+  ! piece that must survive between turns. Plus its working memory.
   !
   ! Each session has a FIFO `queue` drained by its own dedicated worker thread,
   ! so turns for different chats run concurrently while turns within one chat
@@ -68,8 +72,8 @@ class Incoming(text: String, files: List[FileSpec], senderId: String)
   ! so no lock is needed around it.
 //]
 private class Session(
-    id: String, log: Logger, agent: Agent, memory: Memory, memoryPath: String,
-    dataDir: String, handlers: Map[String, Handler])
+    id: String, log: Logger, brain: Model, tools: Toolset, context: Context,
+    memory: Memory, memoryPath: String, dataDir: String)
   val queue = py.module("queue").Queue()
 
   //[ Begin a user turn
@@ -86,11 +90,11 @@ private class Session(
       maxRetries: Int)
   : Unit =
     val attachments = materialize(incoming, client)
-    val userMsg = UserText(incoming.text, attachments)
+    val userMsg = UserInput(incoming.text, attachments)
     val channel = new TelegramInteract(client, this.id, approvalHandler)
 
     val result = with logger = log, interact = channel in
-      agent.runTurn(userMsg, handlers, maxToolRounds, maxRetries)
+      Agent.runTurn(userMsg, brain, tools, context, maxToolRounds, maxRetries)
 
     match result.result
     case Success =>
@@ -110,7 +114,7 @@ private class Session(
 
   //[ Download this turn's attached files into the session's data directory
     !
-    ! Returning them as `Attachment` metadata for the `UserText`. The bytes land
+    ! Returning them as `Attachment` metadata for the `UserInput`. The bytes land
     ! on disk (so the agent reads them with `fs`). Only the metadata rides in
     ! the transcript. A file that fails to resolve or download is skipped rather
     ! than failing the turn — the model still sees the ones that arrived. Runs
