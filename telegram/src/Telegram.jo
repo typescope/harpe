@@ -40,6 +40,7 @@ import harpe.Toolset
 import harpe.Tool.ToolInput
 import harpe.context.WindowedContext
 import harpe.Transcript
+import harpe.transcript.Journal
 import harpe.logging.Value
 import harpe.logging.logger
 
@@ -495,8 +496,7 @@ private class TelegramBot(
     var names: List[Value] = []
     for f in incoming.files do names = names + f.name
 
-    with logger = session.log in
-      Transcript.request(incoming.id, Transcript.payload("text" ~ incoming.text, "files" ~ names))
+    session.transcript.request(incoming.id, Journal.payload("text" ~ incoming.text, "files" ~ names))
 
     session.queue.put(incoming)
 

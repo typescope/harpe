@@ -17,6 +17,7 @@ import harpe.turns.Success
 import harpe.turns.Failed
 import harpe.logging.logger
 import harpe.logging.JsonlLogger
+import harpe.transcript.Journal
 import harpe.logging.entryFromDict
 import harpe.logging.Value
 
@@ -62,14 +63,15 @@ def run(): Unit receives stdout =
   if os.path.exists(path) then os.unlink(path)
 
   val sessionLog = new JsonlLogger(path)
+  val journal = new Journal(sessionLog)
 
   // One answered turn, including an unrelated diagnostic entry.
   with logger = sessionLog in
-    Transcript.start(UserInput("hi", []))
-    Transcript.append(Assistant("on it", [call]))
+    journal.start(UserInput("hi", []))
+    journal.append(Assistant("on it", [call]))
     logger.log("myagent.debug", "note" ~ "between messages")
-    Transcript.append(ToolResults([ToolResult("c1", "42", [])]))
-    Transcript.commit()
+    journal.append(ToolResults([ToolResult("c1", "42", [])]))
+    journal.commit()
 
   val first = readRecords(path)
   check("turn and diagnostic records share one log", first.size == 5)
@@ -106,20 +108,20 @@ def run(): Unit receives stdout =
   // whose bracket never closed is a fragment, and falls out of the model's
   // context exactly as it falls out of the transcript.
   with logger = sessionLog in
-    Transcript.request("f1", Transcript.payload("text" ~ "will fail"))
-    Transcript.start(UserInput("will fail", []))
-    Transcript.append(Assistant("partial", []))
-    Transcript.failed("bad model")
-    Transcript.response("f1", "turnEnd")
+    journal.request("f1", Journal.payload("text" ~ "will fail"))
+    journal.start(UserInput("will fail", []))
+    journal.append(Assistant("partial", []))
+    journal.failed("bad model")
+    journal.response("f1", "turnEnd")
 
-    Transcript.request("f2", Transcript.payload("text" ~ "again"))
-    Transcript.start(UserInput("again", []))
-    Transcript.append(Assistant("done", []))
-    Transcript.commit()
-    Transcript.response("f2", "turnEnd")
+    journal.request("f2", Journal.payload("text" ~ "again"))
+    journal.start(UserInput("again", []))
+    journal.append(Assistant("done", []))
+    journal.commit()
+    journal.response("f2", "turnEnd")
 
-    Transcript.request("f3", Transcript.payload("text" ~ "crashed"))
-    Transcript.start(UserInput("crashed", []))
+    journal.request("f3", Journal.payload("text" ~ "crashed"))
+    journal.start(UserInput("crashed", []))
 
   var entries: List[harpe.logging.Entry] = []
   val lines = readRecords(path)
@@ -129,13 +131,13 @@ def run(): Unit receives stdout =
 
   // The turn at the head of this file was written WITHOUT a bracket, so it is
   // machinery: in the log, in neither the transcript nor the context.
-  val projected = Transcript.records(entries)
+  val projected = Journal.records(entries)
   check("unbracketed turn is outside the transcript", projected.size == 2)
   check("failed turn is still a record", turnResult(projected.get(0).data) == "Failed(bad model)")
   check("failed turn drops provisional messages", turnSize(projected.get(0).data) == 0)
   check("answered turn keeps its messages", turnResult(projected.get(1).data) == "Success")
 
-  val loaded = Transcript.fromEntries(entries)
+  val loaded = Journal.fromEntries(entries)
   check("context comes from the transcript alone", loaded.size == 3)
   check("context keeps a failed turn's user message", loaded.get(0) is UserInput("will fail", _))
   check("context drops its provisional reply", loaded.get(1) is UserInput("again", _))
@@ -149,33 +151,34 @@ def run(): Unit receives stdout =
   val recPath = os.path.abspath(".build/session-log-test/sub/records.jsonl")
   if os.path.exists(recPath) then os.unlink(recPath)
   val recLog = new JsonlLogger(recPath)
+  val recJournal = new Journal(recLog)
 
   with logger = recLog in
     // A bracketed turn that delegates to a nested (subagent) turn partway through.
-    Transcript.request("t1", Transcript.payload("kind" ~ "upload", "file" ~ "a.png"))
-    Transcript.start(UserInput("look", []))
-    Transcript.append(Assistant("delegating", [call]))
-    Transcript.start(UserInput("subagent work", []))
-    Transcript.append(Assistant("sub answer", []))
-    Transcript.commit()
-    Transcript.append(ToolResults([ToolResult("c1", "42", [])]))
-    Transcript.append(Assistant("done", []))
-    Transcript.commit()
-    Transcript.response("t1", Transcript.payload("text" ~ "done"))
+    recJournal.request("t1", Journal.payload("kind" ~ "upload", "file" ~ "a.png"))
+    recJournal.start(UserInput("look", []))
+    recJournal.append(Assistant("delegating", [call]))
+    recJournal.start(UserInput("subagent work", []))
+    recJournal.append(Assistant("sub answer", []))
+    recJournal.commit()
+    recJournal.append(ToolResults([ToolResult("c1", "42", [])]))
+    recJournal.append(Assistant("done", []))
+    recJournal.commit()
+    recJournal.response("t1", Journal.payload("text" ~ "done"))
 
     // Machinery: a turn nobody bracketed.
-    Transcript.start(UserInput("cron job", []))
-    Transcript.append(Assistant("tick", []))
-    Transcript.commit()
+    recJournal.start(UserInput("cron job", []))
+    recJournal.append(Assistant("tick", []))
+    recJournal.commit()
 
     // Bracketed, but the process died mid-turn.
-    Transcript.request("t2", Transcript.payload("kind" ~ "chat"))
-    Transcript.start(UserInput("and this?", []))
+    recJournal.request("t2", Journal.payload("kind" ~ "chat"))
+    recJournal.start(UserInput("and this?", []))
 
   var recEntries: List[harpe.logging.Entry] = []
   for record in readRecords(recPath) do recEntries = recEntries + entryFromDict(record)
 
-  val recs = Transcript.records(recEntries)
+  val recs = Journal.records(recEntries)
   check("only complete bracketed turns become records", recs.size == 1)
   check("record keeps every request field", payloadField(recs.get(0).request, "file") == "a.png")
 

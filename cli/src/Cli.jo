@@ -26,6 +26,7 @@ import harpe.ffi.dotenv
 import jo.IO.stdout
 import harpe.*
 import harpe.logging.JsonlLogger
+import harpe.transcript.Journal
 import harpe.logging.Entry
 import harpe.logging.entryFromDict
 import harpe.logging.logger
@@ -50,6 +51,7 @@ private def runChat(): Unit receives stdout, workspace =
 
   val sessionPath = chooseSession(resumeRequested())
   val sessionLog = new JsonlLogger(sessionPath)
+  val journal = new Journal(sessionLog)
   val memoryPath = Session.memoryPath(sessionPath)
   val memory = Memory.load(memoryPath)
   // `runCode` owns a build semaphore, so it is an object built once here. The
@@ -96,8 +98,6 @@ private def runChat(): Unit receives stdout, workspace =
     // so nothing reads these records back today — but they are what makes a CLI
     // journal replayable as a conversation rather than just an audit log.
     val transcriptId = time.strftime("%Y%m%dT%H%M%S") + "-" + secrets.tokenHex(nbytes = 3)
-    with logger = sessionLog in
-      Transcript.request(transcriptId, Transcript.payload("text" ~ userInput))
 
     val userMsg = UserInput(userInput, [])
     val runTurn = (turnInteract: Interact) =>
@@ -107,7 +107,9 @@ private def runChat(): Unit receives stdout, workspace =
           brain = brain
           tools = tools
           context = context
+          transcript = journal
 
+    journal.request(transcriptId, Journal.payload("text" ~ userInput))
     val res = console.turn(userMsg, runTurn)
 
     match res.result
@@ -125,8 +127,9 @@ private def runChat(): Unit receives stdout, workspace =
 
     // A bare marker: the console is this driver's UI, and how the turn ended is
     // already in the journal. The record exists to close the bracket, nothing more.
-    with logger = sessionLog in
-      Transcript.response(transcriptId, "turnEnd")
+    // A bare marker: the console is this driver's UI, and how the turn ended is
+    // already recorded. The record exists to close the bracket, nothing more.
+    journal.response(transcriptId, "turnEnd")
 
     // Persist memory regardless of outcome (it is not rolled back with a turn).
     if !memory.isEmpty then Memory.save(memoryPath, memory)
@@ -160,7 +163,7 @@ section Session
       var entries: List[Entry] = []
       for line in file.read(path).lines if line.trim != "" do
         entries = entries + entryFromDict(json.loads(line).cast[py.Dict])
-      Transcript.fromEntries(entries)
+      Journal.fromEntries(entries)
 
   //[ Up to `limit` CLI session logs, newest first. //]
   def recentFiles(limit: Int): List[String] receives workspace =

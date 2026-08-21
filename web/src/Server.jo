@@ -53,6 +53,7 @@ import harpe.Toolset
 import harpe.Tool.ToolInput
 import harpe.turns.Failed
 import harpe.Transcript
+import harpe.transcript.Journal
 import harpe.TurnData
 import harpe.logging.Value
 
@@ -250,8 +251,8 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       // It also carries what the user actually sent, before the engine desugars
       // it into a `UserInput`.
       val transcriptId = mintTranscriptId()
-      val request = Transcript.payload("text" ~ text, "files" ~ uploadedFiles(attachments))
-      with logger = session.log in Transcript.request(transcriptId, request)
+      val request = Journal.payload("text" ~ text, "files" ~ uploadedFiles(attachments))
+      session.transcript.request(transcriptId, request)
 
       // The model is TOLD about the files, not shown them: this driver's uploads
       // stay on disk and cost nothing until the agent decides it needs one, and
@@ -378,7 +379,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
   private def uploadedFiles(attachments: List[Attachment]): Value =
     var out: List[Value] = []
     for a in attachments do
-      out = out + Transcript.payload("name" ~ a.name, "size" ~ a.size, "mime" ~ a.mime)
+      out = out + Journal.payload("name" ~ a.name, "size" ~ a.size, "mime" ~ a.mime)
     out
 
   //[ A fresh session under a newly-minted, time-sortable id. //]

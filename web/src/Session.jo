@@ -31,6 +31,7 @@ import harpe.Tool.ToolInput
 import harpe.Context
 import harpe.interact
 import harpe.Transcript
+import harpe.transcript.Journal
 import harpe.TurnData
 import harpe.TurnRecord
 import harpe.workspace
@@ -84,6 +85,13 @@ end
 class Session(
     id: String, log: Logger, brain: Model, tools: Toolset, context: Context,
     memory: Memory, memoryPath: String)
+  //[ This session's conversation, recorded into its own log.
+    !
+    ! Typed as the concrete journal, not as `Transcript`, because `turn` — the
+    ! driver's bracket — deliberately is not on the interface.
+  //]
+  val transcript = new Journal(log)
+
   val lock = threading.lock()
 
   //[ Set (via `POST /api/stop`) to request cancellation of the running turn
@@ -214,56 +222,61 @@ class Session(
     ! the turn finishes, `idle` is set, which releases every subscriber.
   //]
   def runTurn(transcriptId: String, request: Value, prompt: String, initiatorSink: Sink): Unit =
-    lastActive = time.now()
+    // Opening the bracket HERE, outside the lock the body takes, is what makes
+    // the gap to `harpe.turn.started` the real queue wait. `turn` writes the
+    // closing record from what the body returns, so the two cannot drift.
+    transcript.turn: transcriptId, request, () =>
+      lastActive = time.now()
 
-    this.lock.acquire()
-    state = Active(request)
-    idle.clear()
-    val subId = addSink(initiatorSink)
+      this.lock.acquire()
+      state = Active(request)
+      idle.clear()
+      val subId = addSink(initiatorSink)
 
-    val emit: Sink = obj => this.broadcast(obj)
-    val channel = new WebInteract(emit, this.stop, (id, request) => requestApproval(id, request))
+      val emit: Sink = obj => this.broadcast(obj)
+      val channel = new WebInteract(emit, this.stop, (id, request) => requestApproval(id, request))
 
-    val turn = with logger = log, interact = channel in
-      Agent.ask(prompt, brain = brain, tools = tools, context = context)
+      val turn = with logger = log, interact = channel in
+        Agent.ask(prompt, brain = brain, tools = tools, context = context,
+                  transcript = transcript)
 
-    // The driver's reading of the finished turn: how it ended, and which files
-    // the agent delivered. `sendFile` is the agent's channel for putting a file
-    // in front of the user, so its deliveries are a high-level OUTPUT of the
-    // turn — recorded here as fact, rather than inferred later by matching tool
-    // names against the journal.
-    val response = Transcript.payload("sent" ~ Session.delivered(turn))
-    with logger = log in Transcript.response(transcriptId, response)
+      // The driver's reading of the finished turn: how it ended, and which files
+      // the agent delivered. `sendFile` is the agent's channel for putting a file
+      // in front of the user, so its deliveries are a high-level OUTPUT of the
+      // turn — recorded here as fact, rather than inferred later by matching tool
+      // names against the journal.
+      val response = Journal.payload("sent" ~ Session.delivered(turn))
 
-    // The same value `/api/history` will rebuild from disk, so the live view and
-    // the reloaded one are rendered from identical inputs.
-    val record = TurnRecord(transcriptId, request, response, turn)
+      // The same value `/api/history` will rebuild from disk, so the live view and
+      // the reloaded one are rendered from identical inputs.
+      val record = TurnRecord(transcriptId, request, response, turn)
 
-    match turn.result
-    case Success =>
-      this.commit()
-      // The finished turn, rendered exactly as `/api/history` would render it once
-      // reloaded — so the page folds the live reply into its committed form (code
-      // trace, delivered files) from this event alone, with nothing to re-fetch.
-      broadcast: py.dict:
-        "type" ~ "turnFinish"
-        "rows" ~ TurnView.rows(record, Session.existingDataDir(this.id))
+      match turn.result
+      case Success =>
+        this.commit()
+        // The finished turn, rendered exactly as `/api/history` would render it once
+        // reloaded — so the page folds the live reply into its committed form (code
+        // trace, delivered files) from this event alone, with nothing to re-fetch.
+        broadcast: py.dict:
+          "type" ~ "turnFinish"
+          "rows" ~ TurnView.rows(record, Session.existingDataDir(this.id))
 
-    case Interrupted =>
-      this.rollback()
-      broadcast(py.dict("type" ~ "interrupted"))
+      case Interrupted =>
+        this.rollback()
+        broadcast(py.dict("type" ~ "interrupted"))
 
-    case Failed(detail) =>
-      this.rollback()
-      broadcast(py.dict("type" ~ "failed", "detail" ~ detail))
+      case Failed(detail) =>
+        this.rollback()
+        broadcast(py.dict("type" ~ "failed", "detail" ~ detail))
 
-    case _ => pass
+      case _ => pass
 
-    removeSink(subId)
-    state = Idle
-    stop.clear()
-    idle.set()
-    this.lock.release()
+      removeSink(subId)
+      state = Idle
+      stop.clear()
+      idle.set()
+      this.lock.release()
+      response
 
   //[ Request cancellation only when this session has a turn in flight. //]
   def requestStop(): Unit =
@@ -386,7 +399,7 @@ section Session
     ! an empty conversation.
   //]
   def load(id: String): List[Message] receives workspace =
-    Transcript.fromEntries(loadEntries(id))
+    Journal.fromEntries(loadEntries(id))
 
   //[ Reconstruct this driver's transcript for application history.
     !
@@ -395,7 +408,7 @@ section Session
     ! for auditing and is not part of the conversation the user sees.
   //]
   def loadRecords(id: String): List[TurnRecord] receives workspace =
-    Transcript.records(loadEntries(id))
+    Journal.records(loadEntries(id))
 
   //[ The files this turn delivered, in the order the agent sent them
     !
@@ -457,7 +470,7 @@ section Session
         // The turn's OPENING record, which holds what the user typed. The
         // engine's own `harpe.turn.started` carries the model-facing text, with
         // any file manifest appended — not a title.
-        if title == "" && d.get("category", "").asString == Transcript.requestCategory then
+        if title == "" && d.get("category", "").asString == Journal.requestCategory then
           title = TurnView.requestText(valueFromJson(d.get("data", py.dict())))
 
     new SessionMeta(id, if title == "" then "New chat" else title, startTime)

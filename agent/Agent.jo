@@ -51,10 +51,12 @@ section Agent
     ! model read it with `fs`, which is what a driver minding its token bill
     ! does with uploads.
     !
-    ! The `context` owns the transcript: the engine marks it, appends the user's
-    ! input and then each assistant reply and tool-result batch, and asks it to
-    ! compose `(system, messages)` at the turn's start. Structured transcript
-    ! events use the ambient logger. On interruption/failure the provisional
+    ! `context` and `transcript` both see every message, and are deliberately
+    ! separate. The context composes `(system, messages)` for the model and is
+    ! rolled back when a turn fails. The transcript records what was said and is
+    ! append-only, closing a failed turn with a terminator rather than erasing
+    ! it. Keeping them apart is what lets one conversation be replayed under a
+    ! different window or summarizer. On interruption/failure the provisional
     ! assistant/tool tail is rolled back, while the user's message remains in the
     ! context. Defaulted, it is a `NoHistory` built fresh for this call — the
     ! model still sees this turn, and nothing survives into the next one. A
@@ -78,6 +80,7 @@ section Agent
       brain: Model = Defaults.model,
       tools: Toolset = Toolset.empty,
       context: Context = NoHistory,
+      transcript: Transcript = Transcript.NoTranscript,
       maxToolRounds: Int = 50,
       maxRetries: Int = 4)
   : TurnData receives logger, interact =
@@ -92,7 +95,7 @@ section Agent
 
     context.mark()
     context.append(input)
-    Transcript.start(input)
+    transcript.start(input)
 
     // Compose what the model sees ONCE, at the turn's start. The Session then
     // owns the intra-turn tail. The engine feeds it tool results and never
@@ -108,7 +111,7 @@ section Agent
         result = Interrupted
         context.rollback()
         context.append(input)
-        Transcript.interrupted()
+        transcript.interrupted()
         break
 
       // Once the tool budget is spent, offer no tools so the model must reply with
@@ -123,25 +126,25 @@ section Agent
           result = Interrupted
           context.rollback()
           context.append(input)
-          Transcript.interrupted()
+          transcript.interrupted()
           break
 
         case GaveUp(detail) =>
           result = Failed(detail)
           context.rollback()
           context.append(input)
-          Transcript.failed(detail)
+          transcript.failed(detail)
           break
 
         case Got(reply, usage) =>
           context.observe(usage)
           context.append(reply)
           produced = produced + reply
-          Transcript.append(reply)
+          transcript.append(reply)
 
           if reply.calls.isEmpty then
             result = Success
-            Transcript.commit()
+            transcript.commit()
             break
 
           if reply.text.trim != "" then
@@ -173,19 +176,19 @@ section Agent
             context.rollback()
             context.append(input)
             result = Interrupted
-            Transcript.interrupted()
+            transcript.interrupted()
             break
 
           else
             val results = ToolResults(toolResults)
             context.append(results)
             produced = produced + results
-            Transcript.append(results)
+            transcript.append(results)
             pending = toolResults
             rounds = rounds + 1
     end // while
 
-    // A rolled-back turn contributes nothing to history, and `Transcript.records`
+    // A rolled-back turn contributes nothing to history, and `Journal.records`
     // replays it with no messages — so drop them here too, and the live value and
     // the reloaded one agree.
     if result is Success then TurnData(input, produced, result)

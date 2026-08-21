@@ -1,32 +1,134 @@
-//[ Transcript.jo
+//[ Journal.jo
   !
-  ! The backend-independent representation of a conversation in the structured
-  ! event stream. Writers emit through the ambient `Logger`. Readers fold decoded
-  ! `Entry` values into structured turns, then derive model history from them.
+  ! The framework's `Transcript`: every record appended through a `Logger`, as
+  ! one structured entry per event.
+  !
+  ! Because the sink is a `Logger`, a conversation lands wherever that backend
+  ! points — `JsonlLogger`'s per-session file, a socket, a database adapter —
+  ! and it shares the stream with everything else the turn logs, so a tool's
+  ! diagnostics sit in causal order beside the messages that caused them.
+  !
+  ! The reading half lives in the `Transcript` section (`records`,
+  ! `fromEntries`), because it decodes the `Entry` values this class writes.
 //]
 
-namespace harpe
+namespace harpe.transcript
 import harpe.ffi.time
 import harpe.util.truncate
+import harpe.Transcript
+import harpe.TurnRecord
+import harpe.TurnData
 import harpe.Model.*
 import harpe.Tool.*
 import harpe.logging.*
 import harpe.turns.*
 
-section Transcript
-  def maxResumeChars: Int = 1000000
+//[ A transcript kept as structured log records.
+  !
+  ! `log` is the sink. A driver usually hands it the same per-session backend the
+  ! turn's tools log through, so one file holds the whole story.
+//]
+class Journal(log: Logger)
+  view Transcript
 
-  def start(message: Message): Unit receives logger =
-    emit("harpe.turn.started", message)
+  def start(input: UserInput): Unit =
+    emit("harpe.turn.started", input)
 
-  def append(message: Message): Unit receives logger =
+  def append(message: Assistant | ToolResults): Unit =
     emit("harpe.turn.message", message)
 
-  def commit(): Unit receives logger = logger.log("harpe.turn.answered")
-  def interrupted(): Unit receives logger = logger.log("harpe.turn.interrupted")
-  def failed(detail: String = ""): Unit receives logger =
-    if detail == "" then logger.log("harpe.turn.failed")
-    else logger.error("harpe.turn.failed", detail)
+  def commit(): Unit = log.log("harpe.turn.answered")
+  def interrupted(): Unit = log.log("harpe.turn.interrupted")
+  def failed(detail: String): Unit =
+    if detail == "" then log.log("harpe.turn.failed")
+    else log.error("harpe.turn.failed", detail)
+
+  //[ Record one user-facing turn, opening and closing its bracket around `work`
+    !
+    ! What makes a turn part of the transcript rather than machinery. `data` is
+    ! the high-level request — what the user actually did, before the engine
+    ! desugared it into a prompt — and `work` returns the closing payload, the
+    ! driver's reading of how the turn went. Neither is interpreted here.
+    !
+    ! Call it at the TOP of the handler, with whatever queue or lock the request
+    ! waits behind inside `work`: the gap between the opening record and the
+    ! `start` that eventually follows is then exactly how long the request was
+    ! queued before it became an agent turn.
+    !
+    ! Pairing the two writes in one call is why this is not on the `Transcript`
+    ! interface. `Agent.ask` never calls it — only a driver does — so leaving it
+    ! here keeps the interface to what the engine needs, and leaves an
+    ! application free to give its own transcript a bracket over its own types
+    ! rather than `Value`.
+    !
+    ! `work` throwing writes no closing record, which is correct: an unclosed
+    ! bracket is a fragment, and `records` yields nothing for it.
+    ! Where the two halves cannot share a call — a bracket that spans threads,
+    ! as when one thread queues the request and another runs it — use `request`
+    ! and `response` directly.
+  //]
+  def turn(id: String, data: Value, work: () => Value): Unit =
+    request(id, data)
+    response(id, work())
+
+  //[ See `Transcript.request`. Written as a `harpe.turn.request` record. //]
+  def request(id: String, data: Value): Unit =
+    log.log(Journal.requestCategory, "id" ~ id, "data" ~ data)
+
+  //[ See `Transcript.response`. Written as a `harpe.turn.response` record. //]
+  def response(id: String, data: Value): Unit =
+    log.log(Journal.responseCategory, "id" ~ id, "data" ~ data)
+
+  private def emit(category: String, message: Message): Unit =
+    log.logEntry(new Entry(time.now(), category, messageFields(message)))
+
+
+  private def messageFields(message: Message): Map[String, Value] =
+    val d = messageDict(message)
+    var fields = Map.empty[String, Value]
+    for k in py.iter(d.keys()) do fields = fields.add(k.asString, valueFromJson(d.get(k)))
+    fields
+
+  private def messageDict(message: Message): py.Dict =
+    match message
+    case UserInput(text, attachments) =>
+      py.dict("role" ~ "user", "text" ~ text, "attachments" ~ attachmentsDict(attachments))
+    case Assistant(text, calls) =>
+      val list = py.list()
+      for call in calls do
+        list.append(py.dict("id" ~ call.id, "name" ~ call.name, "input" ~ call.input.raw))
+      py.dict("role" ~ "assistant", "text" ~ text, "calls" ~ list)
+    case ToolResults(results) =>
+      val list = py.list()
+      for result in results do
+        list.append(py.dict("id" ~ result.id, "content" ~ result.content,
+                            "attachments" ~ attachmentsDict(result.attachments)))
+      py.dict("role" ~ "tool_results", "results" ~ list)
+
+  private def attachmentsDict(attachments: List[Attachment]): py.List =
+    val list = py.list()
+    for a in attachments do
+      list.append:
+        py.dict:
+          "name"   ~ a.name
+          "size"   ~ a.size
+          "mime"   ~ a.mime
+          "path"   ~ a.path
+    list
+end
+
+//[ Reading a journal back
+  !
+  ! The other half of what this class writes: the record categories, the payload
+  ! builder, and the folds that turn decoded `Entry` values into a transcript
+  ! (`records`) or into model history (`fromEntries`).
+  !
+  ! All of it is `Entry`-shaped, which is why it lives here and not under
+  ! `Transcript`. A transcript kept in a database reads itself back its own way,
+  ! and owes none of this.
+//]
+section Journal
+  def maxResumeChars: Int = 1000000
 
   def requestCategory: String  = "harpe.turn.request"
   def responseCategory: String = "harpe.turn.response"
@@ -36,7 +138,7 @@ section Transcript
     ! Sugar for the common case, so a driver writes its payload the way it writes
     ! a log record:
     !
-    !     Transcript.request(id, Transcript.payload("kind" ~ "upload", "file" ~ name))
+    !     transcript.request(id, Journal.payload("kind" ~ "upload", "file" ~ name))
     !
     ! Without it the map needs an explicit type — `Map[String, Value](...)` — since
     ! a bare `Map` of strings infers `Map[String, String]` and no adapter bridges
@@ -48,41 +150,6 @@ section Transcript
     for k ~ v in fields do map = map.add(k, v)
     map
 
-  //[ Open a user-facing turn — the driver's record of what the user asked for
-    !
-    ! Write this BEFORE `Agent.runTurn`, and write it early: at the top of the
-    ! handler, before whatever queue or lock the request waits behind. The gap
-    ! between this record and the `harpe.turn.started` that follows is then
-    ! exactly how long the request was queued before it became an agent turn.
-    !
-    ! `id` identifies the TRANSCRIPT record, not the engine's turn — the turn
-    ! itself has none, and nothing in `runTurn` knows this exists. It is the
-    ! driver's own (a message id, an update id, a row id) and must match the one
-    ! it later passes to `response`. `data` is whatever the driver wants the
-    ! transcript to show, in whatever shape the driver parses back.
-    !
-    ! Writing this is what makes a turn user-facing. A turn run without it is
-    ! machinery: fully logged, never in the transcript. See `TurnRecord`.
-  //]
-  def request(id: String, data: Value): Unit receives logger =
-    logger.log(requestCategory, "id" ~ id, "data" ~ data)
-
-  //[ Close a user-facing turn — the driver's reading of how it went
-    !
-    ! Write this AFTER `Agent.runTurn`, with the same `id`, on every outcome.
-    ! Skipping it when a turn fails means the UI renders exactly the turns a
-    ! user most wants explained through a different path from the rest.
-    !
-    ! `data` interprets the finished `TurnData`. It is the driver's summary, not
-    ! a copy: the turn's own traffic — assistant replies, tool calls, their
-    ! results — is already in the journal, and `records` hands it back as
-    ! `TurnRecord.data`. Duplicate none of it here.
-  //]
-  def response(id: String, data: Value): Unit receives logger =
-    logger.log(responseCategory, "id" ~ id, "data" ~ data)
-
-  private def emit(category: String, message: Message): Unit receives logger =
-    logger.logEntry(new Entry(time.now(), category, messageFields(message)))
 
   //[ Locate the user-facing turns in a journal
     !
@@ -208,39 +275,6 @@ section Transcript
       messages = messages + record.data.user
       if record.data.result is Success then messages = messages ++ record.data.messages
     truncate(messages, maxResumeChars)
-
-  private def messageFields(message: Message): Map[String, Value] =
-    val d = messageDict(message)
-    var fields = Map.empty[String, Value]
-    for k in py.iter(d.keys()) do fields = fields.add(k.asString, valueFromJson(d.get(k)))
-    fields
-
-  private def messageDict(message: Message): py.Dict =
-    match message
-    case UserInput(text, attachments) =>
-      py.dict("role" ~ "user", "text" ~ text, "attachments" ~ attachmentsDict(attachments))
-    case Assistant(text, calls) =>
-      val list = py.list()
-      for call in calls do
-        list.append(py.dict("id" ~ call.id, "name" ~ call.name, "input" ~ call.input.raw))
-      py.dict("role" ~ "assistant", "text" ~ text, "calls" ~ list)
-    case ToolResults(results) =>
-      val list = py.list()
-      for result in results do
-        list.append(py.dict("id" ~ result.id, "content" ~ result.content,
-                            "attachments" ~ attachmentsDict(result.attachments)))
-      py.dict("role" ~ "tool_results", "results" ~ list)
-
-  private def attachmentsDict(attachments: List[Attachment]): py.List =
-    val list = py.list()
-    for a in attachments do
-      list.append:
-        py.dict:
-          "name"   ~ a.name
-          "size"   ~ a.size
-          "mime"   ~ a.mime
-          "path"   ~ a.path
-    list
 
   private def attachmentsFrom(list: py.List): List[Attachment] =
     var attachments: List[Attachment] = []

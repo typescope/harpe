@@ -23,6 +23,7 @@ import harpe.Toolset
 import harpe.interact
 import harpe.Memory
 import harpe.Transcript
+import harpe.transcript.Journal
 import harpe.workspace
 import harpe.logging.JsonlLogger
 import harpe.logging.Logger
@@ -79,6 +80,14 @@ private class Session(
     memory: Memory, memoryPath: String, dataDir: String)
   val queue = py.module("queue").Queue()
 
+  //[ This chat's conversation, recorded into its own log.
+    !
+    ! Typed as the concrete journal, not as `Transcript`: this driver writes the
+    ! two halves of the bracket from different threads, so it uses `request` and
+    ! `response` directly rather than `turn`.
+  //]
+  val transcript = new Journal(log)
+
   //[ Begin a user turn
     !
     ! Download any attached files into the session's data directory (so the
@@ -100,7 +109,8 @@ private class Session(
     val channel = new TelegramInteract(client, this.id, approvalHandler)
 
     val result = with logger = log, interact = channel in
-      Agent.ask(prompt, brain = brain, tools = tools, context = context)
+      Agent.ask(prompt, brain = brain, tools = tools, context = context,
+                transcript = transcript)
 
     // Whether anything actually reached the chat. The engine cannot know it —
     // an answered turn with empty text sends nothing — and it is the one thing
@@ -127,10 +137,9 @@ private class Session(
       delivered = true
 
     // Close the bracket opened when the message was enqueued, on every outcome.
-    with logger = log in
-      Transcript.response:
-        incoming.id
-        Transcript.payload("delivered" ~ delivered, "sent" ~ Session.sent(result))
+    transcript.response:
+      incoming.id
+      Journal.payload("delivered" ~ delivered, "sent" ~ Session.sent(result))
 
   //[ Download this turn's attached files into the session's data directory
     !
@@ -272,5 +281,5 @@ section Session
       var entries: List[Entry] = []
       for line in file.read(path).lines if line.trim != "" do
         entries = entries + entryFromDict(json.loads(line).cast[py.Dict])
-      Transcript.fromEntries(entries)
+      Journal.fromEntries(entries)
 end
