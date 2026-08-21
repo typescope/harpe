@@ -193,6 +193,7 @@ section Agent
     // the reloaded one agree.
     if result is Success then TurnData(input, produced, result)
     else TurnData(input, [], result)
+
   //[ `Attachment` metadata for each path
     !
     ! Everything an `Attachment` needs is derivable from a path on disk, so a
@@ -214,87 +215,89 @@ section Agent
       out = out + Attachment(fileName, os.path.getsize(abs), mime, path = abs)
 
     out
-end
 
-//[ The result of fetching one model reply (after any retries)
-  !
-  ! The assistant message, a give-up (fatal error or retries exhausted), or an interruption.
-//]
-private union Fetched =
-    Got(message: Assistant, usage: Usage)
-  | GaveUp(detail: String)
-  | Stopped
+  //[ The result of fetching one model reply (after any retries)
+    !
+    ! The assistant message, a give-up (fatal error or retries exhausted), or an interruption.
+  //]
+  private union Fetched =
+      Got(message: Assistant, usage: Usage)
+    | GaveUp(detail: String)
+    | Stopped
 
-//[ Exponential backoff between retries: 1s, 2s, 4s, … capped at 30s.  //]
-private def backoffSeconds(attempt: Int): Float =
-  var d = 1.0
-  var i = 1
-  while i < attempt do
-    d = d * 2.0
-    i = i + 1
+  //[ Exponential backoff between retries: 1s, 2s, 4s, … capped at 30s.  //]
+  private def backoffSeconds(attempt: Int): Float =
+    var d = 1.0
+    var i = 1
+    while i < attempt do
+      d = d * 2.0
+      i = i + 1
 
-  if d > 30.0 then 30.0 else d
+    if d > 30.0 then 30.0 else d
 
-//[ Ask the model for one reply
-  !
-  ! Retry transient errors with exponential backoff up to `maxRetries`.
-  !
-  ! A `None` from `ask` (a cancelled request), or interrupt firing during a
-  ! backoff wait, ends the attempt.
-  !
-  ! Progress is reported through `interact.emit`. A terminal error is returned as
-  ! `Failed(detail)`.
-//]
-private def fetchReply(
-    session: Session, results: List[ToolResult], tools: List[Tool],
-    maxRetries: Int, interact: Interact)
-: Fetched receives logger =
+  //[ Ask the model for one reply
+    !
+    ! Retry transient errors with exponential backoff up to `maxRetries`.
+    !
+    ! A `None` from `ask` (a cancelled request), or interrupt firing during a
+    ! backoff wait, ends the attempt.
+    !
+    ! Progress is reported through `interact.emit`. A terminal error is returned as
+    ! `Failed(detail)`.
+  //]
+  private def fetchReply(
+      session: Session, results: List[ToolResult], tools: List[Tool],
+      maxRetries: Int, interact: Interact)
+  : Fetched receives logger =
 
-  var attempt = 0
-  var outcome: Fetched = GaveUp("")
+    var attempt = 0
+    var outcome: Fetched = GaveUp("")
 
-  while true do
-    if interact.cancelled then
-      outcome = Stopped
-      break
-
-    interact.emit: ModelRequestStarted(attempt, maxRetries)
-
-    // `reply` is idempotent — the Session commits `results` only on success, so
-    // every attempt (including retries) passes the same `results`.
-    val res = session.reply(results, tools)
-
-    interact.emit: ModelRequestEnded
-
-    if interact.cancelled then
-      outcome = Stopped
-      break
-
-    match res
-      case Reply(message, usage) =>
-        outcome = Got(message, usage)
+    while true do
+      if interact.cancelled then
+        outcome = Stopped
         break
 
-      case Fatal(detail) =>
-        logger.error("harpe.model.request", detail)
-        outcome = GaveUp(detail)
+      interact.emit: ModelRequestStarted(attempt, maxRetries)
+
+      // `reply` is idempotent — the Session commits `results` only on success, so
+      // every attempt (including retries) passes the same `results`.
+      val res = session.reply(results, tools)
+
+      interact.emit: ModelRequestEnded
+
+      if interact.cancelled then
+        outcome = Stopped
         break
 
-      case Transient(detail) =>
-        attempt = attempt + 1
-        if attempt > maxRetries then
-          logger.error("harpe.model.request", detail, "retries" ~ maxRetries)
+      match res
+        case Reply(message, usage) =>
+          outcome = Got(message, usage)
+          break
+
+        case Fatal(detail) =>
+          logger.error("harpe.model.request", detail)
           outcome = GaveUp(detail)
           break
 
-        else
-          val delay = backoffSeconds(attempt)
-          logger.warn("harpe.model.request", detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
-          interact.emit: TransientError(detail, delay)
-          // pause returns true if cancellation fired during the backoff.
-          if interact.pause(delay) then
-            outcome = Stopped
+        case Transient(detail) =>
+          attempt = attempt + 1
+          if attempt > maxRetries then
+            logger.error("harpe.model.request", detail, "retries" ~ maxRetries)
+            outcome = GaveUp(detail)
             break
-  end // while
 
-  outcome
+          else
+            val delay = backoffSeconds(attempt)
+            logger.warn("harpe.model.request", detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
+            interact.emit: TransientError(detail, delay)
+            // pause returns true if cancellation fired during the backoff.
+            if interact.pause(delay) then
+              outcome = Stopped
+              break
+    end // while
+
+    outcome
+  end // fetchReply
+
+end // agent
