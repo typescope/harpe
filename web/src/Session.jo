@@ -229,12 +229,12 @@ class Session(
       val turn = with logger = log, interact = channel in
         Agent.ask(prompt, brain = brain, tools = tools, context = context, transcript = transcript)
 
-      // The driver's reading of the finished turn: how it ended, and which files
-      // the agent delivered. `sendFile` is the agent's channel for putting a file
-      // in front of the user, so its deliveries are a high-level OUTPUT of the
-      // turn — recorded here as fact, rather than inferred later by matching tool
-      // names against the journal.
-      val response = Journal.payload("sent" ~ Session.delivered(turn))
+      // The driver's reading of the finished turn: what the agent said, and which
+      // files it delivered alongside. `sendFile` is its channel for putting a file
+      // in front of the user, so a delivery is a high-level OUTPUT of the turn —
+      // recorded here, with the words it came with, rather than inferred later by
+      // matching tool names against the journal.
+      val response = Journal.payload("reply" ~ Session.reply(turn))
 
       // The same value `/api/history` will rebuild from disk, so the live view and
       // the reloaded one are rendered from identical inputs.
@@ -370,21 +370,32 @@ section Session
   def loadRecords(id: String): List[Journal.TurnRecord] receives workspace =
     Journal.records(loadEntries(id))
 
-  //[ The files this turn delivered, in the order the agent sent them
+  //[ What the agent said and sent this turn, in the order it happened
     !
-    ! The turn's only high-level OUTPUT, and the whole of its closing payload.
-    ! How the turn ended is not repeated here — that is `Journal.TurnRecord.data.result`.
+    ! The turn's high-level OUTPUT, and the whole of its closing payload. How the
+    ! turn ended is not repeated here — that is `Journal.TurnRecord.data.result`.
     !
-    ! Names only: whether each file still exists, and its size and type, are
+    ! One entry per assistant message that spoke or delivered, so a file stays
+    ! with the words it arrived with: an agent that says "here is the summary",
+    ! sends it, then asks a follow-up leaves three entries rather than one lump
+    ! of joined text beside a flat list of names.
+    !
+    ! File names only: whether each still exists, and its size and type, are
     ! resolved when the page renders, so one deleted since the delivery shows as
     ! a muted card rather than disappearing from the dialog.
   //]
-  def delivered(turn: TurnData): Value =
-    var names: List[Value] = []
+  def reply(turn: TurnData): Value =
+    var parts: List[Value] = []
+
     for m in turn.messages do
-      if m is Assistant(_, calls) then
-        for c in calls if c.name == "sendFile" do names = names + c.input.string("fileName")
-    names
+      if m is Assistant(text, calls) then
+        var files: List[Value] = []
+        for c in calls if c.name == "sendFile" do files = files + c.input.string("fileName")
+
+        if text.trim != "" || !files.isEmpty then
+          parts = parts + Journal.payload("text" ~ text.trim, "files" ~ files)
+
+    parts
 
   //[ Decode this driver's per-session JSONL file. //]
   private def loadEntries(id: String): List[Entry] receives workspace =

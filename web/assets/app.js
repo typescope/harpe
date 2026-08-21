@@ -747,6 +747,8 @@ function appendMessage(role, text, received, steps, sent) {
   } else if (role === 'agent') {
     var html = renderMarkdown(text);
     if (html === null) bubble.textContent = text; else bubble.innerHTML = html;
+    // A delivery with no words of its own: show the file card, not an empty bubble.
+    if (!text) bubble.style.display = 'none';
   } else {
     bubble.textContent = text;
     if (!text) bubble.style.display = 'none';

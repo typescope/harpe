@@ -465,11 +465,11 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
   //[ One session's user/agent messages, for rendering on load.
     !
-    ! Each user message and each turn's FINAL reply are shown as bubbles. The turn's
-    ! intermediate traffic is not hidden but folded into that reply: the `runCode`
-    ! programs the agent ran (as `steps`, code paired with output by call id) and the
-    ! files it delivered via `sendFile` (as `sent`, resolved against the session
-    ! dir). Both come from the transcript — the tool calls the model itself made — so
+    ! Each user message is one bubble. Each thing the agent said is another, in the
+    ! order it said them, carrying the files it delivered in the same breath (as
+    ! `sent`, resolved against the session dir). The `runCode` programs it ran ride
+    ! on the first of those bubbles (as `steps`, code paired with output by call
+    ! id). Both come from the transcript — the tool calls the model itself made — so
     ! they persist across reloads and never fork from what the model reasons over.
     !
     ! `received` and `sent` name file lists from the AGENT's side: `received` is what
