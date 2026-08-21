@@ -19,7 +19,6 @@ import harpe.ffi.file
 
 import jo.IO.stdout
 import harpe.Http
-import harpe.Http.request
 import harpe.Workspace
 import harpe.Defaults
 import harpe.workspace
@@ -48,10 +47,8 @@ private def serve(): Unit receives stdout, workspace =
 
   // `Http.server` owns the threading: one request per thread, so the page and
   // `/api/stop` stay responsive while a long turn runs. Turns within a session
-  // are still serialized by its lock, and the shared model client is thread
-  // safe. This driver's handlers still take `(environ, startResponse)`
-  // directly rather than reading the ambient request, so the route unpacks it.
-  val httpd = Http.server: host, port, () => server.handle(request.environ, request.startResponse)
+  // are still serialized by its lock, and the shared model client is thread safe.
+  val httpd = Http.server: host, port, () => server.route()
 
   println """
 

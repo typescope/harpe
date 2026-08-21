@@ -51,6 +51,8 @@ import harpe.Handler
 import harpe.Toolset
 import harpe.Tool.ToolInput
 import harpe.turns.Failed
+import harpe.Http
+import harpe.Http.request
 import harpe.Transcript
 import harpe.transcript.Journal
 import harpe.TurnData
@@ -122,60 +124,41 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! Each request runs on its own thread, which does not inherit the process's
     ! context, so `workspace` is re-provided here from the server's field.
   //]
-  def handle(environ: py.Dynamic, startResp: py.Dynamic): py.List =
-    with workspace = wspace in route(environ, startResp)
+  def route(): py.List receives request =
+    with workspace = wspace in dispatch()
 
-  private def route(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
-    val method = environ.get("REQUEST_METHOD", "GET").asString
-    val path = environ.get("PATH_INFO", "/").asString
+  //[ Which handler answers this request
+    !
+    ! A verb and a path together, so a route cannot match the wrong method by
+    ! accident — which the previous string comparisons allowed for every path
+    ! that forgot to check one.
+  //]
+  private def dispatch(): py.List receives request, workspace =
+    match request
+    case Http.Get("/")                => page()
+    case Http.Get(Http.Segments ["c", _]) => page()
 
-    if method == "GET" && (path == "/" || path.startsWith("/c/")) then
-      respond(startResp, "200 OK", "text/html; charset=utf-8", file.read(indexPath()))
+    case Http.Get("/app.css")         => staticAsset("app.css")
+    case Http.Get("/app.js")          => staticAsset("app.js")
 
-    else if method == "GET" && (path == "/app.css" || path == "/app.js") then
-      handleStatic(path, startResp)
+    case Http.Get("/api/info")        => Http.respondJson(py.dict("name" ~ name))
+    case Http.Get("/api/sessions")    => handleSessions()
+    case Http.Get("/api/history")     => handleHistory()
+    case Http.Get("/api/subscribe")   => handleSubscribe()
+    case Http.Get("/api/files")       => handleFiles()
+    case Http.Get("/api/file")        => handleFile()
 
-    else if path == "/api/info" then
-      respondJson(startResp, py.dict("name" ~ name))
+    case Http.Post("/api/message")    => handleMessage()
+    case Http.Post("/api/upload")     => handleUpload()
+    case Http.Post("/api/run")        => handleRun()
+    case Http.Post("/api/save")       => handleSave()
+    case Http.Post("/api/stop")       => handleStop()
+    case Http.Post("/api/approval")   => handleApproval()
 
-    else if path == "/api/sessions" then
-      handleSessions(startResp)
+    case asked if asked.method is Http.Verb.Delete && asked.path == "/api/session" =>
+      handleDeleteSession()
 
-    else if path == "/api/session" && method == "DELETE" then
-      handleDeleteSession(environ, startResp)
-
-    else if path == "/api/history" then
-      handleHistory(environ, startResp)
-
-    else if path == "/api/message" && method == "POST" then
-      handleMessage(environ, startResp)
-
-    else if path == "/api/subscribe" then
-      handleSubscribe(environ, startResp)
-
-    else if path == "/api/upload" && method == "POST" then
-      handleUpload(environ, startResp)
-
-    else if path == "/api/files" then
-      handleFiles(environ, startResp)
-
-    else if path == "/api/file" then
-      handleFile(environ, startResp)
-
-    else if path == "/api/run" && method == "POST" then
-      handleRun(environ, startResp)
-
-    else if path == "/api/save" && method == "POST" then
-      handleSave(environ, startResp)
-
-    else if path == "/api/stop" && method == "POST" then
-      handleStop(environ, startResp)
-
-    else if path == "/api/approval" && method == "POST" then
-      handleApproval(environ, startResp)
-
-    else
-      respond(startResp, "404 Not Found", "text/plain", "not found")
+    case _ => Http.respond("404 Not Found", "text/plain; charset=utf-8", "not found")
 
   //[ The chat page is the agent's own `assets/index.html` (its presence is checked at startup, see `Web.serve`)
     !
@@ -185,24 +168,28 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
   private def indexPath(): String receives workspace =
     workspace.relative("assets/index.html")
 
+  //[ The chat page itself, read from disk per request. //]
+  private def page(): py.List receives request, workspace =
+    Http.respond: "200 OK", "text/html; charset=utf-8", file.read(indexPath())
+
   //[ Serve the page's split stylesheet/script (`/app.css`, `/app.js`)
     !
     ! From the agent's `assets/` directory — read from disk per request, like
     ! the page, so editing them needs no rebuild. The name is reduced to a
     ! basename, so the path can never escape `assets/`. A missing file is a 404.
   //]
-  private def handleStatic(path: String, startResp: py.Dynamic): py.List receives workspace =
-    val name = sanitizeName(path)   // basename → strips the leading "/" and any traversal
+  private def staticAsset(asset: String): py.List receives request, workspace =
+    val name = sanitizeName(asset)   // basename → strips any traversal
     val p = workspace.relative("assets/" + name)
 
     if name == "" || !os.path.isfile(p) then
-      respond(startResp, "404 Not Found", "text/plain", "not found")
+      Http.respond("404 Not Found", "text/plain", "not found")
 
     else
       val ctype = if name.endsWith(".css") then "text/css"
                   else if name.endsWith(".js") then "application/javascript"
                   else "text/plain"
-      respond(startResp, "200 OK", ctype + "; charset=utf-8", file.read(p))
+      Http.respond: "200 OK", ctype + "; charset=utf-8", file.read(p)
 
   //[ Run one turn, streaming its progress and final answer as NDJSON.
     !
@@ -210,8 +197,8 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! the browser can adopt the `/c/<id>` URL. A request that carries a
     ! `session` resumes it (from memory, or loaded from disk).
   //]
-  private def handleMessage(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
-    val body = json.loads(readBody(environ)).cast[py.Dict]
+  private def handleMessage(): py.List receives request, workspace =
+    val body = Http.readJson()
     val text = body.get("text", "").asString
     val reqId = body.get("session", "").asString
     val attachmentItems = body.get("attachments", py.list()).cast[py.List]
@@ -219,7 +206,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     val headers = py.list(
       py.tuple("Content-Type", "application/x-ndjson"),
       py.tuple("Cache-Control", "no-cache"))
-    val write = py.call(startResp, "200 OK", headers)
+    val write = Http.beginStream("application/x-ndjson")
 
     val sink: Sink = (obj: py.Dict) =>
       py.call(write, py.dynamic(json.dumps(obj) + "\n").encode())
@@ -265,19 +252,19 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! executions and rolls the turn back. Unknown or idle sessions are a no-op —
     ! stopping is idempotent.
   //]
-  private def handleStop(environ: py.Dynamic, startResp: py.Dynamic): py.List =
-    val body = json.loads(readBody(environ)).cast[py.Dict]
+  private def handleStop(): py.List receives request =
+    val body = Http.readJson()
     val id = body.get("session", "").asString
 
     registryLock.acquire()
     if registry.contains(id) then registry.get(id).cast[Session].requestStop()
     registryLock.release()
 
-    respondJson(startResp, py.dict("ok" ~ true))
+    Http.respondJson(py.dict("ok" ~ true))
 
   //[ Resolve an instant approval for the session's active turn. //]
-  private def handleApproval(environ: py.Dynamic, startResp: py.Dynamic): py.List =
-    val body = json.loads(readBody(environ)).cast[py.Dict]
+  private def handleApproval(): py.List receives request =
+    val body = Http.readJson()
     val sessionId = sanitizeName(body.get("session", "").asString)
     val approvalId = body.get("id", "").asString
     val decision = body.get("decision", "").asString
@@ -287,7 +274,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       case Some(session) => session.decideApproval(approvalId, decision)
       case None          => false
 
-    respondJson(startResp, py.dict("ok" ~ accepted))
+    Http.respondJson(py.dict("ok" ~ accepted))
 
   //[ Subscribe to a session's in-flight turn
     !
@@ -300,13 +287,13 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! idle, or already-finished one gets an immediate empty stream, so the
     ! client falls back to the committed history for the final answer.
   //]
-  private def handleSubscribe(environ: py.Dynamic, startResp: py.Dynamic): py.List =
-    match residentSession(queryParam(environ, "session"))
+  private def handleSubscribe(): py.List receives request =
+    match residentSession(Http.queryParam("session"))
     case Some(session) if session.state is Active(_) =>
       val headers = py.list(
         py.tuple("Content-Type", "application/x-ndjson"),
         py.tuple("Cache-Control", "no-cache"))
-      val write = py.call(startResp, "200 OK", headers)
+      val write = Http.beginStream("application/x-ndjson")
 
       val sink: Sink = (obj: py.Dict) =>
         py.call(write, py.dynamic(json.dumps(obj) + "\n").encode())
@@ -319,7 +306,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       py.list()
 
     case _ =>
-      respond(startResp, "200 OK", "application/x-ndjson", "")
+      Http.respond("200 OK", "application/x-ndjson", "")
 
   //[ The resident session for `id` (registry only — never loads from disk), or None
     !
@@ -438,20 +425,20 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
     registryLock.release()
 
-  private def handleSessions(startResp: py.Dynamic): py.List receives workspace =
+  private def handleSessions(): py.List receives request, workspace =
     val arr = py.list()
     for m in Session.listSessions() do
       arr.append(py.dict("id" ~ m.id, "title" ~ m.title, "time" ~ m.time))
-    respondJson(startResp, py.dict("sessions" ~ arr))
+    Http.respondJson(py.dict("sessions" ~ arr))
 
   //[ Permanently remove one idle session and all of its stored files. //]
-  private def handleDeleteSession(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
-    val body = json.loads(readBody(environ)).cast[py.Dict]
+  private def handleDeleteSession(): py.List receives request, workspace =
+    val body = Http.readJson()
     val requested = body.get("session", "").asString
     val id = sanitizeName(requested)
 
     if id == "" || id != requested then
-      respondJsonStatus(startResp, "400 Bad Request", py.dict("ok" ~ false, "error" ~ "invalid session"))
+      jsonStatus("400 Bad Request", py.dict("ok" ~ false, "error" ~ "invalid session"))
 
     else
       registryLock.acquire()
@@ -468,16 +455,14 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       registryLock.release()
 
       if active then
-        respondJsonStatus(
-          startResp,
-          "409 Conflict",
+        jsonStatus("409 Conflict",
           py.dict("ok" ~ false, "error" ~ "stop the running turn before deleting this session"))
       else
         match resident
         case Some(session) => session.close()
         case None          => pass
         Session.removeStored(id)
-        respondJson(startResp, py.dict("ok" ~ true))
+        Http.respondJson(py.dict("ok" ~ true))
 
   //[ One session's user/agent messages, for rendering on load.
     !
@@ -494,8 +479,8 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! that has since vanished still shows as a muted card), so they stay separate
     ! fields rather than one merged list.
   //]
-  private def handleHistory(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
-    val id = queryParam(environ, "session")
+  private def handleHistory(): py.List receives request, workspace =
+    val id = Http.queryParam("session")
     val dataDir = existingDataDir(id)
 
     val arr = py.list()
@@ -504,7 +489,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
     // The live turn state alongside persisted history lets a reconnect subscribe
     // to a turn that is still running.
-    respondJson: startResp, py.dict("messages" ~ arr, "state" ~ stateToJson(residentState(id)))
+    Http.respondJson: py.dict("messages" ~ arr, "state" ~ stateToJson(residentState(id)))
 
   //[ The live turn state as JSON
     !
@@ -520,38 +505,20 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
         "text"     ~ TurnView.requestText(request)
         "received" ~ TurnView.requestFiles(request)
 
-  private def queryParam(environ: py.Dynamic, key: String): String =
-    val qs = environ.get("QUERY_STRING", "").asString
-    val params = py.module("urllib.parse").parse_qs(qs).cast[py.Dict]
-    if params.contains(key) then params.get(key).cast[py.List].get(0).asString else ""
+  //[ A JSON body under a status other than 200 — the shape this API refuses with. //]
+  private def jsonStatus(status: String, dict: py.Dict): py.List receives request =
+    Http.respond: status, "application/json", json.dumps(dict)
 
-  //[ Read and decode a request body using its CONTENT_LENGTH. //]
-  private def readBody(environ: py.Dynamic): String =
-    val raw = environ.get("CONTENT_LENGTH", "").asString
-    val length = Int.parse(raw) rescue None => 0
-    environ.get("wsgi.input").read(length).decode().asString
-
-  private def respondJson(startResp: py.Dynamic, dict: py.Dict): py.List =
-    respond(startResp, "200 OK", "application/json", json.dumps(dict))
-
-  private def respondJsonStatus(startResp: py.Dynamic, status: String, dict: py.Dict): py.List =
-    respond(startResp, status, "application/json", json.dumps(dict))
-
-  //[ A complete, non-streamed response from a string body. //]
-  private def respond(startResp: py.Dynamic, status: String, ctype: String, body: String): py.List =
-    val _ = py.call(startResp, status, py.list(py.tuple("Content-Type", ctype)))
-    py.list(py.dynamic(body).encode())
-
-  //[ A complete binary response: the bytes plus a `Content-Disposition` naming the file
+  //[ A file's bytes, with a `Content-Disposition` naming it
     !
-    ! `inline` lets a browser preview images/PDFs. A download still works.
+    ! `inline` lets a browser preview images and PDFs. A download still works.
   //]
-  private def respondBytes(startResp: py.Dynamic, ctype: String, filename: String, data: py.Dynamic): py.List =
-    val headers = py.list(
-      py.tuple("Content-Type", ctype),
-      py.tuple("Content-Disposition", "inline; filename=\"\{filename}\""))
-    val _ = py.call(startResp, "200 OK", headers)
-    py.list(data)
+  private def respondBytes(ctype: String, filename: String, data: py.Dynamic): py.List receives request =
+    val headers = py.list:
+      py.tuple("Content-Type", ctype)
+      py.tuple("Content-Disposition", "inline; filename=\"\{filename}\"")
+
+    Http.respondBytes("200 OK", headers, data)
 
   //[ ── Files ──────────────────────────────────────────────────────────────────
     !
@@ -655,13 +622,13 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! file's metadata. The name is sanitized and de-duplicated, so an upload can
     ! neither escape the session dir nor clobber an existing file.
   //]
-  private def handleUpload(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
-    val body = json.loads(readBody(environ)).cast[py.Dict]
+  private def handleUpload(): py.List receives request, workspace =
+    val body = Http.readJson()
     val reqId = body.get("session", "").asString
     val name = sanitizeName(body.get("name", "").asString)
 
     if name == "" then
-      respondJson: startResp, py.dict("error" ~ "invalid filename")
+      Http.respondJson: py.dict("error" ~ "invalid filename")
 
     else
       val session = if reqId == "" then createSession() else openSession(reqId)
@@ -670,7 +637,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       val size = builtins.len(data)
 
       if size > maxUploadBytes then
-        respondJson: startResp, py.dict("error" ~ "file too large", "session" ~ session.id)
+        Http.respondJson: py.dict("error" ~ "file too large", "session" ~ session.id)
 
       else
         val stored = uniqueName(dir, name)
@@ -678,19 +645,19 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
         val given = body.get("mime", "").asString
         val mime = if given != "" then given
                    else mimetypes.guessType(stored).getOrElse("application/octet-stream")
-        respondJson: startResp, py.dict("session" ~ session.id, "name" ~ stored, "size" ~ size, "mime" ~ mime)
+        Http.respondJson: py.dict("session" ~ session.id, "name" ~ stored, "size" ~ size, "mime" ~ mime)
 
   //[ List a session's data directory
     !
     ! The files currently in its workspace, whether uploaded by the user or
     ! written by the agent. Newest first.
   //]
-  private def handleFiles(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
-    val files = match existingDataDir(queryParam(environ, "session"))
+  private def handleFiles(): py.List receives request, workspace =
+    val files = match existingDataDir(Http.queryParam("session"))
                 case None      => []
                 case Some(dir) => Session.listFiles(dir)
 
-    respondJson: startResp, py.dict("files" ~ filesToJson(files))
+    Http.respondJson: py.dict("files" ~ filesToJson(files))
 
   //[ Serve one file from a session's data directory for preview or download
     !
@@ -698,19 +665,19 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! verified to stay within the session dir — an unknown session, missing
     ! file, or any traversal attempt is a 404.
   //]
-  private def handleFile(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
-    val name = sanitizeName(queryParam(environ, "name"))
+  private def handleFile(): py.List receives request, workspace =
+    val name = sanitizeName(Http.queryParam("name"))
 
-    match existingDataDir(queryParam(environ, "session"))
-    case None => respond(startResp, "404 Not Found", "text/plain", "not found")
+    match existingDataDir(Http.queryParam("session"))
+    case None => Http.respond("404 Not Found", "text/plain", "not found")
     case Some(dir) =>
       val p = os.path.join(dir, name)
       if name == "" || !os.path.isfile(p) || !within(dir, p) then
-        respond(startResp, "404 Not Found", "text/plain", "not found")
+        Http.respond("404 Not Found", "text/plain", "not found")
 
       else
         val mime = mimetypes.guessType(name).getOrElse("application/octet-stream")
-        respondBytes(startResp, mime, name, file.readBytes(p))
+        respondBytes(mime, name, file.readBytes(p))
 
   //[ Run a Jo program in a session's sandbox — the interactive editor's execute.
     !
@@ -720,14 +687,14 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! mints one (so a script written in a fresh chat gets a home), and the client
     ! adopts the returned id.
   //]
-  private def handleRun(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
-    val body = json.loads(readBody(environ)).cast[py.Dict]
+  private def handleRun(): py.List receives request, workspace =
+    val body = Http.readJson()
     val code = body.get("code", "").asString
     val reqId = body.get("session", "").asString
     val requestedId = sanitizeName(reqId)
 
     if code.trim == "" || (reqId != "" && requestedId == "") then
-      respondJson: startResp, py.dict("error" ~ "empty program or session")
+      Http.respondJson: py.dict("error" ~ "empty program or session")
 
     else
       val session = if reqId == "" then createSession() else openSession(requestedId)
@@ -735,23 +702,23 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       val outcome =
         with logger = session.log, interact = Interact.unattended
         in runTool.run(code)
-      respondJson: startResp, py.dict("session" ~ sessionId, "result" ~ outcome.result, "summary" ~ outcome.summary)
+      Http.respondJson: py.dict("session" ~ sessionId, "result" ~ outcome.result, "summary" ~ outcome.summary)
 
   //[ Save a script into a session's files (overwriting a same-named one), so it can be reopened, edited, and re-run
     !
     ! Mints a session if the request carries none.
   //]
-  private def handleSave(environ: py.Dynamic, startResp: py.Dynamic): py.List receives workspace =
-    val body = json.loads(readBody(environ)).cast[py.Dict]
+  private def handleSave(): py.List receives request, workspace =
+    val body = Http.readJson()
     val reqId = body.get("session", "").asString
     val name = sanitizeName(body.get("name", "").asString)
     val content = body.get("content", "").asString
     val sessionId = if reqId == "" then createSession().id else sanitizeName(reqId)
 
     if name == "" || sessionId == "" then
-      respondJson: startResp, py.dict("error" ~ "missing name or session")
+      Http.respondJson: py.dict("error" ~ "missing name or session")
 
     else
       file.write(os.path.join(Session.dataDir(sessionId), name), content)
-      respondJson: startResp, py.dict("session" ~ sessionId, "name" ~ name)
+      Http.respondJson: py.dict("session" ~ sessionId, "name" ~ name)
 end
