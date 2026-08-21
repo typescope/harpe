@@ -33,9 +33,7 @@ import harpe.Model.UserInput
 import harpe.Model.Message
 import harpe.tools.*
 import harpe.context.WindowedContext
-import harpe.turns.Success
-import harpe.turns.Failed
-import harpe.turns.Interrupted
+import harpe.turns.TurnResult
 
 //[ The entry point   //]
 def main(): Unit receives stdout =
@@ -106,13 +104,13 @@ private def runChat(): Unit receives stdout, workspace =
     val res = console.turn(userMsg, runTurn)
 
     match res.result
-    case Success =>
+    case TurnResult.Success =>
       console.agentResponse(res.finalText)
 
-    case Interrupted =>
+    case TurnResult.Interrupted =>
       println("  " + Style.warning("⎋ interrupted"))
 
-    case Failed(detail) =>
+    case TurnResult.Failed(detail) =>
       val message = if detail == "" then "request failed" else "request failed: \{detail}"
       println("  " + Style.error("· \{message}"))
 

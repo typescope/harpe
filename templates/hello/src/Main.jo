@@ -11,7 +11,7 @@ import harpe.ffi.os
 import harpe.logging.Logging
 import harpe.logging.logger
 import harpe.tools.runCodeTool
-import harpe.turns.Success
+import harpe.turns.TurnResult
 
 def main(): Unit receives stdout =
   dotenv.load(".env")
@@ -57,7 +57,7 @@ private def chat(): Unit receives stdout, harpe.workspace, logger =
           maxRetries = 2
 
     match result.result
-    case Success => println "\nAgent ▸ \{result.text}"
+    case TurnResult.Success => println "\nAgent ▸ \{result.text}"
     case _       => println "\nThe turn failed. Try again."
   end
 end

@@ -13,8 +13,7 @@ import jo.IO.stdout
 import harpe.*
 import harpe.Model.*
 import harpe.Tool.*
-import harpe.turns.Success
-import harpe.turns.Failed
+import harpe.turns.TurnResult
 import harpe.logging.logger
 import harpe.logging.JsonlLogger
 import harpe.transcript.Journal
@@ -50,10 +49,10 @@ private def turnText(d: TurnData): String =
 
 private def turnResult(d: TurnData): String =
   match d.result
-  case Success        => "Success"
-  case Failed(detail) => "Failed(\{detail})"
-  case None           => "None"
-  case _              => "Interrupted"
+  case TurnResult.Success        => "Success"
+  case TurnResult.Failed(detail) => "Failed(\{detail})"
+  case None                      => "None"
+  case _                         => "Interrupted"
 
 def run(): Unit receives stdout =
   val call = ToolCall("c1", "runCode", ToolInput(py.dict("code" ~ "println 1")))

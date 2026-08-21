@@ -19,14 +19,6 @@ namespace harpe.web
 import harpe.Interact
 import harpe.Approvals
 import harpe.turns.TurnEvent
-import harpe.turns.ModelRequestStarted
-import harpe.turns.ModelRequestEnded
-import harpe.turns.TransientError
-import harpe.turns.AssistantMessage
-import harpe.turns.ToolBudgetReached
-import harpe.turns.ToolCallStarted
-import harpe.turns.ToolCallEnded
-import harpe.turns.ContextCompacted
 import harpe.Model
 import harpe.Model.Rendered
 import harpe.Model.ReplyResult
@@ -58,29 +50,29 @@ private class WebInteract(sink: Sink, stop: py.Dynamic, approvalHandler: Approva
   //]
   def emit(event: TurnEvent): Unit =
     match event
-    case ModelRequestStarted(attempt, maxAttempts) =>
+    case TurnEvent.ModelRequestStarted(attempt, maxAttempts) =>
       val label = if attempt == 0 then "thinking" else "retrying \{attempt}/\{maxAttempts}"
       sink(py.dict("type" ~ "status", "label" ~ label))
 
-    case ModelRequestEnded =>
+    case TurnEvent.ModelRequestEnded =>
       pass
 
-    case TransientError(detail, delaySeconds) =>
+    case TurnEvent.TransientError(detail, delaySeconds) =>
       sink(py.dict("type" ~ "status", "label" ~ "transient error; retrying in \{delaySeconds}s"))
 
-    case AssistantMessage(text) =>
+    case TurnEvent.AssistantMessage(text) =>
       sink(py.dict("type" ~ "assistant-message", "text" ~ text))
 
-    case ToolBudgetReached(budget) =>
+    case TurnEvent.ToolBudgetReached(budget) =>
       sink(py.dict("type" ~ "status", "label" ~ "tool budget reached (\{budget})"))
 
-    case ToolCallStarted(name) =>
+    case TurnEvent.ToolCallStarted(name) =>
       sink(py.dict("type" ~ "status", "label" ~ name))
 
-    case ToolCallEnded(name, summary) =>
+    case TurnEvent.ToolCallEnded(name, summary) =>
       sink(py.dict("type" ~ "tool", "name" ~ name, "summary" ~ summary))
 
-    case ContextCompacted(droppedMessages) =>
+    case TurnEvent.ContextCompacted(droppedMessages) =>
       sink(py.dict("type" ~ "status", "label" ~ "context compacted (\{droppedMessages} messages summarized)"))
   end
 end

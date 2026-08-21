@@ -67,10 +67,10 @@ section TurnView
     // `turn.text` joins every visible reply across the turn's tool rounds, so a
     // turn that spoke before calling a tool keeps that text.
     val reply = turn.text
-    if turn.result is Success && reply != "" then
+    if turn.result is TurnResult.Success && reply != "" then
       arr.append: py.dict("role" ~ "agent", "text" ~ reply, "steps" ~ steps, "sent" ~ sent)
 
-    if turn.result is Failed(detail) then
+    if turn.result is TurnResult.Failed(detail) then
       val message = if detail == "" then "Please try again." else detail
       arr.append: py.dict("role" ~ "error", "text" ~ message)
 

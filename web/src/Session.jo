@@ -41,9 +41,7 @@ import harpe.Model.Message
 import harpe.Model.UserInput
 import harpe.Model.Assistant
 import harpe.Model.Attachment
-import harpe.turns.Success
-import harpe.turns.Interrupted
-import harpe.turns.Failed
+import harpe.turns.TurnResult
 import harpe.logging.Value
 
 
@@ -245,7 +243,7 @@ class Session(
       val record = Journal.TurnRecord(request, response, turn)
 
       match turn.result
-      case Success =>
+      case TurnResult.Success =>
         // The finished turn, rendered exactly as `/api/history` would render it once
         // reloaded — so the page folds the live reply into its committed form (code
         // trace, delivered files) from this event alone, with nothing to re-fetch.
@@ -253,10 +251,10 @@ class Session(
           "type" ~ "turnFinish"
           "rows" ~ TurnView.rows(record, Session.existingDataDir(this.id))
 
-      case Interrupted =>
+      case TurnResult.Interrupted =>
         broadcast(py.dict("type" ~ "interrupted"))
 
-      case Failed(detail) =>
+      case TurnResult.Failed(detail) =>
         broadcast(py.dict("type" ~ "failed", "detail" ~ detail))
 
       case _ => pass

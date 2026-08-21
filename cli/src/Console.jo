@@ -126,37 +126,37 @@ private class Console(out: String => Unit, historyFile: String)
     // that never committed.
     match outcome
     case WorkerCompleted(res)   => res
-    case WorkerCancelled        => TurnData(userMsg, [], Interrupted)
-    case WorkerCrashed(message) => TurnData(userMsg, [], Failed(message))
+    case WorkerCancelled        => TurnData(userMsg, [], TurnResult.Interrupted)
+    case WorkerCrashed(message) => TurnData(userMsg, [], TurnResult.Failed(message))
 
   def display(event: TurnEvent): Unit = with IO.stdout = out in
     match event
-    case ModelRequestStarted(attempt, maxAttempts) =>
+    case TurnEvent.ModelRequestStarted(attempt, maxAttempts) =>
       val label =
         if attempt == 0 then "thinking · ESC to interrupt"
         else "retrying \{attempt}/\{maxAttempts} · ESC to interrupt"
       spinner.start(label)
 
-    case ModelRequestEnded =>
+    case TurnEvent.ModelRequestEnded =>
       spinner.stop()
 
-    case TransientError(detail, delaySeconds) =>
+    case TurnEvent.TransientError(detail, delaySeconds) =>
       println("  " + Style.warning("· transient error") + " (\{detail}); retrying in \{delaySeconds}s")
 
-    case AssistantMessage(text) =>
+    case TurnEvent.AssistantMessage(text) =>
       agentResponse(text)
 
-    case ToolBudgetReached(budget) =>
+    case TurnEvent.ToolBudgetReached(budget) =>
       println("  " + Style.warning("· tool budget reached") + " (\{budget}); requesting final answer")
 
-    case ToolCallStarted(name) =>
+    case TurnEvent.ToolCallStarted(name) =>
       spinner.start("\{name} · ESC to interrupt")
 
-    case ToolCallEnded(name, summary) =>
+    case TurnEvent.ToolCallEnded(name, summary) =>
       spinner.stop()
       println("  " + Style.note("·") + " \{summary}")
 
-    case ContextCompacted(droppedMessages) =>
+    case TurnEvent.ContextCompacted(droppedMessages) =>
       println("  " + Style.muted("· context compacted (\{droppedMessages} messages summarized)"))
 end
 

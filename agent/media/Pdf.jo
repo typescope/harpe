@@ -96,7 +96,7 @@ private class PdfImpl(doc: py.Dynamic, root: String)
 
     new PageContent(texts, images, paths)
 
-  def pageImage(page: Int, target: String, scale: Int = 2): Result[ImageSize, String] =
+  def pageImage(page: Int, target: String, scale: Int = 2): Result[Image.Size, String] =
     checkPage(page)
     val real = resolvePath(root, target) rescue err: Err[String] => return err
     orMessage:
@@ -108,11 +108,11 @@ private class PdfImpl(doc: py.Dynamic, root: String)
     case Ok(_)  => pass
     case Err(_) => pass
 
-  private def render(page: Int, realTarget: String, scale: Int): ImageSize =
+  private def render(page: Int, realTarget: String, scale: Int): Image.Size =
     val image = doc.get_page(page - 1).render(scale).to_pil()
     os.makedirs(os.path.dirname(realTarget))
     image.save(realTarget)
-    new ImageSize(image.width.asInt, image.height.asInt)
+    new Image.Size(image.width.asInt, image.height.asInt)
 
   //[ Naming a page outside the document is a program bug
     !

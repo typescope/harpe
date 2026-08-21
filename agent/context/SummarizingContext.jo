@@ -11,6 +11,7 @@ import harpe.*
 import harpe.util.truncate
 import harpe.Model.*
 import harpe.logging.logger
+import harpe.turns.TurnEvent
 
 //[ Like `WindowedContext`, but with model-assisted distillation of old turns.
   !
@@ -105,7 +106,7 @@ class SummarizingContext(
       if distill(new Rendered(distillSystem(), [request])) is Some(text) then
         summary = text
         transcript = kept
-        interact.emit: turns.ContextCompacted(dropCount)
+        interact.emit: TurnEvent.ContextCompacted(dropCount)
 end
 
 //[ The distilled-history block

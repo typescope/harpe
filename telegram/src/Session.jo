@@ -38,9 +38,7 @@ import harpe.Model.Message
 import harpe.Model.UserInput
 import harpe.Model.Assistant
 import harpe.Model.Attachment
-import harpe.turns.Success
-import harpe.turns.Interrupted
-import harpe.turns.Failed
+import harpe.turns.TurnResult
 import harpe.logging.Value
 
 
@@ -135,15 +133,15 @@ private class Session(
     var delivered = false
 
     match result.result
-    case Success =>
+    case TurnResult.Success =>
       val answer = result.finalText
       if answer.trim != "" then
         client.sendMessage(this.id, answer)
         delivered = true
 
-    case Interrupted => pass
+    case TurnResult.Interrupted => pass
 
-    case Failed(detail) =>
+    case TurnResult.Failed(detail) =>
       val message =
         if detail == "" then "Request failed. Please try again."
         else "Request failed: \{detail}"

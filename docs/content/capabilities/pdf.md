@@ -77,7 +77,7 @@ interface PDF
   def metadata: Map[String, String]
   def pageText(page: Int): Result[String, String]
   def pageContent(page: Int): PageContent
-  def pageImage(page: Int, target: String, scale: Int = 2): Result[ImageSize, String]
+  def pageImage(page: Int, target: String, scale: Int = 2): Result[Image.Size, String]
   def close(): Unit
 end
 

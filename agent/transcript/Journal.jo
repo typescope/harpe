@@ -267,9 +267,9 @@ section Journal
       || category == "harpe.turn.failed"
 
   private def turnFrom(user: Message, pending: List[Message], terminator: Entry): TurnData =
-    if terminator.category == "harpe.turn.answered" then TurnData(user, pending, Success)
-    else if terminator.category == "harpe.turn.interrupted" then TurnData(user, [], Interrupted)
-    else TurnData(user, [], Failed(entryDict(terminator).get("error", "").asString))
+    if terminator.category == "harpe.turn.answered" then TurnData(user, pending, TurnResult.Success)
+    else if terminator.category == "harpe.turn.interrupted" then TurnData(user, [], TurnResult.Interrupted)
+    else TurnData(user, [], TurnResult.Failed(entryDict(terminator).get("error", "").asString))
 
   //[ Derive model history from the transcript
     !
@@ -288,7 +288,7 @@ section Journal
     var messages: List[Message] = []
     for record in records(entries) do
       messages = messages + record.data.user
-      if record.data.result is Success then messages = messages ++ record.data.messages
+      if record.data.result is TurnResult.Success then messages = messages ++ record.data.messages
     truncate(messages, maxResumeChars)
 
   private def attachmentsFrom(list: py.List): List[Attachment] =

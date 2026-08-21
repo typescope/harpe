@@ -10,27 +10,27 @@ private class PrintInteract(out: String => Unit)
 
   def emit(event: TurnEvent): Unit = with IO.stdout = out in
     match event
-    case ModelRequestStarted(attempt, maxAttempts) =>
+    case TurnEvent.ModelRequestStarted(attempt, maxAttempts) =>
       val label =
         if attempt == 0 then "thinking..."
         else "retrying \{attempt}/\{maxAttempts}..."
       println label
 
-    case ModelRequestEnded => pass
+    case TurnEvent.ModelRequestEnded => pass
 
-    case TransientError(detail, delaySeconds) =>
+    case TurnEvent.TransientError(detail, delaySeconds) =>
       println "  · transient error (\{detail}); retrying in \{delaySeconds}s"
 
-    case ToolBudgetReached(budget) =>
+    case TurnEvent.ToolBudgetReached(budget) =>
       println "  · tool budget reached (\{budget}); requesting final answer"
 
-    case ToolCallStarted(name) =>
+    case TurnEvent.ToolCallStarted(name) =>
       println "\{name}..."
 
-    case ToolCallEnded(name, summary) =>
+    case TurnEvent.ToolCallEnded(name, summary) =>
       println "  · \{summary}"
 
-    case ContextCompacted(droppedMessages) =>
+    case TurnEvent.ContextCompacted(droppedMessages) =>
       println "  · context compacted (\{droppedMessages} messages summarized)"
 
   def cancelled: Bool = false
