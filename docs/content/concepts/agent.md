@@ -36,7 +36,7 @@ a default:
 def ask(
     message: String,
     attachments: List[String] = NoAttachments,
-    brain: Model = Defaults.model,
+    brain: Model = Model.default,
     tools: Toolset = Toolset.empty,
     context: Context = Context.noHistory,
     maxToolRounds: Int = 50,

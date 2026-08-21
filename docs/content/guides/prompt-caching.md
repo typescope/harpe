@@ -75,7 +75,7 @@ The policy is an argument to the constructor:
 val brain = anthropic(apiKey, "claude-opus-4-6", cache = Anthropic.OneHour)
 ```
 
-[`Defaults.model()`](/concepts/models/) uses `Anthropic.FiveMinutes`. It selects a
+[`Model.default()`](/concepts/models/) uses `Anthropic.FiveMinutes`. It selects a
 provider from environment variables and deliberately stops there: a cache policy
 is provider-specific tuning, so an agent that wants a different one calls
 `anthropic(...)` itself rather than reaching for an environment variable that

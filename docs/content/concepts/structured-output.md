@@ -72,11 +72,19 @@ section SendFileTool
 
   def send(fileName: String, dir: String): Tool.RunOutcome =
     val baseName = os.path.basename(fileName)
-    // validation elided
-    new Tool.RunOutcome:
-      "Sent '\{baseName}' to the user."
-      "sendFile · \{baseName}"
-      attachments = []
+
+    if !os.path.isfile(os.path.join(dir, baseName)) then
+      new Tool.RunOutcome:
+        "No such file: '\{fileName}'. Write it to your data directory first, then send it."
+        "sendFile · no such file"
+        attachments = []
+        success = false
+
+    else
+      new Tool.RunOutcome:
+        "Sent '\{baseName}' to the user."
+        "sendFile · \{baseName}"
+        attachments = []
 end
 ```
 
@@ -87,12 +95,20 @@ driver reads its own output out of it — the calls the agent made are the recor
 ```jo
 //[ What the agent said and sent this turn, in the order it happened. //]
 def reply(turn: TurnData): Value =
+  // A `sendFile` the tool refused is not a delivery. Collect the refused call
+  // ids first: the results arrive after the message that made the calls.
+  var refused = Set.empty[String]
+  for m in turn.messages do
+    if m is ToolResults(results) then
+      for r in results if !r.success do refused = refused + r.id
+
   var parts: List[Value] = []
 
   for m in turn.messages do
     if m is Assistant(text, calls) then
       var files: List[Value] = []
-      for c in calls if c.name == "sendFile" do files = files + c.input.string("fileName")
+      for c in calls if c.name == "sendFile" && !refused.contains(c.id) do
+        files = files + c.input.string("fileName")
 
       if text.trim != "" || !files.isEmpty then
         parts = parts + Journal.payload("text" ~ text.trim, "files" ~ files)
@@ -101,6 +117,13 @@ def reply(turn: TurnData): Value =
 ```
 
 One entry per assistant message, so a file stays with the words it arrived with.
+
+A refusal is where the two audiences separate. The model is told in prose why
+nothing was sent, and reads that as its next turn's input. The driver reads
+[`success`](/concepts/tools/) off the `ToolResult` instead, so the call it made
+never becomes an attachment on the page. Both come off the same record, which is
+what keeps them from disagreeing.
+
 That value closes the turn's transcript bracket, beside the driver's own record
 of what the user asked:
 

@@ -60,7 +60,7 @@ available to context strategies.
 ## Built-in models
 
 Harpe includes Anthropic, OpenAI, OpenRouter, OpenAI-compatible servers, and a
-keyless `echo` model for testing. `Defaults.model()` selects and constructs a
+keyless `echo` model for testing. `Model.default()` selects and constructs a
 hosted provider from environment variables. OpenAI takes precedence, followed
 by OpenRouter and Anthropic.
 
@@ -79,9 +79,9 @@ The default model IDs are `claude-opus-4-6` for Anthropic and `gpt-5.6` for
 OpenAI. OpenRouter requires an explicit `MODEL`. If no API key is set, startup
 fails.
 
-`Defaults.model()` covers provider selection only. Provider-specific tuning,
+`Model.default()` covers provider selection only. Provider-specific tuning,
 such as Anthropic's prompt-cache policy, stays with the provider constructor:
-`Defaults.model()` uses the default 5-minute cache, and an agent needing another
+`Model.default()` uses the default 5-minute cache, and an agent needing another
 policy calls `anthropic(...)` itself. See
 [Prompt Caching](/guides/prompt-caching/).
 
@@ -171,7 +171,7 @@ val brain = openai:
 The shipped applications construct the model at startup:
 
 ```jo
-val brain = Defaults.model()
+val brain = Model.default()
 ```
 
 You can instead construct a provider explicitly or use `echo()` without an API
