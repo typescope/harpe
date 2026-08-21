@@ -88,9 +88,7 @@ private class Session(
   def runTurn(
       incoming: Incoming,
       client: TelegramClient,
-      approvalHandler: TelegramApprovalHandler,
-      maxToolRounds: Int,
-      maxRetries: Int)
+      approvalHandler: TelegramApprovalHandler)
   : Unit =
     val attachments = materialize(incoming, client)
 
@@ -98,11 +96,11 @@ private class Session(
     // the agent reaches for one with `fs` or `uploadMedia`. `Model.userContent`
     // builds the same manifest the render layer would, so what the model reads
     // is unchanged — the token policy just lives with the driver now.
-    val userMsg = UserInput(Model.userContent(incoming.text, attachments), [])
+    val prompt = Model.userContent(incoming.text, attachments)
     val channel = new TelegramInteract(client, this.id, approvalHandler)
 
     val result = with logger = log, interact = channel in
-      Agent.runTurn(userMsg, brain, tools, context, maxToolRounds, maxRetries)
+      Agent.ask(prompt, brain = brain, tools = tools, context = context)
 
     // Whether anything actually reached the chat. The engine cannot know it —
     // an answered turn with empty text sends nothing — and it is the one thing

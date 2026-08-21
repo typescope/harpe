@@ -1,6 +1,6 @@
 //[ TurnTest.jo
   !
-  ! Unit tests for the turn engine (`Agent.runTurn`). The engine is pure — its
+  ! Unit tests for the turn engine (`Agent.ask`). The engine is pure — its
   ! model call is an injected `Responder`, its output an injected `emit`, and its
   ! cancellation a plain event — so each scenario scripts a `Responder`, records
   ! the emitted `TurnEvent`s, and asserts the resulting `TurnResult` + event
@@ -151,11 +151,11 @@ private def scenario(tools: List[TestTool], maxToolRounds: Int, maxRetries: Int,
   val context = new WindowedContext("", new Memory, [])
   val res =
     with interact = channel in
-      Agent.runTurn:
+      Agent.ask:
         "dummy message"
-        model
-        toolsetOf(tools)
-        context
+        brain = model
+        tools = toolsetOf(tools)
+        context = context
         maxToolRounds = maxToolRounds
         maxRetries = maxRetries
   "\{resultTag(res)} | \{joinPy(channel.log)}"
@@ -229,7 +229,7 @@ def run(): Unit receives stdout, logger =
   val failedChannel = new TestInteract(live)
   val failedResult =
     with interact = failedChannel in
-      Agent.runTurn("keep me", failedBrain, toolsetOf(tools), failedContext, 50, 4)
+      Agent.ask("keep me", brain = failedBrain, tools = toolsetOf(tools), context = failedContext)
   val failedMessages = failedContext.render(failedChannel).messages
   check:
     "D failed user retained"
@@ -313,13 +313,11 @@ def run(): Unit receives stdout, logger =
   val capture = new CaptureLogger
   val toolsK = [loggingTool()]
   with logger = capture, interact = new TestInteract(live) in
-    val _ = Agent.runTurn:
+    val _ = Agent.ask:
       "dummy text"
-      askK
-      toolsetOf(toolsK)
-      new WindowedContext("", new Memory, [])
-      50
-      4
+      brain = askK
+      tools = toolsetOf(toolsK)
+      context = new WindowedContext("", new Memory, [])
 
   check:
     "K message-logged-before-tool"
@@ -331,13 +329,11 @@ def run(): Unit receives stdout, logger =
   val captureFailure = new CaptureLogger
   val toolsL = [failingLoggingTool()]
   with logger = captureFailure, interact = new TestInteract(live) in
-    val _ = Agent.runTurn:
+    val _ = Agent.ask:
       "dummy text"
-      askK
-      toolsetOf(toolsL)
-      new WindowedContext("", new Memory, [])
-      50
-      4
+      brain = askK
+      tools = toolsetOf(toolsL)
+      context = new WindowedContext("", new Memory, [])
 
   check:
     "L message-kept-when-tool-fails"
@@ -372,8 +368,8 @@ def run(): Unit receives stdout, logger =
     sizes.set(0, if prev == "" then "\{base.messages.size}" else prev + ",\{base.messages.size}")
     (results, tools) => textReply("ok")
 
-  val n1 = Agent.runTurn("first", askN)
-  val n2 = Agent.runTurn("second", askN)
+  val n1 = Agent.ask("first", brain = askN)
+  val n2 = Agent.ask("second", brain = askN)
 
   check:
     "N defaulted-turn-is-self-contained"

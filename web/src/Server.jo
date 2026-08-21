@@ -260,8 +260,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       // unchanged — the choice of whether to show a file just lives here now,
       // with the driver that has a reason to care about tokens.
       val prompt = Model.userContent(text, attachments)
-      session.runTurn(transcriptId, request, UserInput(prompt, []), sink,
-                      maxToolRounds = 50, maxRetries = 4)
+      session.runTurn(transcriptId, request, prompt, sink)
 
     py.list()
 

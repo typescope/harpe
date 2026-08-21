@@ -102,13 +102,11 @@ private def runChat(): Unit receives stdout, workspace =
     val userMsg = UserInput(userInput, [])
     val runTurn = (turnInteract: Interact) =>
       with logger = sessionLog, interact = turnInteract in
-        Agent.runTurn:
-          userMsg
-          brain
-          tools
-          context
-          maxToolRounds = 50
-          maxRetries = 4
+        Agent.ask:
+          userInput
+          brain = brain
+          tools = tools
+          context = context
 
     val res = console.turn(userMsg, runTurn)
 

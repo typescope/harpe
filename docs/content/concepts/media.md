@@ -32,11 +32,16 @@ For the guest-facing APIs, see:
 ## Receiving files
 
 Web uploads and Telegram attachments are saved into the session data directory
-before the agent processes the message. The transcript stores an `Attachment`
-record, not the bytes:
+before the agent processes the message. Neither driver sends them to the model:
+an upload should cost nothing until the agent decides it needs the file. Both
+name the files in the message text instead, with `Model.userContent`, and the
+turn's transcript record carries what the user actually uploaded.
+
+An `Attachment` is what a file looks like when the model *is* shown it —
+metadata and a path, never the bytes:
 
 ```jo
-class Attachment(name: String, size: Int, mime: String, inline: Bool)
+class Attachment(name: String, size: Int, mime: String, path: String)
 ```
 
 The model receives a short manifest appended to the user message:
@@ -50,9 +55,12 @@ To add file input to another driver:
 
 1. create a data directory scoped to the user or session
 2. sanitize and de-duplicate inbound filenames
-3. save the bytes before calling `Agent.runTurn`
-4. add an `Attachment` for each saved file to `UserInput`, with the `path` the
-   bytes were written to
+3. save the bytes before calling `Agent.ask`
+4. decide whether the model should SEE each file or merely know it exists. To
+   show it, pass its path in `attachments`. To keep it out of the request — what
+   the web and Telegram drivers do, so an upload costs nothing until the agent
+   wants it — name it in the message text with `Model.userContent` and let the
+   agent reach for `fs` or `uploadMedia`
 5. pass the directory to the routes that need it (`uploadMedia`, your `sendFile`)
    and to your sandbox runtime as its own environment variable
 
@@ -62,20 +70,27 @@ session into its data directory.
 
 ## Showing a file to the model
 
-An attachment is reference-only by default. The model knows its name and can
-read it through generated code. This is usually cheaper and more precise than
-sending the complete file to a multimodal model.
+Naming a file is the default. The model knows it exists and can read it through
+generated code, which is usually cheaper and more precise than sending the whole
+thing to a multimodal model.
 
-When layout or pixels matter—a chart, screenshot, photo, or scan—the built-in
-`uploadMedia` tool shows a file from the data directory directly to the chat
-model. It supports JPEG, PNG, GIF, WebP, and PDF.
+Attaching one is the exception, and it is what `Attachment` means: a file in
+`attachments` is *shown*, rendered as a real image or document block where the
+provider takes the type. `Agent.ask` builds them from paths:
 
-The tool returns an `Attachment` with `inline = true`. Anthropic and OpenAI then
-render the bytes as an image or document block on the next model request.
+```jo
+Agent.ask("what is on this chart?", ["reports/q3.png"])
+```
 
-Inline media is request-scoped:
+When layout or pixels matter mid-conversation—a chart, screenshot, photo, or
+scan the agent only now realizes it needs—the built-in `uploadMedia` tool pulls
+a file from the data directory into the model's view. It supports JPEG, PNG,
+GIF, WebP, and PDF, and returns it as an `Attachment` so Anthropic and OpenAI
+render the bytes on the next request.
 
-- an inline user attachment is sent only with the newest user message
+Showing a file is request-scoped:
+
+- a user message's attachments are sent only while it is the newest message
 - media returned by a tool is sent with that tool result
 - older transcript entries retain metadata but are not uploaded again
 

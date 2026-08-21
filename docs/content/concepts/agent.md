@@ -33,8 +33,9 @@ So a turn takes what a turn needs, and each input is an ordinary parameter with
 a default:
 
 ```jo
-def runTurn(
-    input: UserInput :- [stringInput],
+def ask(
+    message: String,
+    attachments: List[String] = NoAttachments,
     brain: Model = Defaults.model,
     tools: Toolset = Toolset.empty,
     context: Context = NoHistory,
@@ -46,7 +47,7 @@ def runTurn(
 The smallest agent is one call:
 
 ```jo
-Agent.runTurn("hello")
+Agent.ask("hello")
 ```
 
 `Agent` there is a namespace, not a thing. A driver writes the same call with
@@ -62,7 +63,7 @@ val context = new WindowedContext:
   initial = history
 
 with interact = channel in
-  Agent.runTurn(userMsg, brain, tools, context, maxToolRounds = 50, maxRetries = 4)
+  Agent.ask(text, brain = brain, tools = tools, context = context)
 ```
 
 Nothing was assembled. The same function served both, and the difference
@@ -111,7 +112,7 @@ using the same core components.
 
 ## Custom execution
 
-`runTurn` is one coordination, not the only one. If it does not fit, build a
+`ask` is one coordination, not the only one. If it does not fit, build a
 loop over `Model` and `Tool.runSafely`. The same components support parallel
 tool execution, planner and executor roles, or application-specific control
 between steps — and because there was never an `Agent` to be outside of, such a

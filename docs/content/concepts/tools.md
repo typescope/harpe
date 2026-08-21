@@ -64,7 +64,7 @@ The **handler** is the executor — what actually runs:
 type Handler = ToolInput => RunOutcome receives logger, interact
 ```
 
-A **`Toolset`** wires each spec to its handler, and that is what `runTurn` takes.
+A **`Toolset`** wires each spec to its handler, and that is what `Agent.ask` takes.
 Because you build it, a handler closes over whatever the turn needs — a session's
 data directory, an API token, your own typed context — with nothing passed
 through the framework to get there.
@@ -248,7 +248,7 @@ val tools =
     ++ runCode.toolset()
     ++ weather.toolset(preferredUnits)
 
-Agent.runTurn(userMsg, brain, tools, context, maxToolRounds = 50, maxRetries = 4)
+Agent.ask(text, brain = brain, tools = tools, context = context)
 ```
 
 `.add: spec, handler` is there for a one-off, but a tool worth naming is worth

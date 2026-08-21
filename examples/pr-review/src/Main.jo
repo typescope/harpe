@@ -50,13 +50,12 @@ private def review(pr: String): Unit receives stdout, workspace, logger =
 
   val turn =
     with interact = channel in
-      Agent.runTurn:
+      Agent.ask:
         "please start review the pr"
-        Defaults.model()
-        tools
-        context
+        brain = Defaults.model()
+        tools = tools
+        context = context
         maxToolRounds = 30
-        maxRetries = 4
 
   match turn.result
   case Success =>

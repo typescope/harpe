@@ -56,14 +56,6 @@ section Model
     | Assistant(text: String, calls: List[ToolCall])
     | ToolResults(results: List[ToolResult])
 
-  //[ A bare string as the user's input, carrying no files
-    !
-    ! The coercion behind `runTurn`'s `input` parameter, so the plainest call is
-    ! `Agent.runTurn("hello")`. A driver that accepts uploads builds the
-    ! `UserInput` itself, with the attachments it saved.
-  //]
-  def stringInput(text: String): UserInput = UserInput(text, [])
-
   //[ Attachment
     !
     ! One file the user shared. It rides in the transcript as pure metadata —

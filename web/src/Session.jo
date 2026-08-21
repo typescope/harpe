@@ -213,8 +213,7 @@ class Session(
     ! other tabs may attach via `addSink`. All of them see the same stream. When
     ! the turn finishes, `idle` is set, which releases every subscriber.
   //]
-  def runTurn(transcriptId: String, request: Value, input: UserInput, initiatorSink: Sink,
-              maxToolRounds: Int, maxRetries: Int): Unit =
+  def runTurn(transcriptId: String, request: Value, prompt: String, initiatorSink: Sink): Unit =
     lastActive = time.now()
 
     this.lock.acquire()
@@ -226,7 +225,7 @@ class Session(
     val channel = new WebInteract(emit, this.stop, (id, request) => requestApproval(id, request))
 
     val turn = with logger = log, interact = channel in
-      Agent.runTurn(input, brain, tools, context, maxToolRounds, maxRetries)
+      Agent.ask(prompt, brain = brain, tools = tools, context = context)
 
     // The driver's reading of the finished turn: how it ended, and which files
     // the agent delivered. `sendFile` is the agent's channel for putting a file
