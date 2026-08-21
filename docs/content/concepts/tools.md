@@ -156,14 +156,34 @@ input["city"]                  // the indexing form of `string`
 ## Returning a result
 
 ```jo
-class RunOutcome(result, summary, attachments)
+class RunOutcome(result, summary, attachments, success = true)
 ```
 
 - **`result`** is the text fed back to the model — what it sees as the tool's
   output.
 - **`summary`** is a one-line status for the console and logs (e.g. `"weather · Paris"`).
-- **`attachments`** is a list of files to show directly to the model; use `[]`
+- **`attachments`** is a list of files to show directly to the model. Use `[]`
   for an ordinary text result.
+- **`success`** is whether the call did what it was asked to. It defaults to
+  `true`, so an ordinary result says nothing about it.
+
+**`success` is for code, `result` is for the model.** A handler that refuses a
+call — a file name that resolves to nothing, an argument out of range — explains
+itself in `result` and sets `success = false`, and the two must agree. The model
+reads the prose and can correct itself. Nothing is sent to the provider for the
+flag: it rides into the `ToolResult` and the transcript, so a driver reading its
+own output back off the finished turn does not mistake a refusal for work done
+(see [Structured output](/concepts/structured-output/)), and a turn reloaded
+from the journal knows which of its calls were refused, exactly as the live one
+did.
+
+```jo
+new RunOutcome:
+  "No such file: '\{fileName}'. Write it to your data directory first, then send it."
+  "sendFile · no such file"
+  attachments = []
+  success = false
+```
 
 **Bound large output.** Context is finite, so don't feed the model a megabyte.
 `elide(text, maxChars)` trims to a head-plus-tail excerpt with the middle marked.
@@ -230,8 +250,9 @@ Three things to know:
 
 You don't have to catch everything. The engine runs every tool through a backstop
 (`runSafely`), so if your handler throws — or `abort`s — the exception becomes an
-*error* `RunOutcome` fed back to the model. The turn continues and the driver never
-crashes. Return a clear message for expected failures. Let unexpected ones raise.
+*error* `RunOutcome` (`success = false`) fed back to the model. The turn continues
+and the driver never crashes. Return a clear message for expected failures. Let
+unexpected ones raise.
 
 ## Adding your tool
 
