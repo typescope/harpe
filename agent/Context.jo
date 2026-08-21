@@ -2,7 +2,7 @@
   !
   ! `Context` — the pluggable context-engineering surface. A per-session value
   ! that owns the transcript and composes what the model sees for each request:
-  ! the engine (`Agent.runTurn`) appends transcript events to it and calls
+  ! the engine (`Agent.ask`) appends transcript events to it and calls
   ! `render` once per user turn (at its start). Implementing this interface is
   ! the whole customization surface for context management — there is
   ! deliberately no secondary hook.
@@ -10,11 +10,14 @@
   ! Two strategies are provided, named by their transcript policy:
   ! `WindowedContext` (the default) drops turns that fall out of its window.
   ! `SummarizingContext` distills them into a rolling summary via the model.
-  ! Both render the base system prompt (AGENT.md) as the stable `system`, and
-  ! the volatile working memory as the `transient` tail (after the transcript,
-  ! so a memory edit never invalidates the cached prefix) — memory is orthogonal
-  ! to the strategy: a store the agent maintains through tools, which any
-  ! strategy may render.
+  ! Both render the base system prompt they were given as the stable `system`
+  ! and the transcript as `messages`, and nothing else.
+  !
+  ! VOLATILE CONTENT IS NOT A FRAMEWORK CONCERN. There is no slot for working
+  ! notes or retrieved documents, because there never needed to be one: a
+  ! strategy that wants them in front of the model appends them to `messages` as
+  ! a trailing user message, which is exactly what a dedicated field did. An
+  ! agent that keeps notes in a file reads them with the tools it already has.
 //]
 
 namespace harpe
@@ -33,8 +36,7 @@ interface Context
 
   //[ Compose what the model sees for a turn
     !
-    ! A `Rendered` bundling the system prompt, the transcript window, and a
-    ! transient tail.
+    ! A `Rendered` bundling the system prompt and the transcript window.
     !
     ! Called once per user turn, at its start — the `Model` seeds a `Session`
     ! from it and owns the intra-turn tail thereafter, so the base is NOT
@@ -73,4 +75,4 @@ end
   ! A session that should remember its past turns supplies a real strategy —
   ! `WindowedContext` or `SummarizingContext` — and keeps it alive across turns.
 //]
-def NoHistory: Context = new FullContext("", new Memory, [])
+def NoHistory: Context = new FullContext("", [])

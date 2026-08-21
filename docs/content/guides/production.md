@@ -11,7 +11,7 @@ model-provider access.
 Authenticate users before they can start a turn. Derive user and tenant scope
 from trusted session state, not from identifiers supplied by the model.
 
-Isolate each session's files, memory, transcript, and approvals. The Web and
+Isolate each session's files, transcript, and approvals. The Web and
 Telegram applications demonstrate per-session data directories. Define
 authentication, authorization, retention, and deletion for your application.
 
@@ -75,7 +75,7 @@ For high-stakes workflows or highly sensitive data, consider deploying a
 **local open-weight model**.
 
 Define retention and deletion policies for prompts, outputs, files, generated
-programs, memory, and audit events. Restrict who can query or export them, and
+programs and audit events. Restrict who can query or export them, and
 redact secrets and personal data.
 
 ## Test the boundaries
@@ -85,4 +85,4 @@ redact secrets and personal data.
 - Test approval rejection, timeout, replay, and duplicate decisions.
 - Test malformed and oversized uploads.
 - Test sandbox timeouts and resource limits.
-- Test restart behavior for sessions and memory.
+- Test restart behavior for sessions.

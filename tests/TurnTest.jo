@@ -149,7 +149,7 @@ end
 // the no-network echo model — the scripted TestInteract.ask never touches it.
 private def scenario(tools: List[TestTool], maxToolRounds: Int, maxRetries: Int, model: Model, state: State): String receives logger =
   val channel = new TestInteract(state)
-  val context = new WindowedContext("", new Memory, [])
+  val context = new WindowedContext("", [])
   val res =
     with interact = channel in
       Agent.ask:
@@ -225,7 +225,7 @@ def run(): Unit receives stdout, logger =
 
   // A failed turn retains its user message in the live context. Only the
   // provisional assistant/tool tail is rolled back.
-  val failedContext = new WindowedContext("", new Memory, [])
+  val failedContext = new WindowedContext("", [])
   val failedBrain: Model = base => (results, tools) => Fatal("bad key")
   val failedChannel = new TestInteract(live)
   val failedResult =
@@ -318,7 +318,7 @@ def run(): Unit receives stdout, logger =
       "dummy text"
       brain = askK
       tools = toolsetOf(toolsK)
-      context = new WindowedContext("", new Memory, [])
+      context = new WindowedContext("", [])
       transcript = new Journal(capture)
 
   check:
@@ -335,7 +335,7 @@ def run(): Unit receives stdout, logger =
       "dummy text"
       brain = askK
       tools = toolsetOf(toolsL)
-      context = new WindowedContext("", new Memory, [])
+      context = new WindowedContext("", [])
       transcript = new Journal(captureFailure)
 
   check:

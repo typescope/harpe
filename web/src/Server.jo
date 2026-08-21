@@ -35,7 +35,6 @@ import harpe.Agent
 import harpe.Interact
 import harpe.interact
 import harpe.Defaults
-import harpe.Memory
 import harpe.Workspace
 import harpe.workspace
 import harpe.logging.logger
@@ -345,10 +344,9 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! readers) are rooted per session. Uploads land there, agent output surfaces
     ! there, and this is where that directory reaches the tools.
   //]
-  private def tools(memory: Memory, id: String): Toolset =
+  private def tools(id: String): Toolset =
     val dataDir = os.path.abspath(Session.dataDir(id))
-    MemoryTools.toolset(memory)
-      ++ SkillTools.toolset(wspace.skillsDir)
+    SkillTools.toolset(wspace.skillsDir)
       ++ UploadMediaTool.toolset(dataDir)
       ++ SendFileTool.toolset(dataDir)
       ++ runTool.toolset()
@@ -368,20 +366,16 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
   //[ A fresh session under a newly-minted, time-sortable id. //]
   private def createSession(): Session receives workspace =
     val id = time.strftime("%Y%m%dT%H%M%S") + "-" + secrets.tokenHex(nbytes = 2)
-    val memory = new Memory
     val context = new WindowedContext:
       baseSystem = workspace.read("AGENT.md").getOrElse("")
-      memory = memory
       initial = []
 
     val session = new Session:
       id
       Session.forSession(id)
       brain
-      tools(memory, id)
+      tools(id)
       context
-      memory
-      Session.memoryPath(id)
 
     registryLock.acquire()
     registry.set(id, session)
@@ -406,15 +400,13 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
     case None =>
       val log = Session.forSession(id)
-      val memory = Memory.load(Session.memoryPath(id))
       // `Session.load` caps the replayed transcript (a RAM backstop). The full
       // transcript stays on disk.
       val context = new WindowedContext:
         baseSystem = workspace.read("AGENT.md").getOrElse("")
-        memory = memory
         initial = Session.load(id)
 
-      val session = new Session(id, log, brain, tools(memory, id), context, memory, Session.memoryPath(id))
+      val session = new Session(id, log, brain, tools(id), context)
 
       registryLock.acquire()
       val winner =

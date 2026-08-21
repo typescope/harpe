@@ -21,7 +21,6 @@ import harpe.ffi.builtins
 import harpe.Agent
 import harpe.Toolset
 import harpe.interact
-import harpe.Memory
 import harpe.Transcript
 import harpe.transcript.Journal
 import harpe.workspace
@@ -77,7 +76,7 @@ class Incoming(id: String, text: String, files: List[FileSpec], senderId: String
 //]
 private class Session(
     id: String, log: Logger, brain: Model, tools: Toolset, context: Context,
-    memory: Memory, memoryPath: String, dataDir: String)
+    dataDir: String)
   val queue = py.module("queue").Queue()
 
   //[ This chat's conversation, recorded into its own log.
@@ -137,17 +136,14 @@ private class Session(
 
     match result.result
     case Success =>
-      commit()
       val answer = result.finalText
       if answer.trim != "" then
         client.sendMessage(this.id, answer)
         delivered = true
 
-    case Interrupted =>
-      rollback()
+    case Interrupted => pass
 
     case Failed(detail) =>
-      rollback()
       val message =
         if detail == "" then "Request failed. Please try again."
         else "Request failed: \{detail}"
@@ -195,29 +191,6 @@ private class Session(
 
       atts
 
-  //[ Commit a completed turn's working memory
-    !
-    ! Transcript entries have already flowed through the structured logger
-    ! channel.
-  //]
-  private def commit(): Unit =
-    saveMemory()
-
-  //[ Finish a cancelled or failed turn
-    !
-    ! Memory is still persisted — it is deliberate and not rolled back with the
-    ! provisional assistant transcript. The engine retains the user message.
-  //]
-  private def rollback(): Unit =
-    saveMemory()
-
-  //[ Persist the working memory beside the transcript archive
-    !
-    ! Runs on the chat's worker thread. The resolved path is captured when the
-    ! session is created.
-  //]
-  private def saveMemory(): Unit =
-    if !memory.isEmpty then Memory.save(memoryPath, memory)
 end
 
 //[ Reduce a client-supplied name to a safe bare basename
@@ -267,10 +240,6 @@ section Session
   //[ An append log for this chat's session (its file is created lazily). //]
   def forSession(chatId: String): Logger receives workspace =
     new JsonlLogger(sessionPath(chatId))
-
-  def memoryPath(chatId: String): String receives workspace =
-    val path = sessionPath(chatId)
-    path.substring(0, path.size - 6) + ".memory.json"
 
   //[ The files this turn delivered, in the order the agent sent them
     !

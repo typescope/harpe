@@ -51,8 +51,6 @@ private def runChat(): Unit receives stdout, workspace =
   val sessionPath = chooseSession(resumeRequested())
   val sessionLog = new JsonlLogger(sessionPath)
   val journal = new Journal(sessionLog)
-  val memoryPath = Session.memoryPath(sessionPath)
-  val memory = Memory.load(memoryPath)
   // `runCode` owns a build semaphore, so it is an object built once here. The
   // rest own nothing and are reached through their sections.
   val runCode = runCodeTool(workspace.sandboxDir, 610.0)
@@ -65,7 +63,6 @@ private def runChat(): Unit receives stdout, workspace =
   // once here and handed to every turn below.
   val context = new WindowedContext:
     baseSystem = workspace.read("AGENT.md").getOrElse("")
-    memory = memory
     initial = Session.load(sessionPath)
 
   // One local working directory for the whole run.
@@ -78,8 +75,7 @@ private def runChat(): Unit receives stdout, workspace =
   // configuration of its own, so `runCode` takes its default (empty)
   // environment.
   val tools =
-    MemoryTools.toolset(memory)
-      ++ SkillTools.toolset(skillsDir)
+    SkillTools.toolset(skillsDir)
       ++ UploadMediaTool.toolset(dataDir)
       ++ runCode.toolset()
       ++ bash.toolset()
@@ -128,8 +124,6 @@ private def runChat(): Unit receives stdout, workspace =
     // already recorded. The record exists to close the bracket, nothing more.
     journal.response("turnEnd")
 
-    // Persist memory regardless of outcome (it is not rolled back with a turn).
-    if !memory.isEmpty then Memory.save(memoryPath, memory)
   end
 
   sessionLog.close()
@@ -150,9 +144,6 @@ section Session
   //[ A new CLI session log, named from its start time. //]
   def newLog(): String receives workspace =
     workspace.relative(time.strftime("logs/sessions/%Y/%m/%d/%H-%M-%S") + ".jsonl")
-
-  def memoryPath(path: String): String =
-    path.substring(0, path.size - 6) + ".memory.json"
 
   def load(path: String): List[Message] =
     if !file.exists(path) then []

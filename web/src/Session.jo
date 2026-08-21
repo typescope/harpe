@@ -24,7 +24,6 @@ import harpe.ApprovalRequest
 import harpe.ApprovalDecision
 import harpe.ApprovalTimedOut
 import harpe.ApprovalCancelled
-import harpe.Memory
 import harpe.Toolset
 import harpe.Tool
 import harpe.Tool.ToolInput
@@ -77,13 +76,12 @@ end
   ! Its id, its append log, and the pieces each of its turns is run with: the
   ! `brain`, the `tools` it is offered, the `routes` that run them, and the
   ! `context`, which owns the running transcript window and is therefore the one
-  ! piece that must survive between turns. Plus its working memory. A lock
+  ! piece that must survive between turns. A lock
   ! serializes turns within the session so its state stays consistent under
   ! concurrent requests.
 //]
 class Session(
-    id: String, log: Logger, brain: Model, tools: Toolset, context: Context,
-    memory: Memory, memoryPath: String)
+    id: String, log: Logger, brain: Model, tools: Toolset, context: Context)
   //[ This session's conversation, recorded into its own log.
     !
     ! Typed as the concrete journal, not as `Transcript`, because `turn` — the
@@ -251,7 +249,6 @@ class Session(
 
       match turn.result
       case Success =>
-        this.commit()
         // The finished turn, rendered exactly as `/api/history` would render it once
         // reloaded — so the page folds the live reply into its committed form (code
         // trace, delivered files) from this event alone, with nothing to re-fetch.
@@ -260,11 +257,9 @@ class Session(
           "rows" ~ TurnView.rows(record, Session.existingDataDir(this.id))
 
       case Interrupted =>
-        this.rollback()
         broadcast(py.dict("type" ~ "interrupted"))
 
       case Failed(detail) =>
-        this.rollback()
         broadcast(py.dict("type" ~ "failed", "detail" ~ detail))
 
       case _ => pass
@@ -281,26 +276,6 @@ class Session(
     match state
     case Active(_) => stop.set()
     case Idle      => pass
-
-  //[ Commit a completed turn's working memory
-    !
-    ! Transcript entries have already flowed through the structured logger
-    ! channel.
-  //]
-  private def commit(): Unit =
-    saveMemory()
-
-  //[ Finish a cancelled or failed turn
-    !
-    ! Memory is still persisted — it is deliberate and not rolled back with the
-    ! provisional assistant transcript. The engine retains the user message.
-  //]
-  private def rollback(): Unit =
-    saveMemory()
-
-  //[ Persist the working memory beside the transcript archive. //]
-  private def saveMemory(): Unit =
-    if !memory.isEmpty then Memory.save(memoryPath, memory)
 
   //[ Release the session's open journal before its stored files are removed. //]
   def close(): Unit = log.close()
@@ -377,18 +352,12 @@ section Session
   def forSession(id: String): Logger receives workspace =
     new JsonlLogger(sessionPath(id))
 
-  def memoryPath(id: String): String receives workspace =
-    val path = sessionPath(id)
-    path.substring(0, path.size - 6) + ".memory.json"
-
-  //[ Permanently remove a session's transcript, memory, and data directory. //]
+  //[ Permanently remove a session's transcript and data directory. //]
   def removeStored(id: String): Unit receives workspace =
     val transcript = sessionPath(id)
-    val memory = memoryPath(id)
     val data = workspace.relative("data/" + id)
 
     if os.path.isfile(transcript) then os.unlink(transcript)
-    if os.path.isfile(memory) then os.unlink(memory)
     if os.path.isdir(data) then py.module("shutil").rmtree(data)
 
   //[ Reconstruct this id's conversation from disk

@@ -186,15 +186,13 @@ private class OpenAIResponsesSession(
     val toolSpecs = py.list()
     for t in tools do toolSpecs.append(OpenAIResponses.toolSpec(t))
 
-    // First request: the full base conversation (+ the transient tail). Later
+    // First request: the full base conversation. Later
     // requests: an empty list the tool results are appended to — the prior turn
     // rides along via `previous_response_id`.
     val input =
       if prevId == "" then
         val items = OpenAIResponses.toInput(base.messages)
 
-        if base.transient != "" then
-          items.append(py.dict("role" ~ "user", "content" ~ base.transient))
 
         items
 

@@ -57,7 +57,6 @@ val brain = Defaults.model()
 // conversation from one turn to the next.
 val context = new FullContext:
   baseSystem = workspace.read("AGENT.md").getOrElse("")
-  memory = new Memory
   initial = []
 
 // The one tool this agent has: what the model is offered, and what runs.
@@ -128,7 +127,7 @@ The [sandbox concept guide](/concepts/sandbox/) explains the compiler guarantee.
 ## Build a complete application
 
 - [Create a CLI agent](/tutorial/create-cli-agent/) — terminal history,
-  cancellation, memory, skills, and audit logs.
+  cancellation, skills, and audit logs.
 - [Create a web agent](/tutorial/create-web-agent/) — browser sessions,
   streaming, uploads, and downloadable files.
 - [Create a Telegram agent](/tutorial/create-telegram-agent/) — persistent bot

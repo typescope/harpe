@@ -96,8 +96,6 @@ The framework provides the tools, and your driver wires them:
   data directory directly to the chat model.
 - **`SkillTools`** — `skillsList` / `skillsRead` / `skillsSearch`, read-only
   access to the agent's `skills/`.
-- **`MemoryTools`** — `updateMemory` / `readMemory` / `listMemory`, the agent's
-  working memory.
 
 Each offers a `toolset(...)` that wires its specs to its handlers, and one typed
 method per verb if you would rather wire them yourself. Only `runCodeTool` is a constructor: it is the one tool that
@@ -221,7 +219,7 @@ Three things to know:
   a single `runCode` bounds sandbox concurrency across the whole process, while
   each session's toolset hands it that session's settings. A tool that owns
   nothing is a `section` instead, with its spec as a constant and every value it
-  needs passed in — that is what `SkillTools` and `MemoryTools` are.
+  needs passed in — that is what `SkillTools` is.
 - A class parameter does not implement an interface member, so name the
   parameters apart from `name` / `description` / `params` and let the members
   read them.
@@ -243,7 +241,6 @@ that declares it:
 
 ```jo
 val tools =
-  MemoryTools.toolset(memory)
     ++ SkillTools.toolset(skillsDir)
     ++ runCode.toolset()
     ++ weather.toolset(preferredUnits)

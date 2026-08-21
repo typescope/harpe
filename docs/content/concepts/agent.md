@@ -55,11 +55,10 @@ its own pieces supplied:
 
 ```jo
 val runCode = runCodeTool(workspace.sandboxDir, approvalDeadline = 610.0)
-val tools = MemoryTools.toolset(memory) ++ runCode.toolset()
+val tools = SkillTools.toolset(skillsDir) ++ runCode.toolset()
 
 val context = new WindowedContext:
   baseSystem = workspace.read("AGENT.md").getOrElse("")
-  memory = memory
   initial = history
 
 with interact = channel in

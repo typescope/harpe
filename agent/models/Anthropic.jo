@@ -222,13 +222,10 @@ private class AnthropicSession(
     if !results.isEmpty then
       committed.append(toolResultMessage(results))
 
-    // The request adds the transient tail (working memory) after the transcript —
-    // request-only, never committed, so editing memory reprocesses only the tail.
+    // request-only, never committed.
     val outgoing = py.list()
     for m in committed do outgoing.append(m)
 
-    if base.transient != "" then
-      outgoing.append(py.dict("role" ~ "user", "content" ~ base.transient))
 
     val attempt = anthropicCreate:
       client

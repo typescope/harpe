@@ -17,7 +17,7 @@ import harpe.Model.*
   ! within the model's context window. `observe` is a no-op: there is nothing to
   ! size or trigger.
 //]
-class FullContext(baseSystem: String, memory: Memory, initial: List[Message])
+class FullContext(baseSystem: String, initial: List[Message])
   view Context
 
   private var transcript: List[Message] = initial
@@ -27,10 +27,7 @@ class FullContext(baseSystem: String, memory: Memory, initial: List[Message])
     transcript = transcript + message
 
   def render(interact: Interact): Rendered =
-    val mem = memory.snapshot()
-    val transient = if mem.isEmpty then "" else memoryBlock(mem)
-
-    new Rendered(baseSystem, transcript, transient)
+    new Rendered(baseSystem, transcript)
 
   def observe(usage: Usage): Unit = pass
 

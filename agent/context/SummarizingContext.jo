@@ -34,7 +34,7 @@ import harpe.logging.logger
   ! agnostic to how a summary is produced (an LLM, a heuristic, a stub).
 //]
 class SummarizingContext(
-    baseSystem: String, memory: Memory, initial: List[Message],
+    baseSystem: String, initial: List[Message],
     highWaterTokens: Int, lowWaterChars: Int,
     distill: Rendered => Option[String] receives logger)
   view Context
@@ -58,8 +58,7 @@ class SummarizingContext(
   //[ Compact if over the high-water mark, then compose
     !
     ! The base prompt and the distilled summary as `system`, the retained recent
-    ! turns as the messages, and the volatile memory block as the transient tail
-    ! (after the transcript, so a memory edit leaves the cached prefix intact).
+    ! turns as the messages.
     ! The summary stays in `system`: a compaction rewrites the message window at
     ! the same moment, so keeping the summary cached with the base prompt costs
     ! nothing.
@@ -67,14 +66,10 @@ class SummarizingContext(
   def render(interact: Interact): Rendered receives logger =
     if lastInputTokens > highWaterTokens then compact(interact)
 
-    val mem = memory.snapshot()
     var system = baseSystem
-
     if summary != "" then system = system + "\n\n" + summaryBlock(summary)
 
-    val transient = if mem.isEmpty then "" else memoryBlock(mem)
-
-    new Rendered(system, transcript, transient)
+    new Rendered(system, transcript)
 
   def mark(): Unit =
     markedTranscript = transcript
@@ -107,7 +102,7 @@ class SummarizingContext(
       val dropped = transcript.take(dropCount)
       val request: Message = distillRequest(summary, dropped)
 
-      if distill(new Rendered(distillSystem(), [request], "")) is Some(text) then
+      if distill(new Rendered(distillSystem(), [request])) is Some(text) then
         summary = text
         transcript = kept
         interact.emit: turns.ContextCompacted(dropCount)
@@ -115,8 +110,7 @@ end
 
 //[ The distilled-history block
   !
-  ! Between the stable base prompt and the memory block (it changes only at
-  ! compactions, memory on any agent edit).
+  ! Appended to the stable base prompt, which it changes only at compactions.
 //]
 private def summaryBlock(summary: String): String =
   "# Conversation summary\n\n(Older turns, distilled; the messages below are the most recent turns.)\n\n" + summary

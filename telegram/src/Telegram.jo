@@ -31,7 +31,6 @@ import harpe.ApprovalTimedOut
 import harpe.ApprovalCancelled
 import harpe.workspace
 import harpe.Workspace
-import harpe.Memory
 import harpe.Defaults
 import harpe.Model
 import harpe.Tool
@@ -450,13 +449,10 @@ private class TelegramBot(
 
     if !live then
       val log = Session.forSession(chatId)
-      val memoryPath = Session.memoryPath(chatId)
-      val memory = Memory.load(memoryPath)
       // `Session.load` caps the replayed transcript (a RAM backstop). The full
       // transcript stays on disk.
       val context = new WindowedContext:
         baseSystem = workspace.read("AGENT.md").getOrElse("")
-        memory = memory
         initial = Session.load(chatId)
 
       // Each chat is its own session, rooted at its own data directory:
@@ -465,13 +461,12 @@ private class TelegramBot(
       // tools.
       val dataDir = os.path.abspath(Session.dataDir(chatId))
       val tools =
-        MemoryTools.toolset(memory)
-          ++ SkillTools.toolset(harpe.workspace.skillsDir)
+        SkillTools.toolset(harpe.workspace.skillsDir)
           ++ UploadMediaTool.toolset(dataDir)
           ++ sendFile.toolset(chatId, dataDir)
           ++ runTool.toolset()
 
-      val session = new Session(chatId, log, brain, tools, context, memory, memoryPath, dataDir)
+      val session = new Session(chatId, log, brain, tools, context, dataDir)
       registryLock.acquire()
       registry.set(chatId, session)
       enqueue(session, incoming)

@@ -22,7 +22,7 @@ import harpe.logging.logger
 //[ Model
   !
   ! The agent's brain. `startTurn` begins one user turn, seeded ONCE with the
-  ! `base` context (system prompt + transcript + transient tail) the `Context`
+  ! `base` context (system prompt + transcript) the `Context`
   ! composed for the user's message. The returned `Session` drives that turn's
   ! tool loop. The engine never re-renders `base` for it.
   !
@@ -103,15 +103,17 @@ section Model
   //[ Rendered
     !
     ! What the model sees for one request, composed by a `Context`: the stable
-    ! `system` prompt, the `messages` transcript window, and a `transient` tail.
+    ! `system` prompt and the `messages` transcript window.
     !
-    ! `transient` is per-request context (currently the agent's working memory)
-    ! placed AFTER the transcript — past any provider cache breakpoint — so
-    ! editing it never invalidates the cached transcript prefix. It carries no
-    ! operator authority (it renders as user content, not system), and it is `""`
+    ! There is no separate slot for per-request content. A `Context` that wants
+    ! volatile material in front of the model — working notes, retrieved
+    ! documents — appends it to `messages` as an ordinary user message, which is
+    ! all a dedicated field ever did. Putting it last keeps it past any provider
+    ! cache breakpoint, so changing it leaves the cached prefix intact, and it
+    ! carries no operator authority because it is user content, not system.
     ! when there is nothing to append.
   //]
-  class Rendered(system: String, messages: List[Message], transient: String)
+  class Rendered(system: String, messages: List[Message])
 
   //[ Usage
     !
@@ -185,7 +187,7 @@ section Model
         if results.isEmpty then messages
         else messages + ToolResults(results)
 
-      val res = send(new Rendered(base.system, outgoing, base.transient), tools)
+      val res = send(new Rendered(base.system, outgoing), tools)
 
       // Commit the results and the reply together — only on success.
       if res is Reply(msg, _) then
