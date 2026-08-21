@@ -25,9 +25,9 @@
   ! for a session journal is nothing, and it is correct across truncation,
   ! rotation, and a writer that has not flushed a complete line.
   !
-  ! The page itself is a resource bundled with the `harpe` module
-  ! (`agent/assets/journal.html`), so an agent installs nothing to use the viewer
-  ! and the markup stays editable as markup.
+  ! The page is three resources bundled with the `harpe` module —
+  ! `agent/assets/journal.{html,css,js}` — so an agent installs nothing to use
+  ! the viewer, and each stays editable in its own language.
 //]
 
 namespace harpe.transcript
@@ -86,9 +86,17 @@ private def journalPath(): String =
 
 private def route(path: String, name: String): py.List receives request, resources =
   match request
-  case Http.Get("/")       => Http.respondHtml(page(name))
-  case Http.Get("/events") => Http.respond("200 OK", "application/json", events(path, seen()))
-  case _                   => Http.notFound()
+  case Http.Get("/")            => Http.respondHtml(page(name))
+  case Http.Get("/journal.css") => asset("journal.css", "text/css; charset=utf-8")
+  case Http.Get("/journal.js")  => asset("journal.js", "text/javascript; charset=utf-8")
+  case Http.Get("/events")      => Http.respond("200 OK", "application/json", events(path, seen()))
+  case _                        => Http.notFound()
+
+//[ One bundled asset, served as-is. //]
+private def asset(rel: String, ctype: String): py.List receives request, resources =
+  match resources.readText("assets/" + rel)
+  case Ok(text) => Http.respond("200 OK", ctype, text)
+  case Err(why) => Http.respond("500 Internal Server Error", "text/plain; charset=utf-8", why)
 
 //[ How many lines the page already has. //]
 private def seen(): Int receives request =

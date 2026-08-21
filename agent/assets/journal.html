@@ -1,105 +1,35 @@
 <!doctype html>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__NAME__ · harpe journal</title>
-<style>
-  :root { color-scheme: light dark; --bg:#fbfbfa; --fg:#1a1a1a; --dim:#6b6b6b;
-          --line:#e3e3e0; --turn:#2d6cdf; --warn:#b8860b; --err:#c0392b; }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg:#16171a; --fg:#e6e6e6; --dim:#8b8b8b; --line:#2a2c31;
-            --turn:#6fa8ff; --warn:#d7a52a; --err:#ff6b5e; }
-  }
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg);
-         font:13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
-  header { position:sticky; top:0; background:var(--bg); z-index:1;
-           border-bottom:1px solid var(--line); padding:10px 16px;
-           display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
-  h1 { font-size:13px; font-weight:600; margin:0; }
-  .count { color:var(--dim); }
-  input[type=search] { font:inherit; padding:3px 8px; border:1px solid var(--line);
-                       border-radius:5px; background:transparent; color:inherit; min-width:200px; }
-  label { color:var(--dim); display:flex; gap:5px; align-items:center; cursor:pointer; }
-  main { padding:8px 0 40vh; }
-  .row { padding:5px 16px; border-bottom:1px solid var(--line); display:grid;
-         grid-template-columns:74px 190px 1fr; gap:12px; align-items:baseline; }
-  .t { color:var(--dim); }
-  .cat { color:var(--dim); overflow-wrap:anywhere; }
-  .turn .cat { color:var(--turn); font-weight:600; }
-  .warn .cat { color:var(--warn); }
-  .err .cat { color:var(--err); }
-  .fields { white-space:pre-wrap; overflow-wrap:anywhere; margin:0; }
-  .k { color:var(--dim); }
-  .empty { padding:24px 16px; color:var(--dim); }
-</style>
+<link rel="stylesheet" href="/journal.css">
+
 <header>
-  <h1>__NAME__</h1>
-  <span class="count" id="count">0 entries</span>
-  <input type="search" id="filter" placeholder="filter by category or text">
-  <label><input type="checkbox" id="turns"> transcript only</label>
-  <label><input type="checkbox" id="follow" checked> follow</label>
+  <span class="mark" aria-hidden="true">♪</span>
+
+  <span class="ident">
+    <span class="name" id="name">__NAME__</span>
+    <span class="kicker">harpe journal</span>
+  </span>
+
+  <span class="search">
+    <input type="search" id="filter" placeholder="filter entries…" spellcheck="false">
+    <kbd>/</kbd>
+  </span>
+
+  <span class="toggles">
+    <label><input type="checkbox" id="turns"> turns only</label>
+    <label><input type="checkbox" id="follow" checked> follow</label>
+  </span>
+
+  <span class="state">
+    <span class="pill"><i class="dot" id="dot"></i><span id="status">connecting</span></span>
+    <span class="pill quiet" id="counts">0 entries</span>
+  </span>
 </header>
-<main id="log"><div class="empty">waiting for entries…</div></main>
-<script>
-  const NL = String.fromCharCode(10);
-  let seen = 0, all = [];
-  const log = document.getElementById('log');
-  const filter = document.getElementById('filter');
-  const turnsOnly = document.getElementById('turns');
-  const follow = document.getElementById('follow');
-  const count = document.getElementById('count');
 
-  const esc = s => String(s).replace(/[&<>]/g, c => ESC[c]);
-  const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;' };
-  const clock = t => (t || '').slice(11, 19) || '--:--:--';
+<main id="log">
+  <p class="placeholder">Waiting for the first entry…</p>
+</main>
 
-  function fields(e) {
-    return Object.keys(e).filter(k => k !== 'time' && k !== 'category').map(k => {
-      let v = e[k];
-      if (typeof v === 'object') v = JSON.stringify(v);
-      v = String(v);
-      if (v.length > 600) v = v.slice(0, 600) + ' … (' + v.length + ' chars)';
-      return '<span class="k">' + esc(k) + '</span> ' + esc(v);
-    }).join(NL);
-  }
-
-  function severity(e) {
-    if (e.error !== undefined) return 'err';
-    if (e.warning !== undefined) return 'warn';
-    if ((e.category || '').startsWith('harpe.turn.')) return 'turn';
-    return '';
-  }
-
-  function matches(e) {
-    if (turnsOnly.checked && !(e.category || '').startsWith('harpe.turn.')) return false;
-    const q = filter.value.trim().toLowerCase();
-    return !q || JSON.stringify(e).toLowerCase().includes(q);
-  }
-
-  function render() {
-    const rows = all.filter(matches);
-    count.textContent = rows.length + ' of ' + all.length + ' entries';
-    log.innerHTML = rows.length === 0
-      ? '<div class="empty">nothing yet</div>'
-      : rows.map(e =>
-          '<div class="row ' + severity(e) + '">' +
-            '<span class="t">' + esc(clock(e.time)) + '</span>' +
-            '<span class="cat">' + esc(e.category || '?') + '</span>' +
-            '<pre class="fields">' + fields(e) + '</pre>' +
-          '</div>').join('');
-    if (follow.checked) window.scrollTo(0, document.body.scrollHeight);
-  }
-
-  async function poll() {
-    try {
-      const r = await fetch('/events?seen=' + seen);
-      const d = await r.json();
-      if (d.seen < seen) { all = []; seen = 0; }
-      else if (d.entries.length) { all = all.concat(d.entries); seen = d.seen; render(); }
-    } catch (err) { /* the server went away; keep trying */ }
-    setTimeout(poll, 1000);
-  }
-
-  filter.addEventListener('input', render);
-  turnsOnly.addEventListener('change', render);
-  poll();
-</script>
+<script src="/journal.js"></script>
