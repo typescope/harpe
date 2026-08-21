@@ -33,10 +33,11 @@ private def orMessage[T](result: Result[T, py.Error]): Result[T, String] =
   case Ok(value) => Ok(value)
   case Err(e)    => Err(e.message)
 
-//[ A `FileSystem` (local reads) that also carries the `MediaProvider` view.
+//[ The local `FileSystem`: reads and writes under a real root directory.
   !
-  ! Granted-media `resolve`/`load` are inert (`None`/`false`): media loading is now
-  ! host-side staging into the shared run dir, read back through `FileSystem`.
+  ! Files a turn was given are staged into the shared run dir host-side, before
+  ! the guest starts, so the guest reaches everything through this one
+  ! capability rather than a second granted-media channel.
 //]
 class FileSystemImpl
   val realRoot: String
