@@ -33,6 +33,7 @@
 namespace harpe.transcript
 
 import harpe.ffi.sys
+import harpe.ffi.signal
 import harpe.ffi.os
 import harpe.ffi.file
 import harpe.ffi.json
@@ -64,13 +65,14 @@ def serve(): Unit receives stdout =
   val name = os.path.basename(path)
   val httpd = Http.server: host, port, () => route(path, name)
 
-  println "  Journal  \{path}"
-  println "  Live at  http://\{host}:\{port}"
+  println "  \{name}"
+  println "  Live at http://\{host}:\{port}"
   println "  Ctrl-C to stop"
 
-  match py.try(httpd.serve_forever())
-  case Ok(_)  => pass
-  case Err(_) => println "\n  stopped."
+  // Stop cleanly on Ctrl-C instead of dumping a traceback from serve_forever.
+  signal.shutdownOnSigint("\n  stopped.")
+
+  httpd.serve_forever()
 
 //[ The first non-flag argument after the program name, or "". //]
 private def journalPath(): String =
