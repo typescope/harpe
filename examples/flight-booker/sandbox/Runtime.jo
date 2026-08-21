@@ -2,13 +2,29 @@ namespace sandbox.runtime
 
 import jo.IO.stdout
 import harpe.ffi.os
+import harpe.approvals
+import harpe.interact.BrokerApprovals
+import harpe.logging.*
 import sandbox.api
 
-//[ Sandbox entry point — reads the Duffel token, wires the capability, runs the guest //]
+//[ Sandbox entry point — connect the broker (approvals channel), install the
+  ! audit logger, wire the Duffel capability, and run the guest.
+//]
 def main(): Unit receives stdout =
+  with approvals = BrokerApprovals.connect() in
+    Logging.withLogger: auditLogger(), () => run()
+
+private def run(): Unit receives stdout, approvals =
   val token = os.getenv("DUFFEL_API_KEY", "")
   if token == "" then abort "sandbox: DUFFEL_API_KEY is not set"
 
-  val duffelImpl = new DuffelClient(token)
+  val duffelImpl = new DuffelClient(token, approvals)
   with api.duffel = duffelImpl in
     api.runTask()
+
+//[ Write sandbox audit records to HARPE_AUDIT_LOG (set by runCode), or
+  ! discard them when the program is launched outside the runCode harness.
+//]
+private def auditLogger(): Logger =
+  val path = os.getenv("HARPE_AUDIT_LOG", "")
+  if path == "" then Logging.discard else new JsonlLogger(path)

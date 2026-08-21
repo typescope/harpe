@@ -13,6 +13,10 @@ namespace sandbox.runtime
 
 import harpe.ffi.json
 import harpe.ffi.os
+import harpe.ApprovalRequest
+import harpe.ApprovalDecision
+import harpe.approvals
+import harpe.Approvals
 import sandbox.api
 
 
@@ -20,7 +24,7 @@ private def duffelBase: String = "https://api.duffel.com"
 private def duffelVersion: String = "v2"
 
 //[ The Duffel HTTP client — implements the api.Duffel capability //]
-class DuffelClient(token: String)
+class DuffelClient(token: String, approvals: Approvals)
   view api.Duffel
 
   private def urllibReq: py.Dynamic = py.module("urllib.request")
@@ -100,8 +104,6 @@ class DuffelClient(token: String)
       slices = slices + new api.FlightSlice(
         originCode,
         destCode,
-        s["departing_at"].asString,
-        s["arriving_at"].asString,
         s["duration"].asString,
         segs
       )
@@ -179,13 +181,50 @@ class DuffelClient(token: String)
     val offer = parseOffer(resp.get("data").cast[py.Dict])
     new api.OfferDetail(offer.id, offer.totalAmount, offer.currency, offer.slices, offer.passengerIds)
 
-  //[ Book a flight with mock balance payment (test mode) //]
+  //[ Build a human-readable booking summary for the approval card //]
+  private def bookingSummary(
+      offer: api.OfferDetail,
+      passengers: List[api.PassengerInfo],
+      paymentAmount: String,
+      paymentCurrency: String): String =
+    var lines: List[String] = []
+
+    for slice in offer.slices do
+      val stops = slice.segments.size - 1
+      val stopLabel = if stops == 0 then "direct" else "\{stops} stop(s)"
+      lines = lines + "\{slice.origin} → \{slice.destination} (\{stopLabel})"
+      lines = lines + "Druation \{slice.duration}"
+      if slice.segments.size > 0 then
+        val seg = slice.segments.get(0)
+        lines = lines + "\{seg.carrierName} \{seg.flightNumber}"
+
+    lines = lines + ""
+    var paxNames: List[String] = []
+    for p in passengers do
+      paxNames = paxNames + (p.givenName + " " + p.familyName)
+    lines = lines + "Passenger(s): " + paxNames.join(",")
+    lines = lines + "Total: \{paymentAmount} \{paymentCurrency}"
+    lines.join("\n")
+
+  //[ Book a flight with mock balance payment (test mode)
+    !
+    ! Requests user confirmation via the broker (Telegram inline Approve/Reject
+    ! card) before placing the order. Returns an error OrderConfirmation if the
+    ! user rejects or if the approval times out.
+  //]
   def createOrder(
     offerId: String,
     passengers: List[api.PassengerInfo],
     paymentAmount: String,
     paymentCurrency: String
   ): api.OrderConfirmation =
+    // Fetch offer details to build an informative approval summary.
+    val offer = getOffer(offerId)
+    val summary = bookingSummary(offer, passengers, paymentAmount, paymentCurrency)
+    val decision = approvals.request(new ApprovalRequest("Confirm booking", summary))
+    if ApprovalDecision.wire(decision) != "approved" then
+      return new api.OrderConfirmation("", "", "", "", "Booking " + ApprovalDecision.wire(decision))
+
     var paxList = py.list()
     for p in passengers do
       paxList.append(py.dict(

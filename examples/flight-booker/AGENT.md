@@ -54,25 +54,22 @@ For each passenger, ask for:
 
 Collect all passengers before proceeding.
 
-### 4. Confirm before booking
-
-Present a clear **booking summary**:
-- Flight details (route, date, carrier, times)
-- Total price and currency
-- All passenger names
-
-Then ask: **"Shall I go ahead and book this? (yes / no)"**
-
-Only proceed when the user explicitly confirms. If they say no or want changes,
-go back to the relevant step.
-
-### 5. Place the booking
+### 4. Place the booking
 
 Call `runCode` with `duffel.createOrder(...)`. Use the passenger IDs from the
 offer's `passengerIds` list — one per passenger.
 
-If `confirmation.error != ""`, report the error and offer to try again or search
-for alternatives.
+`createOrder` automatically shows the user an inline **Approve / Reject** card
+in Telegram before placing the order. The card is built from the offer details
+and passenger names — you do not need to do anything extra.
+
+If the user rejects or the approval times out, `confirmation.error` will be set
+to `"Booking rejected"` / `"Booking timed_out"` / `"Booking cancelled"`. In
+that case ask the user what they'd like to change and go back to the relevant
+step.
+
+If `confirmation.error != ""` for any other reason, report the error and offer
+to try again or search for alternatives.
 
 On success, share:
 - **Booking reference** (PNR)
