@@ -2,17 +2,20 @@
   !
   ! One turn as the chat page renders it.
   !
-  ! `TurnData` is the whole input: the same value `Agent.runTurn` returns for the
-  ! turn it just ran and `Transcript.turns` rebuilds from the journal. So a turn
-  ! that just finished and a turn reloaded a week later go through this one
-  ! function, and the live view cannot drift from the persisted one.
+  ! `Journal.TurnRecord` is the whole input: what the driver bracketed the turn with, and
+  ! the engine's own account of what happened in between. A turn that just
+  ! finished and a turn reloaded a week later go through this one function with
+  ! the same inputs, so the live view cannot drift from the persisted one.
   !
-  ! The mapping is presentation, and it lives here rather than in the agent: the
-  ! turn's intermediate traffic is folded into its reply, with the `runCode`
-  ! programs as `steps` (code paired with its output by call id) and the
-  ! `sendFile` deliveries as `sent`. Both are read back from the tool calls the
-  ! model itself made, so what the user sees and what the model reasons over are
-  ! the same events.
+  ! WHAT COMES FROM WHERE. The high-level input and output come from the bracket:
+  ! the message and the files the user uploaded from `request`, the files the
+  ! agent delivered from `response`. The driver knows those as facts at the time
+  ! they happen, so the page never has to infer them.
+  !
+  ! Everything in between is recovered from `data` — the reply text, and the
+  ! `runCode` programs as `steps` (code paired with its output by call id). That
+  ! traffic is already in the journal in full, so copying any of it into the
+  ! bracket would only create a second version to keep in sync.
 //]
 
 namespace harpe.web
@@ -21,6 +24,9 @@ import harpe.ffi.os
 import harpe.ffi.mimetypes
 
 import harpe.TurnData
+import harpe.transcript.Journal
+import harpe.logging.Value
+import harpe.logging.valueToJson
 import harpe.Model.*
 import harpe.turns.*
 
@@ -31,35 +37,38 @@ section TurnView
     ! failed. `dataDir` is the session's data directory, used to resolve delivered
     ! files (`None` if it does not exist).
   //]
-  def rows(turn: TurnData, dataDir: Option[String]): py.List =
+  def rows(record: Journal.TurnRecord, dataDir: Option[String]): py.List =
     val arr = py.list()
 
-    if turn.user is UserInput(t, attachments) then
-      arr.append: py.dict("role" ~ "user", "text" ~ t, "received" ~ receivedJson(attachments))
+    arr.append: py.dict:
+      "role" ~ "user"
+      "text" ~ requestText(record.request)
+      "received" ~ requestFiles(record.request)
 
+    val turn = record.data
     val steps = py.list()      // this turn's {code, output} runCode steps
     val pending = py.dict()    // runCode call id -> program, awaiting its result
-    val sent = py.list()       // this turn's sendFile deliveries
 
     for m in turn.messages do
       if m is Assistant(_, calls) then
         for c in calls if c.name == "runCode" do
           pending.set(c.id, c.input.string("code"))
 
-        // A file that no longer resolves is still listed, because the delivery
-        // happened and is part of the dialog.
-        for c in calls if c.name == "sendFile" do
-          sent.append: sentFileJson(dataDir, c.input.string("fileName"))
-
       else if m is ToolResults(results) then
         for r in results if pending.contains(r.id) do
           steps.append: py.dict("code" ~ pending.get(r.id).asString, "output" ~ r.content)
 
+    // Resolved at render time, not when the delivery was recorded, so a file
+    // that has since vanished still shows as a muted card.
+    val sent = py.list()
+    for name in items(record.response, "sent") do
+      sent.append: sentFileJson(dataDir, asString(name))
+
     // `turn.text` joins every visible reply across the turn's tool rounds, so a
     // turn that spoke before calling a tool keeps that text.
-    val text = turn.text
-    if turn.result is Success && text != "" then
-      arr.append: py.dict("role" ~ "agent", "text" ~ text, "steps" ~ steps, "sent" ~ sent)
+    val reply = turn.text
+    if turn.result is Success && reply != "" then
+      arr.append: py.dict("role" ~ "agent", "text" ~ reply, "steps" ~ steps, "sent" ~ sent)
 
     if turn.result is Failed(detail) then
       val message = if detail == "" then "Please try again." else detail
@@ -67,12 +76,39 @@ section TurnView
 
     arr
 
-  //[ The files that arrived with a user message. //]
-  def receivedJson(attachments: List[Attachment]): py.List =
+  //[ One field out of a bracket payload
+    !
+    ! A payload is the driver's own, but it has been through JSON, so every read
+    ! here tolerates a missing key or an unexpected shape rather than failing a
+    ! whole page over one malformed record.
+  //]
+  private def field(payload: Value, key: String): Value =
+    match payload
+    case m: Map[String, Value] => m.getOrElse(key, "")
+    case _                     => ""
+
+  //[ The message the user typed, out of a turn's opening payload. //]
+  def requestText(request: Value): String = asString(field(request, "text"))
+
+  //[ The files that arrived with it, as JSON cards.
+    !
+    ! The same list for a live pending turn and a reloaded one, so the page
+    ! renders an in-flight upload exactly as it will render it afterwards.
+  //]
+  def requestFiles(request: Value): py.List =
     val arr = py.list()
-    for a in attachments do
-      arr.append: py.dict("name" ~ a.name, "size" ~ a.size, "mime" ~ a.mime, "inline" ~ a.inline)
+    for f in items(request, "files") do arr.append(valueToJson(f))
     arr
+
+  private def items(payload: Value, key: String): List[Value] =
+    match field(payload, key)
+    case xs: List[Value] => xs
+    case _               => []
+
+  private def asString(v: Value): String =
+    match v
+    case s: String => s
+    case _         => ""
 
   //[ The card metadata for one `sendFile`d file
     !

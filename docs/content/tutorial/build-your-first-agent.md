@@ -57,7 +57,6 @@ val brain = Defaults.model()
 // conversation from one turn to the next.
 val context = new FullContext:
   baseSystem = workspace.read("AGENT.md").getOrElse("")
-  memory = new Memory
   initial = []
 
 // The one tool this agent has: what the model is offered, and what runs.
@@ -67,15 +66,15 @@ val tools = runCode.toolset()
 There is no `Agent` object to build — these are just values, and a turn is the
 call that brings them together. The `Toolset` holds both halves of a tool: the
 spec the model is offered, and the code that runs when it calls. The rest of the
-file reads terminal input, hands it to `Agent.runTurn` with these pieces, and
+file reads terminal input, hands it to `Agent.ask` with these pieces, and
 prints the answer:
 
 ```jo
-Agent.runTurn(input, brain, tools, context, maxToolRounds = 10, maxRetries = 2)
+Agent.ask(input, brain = brain, tools = tools, context = context, maxToolRounds = 10, maxRetries = 2)
 ```
 
-`input` is the raw string from the terminal — `runTurn` accepts one directly,
-so nothing has to wrap it first.
+`input` is the raw string from the terminal — `ask` takes the message itself, so
+nothing has to wrap it first.
 
 `SimpleInteract` implements the interface through which the engine reports turn
 events and asks whether a turn was cancelled:
@@ -128,7 +127,7 @@ The [sandbox concept guide](/concepts/sandbox/) explains the compiler guarantee.
 ## Build a complete application
 
 - [Create a CLI agent](/tutorial/create-cli-agent/) — terminal history,
-  cancellation, memory, skills, and audit logs.
+  cancellation, skills, and audit logs.
 - [Create a web agent](/tutorial/create-web-agent/) — browser sessions,
   streaming, uploads, and downloadable files.
 - [Create a Telegram agent](/tutorial/create-telegram-agent/) — persistent bot

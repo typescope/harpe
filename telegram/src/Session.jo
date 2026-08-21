@@ -21,8 +21,8 @@ import harpe.ffi.builtins
 import harpe.Agent
 import harpe.Toolset
 import harpe.interact
-import harpe.Memory
 import harpe.Transcript
+import harpe.transcript.Journal
 import harpe.workspace
 import harpe.logging.JsonlLogger
 import harpe.logging.Logger
@@ -31,6 +31,8 @@ import harpe.logging.Entry
 import harpe.logging.entryFromDict
 import harpe.Model
 import harpe.Tool
+import harpe.Tool.ToolInput
+import harpe.TurnData
 import harpe.Context
 import harpe.Model.Message
 import harpe.Model.UserInput
@@ -39,6 +41,7 @@ import harpe.Model.Attachment
 import harpe.turns.Success
 import harpe.turns.Interrupted
 import harpe.turns.Failed
+import harpe.logging.Value
 
 
 //[ One file the user attached to a Telegram message
@@ -56,7 +59,7 @@ class FileSpec(fileId: String, name: String, mime: String)
   ! it. This is the unit the poll loop enqueues and the worker drains —
   ! replacing the bare text string, so a message can now carry attachments.
 //]
-class Incoming(text: String, files: List[FileSpec], senderId: String)
+class Incoming(id: String, text: String, files: List[FileSpec], senderId: String)
 
 
 //[ One live conversation
@@ -73,8 +76,16 @@ class Incoming(text: String, files: List[FileSpec], senderId: String)
 //]
 private class Session(
     id: String, log: Logger, brain: Model, tools: Toolset, context: Context,
-    memory: Memory, memoryPath: String, dataDir: String)
+    dataDir: String)
   val queue = py.module("queue").Queue()
+
+  //[ This chat's conversation, recorded into its own log.
+    !
+    ! Typed as the concrete journal, not as `Transcript`: this driver writes the
+    ! two halves of the bracket from different threads, so it uses `request` and
+    ! `response` directly rather than `turn`.
+  //]
+  val transcript = new Journal(log)
 
   //[ Begin a user turn
     !
@@ -85,32 +96,62 @@ private class Session(
   def runTurn(
       incoming: Incoming,
       client: TelegramClient,
-      approvalHandler: TelegramApprovalHandler,
-      maxToolRounds: Int,
-      maxRetries: Int)
+      approvalHandler: TelegramApprovalHandler)
   : Unit =
+    // The bracket is opened HERE, on the worker thread that runs the turn — not
+    // where the message was queued. A journal holds one conversation and pairs
+    // its records in order, so two brackets must never overlap, and queuing on
+    // the poll thread while a turn is in flight would overlap them. How long the
+    // message waited is a `telegram.queued` diagnostic instead.
+    val request = Journal.payload:
+      "messageId" ~ incoming.id
+      "text" ~ incoming.text
+      "files" ~ Session.fileNames(incoming.files)
+
+    transcript.turn: request, () =>
+      run(incoming, client, approvalHandler)
+
+  //[ One turn, from downloading its files to delivering its answer. //]
+  private def run(
+      incoming: Incoming,
+      client: TelegramClient,
+      approvalHandler: TelegramApprovalHandler)
+  : Value =
     val attachments = materialize(incoming, client)
-    val userMsg = UserInput(incoming.text, attachments)
+
+    // Told, not shown: the downloaded files stay on disk and cost nothing until
+    // the agent reaches for one with `fs` or `uploadMedia`. `Model.userContent`
+    // builds the same manifest the render layer would, so what the model reads
+    // is unchanged — the token policy just lives with the driver now.
+    val prompt = Model.userContent(incoming.text, attachments)
     val channel = new TelegramInteract(client, this.id, approvalHandler)
 
     val result = with logger = log, interact = channel in
-      Agent.runTurn(userMsg, brain, tools, context, maxToolRounds, maxRetries)
+      Agent.ask(prompt, brain = brain, tools = tools, context = context, transcript = transcript)
+
+    // Whether anything actually reached the chat. The engine cannot know it —
+    // an answered turn with empty text sends nothing — and it is the one thing
+    // worth closing the transcript's bracket with here.
+    var delivered = false
 
     match result.result
     case Success =>
-      commit()
       val answer = result.finalText
-      if answer.trim != "" then client.sendMessage(this.id, answer)
+      if answer.trim != "" then
+        client.sendMessage(this.id, answer)
+        delivered = true
 
-    case Interrupted =>
-      rollback()
+    case Interrupted => pass
 
     case Failed(detail) =>
-      rollback()
       val message =
         if detail == "" then "Request failed. Please try again."
         else "Request failed: \{detail}"
       client.sendMessage(this.id, message)
+      delivered = true
+
+    // The driver's reading of the finished turn, closing the bracket.
+    Journal.payload("delivered" ~ delivered, "sent" ~ Session.sent(result))
 
   //[ Download this turn's attached files into the session's data directory
     !
@@ -145,35 +186,11 @@ private class Session(
                 name
                 builtins.len(data)
                 mime
-                inline = false
                 path = os.path.join(dir, name)
               atts = atts + att
 
       atts
 
-  //[ Commit a completed turn's working memory
-    !
-    ! Transcript entries have already flowed through the structured logger
-    ! channel.
-  //]
-  private def commit(): Unit =
-    saveMemory()
-
-  //[ Finish a cancelled or failed turn
-    !
-    ! Memory is still persisted — it is deliberate and not rolled back with the
-    ! provisional assistant transcript. The engine retains the user message.
-  //]
-  private def rollback(): Unit =
-    saveMemory()
-
-  //[ Persist the working memory beside the transcript archive
-    !
-    ! Runs on the chat's worker thread. The resolved path is captured when the
-    ! session is created.
-  //]
-  private def saveMemory(): Unit =
-    if !memory.isEmpty then Memory.save(memoryPath, memory)
 end
 
 //[ Reduce a client-supplied name to a safe bare basename
@@ -224,9 +241,24 @@ section Session
   def forSession(chatId: String): Logger receives workspace =
     new JsonlLogger(sessionPath(chatId))
 
-  def memoryPath(chatId: String): String receives workspace =
-    val path = sessionPath(chatId)
-    path.substring(0, path.size - 6) + ".memory.json"
+  //[ The files this turn delivered, in the order the agent sent them
+    !
+    ! `sendFile` is the agent's channel for putting a file in front of the user,
+    ! so its deliveries are a high-level OUTPUT of the turn. Recorded as fact
+    ! here rather than inferred later by matching tool names against the journal.
+  //]
+  def sent(turn: TurnData): Value =
+    var names: List[Value] = []
+    for m in turn.messages do
+      if m is Assistant(_, calls) then
+        for c in calls if c.name == "sendFile" do names = names + c.input.string("fileName")
+    names
+
+  //[ The names of the files that arrived with a message. //]
+  def fileNames(files: List[FileSpec]): Value =
+    var names: List[Value] = []
+    for f in files do names = names + f.name
+    names
 
   //[ Reconstruct this chat's conversation from disk
     !
@@ -240,5 +272,5 @@ section Session
       var entries: List[Entry] = []
       for line in file.read(path).lines if line.trim != "" do
         entries = entries + entryFromDict(json.loads(line).cast[py.Dict])
-      Transcript.fromEntries(entries)
+      Journal.fromEntries(entries)
 end

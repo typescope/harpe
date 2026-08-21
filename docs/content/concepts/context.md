@@ -3,37 +3,35 @@ title = "Context management"
 +++
 A model's input is bounded, but a session can run indefinitely. So on every
 request *something* must decide what the model sees — the instructions, how much
-of the conversation, and the agent's working memory. That decision is the
+of the conversation. That decision is the
 **Context**: a per-session strategy you configure or replace. Implementing it is
 the whole customization surface for context engineering. There is no second hook.
 
 ## What the model sees each request
 
-For each model call, the Context composes a `Rendered` — three parts:
+For each model call, the Context composes a `Rendered` — two parts:
 
 ```jo
-class Rendered(system: String, messages: List[Message], transient: String)
+class Rendered(system: String, messages: List[Message])
 ```
 
-- **`system`** — the stable instructions: your `AGENT.md`, used verbatim (plus a
+- **`system`** — the stable instructions: your base prompt, used verbatim (plus a
   distilled summary, if the strategy keeps one).
 - **`messages`** — the recent transcript, as much as the strategy's window holds.
-- **`transient`** — a tail appended *after* the transcript: the agent's working
-  memory.
 
-The split is deliberate and cache-friendly. `system` is the long-lived prefix a
-provider caches. `transient` sits *past* that prefix, so the agent editing its
-memory never invalidates the cached conversation.
+There is no third slot for volatile content. A strategy that wants working notes
+or retrieved documents in front of the model appends them to `messages` as a
+trailing user message — past the cached prefix, so changing them costs nothing.
 
 ## The two built-in strategies
 
-Both render `AGENT.md` as `system` and memory as `transient`. They differ only in
-what they do when the transcript outgrows the window.
+Both render the base prompt as `system`. They differ only in what they do when
+the transcript outgrows the window.
 
 **`WindowedContext` (the default).** A sliding window: once the transcript passes
 a fixed character budget, the oldest whole turns are dropped from what's sent (the
 driver's on-disk session archive still keeps them). Cheap and simple — no extra
-model calls — but dropped detail is gone unless the agent saved it to memory.
+model calls — but dropped detail is gone unless the agent wrote it down.
 
 **`SummarizingContext`.** Instead of dropping old turns, it distills them into a
 rolling summary — one extra call to a "distiller" model — carried in `system`. A
@@ -44,7 +42,7 @@ target.
 
 | | old turns become | extra model calls | best for |
 |---|---|---|---|
-| `WindowedContext` | dropped | none | short sessions where memory holds what matters |
+| `WindowedContext` | dropped | none | short sessions, or agents that keep their own notes |
 | `SummarizingContext` | a rolling summary | one per compaction | long sessions that must recall early detail |
 
 ## Choosing and configuring
@@ -55,13 +53,11 @@ The strategy is per-session, constructed where the driver builds its `Agent`:
 // default: a sliding window (fixed size, no knobs)
 new WindowedContext:
   baseSystem = workspace.read("AGENT.md").getOrElse("")
-  memory = memory
   initial = history
 
 // or: summarize instead of dropping
 new SummarizingContext:
   baseSystem = workspace.read("AGENT.md").getOrElse("")
-  memory = memory
   initial = history
   highWaterTokens = 120000
   lowWaterChars = 160000
@@ -85,14 +81,16 @@ One behavior to know: `SummarizingContext` is **reactive** — it learns the tok
 count only *after* a reply, so a single oversized request can go out before the
 next one compacts.
 
-## Working memory
+## Carrying facts past the window
 
-The `transient` tail is the agent's **working memory** — a small key/value store
-it maintains itself through the memory tools, persisted across turns (see
-[memory](/concepts/memory/)). It is orthogonal to the strategy: whatever windows or
-summarizes the transcript, memory is how the agent *deliberately* carries facts
-forward. Rendering it after the transcript keeps it cheap to edit — the right place
-for volatile state.
+Nothing the agent knows survives the window except what it writes down. The
+framework offers no store for that, deliberately: the agent already has a
+filesystem through `fs`, so a notes file it maintains itself is one mechanism
+instead of two, and its format is the agent's own rather than a schema the
+framework imposed.
+
+A driver that wants those notes in front of the model on every request writes a
+`Context` that reads the file and appends it to `messages` — see below.
 
 ## Writing your own strategy
 

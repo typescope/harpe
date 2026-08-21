@@ -53,7 +53,7 @@ private def toolSpec(t: Tool): py.Dict =
     "input_schema" ~ py.dict("type" ~ "object", "properties" ~ properties, "required" ~ required)
   )
 
-//[ Inline content blocks (`image`/`document`) for inline attachments
+//[ Inline content blocks (`image`/`document`) for a message's attachments
   !
   ! Reading each one's bytes from `dataDir`. An attachment whose mime type is
   ! neither an inline image nor a PDF, or whose bytes cannot be read, is
@@ -63,7 +63,7 @@ private def toolSpec(t: Tool): py.Dict =
 private def anthropicMediaBlocks(attachments: List[Attachment]): py.List =
   val blocks = py.list()
 
-  for a in attachments if a.inline do
+  for a in attachments do
     if isInlineImage(a.mime) then
       match readInlineBase64(a.path)
       case Some(data) =>
@@ -94,9 +94,9 @@ private def anthropicMediaBlocks(attachments: List[Attachment]): py.List =
   ! A `UserInput` is promoted to a one-element text-block list so it can carry
   ! the marker (Anthropic accepts either form).
   !
-  ! An inline attachment only becomes a real image/document block when its
-  ! `UserInput` is the NEWEST message in `history` (`i == lastIdx`) — an older
-  ! one's `inline` is inert here, so a past image is never resent (and re-billed)
+  ! An attachment only becomes a real image/document block when its `UserInput`
+  ! is the NEWEST message in `history` (`i == lastIdx`) — an older message's
+  ! attachments are inert here, so a past image is never resent (and re-billed)
   ! once a later turn rebuilds this same history from scratch. `dataDir` is the
   ! session's data directory (`""` if none), resolved once by the caller.
 //]
@@ -222,13 +222,10 @@ private class AnthropicSession(
     if !results.isEmpty then
       committed.append(toolResultMessage(results))
 
-    // The request adds the transient tail (working memory) after the transcript —
-    // request-only, never committed, so editing memory reprocesses only the tail.
+    // request-only, never committed.
     val outgoing = py.list()
     for m in committed do outgoing.append(m)
 
-    if base.transient != "" then
-      outgoing.append(py.dict("role" ~ "user", "content" ~ base.transient))
 
     val attempt = anthropicCreate:
       client

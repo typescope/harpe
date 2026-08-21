@@ -6,10 +6,34 @@ Harpe publishes two independently versioned Jo packages:
 - `harpe`, the Python runtime package, which depends on `harpe-caps`
 
 Packages are published through `https://pkg.typescope.ai`. Developers do not
-need Cloudflare credentials. The final tag is created only after the drivers
-have resolved and built against the published package versions.
+need Cloudflare credentials.
 
-## 1. Prepare the package pull request
+Set the version once and paste the commands as written:
+
+```sh
+VERSION=0.5.0
+MINOR=${VERSION%.*}          # the MAJOR.MINOR constraint drivers pin
+```
+
+## Publication comes before the green build
+
+CI builds each driver twice: from `ci/*.toml` against local sources, and from
+the driver's own `jo.toml` against the public registry. A release that changes
+the API means the driver *sources* already need the new version, so the
+registry-resolving jobs **cannot pass until that version is published**.
+
+So a release pull request is red before publication and green after it. Waiting
+for green before publishing deadlocks, and publishing from a merged commit is
+therefore impossible for any release that changes the API.
+
+What replaces "publish from a merged commit" as the safety property is step 5: a
+content check proving the published artifact matches what landed on `main`.
+Between publishing and merging, **do not push another source change**. A
+published version is immutable — it may be retried with identical bytes, never
+replaced with different content — so a post-publication fix means burning the
+version and releasing the next patch instead.
+
+## 1. Prepare the release pull request
 
 Create a branch from the latest `origin/main`. In the pull request:
 
@@ -18,17 +42,35 @@ Create a branch from the latest `origin/main`. In the pull request:
 - [ ] Confirm `harpe` has the intended `harpe-caps` dependency constraint.
 - [ ] Add the release notes to `CHANGELOG.md`.
 - [ ] Update the version and link in the release badge in `README.md`.
+- [ ] Update the `harpe` package version in `cli/jo.toml`, `web/jo.toml`,
+      `telegram/jo.toml`, and `templates/hello/jo.toml` — including any
+      secondary module in those files, such as `[module.view]`.
+- [ ] Update the `harpe` and `harpe-caps` versions in each driver's
+      `sandbox/jo.toml`.
 
-Wait for required CI checks to pass and merge. Do not tag yet.
-
-## 2. Build and publish the packages
-
-Update the local checkout, run the tests, and build from the merged commit:
+Jo package constraints use `MAJOR.MINOR`, so `0.5.0` is referenced as `0.5`. A
+minor bump rewrites every constraint above; a patch bump rewrites none of them.
+Where a file needs no textual edit, confirm that explicitly during review rather
+than assuming it. Afterwards grep for the constraint being *replaced* — it
+should now match nothing:
 
 ```sh
-git switch main
-git pull --ff-only origin main
-git status --short
+grep -rn '"0.4"' --include='jo.toml' . | grep -v '^./ci'
+```
+
+**The gate before publishing is the local-source half of CI**: every
+`jo build … --spec ci/*.toml` job, plus `jo run test`. Those prove the code is
+correct. The registry-resolving jobs are expected to fail here, and are the
+thing publication fixes.
+
+A patch release that changes no API is the one case where the driver pins can go
+in a second pull request after publication, as they resolve against the older
+published minor either way. It is not worth a separate process.
+
+## 2. Build and verify the artifacts from the pull request head
+
+```sh
+git status --short          # must be clean
 jo run test
 jo package caps
 jo package harpe
@@ -38,20 +80,38 @@ Jo writes the artifacts under `.build/caps/release/` and
 `.build/harpe/release/`. Verify their checksums:
 
 ```sh
-(cd .build/caps/release && sha512sum --check harpe-caps-v0.1.0.joy.sha512)
-(cd .build/harpe/release && sha512sum --check harpe-v0.1.0.joy.sha512)
+(cd .build/caps/release && sha512sum --check harpe-caps-v$VERSION.joy.sha512)
+(cd .build/harpe/release && sha512sum --check harpe-v$VERSION.joy.sha512)
 ```
+
+Confirm the package carries what it should — the dependency constraint, and any
+bundled resources:
+
+```sh
+unzip -p .build/harpe/release/harpe-v$VERSION.joy meta.toml | grep -E 'version|harpe-caps'
+unzip -l .build/harpe/release/harpe-v$VERSION.joy | grep resources/ | head
+```
+
+Keep an extracted copy for the step 5 check, before anything else can rebuild
+over it:
+
+```sh
+mkdir -p /tmp/published-$VERSION && (cd /tmp/published-$VERSION && \
+  unzip -oq $OLDPWD/.build/harpe/release/harpe-v$VERSION.joy)
+```
+
+## 3. Publish the packages
 
 The proxy accepts one package per temporary private release. Publish
 `harpe-caps` first so that `harpe` never points at an unavailable dependency:
 
 ```sh
-gh release create upload-harpe-caps-v0.1.0 \
+gh release create upload-harpe-caps-v$VERSION \
   --repo typescope/proxy \
-  .build/caps/release/harpe-caps-v0.1.0.joy \
-  .build/caps/release/harpe-caps-v0.1.0.joy.sha512 \
+  .build/caps/release/harpe-caps-v$VERSION.joy \
+  .build/caps/release/harpe-caps-v$VERSION.joy.sha512 \
   --prerelease \
-  --title "Publish harpe-caps 0.1.0" \
+  --title "Publish harpe-caps $VERSION" \
   --notes "Internal package publication upload"
 ```
 
@@ -59,92 +119,88 @@ Wait for the proxy's `Publish package` workflow to succeed, then publish
 `harpe`:
 
 ```sh
-gh release create upload-harpe-v0.1.0 \
+gh release create upload-harpe-v$VERSION \
   --repo typescope/proxy \
-  .build/harpe/release/harpe-v0.1.0.joy \
-  .build/harpe/release/harpe-v0.1.0.joy.sha512 \
+  .build/harpe/release/harpe-v$VERSION.joy \
+  .build/harpe/release/harpe-v$VERSION.joy.sha512 \
   --prerelease \
-  --title "Publish harpe 0.1.0" \
+  --title "Publish harpe $VERSION" \
   --notes "Internal package publication upload"
 ```
 
 The workflow validates the checksum and metadata, writes the artifact and JSONL
 index to R2, then deletes the temporary release and tag. On failure it retains
-them for inspection and retry. A version may be retried with identical bytes,
-but must never be replaced with different content.
-
-## 3. Verify public resolution
+them for inspection and retry.
 
 Confirm both indexes are publicly reachable:
 
 ```sh
-curl --fail https://pkg.typescope.ai/harpe-caps.jsonl
-curl --fail https://pkg.typescope.ai/harpe.jsonl
+curl --fail https://pkg.typescope.ai/harpe-caps.jsonl | tail -1
+curl --fail https://pkg.typescope.ai/harpe.jsonl | tail -1
 ```
 
-## 4. Prepare the driver integration pull request
+## 4. Re-run CI, then merge
 
-Only after both packages are public, create a second branch from `main`. In the
-pull request:
+Re-run the pull request's checks. The registry-resolving jobs now resolve the
+version just published, and the run should be fully green. Merge only then.
 
-- [ ] Update the `harpe` package version in `cli/jo.toml`, `web/jo.toml`,
-      `telegram/jo.toml`, and `templates/hello/jo.toml`.
-- [ ] Update the `harpe` and `harpe-caps` versions in each driver's
-      `sandbox/jo.toml`.
-- [ ] Set `JO_REGISTRY_URL=https://pkg.typescope.ai` in CI.
-- [ ] Build CLI, web, and Telegram from their own `jo.toml` files so CI resolves
-      the published packages instead of local source modules.
-- [ ] Build every driver sandbox guest from its own `sandbox/jo.toml`.
+If review still demands a source change, the published version is spent: do not
+force the artifacts to match. Bump to the next patch, and start again at step 1.
 
-Jo package constraints use `MAJOR.MINOR`, so a `0.1.0` package is referenced as
-`0.1`. A minor bump therefore rewrites every constraint in the list above, while
-a patch bump rewrites none of them. When a file needs no textual edit, confirm
-that explicitly during review rather than assuming it. Afterwards, grep for the
-constraint being replaced — not the new one — which should now match nothing:
+## 5. Verify the merged commit matches what was published
 
-```sh
-grep -rn 'version = "MAJOR.MINOR"' --include='jo.toml' .
-```
-
-Wait for required checks to pass and merge. This green integration commit is
-the commit to tag: it contains the package and driver versions tested against
-the public registry.
-
-## 5. Tag the tested integration commit
+This is the check that makes publishing from a branch safe. Repackage from
+`main` and compare *content*, not archive bytes — `jo package` records the build
+time in each zip entry, so two runs over an identical tree differ in bytes while
+their contents are the same:
 
 ```sh
 git switch main
 git pull --ff-only origin main
+jo package harpe
+
+rm -rf /tmp/merged-$VERSION && mkdir -p /tmp/merged-$VERSION
+(cd /tmp/merged-$VERSION && unzip -oq $OLDPWD/.build/harpe/release/harpe-v$VERSION.joy)
+
+diff -r /tmp/published-$VERSION /tmp/merged-$VERSION && echo "matches what was published"
+```
+
+Any difference means something changed between publishing and merging. The
+registry cannot be corrected — release the next patch from `main` instead.
+
+## 6. Tag the merged commit
+
+```sh
 git status --short
-git tag -a v0.1.0 -m "Harpe 0.1.0"
-git push origin v0.1.0
+git tag -a v$VERSION -m "Harpe $VERSION"
+git push origin v$VERSION
 ```
 
 Never move or reuse a published version tag.
 
-## 6. Create the permanent Harpe GitHub release
+## 7. Create the permanent Harpe GitHub release
 
 The release notes are the new version's section of `CHANGELOG.md` alone, so cut
 it out — passing the whole file would republish every earlier version's notes:
 
 ```sh
-awk '/^## /{n++} n==1' CHANGELOG.md > /tmp/notes-v0.1.0.md
+awk '/^## /{n++} n==1' CHANGELOG.md > /tmp/notes-v$VERSION.md
 ```
 
 Create a private release containing the binary and source artifacts:
 
 ```sh
-gh release create v0.1.0 \
-  .build/caps/release/harpe-caps-v0.1.0.joy \
-  .build/caps/release/harpe-caps-v0.1.0.joy.sha512 \
-  .build/caps/release/harpe-caps-v0.1.0-sources.zip \
-  .build/caps/release/harpe-caps-v0.1.0-sources.zip.sha512 \
-  .build/harpe/release/harpe-v0.1.0.joy \
-  .build/harpe/release/harpe-v0.1.0.joy.sha512 \
-  .build/harpe/release/harpe-v0.1.0-sources.zip \
-  .build/harpe/release/harpe-v0.1.0-sources.zip.sha512 \
+gh release create v$VERSION \
+  .build/caps/release/harpe-caps-v$VERSION.joy \
+  .build/caps/release/harpe-caps-v$VERSION.joy.sha512 \
+  .build/caps/release/harpe-caps-v$VERSION-sources.zip \
+  .build/caps/release/harpe-caps-v$VERSION-sources.zip.sha512 \
+  .build/harpe/release/harpe-v$VERSION.joy \
+  .build/harpe/release/harpe-v$VERSION.joy.sha512 \
+  .build/harpe/release/harpe-v$VERSION-sources.zip \
+  .build/harpe/release/harpe-v$VERSION-sources.zip.sha512 \
   --repo typescope/harpe \
   --verify-tag \
-  --title "Harpe 0.1.0" \
-  --notes-file /tmp/notes-v0.1.0.md
+  --title "Harpe $VERSION" \
+  --notes-file /tmp/notes-v$VERSION.md
 ```

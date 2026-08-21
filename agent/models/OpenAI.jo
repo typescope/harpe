@@ -41,7 +41,7 @@ private section OpenAIResponses
     py.dict("type" ~ "function", "name" ~ t.name, "description" ~ t.description,
             "parameters" ~ parameters, "strict" ~ false)
 
-  //[ Inline content items (`input_image`/`input_file`) for inline attachments
+  //[ Inline content items (`input_image`/`input_file`) for a message's attachments
     !
     ! Reading each one's bytes from `dataDir`. Mirrors
     ! `Anthropic.anthropicMediaBlocks` — see its doc for the skip conditions.
@@ -49,7 +49,7 @@ private section OpenAIResponses
   def openaiMediaBlocks(attachments: List[Attachment]): py.List =
     val blocks = py.list()
 
-    for a in attachments if a.inline do
+    for a in attachments do
       if isInlineImage(a.mime) then
         match readInlineBase64(a.path)
         case Some(data) =>
@@ -71,11 +71,11 @@ private section OpenAIResponses
     ! `function_call` items, and each tool result a `function_call_output` item
     ! keyed by the same `call_id`.
     !
-    ! An inline attachment only becomes a real `input_image`/`input_file` item
-    ! when its `UserInput` is the NEWEST message in `history` (`i == lastIdx`) —
-    ! same reasoning as `Anthropic.toMessages`: an older one's `inline` is inert,
-    ! so a past image is never resent (and re-billed) once a later turn rebuilds
-    ! this same history from scratch. `dataDir` is the session's data directory
+    ! An attachment only becomes a real `input_image`/`input_file` item when its
+    ! `UserInput` is the NEWEST message in `history` (`i == lastIdx`) — same
+    ! reasoning as `Anthropic.toMessages`: an older message's attachments are
+    ! inert, so a past image is never resent (and re-billed) once a later turn
+    ! rebuilds this same history from scratch. `dataDir` is the session's data directory
     ! (`""` if none), resolved once by the caller.
   //]
   def toInput(history: List[Message]): py.List =
@@ -186,15 +186,13 @@ private class OpenAIResponsesSession(
     val toolSpecs = py.list()
     for t in tools do toolSpecs.append(OpenAIResponses.toolSpec(t))
 
-    // First request: the full base conversation (+ the transient tail). Later
+    // First request: the full base conversation. Later
     // requests: an empty list the tool results are appended to — the prior turn
     // rides along via `previous_response_id`.
     val input =
       if prevId == "" then
         val items = OpenAIResponses.toInput(base.messages)
 
-        if base.transient != "" then
-          items.append(py.dict("role" ~ "user", "content" ~ base.transient))
 
         items
 

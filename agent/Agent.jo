@@ -2,9 +2,9 @@
   !
   ! The turn engine. `Agent` is a namespace, not a thing — an agent is not one
   ! component but the way a model, its tools, and its context are coordinated
-  ! for a turn, so there is nothing here to instantiate. `runTurn` takes each of
+  ! for a turn, so there is nothing here to instantiate. `ask` takes each of
   ! those as an ordinary parameter with a default, which is what lets the
-  ! plainest agent be `Agent.runTurn("hello")` while a driver writes the same
+  ! plainest agent be `Agent.ask("hello")` while a driver writes the same
   ! call with its own components supplied. Drawing a boundary around any subset
   ! of them and calling *that* the agent would be a choice the code cannot
   ! justify.
@@ -18,6 +18,8 @@
 namespace harpe
 
 import harpe.turns.*
+import harpe.ffi.os
+import harpe.ffi.mimetypes
 import harpe.logging.logger
 import harpe.Model
 import harpe.Model.*
@@ -25,7 +27,10 @@ import harpe.Tool
 import harpe.Tool.*
 
 section Agent
-  //[ Drive one user turn
+  //[ No files sent with the question — the default for `ask`'s `attachments`. //]
+  private def NoAttachments: List[String] = []
+
+  //[ Ask once: drive one user turn and return everything it produced
     !
     ! Call the model (with retries), run any tool calls it requests, and repeat
     ! until it replies with plain text.
@@ -33,16 +38,25 @@ section Agent
     ! Every input is a parameter with a default, so a turn is whatever the
     ! caller says it is and no subset of these is privileged as "the agent":
     !
-    !     Agent.runTurn("hello")
+    !     Agent.ask("hello")
     !
     ! answers with a bare model and nothing else, while a driver passes its own
-    ! brain, tools, routes, and context. `input` coerces from a plain string
-    ! (see `stringInput`), so the short form needs no constructor.
+    ! brain, tools, and context.
     !
-    ! The `context` owns the transcript: the engine marks it, appends the user's
-    ! input and then each assistant reply and tool-result batch, and asks it to
-    ! compose `(system, messages)` at the turn's start. Structured transcript
-    ! events use the ambient logger. On interruption/failure the provisional
+    ! `attachments` are paths to files the model should SEE — an image, a PDF —
+    ! sent as real content blocks where the provider takes them, and named in the
+    ! text manifest either way. Their metadata is read off disk, so a caller
+    ! never hand-writes a name, size, or mime type. A file the model should
+    ! merely know about does not belong here: name it in `message` and let the
+    ! model read it with `fs`, which is what a driver minding its token bill
+    ! does with uploads.
+    !
+    ! `context` and `transcript` both see every message, and are deliberately
+    ! separate. The context composes `(system, messages)` for the model and is
+    ! rolled back when a turn fails. The transcript records what was said and is
+    ! append-only, closing a failed turn with a terminator rather than erasing
+    ! it. Keeping them apart is what lets one conversation be replayed under a
+    ! different window or summarizer. On interruption/failure the provisional
     ! assistant/tool tail is rolled back, while the user's message remains in the
     ! context. Defaulted, it is a `NoHistory` built fresh for this call — the
     ! model still sees this turn, and nothing survives into the next one. A
@@ -60,15 +74,18 @@ section Agent
     ! mistake still possible, the same name wired twice, as it is built.) A name
     ! the model invents anyway comes back to it as an unknown tool.
   //]
-  def runTurn(
-      input: UserInput :- [stringInput],
+  def ask(
+      message: String,
+      attachments: List[String] = NoAttachments,
       brain: Model = Defaults.model,
       tools: Toolset = Toolset.empty,
       context: Context = NoHistory,
+      transcript: Transcript = Transcript.NoTranscript,
       maxToolRounds: Int = 50,
       maxRetries: Int = 4)
   : TurnData receives logger, interact =
 
+    val input = UserInput(message, filesAt(attachments))
     var rounds = 0
     var result: TurnResult = Failed("")
 
@@ -78,7 +95,7 @@ section Agent
 
     context.mark()
     context.append(input)
-    Transcript.start(input)
+    transcript.start(input)
 
     // Compose what the model sees ONCE, at the turn's start. The Session then
     // owns the intra-turn tail. The engine feeds it tool results and never
@@ -94,7 +111,7 @@ section Agent
         result = Interrupted
         context.rollback()
         context.append(input)
-        Transcript.interrupted()
+        transcript.interrupted()
         break
 
       // Once the tool budget is spent, offer no tools so the model must reply with
@@ -109,25 +126,25 @@ section Agent
           result = Interrupted
           context.rollback()
           context.append(input)
-          Transcript.interrupted()
+          transcript.interrupted()
           break
 
         case GaveUp(detail) =>
           result = Failed(detail)
           context.rollback()
           context.append(input)
-          Transcript.failed(detail)
+          transcript.failed(detail)
           break
 
         case Got(reply, usage) =>
           context.observe(usage)
           context.append(reply)
           produced = produced + reply
-          Transcript.append(reply)
+          transcript.append(reply)
 
           if reply.calls.isEmpty then
             result = Success
-            Transcript.commit()
+            transcript.commit()
             break
 
           if reply.text.trim != "" then
@@ -159,104 +176,128 @@ section Agent
             context.rollback()
             context.append(input)
             result = Interrupted
-            Transcript.interrupted()
+            transcript.interrupted()
             break
 
           else
             val results = ToolResults(toolResults)
             context.append(results)
             produced = produced + results
-            Transcript.append(results)
+            transcript.append(results)
             pending = toolResults
             rounds = rounds + 1
     end // while
 
-    // A rolled-back turn contributes nothing to history, and `Transcript.turns`
+    // A rolled-back turn contributes nothing to history, and `Journal.records`
     // replays it with no messages — so drop them here too, and the live value and
     // the reloaded one agree.
     if result is Success then TurnData(input, produced, result)
     else TurnData(input, [], result)
-end
 
-//[ The result of fetching one model reply (after any retries)
-  !
-  ! The assistant message, a give-up (fatal error or retries exhausted), or an interruption.
-//]
-private union Fetched =
-    Got(message: Assistant, usage: Usage)
-  | GaveUp(detail: String)
-  | Stopped
+  //[ `Attachment` metadata for each path
+    !
+    ! Everything an `Attachment` needs is derivable from a path on disk, so a
+    ! caller naming a file never hand-writes its name, size, or mime type.
+    !
+    ! A path that is not a file aborts. Dropping it instead would answer the
+    ! question against fewer files than were asked about, and say so nowhere.
+  //]
+  private def filesAt(paths: List[String]): List[Attachment] =
+    var out: List[Attachment] = []
 
-//[ Exponential backoff between retries: 1s, 2s, 4s, … capped at 30s.  //]
-private def backoffSeconds(attempt: Int): Float =
-  var d = 1.0
-  var i = 1
-  while i < attempt do
-    d = d * 2.0
-    i = i + 1
+    for p in paths do
+      val abs = os.path.abspath(p)
+      if !os.path.isfile(abs) then
+        abort "no such file: '\{p}'"
 
-  if d > 30.0 then 30.0 else d
+      val fileName = os.path.basename(abs)
+      val mime = mimetypes.guessType(fileName).getOrElse("application/octet-stream")
+      out = out + Attachment(fileName, os.path.getsize(abs), mime, path = abs)
 
-//[ Ask the model for one reply
-  !
-  ! Retry transient errors with exponential backoff up to `maxRetries`.
-  !
-  ! A `None` from `ask` (a cancelled request), or interrupt firing during a
-  ! backoff wait, ends the attempt.
-  !
-  ! Progress is reported through `interact.emit`. A terminal error is returned as
-  ! `Failed(detail)`.
-//]
-private def fetchReply(
-    session: Session, results: List[ToolResult], tools: List[Tool],
-    maxRetries: Int, interact: Interact)
-: Fetched receives logger =
+    out
 
-  var attempt = 0
-  var outcome: Fetched = GaveUp("")
+  //[ The result of fetching one model reply (after any retries)
+    !
+    ! The assistant message, a give-up (fatal error or retries exhausted), or an interruption.
+  //]
+  private union Fetched =
+      Got(message: Assistant, usage: Usage)
+    | GaveUp(detail: String)
+    | Stopped
 
-  while true do
-    if interact.cancelled then
-      outcome = Stopped
-      break
+  //[ Exponential backoff between retries: 1s, 2s, 4s, … capped at 30s.  //]
+  private def backoffSeconds(attempt: Int): Float =
+    var d = 1.0
+    var i = 1
+    while i < attempt do
+      d = d * 2.0
+      i = i + 1
 
-    interact.emit: ModelRequestStarted(attempt, maxRetries)
+    if d > 30.0 then 30.0 else d
 
-    // `reply` is idempotent — the Session commits `results` only on success, so
-    // every attempt (including retries) passes the same `results`.
-    val res = session.reply(results, tools)
+  //[ Ask the model for one reply
+    !
+    ! Retry transient errors with exponential backoff up to `maxRetries`.
+    !
+    ! A `None` from `ask` (a cancelled request), or interrupt firing during a
+    ! backoff wait, ends the attempt.
+    !
+    ! Progress is reported through `interact.emit`. A terminal error is returned as
+    ! `Failed(detail)`.
+  //]
+  private def fetchReply(
+      session: Session, results: List[ToolResult], tools: List[Tool],
+      maxRetries: Int, interact: Interact)
+  : Fetched receives logger =
 
-    interact.emit: ModelRequestEnded
+    var attempt = 0
+    var outcome: Fetched = GaveUp("")
 
-    if interact.cancelled then
-      outcome = Stopped
-      break
-
-    match res
-      case Reply(message, usage) =>
-        outcome = Got(message, usage)
+    while true do
+      if interact.cancelled then
+        outcome = Stopped
         break
 
-      case Fatal(detail) =>
-        logger.error("harpe.model.request", detail)
-        outcome = GaveUp(detail)
+      interact.emit: ModelRequestStarted(attempt, maxRetries)
+
+      // `reply` is idempotent — the Session commits `results` only on success, so
+      // every attempt (including retries) passes the same `results`.
+      val res = session.reply(results, tools)
+
+      interact.emit: ModelRequestEnded
+
+      if interact.cancelled then
+        outcome = Stopped
         break
 
-      case Transient(detail) =>
-        attempt = attempt + 1
-        if attempt > maxRetries then
-          logger.error("harpe.model.request", detail, "retries" ~ maxRetries)
+      match res
+        case Reply(message, usage) =>
+          outcome = Got(message, usage)
+          break
+
+        case Fatal(detail) =>
+          logger.error("harpe.model.request", detail)
           outcome = GaveUp(detail)
           break
 
-        else
-          val delay = backoffSeconds(attempt)
-          logger.warn("harpe.model.request", detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
-          interact.emit: TransientError(detail, delay)
-          // pause returns true if cancellation fired during the backoff.
-          if interact.pause(delay) then
-            outcome = Stopped
+        case Transient(detail) =>
+          attempt = attempt + 1
+          if attempt > maxRetries then
+            logger.error("harpe.model.request", detail, "retries" ~ maxRetries)
+            outcome = GaveUp(detail)
             break
-  end // while
 
-  outcome
+          else
+            val delay = backoffSeconds(attempt)
+            logger.warn("harpe.model.request", detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
+            interact.emit: TransientError(detail, delay)
+            // pause returns true if cancellation fired during the backoff.
+            if interact.pause(delay) then
+              outcome = Stopped
+              break
+    end // while
+
+    outcome
+  end // fetchReply
+
+end // agent

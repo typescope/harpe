@@ -34,7 +34,7 @@ private section CompatibleChat
 
   def imageBlocks(attachments: List[Attachment]): py.List =
     val blocks = py.list()
-    for a in attachments if a.inline && isInlineImage(a.mime) do
+    for a in attachments if isInlineImage(a.mime) do
       match readInlineBase64(a.path)
       case Some(data) =>
         blocks.append:
@@ -89,8 +89,6 @@ private section CompatibleChat
       end
       i = i + 1
 
-    if rendered.transient != "" then
-      messages.append(py.dict("role" ~ "user", "content" ~ rendered.transient))
     messages
 
   def parseResponse(response: py.Dynamic): Assistant =

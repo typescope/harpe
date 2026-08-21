@@ -117,14 +117,16 @@ returns an error if the name does not match a file in your data directory — fi
 name (or write the file) and try again. A file you write is **not** shown to the
 user until you `sendFile` it.
 
-## Working memory
+## Working notes
 
-You have a small working memory: named notes that persist across turns and are
-included in your context each turn. Use it so you don't lose track over a longer task.
+Nothing you say persists except the conversation itself, and the conversation is
+windowed — older turns fall out. For anything that must survive that, keep a
+`NOTES.md` in your data directory and maintain it with `fs`:
 
-- `updateMemory(key, value)` — write or replace a note. To edit, read the current
-  value first, then write the full revised value.
-- `readMemory(key)` / `listMemory()` — read one note / list your note keys.
+```jo
+fs.write("NOTES.md", updated)
+```
 
-Keep notes like `goal`, `plan`, `todos`, and `facts` up to date as you work, and
-keep each concise.
+Read it back at the start of a longer task, and update it when the goal, the
+plan, or an important fact changes. Keep it short — it is a working scratchpad,
+not a log. Nothing reads it but you.

@@ -14,11 +14,11 @@
 namespace harpe.web
 import harpe.ffi.sys
 import harpe.ffi.signal
-import harpe.ffi.builtins
 import harpe.ffi.dotenv
 import harpe.ffi.file
 
 import jo.IO.stdout
+import harpe.Http
 import harpe.Workspace
 import harpe.Defaults
 import harpe.workspace
@@ -45,24 +45,10 @@ private def serve(): Unit receives stdout, workspace =
   val host = os.getenv("HOST", "127.0.0.1")
   val port = Int.parse(os.getenv("PORT", "8765")) rescue None => 8765
 
-  // The WSGI app is a thin adapter onto the server. The runtime calls it with
-  // (environ, start_response) per request.
-  val app = (environ: py.Dynamic, startResp: py.Dynamic) =>
-    server.handle(environ, startResp)
-
-  // A THREADED WSGI server: each request runs on its own thread, so the page
-  // and `/api/stop` stay responsive while a long turn runs. Turns within one
-  // session are still serialized by the session lock, and the shared model
-  // client is thread-safe. daemon_threads lets Ctrl-C exit without joining
-  // in-flight workers.
-  val wsgi = py.module("wsgiref.simple_server")
-  val ThreadingMixIn = py.module("socketserver").ThreadingMixIn
-  val threadedServer = builtins.newType:
-    "ThreadingWSGIServer"
-    py.tuple(ThreadingMixIn, wsgi.WSGIServer)
-    py.dict("daemon_threads" ~ true)
-
-  val httpd = wsgi.make_server(host, port, app, server_class = threadedServer)
+  // `Http.server` owns the threading: one request per thread, so the page and
+  // `/api/stop` stay responsive while a long turn runs. Turns within a session
+  // are still serialized by its lock, and the shared model client is thread safe.
+  val httpd = Http.server: host, port, () => server.route()
 
   println """
 

@@ -81,13 +81,11 @@ def run(): Unit receives stdout, logger =
   val nix = new NoInteract
 
   // --- FullContext: entire transcript kept verbatim, no windowing ---
-  val fmem = new Memory
-  val fullctx = new FullContext("SYS", fmem, [])
+  val fullctx = new FullContext("SYS", [])
 
   val empty = fullctx.render(nix)
   check("full: empty transcript renders zero messages", empty.messages.size == 0)
   check("full: system prompt is preserved", empty.system == "SYS")
-  check("full: no memory means empty transient", empty.transient == "")
 
   fullctx.append(user("first"))
   fullctx.append(asst("reply"))
@@ -99,46 +97,30 @@ def run(): Unit receives stdout, logger =
   fullctx.observe(new Usage(999, 0))
   check("full: transcript unchanged after observe", fullctx.render(nix).messages.size == 4)
 
-  fmem.set("k", "v")
-  val mrender = fullctx.render(nix)
-  check("full: memory renders in the transient tail", mrender.transient.contains("v"))
-  check("full: memory does not bleed into the system prompt", mrender.system == "SYS")
-
   // mark/rollback
   fullctx.mark()
   fullctx.append(user("oops"))
   check("full: message appended after mark is visible", fullctx.render(nix).messages.size == 5)
   fullctx.rollback()
   check("full: rollback restores the marked transcript", fullctx.render(nix).messages.size == 4)
-  check("full: rollback does not touch memory", fullctx.render(nix).transient.contains("v"))
 
   // initial messages are part of the transcript
   val init = [user("seed")]
-  val ictx = new FullContext("BASE", new Memory, init)
+  val ictx = new FullContext("BASE", init)
   check("full: initial messages are included in the first render", ictx.render(nix).messages.size == 1)
   ictx.append(asst("hi"))
   check("full: appends accumulate on top of initial messages", ictx.render(nix).messages.size == 2)
 
   // --- WindowedContext: memory rendered as the transient tail ---
-  val mem = new Memory
-  val ctx = new WindowedContext("BASE", mem, [])
+  val ctx = new WindowedContext("BASE", [])
   ctx.append(user("hi"))
   ctx.append(asst("hello"))
 
   val plain = ctx.render(nix)
-  check("render without memory leaves system as base", plain.system == "BASE")
-  check("render without memory leaves the transient empty", plain.transient == "")
+  check("render leaves system as the base prompt", plain.system == "BASE")
   check("render passes the transcript through", plain.messages.size == 2)
 
-  mem.set("goal", "win")
-  mem.set("todos", "- a\n- b")
-
-  val withMem = ctx.render(nix)
-  check("memory does not leak into the system prompt", withMem.system == "BASE")
-  check("a memory update is visible to the next render", withMem.transient.contains("goal") && withMem.transient.contains("todos"))
-  check("render puts memory values in the transient tail", withMem.transient.contains("win") && withMem.transient.contains("- a\n- b"))
-
-  // --- mark/rollback: the window restores. Memory stays ---
+  // --- mark/rollback: the window restores ---
   ctx.mark()
   ctx.append(user("oops"))
   ctx.append(asst("half-done"))
@@ -146,7 +128,6 @@ def run(): Unit receives stdout, logger =
 
   ctx.rollback()
   check("rollback restores the pre-turn window", ctx.render(nix).messages.size == 2)
-  check("rollback leaves memory alone", ctx.render(nix).transient.contains("win"))
 
   // --- truncate: small transcript is unchanged ---
   val a = [user("AAAA"), asst("aaaa")]   // 8 chars
@@ -181,8 +162,7 @@ def run(): Unit receives stdout, logger =
 
   val interact = new CompactInteract
 
-  val smem = new Memory
-  val sctx = new SummarizingContext("BASE", smem, [], 30, 16, rendered => distiller.distill(rendered))
+  val sctx = new SummarizingContext("BASE", [], 30, 16, rendered => distiller.distill(rendered))
 
   for m in turn8("AAAA", "aaaa") ++ turn8("BBBB", "bbbb") ++ turn8("CCCC", "cccc") do
     sctx.append(m)
@@ -198,7 +178,6 @@ def run(): Unit receives stdout, logger =
     sctx.append(m)
 
   // Reported usage over the high-water mark: compact down to the low-water window.
-  smem.set("goal", "win")
   sctx.observe(new Usage(40, 0))
   val over = sctx.render(interact)
   check("summarizing: compaction keeps the low-water window", over.messages.size == 4)
@@ -206,8 +185,6 @@ def run(): Unit receives stdout, logger =
   check("summarizing: one distillation call", distiller.prompts.size == 1)
   check("summarizing: summary rendered into the system", over.system.contains("Conversation summary") && over.system.contains("DISTILLED"))
   check("summarizing: base stays at the front", over.system.startsWith("BASE"))
-  check("summarizing: memory renders in the transient tail", over.transient.contains("win"))
-  check("summarizing: memory does not leak into the system prompt", !over.system.contains("win"))
   check("summarizing: compaction event emitted", interact.compactions == 1)
 
   val excerpt = distiller.prompts.get(0).asString
@@ -235,7 +212,7 @@ def run(): Unit receives stdout, logger =
   val failing = new CompactInteract
   val fctx =
     val model = new RecordingDistiller(None)
-    new SummarizingContext("BASE", new Memory, [], 30, 16, rendered => model.distill(rendered))
+    new SummarizingContext("BASE", [], 30, 16, rendered => model.distill(rendered))
 
   for m in turn8("AAAA", "aaaa") ++ turn8("BBBB", "bbbb") ++ turn8("CCCC", "cccc") ++ turn8("DDDD", "dddd") ++ turn8("EEEE", "eeee") do
     fctx.append(m)
@@ -250,7 +227,7 @@ def run(): Unit receives stdout, logger =
   val interact2 = new CompactInteract
   val rctx =
     val model = new RecordingDistiller(Some("DISTILLED"))
-    new SummarizingContext("BASE", new Memory, [], 30, 16, rendered => model.distill(rendered))
+    new SummarizingContext("BASE", [], 30, 16, rendered => model.distill(rendered))
 
   for m in turn8("AAAA", "aaaa") ++ turn8("BBBB", "bbbb") ++ turn8("CCCC", "cccc") do
     rctx.append(m)

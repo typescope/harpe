@@ -1,0 +1,202 @@
+//[ Http.jo
+  !
+  ! WSGI plumbing: reading a request, and writing a response.
+  !
+  ! Nothing here knows what an agent is. It exists because harpe serves HTTP in
+  ! more than one place — the journal viewer here, a driver's own pages — and
+  ! status lines, verb handling and body reading are worth having a single copy
+  ! of. A second `405`-vs-`501` rule is the kind of difference nobody notices
+  ! until it matters.
+  !
+  ! THE REQUEST IS AMBIENT. A server binds one per request and every function
+  ! here reads it, so a handler that wants the body asks for `Http.readBody()`
+  ! rather than being handed an `environ` to pass on. That is why route handlers
+  ! carry neither `environ` nor `startResponse`: they never touch either except
+  ! through this file.
+  !
+  ! Deliberately thin. Cookies, sessions, TLS detection and base-URL resolution
+  ! are application policy, not plumbing, and belong to whoever needs them.
+//]
+
+namespace harpe
+
+import harpe.ffi.json
+import harpe.ffi.builtins
+
+section Http
+  //[ The verb, as a value rather than a string
+    !
+    ! Closed on purpose: these six are what a server here understands, and
+    ! anything else is refused at the door rather than carried inward as a string
+    ! nothing will ever match. `Head` and `Options` are named because browsers,
+    ! proxies and health checkers really do send them — they match no route, but
+    ! they are a deliberate 404 rather than an accident of `method == "GET"`
+    ! being false.
+    !
+    ! `Options` rather than `Option`, which is Jo's own.
+  //]
+  section Verb
+    union Method = Get | Post | Put | Delete | Head | Options
+  end
+
+  //[ One WSGI exchange: what was asked, and the callable that begins the answer
+    !
+    ! `startResponse` is not part of the request, strictly — it is the response
+    ! side. It rides here because WSGI hands the two over together and they are
+    ! never wanted apart, and splitting them would put a second `receives` on
+    ! every handler to no end.
+  //]
+  class Request(method: Verb.Method, path: String, environ: py.Dynamic, startResponse: py.Dynamic)
+
+  //[ Request patterns keep the verb and path test together at dispatch sites.
+    ! A plain string matches an exact path; Jo's regex strings retain their
+    ! normal capture behaviour when supplied as the `path` pattern.
+  //]
+  pattern Get(path: String): Partial[Request] =
+    case asked if asked.method is Verb.Get then path = asked.path
+
+  pattern Post(path: String): Partial[Request] =
+    case asked if asked.method is Verb.Post then path = asked.path
+
+  //[ A path split into its segments, for routing on the parts of one
+    !
+    ! Composes with the verb patterns, so a route reads as the shape it matches:
+    !
+    !     case Http.Get(Http.Segments ["sessions", id])        => …
+    !     case Http.Get(Http.Segments ["sessions", id, "raw"]) => …
+    !
+    ! Empty segments are dropped, so `/sessions/`, `/sessions`, and
+    ! `//sessions//` all match the same way. `/` is the empty list.
+  //]
+  pattern Segments(parts: List[String]): Partial[String] =
+    case path then parts = segments(path)
+
+  //[ `"/sessions/42/"` as `["sessions", "42"]`. //]
+  def segments(path: String): List[String] =
+    path.split("/").exclude(part => part == "")
+
+  //[ The request being served. Bound once per request by the server. //]
+  param request: Request
+
+  //[ Read one out of what WSGI handed over, or None for a verb not implemented.
+    ! The only place a raw `REQUEST_METHOD` string is looked at.
+  //]
+  def requestFrom(environ: py.Dynamic, startResponse: py.Dynamic): Option[Request] =
+    match verb(environ.get("REQUEST_METHOD", "GET").asString)
+    case None => None
+    case Some(asked) =>
+      Some:
+        new Request:
+          asked
+          environ.get("PATH_INFO", "/").asString
+          environ
+          startResponse
+
+  private def verb(raw: String): Option[Verb.Method] =
+    if raw == "GET" then Some(Verb.Get)
+    else if raw == "POST" then Some(Verb.Post)
+    else if raw == "PUT" then Some(Verb.Put)
+    else if raw == "DELETE" then Some(Verb.Delete)
+    else if raw == "HEAD" then Some(Verb.Head)
+    else if raw == "OPTIONS" then Some(Verb.Options)
+    else None
+
+  //[ A verb this server does not implement — TRACE, PATCH, something invented
+    !
+    ! 501 rather than 405: 405 says the method is wrong for this resource, and
+    ! this refusal is made before any path is looked at. It is also the one
+    ! response written without an ambient request, since refusing the verb is
+    ! precisely what stops one being built.
+  //]
+  def unsupportedMethod(startResponse: py.Dynamic): py.List =
+    py.call:
+      startResponse
+      "501 Not Implemented"
+      py.list(py.tuple("Content-Type", "text/plain; charset=utf-8"))
+    py.list(py.dynamic("not implemented").encode())
+
+  //[ Read and decode a request body using its CONTENT_LENGTH. //]
+  def readBody(): String receives request =
+    val raw = request.environ.get("CONTENT_LENGTH", "").asString
+    val length = Int.parse(raw) rescue None => 0
+    request.environ.get("wsgi.input").read(length).decode().asString
+
+  //[ The request body as a JSON object, or an empty one
+    !
+    ! A missing, empty, or malformed body yields `{}` rather than raising, so a
+    ! handler's own validation answers with its own 400 instead of the request
+    ! dying in a traceback. A client that sends nothing and a client that sends
+    ! `{}` are the same thing to every caller here.
+  //]
+  def readJson(): py.Dict receives request =
+    match py.try(json.loads(readBody()))
+    case Ok(value) =>
+      if builtins.typeName(value) == "dict" then value.cast[py.Dict] else py.dict()
+    case Err(_) => py.dict()
+
+  def queryParam(key: String): String receives request =
+    val qs = request.environ.get("QUERY_STRING", "").asString
+    val params = py.module("urllib.parse").parse_qs(qs).cast[py.Dict]
+    if params.contains(key) then params.get(key).cast[py.List].get(0).asString else ""
+
+  //[ A complete, non-streamed response from a string body. //]
+  def respond(status: String, ctype: String, body: String): py.List receives request =
+    val headers = py.list:
+      py.tuple("Content-Type", ctype)
+      py.tuple("Cache-Control", "no-store")
+
+    py.call(request.startResponse, status, headers)
+    py.list(py.dynamic(body).encode())
+
+  def respondHtml(body: String): py.List receives request =
+    respond("200 OK", "text/html; charset=utf-8", body)
+
+  def respondJson(dict: py.Dict): py.List receives request =
+    respond: "200 OK", "application/json", json.dumps(dict)
+
+  //[ A streamed response: the headers go out now, and the caller writes into the
+    ! returned callable as it has more to send.
+    !
+    ! How a long-running turn reaches the tab that asked for it, a line at a
+    ! time, instead of arriving whole at the end.
+  //]
+  def beginStream(ctype: String): py.Dynamic receives request =
+    val headers = py.list:
+      py.tuple("Content-Type", ctype)
+      py.tuple("Cache-Control", "no-cache")
+    py.call(request.startResponse, "200 OK", headers)
+
+  //[ A response whose body is bytes rather than text, with the caller's headers. //]
+  def respondBytes(status: String, headers: py.List, body: py.Dynamic): py.List receives request =
+    py.call(request.startResponse, status, headers)
+    py.list(body)
+
+  def notFound(): py.List receives request =
+    respond: "404 Not Found", "application/json", json.dumps(py.dict("error" ~ "not_found"))
+
+  //[ A threaded WSGI server that binds the ambient request and calls `route`
+    !
+    ! One request per thread, so a page stays responsive while another request
+    ! is doing something slow — a long agent turn, a large file read. Whatever
+    ! the route touches must therefore be safe to touch concurrently; a server
+    ! that serializes work does so with its own lock, not by being single
+    ! threaded. `daemon_threads` lets Ctrl-C exit without joining in-flight
+    ! workers.
+    !
+    ! Returns the server rather than serving: the caller prints its banner,
+    ! installs signal handlers, and decides when to `serve_forever`.
+  //]
+  def server(host: String, port: Int, route: () => py.List receives request): py.Dynamic =
+    val app = (environ: py.Dynamic, startResponse: py.Dynamic) =>
+      match requestFrom(environ, startResponse)
+      case None        => unsupportedMethod(startResponse)
+      case Some(asked) => with request = asked in route()
+
+    val wsgi = py.module("wsgiref.simple_server")
+    val threaded = builtins.newType:
+      "ThreadingWSGIServer"
+      py.tuple(py.module("socketserver").ThreadingMixIn, wsgi.WSGIServer)
+      py.dict("daemon_threads" ~ true)
+
+    wsgi.make_server(host, port, app, server_class = threaded)
+end

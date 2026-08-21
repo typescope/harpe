@@ -52,7 +52,7 @@ end
   ! The host-side code that actually runs when the model calls a tool. It is NOT
   ! part of `Tool`: the spec is a constant the model reads, while the handler is
   ! written where the driver's own context is in scope — a session's data
-  ! directory, its memory store, its chat id. That is what lets a handler close
+  ! directory, its chat id, its API client. That is what lets a handler close
   ! over typed values instead of receiving them through an untyped bag.
   !
   ! `logger` and `interact` stay ambient, so a driver builds its `Toolset` once
@@ -83,8 +83,8 @@ section Tool
     ! - `result` is the text fed back to the model
     ! - `summary` is the one-line status shown in the console
     ! - `attachments` is any file the tool wants to show the model directly (not
-    !   just reference by name) — e.g. `uploadMedia` marking a file `inline` so
-    !   the render layer can send it as a real image/document content block.
+    !   just reference by name) — e.g. `uploadMedia` returning the file so the
+    !   render layer sends it as a real image/document content block.
     !   `[]` for the ordinary, text-only case.
   //]
   class RunOutcome(result: String, summary: String, attachments: List[Attachment])
@@ -122,8 +122,8 @@ section Tool
 
   //[ The result of running a tool call, fed back to the model next turn.
     !
-    ! `attachments` mirrors `RunOutcome.attachments` — carried through so the provider render
-    ! layer can decide whether to inline it (see `RunOutcome`).
+    ! `attachments` mirrors `RunOutcome.attachments` — carried through for the
+    ! provider render layer to send as content blocks (see `RunOutcome`).
   //]
   class ToolResult(id: String, content: String, attachments: List[Attachment])
 

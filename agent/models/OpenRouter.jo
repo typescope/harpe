@@ -36,7 +36,7 @@ private section OpenRouterResponses
 
   def mediaBlocks(attachments: List[Attachment]): py.List =
     val blocks = py.list()
-    for a in attachments if a.inline do
+    for a in attachments do
       if isInlineImage(a.mime) then
         match readInlineBase64(a.path)
         case Some(data) =>
@@ -151,7 +151,6 @@ private class OpenRouterSession(
     case None =>
       val initial = OpenRouterResponses.toInput(base.messages)
       for item in initial do input.append(item)
-      if base.transient != "" then input.append(py.dict("role" ~ "user", "content" ~ base.transient))
 
     for r in results do
       input.append:

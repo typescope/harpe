@@ -1,0 +1,74 @@
+//[ Transcript.jo
+  !
+  ! `Transcript` — the record of a conversation, as the ENGINE writes it.
+  !
+  ! An interface, because where a conversation is kept is an application's
+  ! choice. The framework ships `Journal`, which appends structured
+  ! records through a `Logger`, and an app that would rather hold its
+  ! conversations in a database implements this instead — `Agent.ask` cannot tell
+  ! the difference.
+  !
+  ! ONLY WHAT THE ENGINE CALLS. The bracket that marks a turn user-facing
+  ! (`request`/`response`/`turn`) is not here: a driver calls it, never `ask`.
+  ! Leaving it out keeps this interface free of the payload type, so an
+  ! application's own transcript can bracket its own types instead of passing
+  ! everything through a `Value`. Reading a transcript back is likewise the
+  ! implementation's business — see `Journal`.
+  !
+  ! DELIBERATELY SEPARATE FROM `Context`. Both see every message of a turn, and
+  ! folding one into the other would save the engine a call — but a transcript is
+  ! what was said, while a context is what the model is shown of it, plus the
+  ! system prompt. Keeping them orthogonal is what
+  ! lets one conversation be replayed under a different window or summarizer.
+//]
+
+namespace harpe
+import harpe.Model.UserInput
+import harpe.Model.Assistant
+import harpe.Model.ToolResults
+
+//[ Where a turn's records go
+  !
+  ! The engine calls `start` once, then `append` for each assistant reply and
+  ! each batch of tool results, then exactly one terminator.
+  !
+  ! An implementation records. It does NOT roll back: a failed turn appends a
+  ! terminator rather than erasing what came before, which is why the engine's
+  ! rollback goes to `Context` and never here.
+//]
+interface Transcript
+  //[ Open a turn with the input the engine is about to run. //]
+  def start(input: UserInput): Unit
+
+  //[ Record the turn's own traffic: an assistant reply, or a batch of tool results
+    !
+    ! Narrower than `Message` on purpose. A user message reaches a transcript
+    ! exactly once, through `start`, so an implementation never has to answer
+    ! what a second one would mean — and the two halves of the turn stay
+    ! distinguishable without inspecting the value.
+  //]
+  def append(message: Assistant | ToolResults): Unit
+
+  def commit(): Unit
+  def interrupted(): Unit
+  def failed(detail: String): Unit
+end
+
+section Transcript
+  //[ A transcript that keeps nothing
+    !
+    ! The default for `ask`'s `transcript`, so the plainest turn runs and reports
+    ! to nobody rather than refusing. Stateless, so one shared object suffices —
+    ! and being an object, it is a qualified identifier and needs no accessor to
+    ! stand as a default value.
+  //]
+  object NoTranscript
+    view Transcript
+
+    def start(input: UserInput): Unit = pass
+    def append(message: Assistant | ToolResults): Unit = pass
+    def commit(): Unit = pass
+    def interrupted(): Unit = pass
+    def failed(detail: String): Unit = pass
+  end
+end

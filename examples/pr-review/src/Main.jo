@@ -30,12 +30,11 @@ def main(): Unit receives args, stdout =
       () => review(pr)
 
 private def review(pr: String): Unit receives stdout, workspace, logger =
-  val memory = new Memory
   val basePrompt = workspace.read("AGENT.md") rescue None => ""
   val runCode = runCodeTool(workspace.sandboxDir, 610.0)
   val skillsDir = workspace.skillsDir
 
-  val context = new FullContext(basePrompt, memory, [])
+  val context = new FullContext(basePrompt, [])
   val channel = new PrintInteract(stdout)
 
   // This agent's own context reaches its tools as ordinary arguments: the guest
@@ -50,13 +49,12 @@ private def review(pr: String): Unit receives stdout, workspace, logger =
 
   val turn =
     with interact = channel in
-      Agent.runTurn:
+      Agent.ask:
         "please start review the pr"
-        Defaults.model()
-        tools
-        context
+        brain = Defaults.model()
+        tools = tools
+        context = context
         maxToolRounds = 30
-        maxRetries = 4
 
   match turn.result
   case Success =>

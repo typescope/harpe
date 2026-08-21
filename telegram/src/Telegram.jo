@@ -31,7 +31,6 @@ import harpe.ApprovalTimedOut
 import harpe.ApprovalCancelled
 import harpe.workspace
 import harpe.Workspace
-import harpe.Memory
 import harpe.Defaults
 import harpe.Model
 import harpe.Tool
@@ -39,6 +38,10 @@ import harpe.tools.*
 import harpe.Toolset
 import harpe.Tool.ToolInput
 import harpe.context.WindowedContext
+import harpe.Transcript
+import harpe.transcript.Journal
+import harpe.logging.Value
+import harpe.logging.logger
 
 //[ The entry point //]
 def main(): Unit receives stdout =
@@ -264,7 +267,7 @@ private class TelegramBot(
 
     // Hand the message to the chat's own worker queue and return immediately, so
     // the poll loop keeps fetching updates while the turn runs.
-    dispatch(chatId, new Incoming(effectiveText, files, senderId))
+    dispatch(chatId, new Incoming("\{message.get("message_id").asInt}", effectiveText, files, senderId))
 
   //[ Resolve an inline approval button without enqueuing a new agent turn. //]
   private def handleApprovalCallback(callback: py.Dict): Unit =
@@ -441,18 +444,15 @@ private class TelegramBot(
     registryLock.acquire()
     val live = registry.contains(chatId)
     if live then
-      registry.get(chatId).cast[Session].queue.put(incoming)
+      enqueue(registry.get(chatId).cast[Session], incoming)
     registryLock.release()
 
     if !live then
       val log = Session.forSession(chatId)
-      val memoryPath = Session.memoryPath(chatId)
-      val memory = Memory.load(memoryPath)
       // `Session.load` caps the replayed transcript (a RAM backstop). The full
       // transcript stays on disk.
       val context = new WindowedContext:
         baseSystem = workspace.read("AGENT.md").getOrElse("")
-        memory = memory
         initial = Session.load(chatId)
 
       // Each chat is its own session, rooted at its own data directory:
@@ -461,18 +461,28 @@ private class TelegramBot(
       // tools.
       val dataDir = os.path.abspath(Session.dataDir(chatId))
       val tools =
-        MemoryTools.toolset(memory)
-          ++ SkillTools.toolset(harpe.workspace.skillsDir)
+        SkillTools.toolset(harpe.workspace.skillsDir)
           ++ UploadMediaTool.toolset(dataDir)
           ++ sendFile.toolset(chatId, dataDir)
           ++ runTool.toolset()
 
-      val session = new Session(chatId, log, brain, tools, context, memory, memoryPath, dataDir)
+      val session = new Session(chatId, log, brain, tools, context, dataDir)
       registryLock.acquire()
       registry.set(chatId, session)
-      session.queue.put(incoming)
+      enqueue(session, incoming)
       registryLock.release()
       startWorker(chatId, session)
+
+  //[ Queue a message for its chat's worker
+    !
+    ! The transcript's bracket is NOT opened here: a journal pairs its records in
+    ! order, and queuing while a turn is in flight would overlap two brackets.
+    ! The worker opens it when it starts the turn. How long the message waited is
+    ! recorded as an ordinary diagnostic, which is what that measurement is.
+  //]
+  private def enqueue(session: Session, incoming: Incoming): Unit =
+    session.log.log("telegram.queued", "messageId" ~ incoming.id, "text" ~ incoming.text)
+    session.queue.put(incoming)
 
   //[ The chat's worker: drain its queue, running one turn per message in arrival order
     !
@@ -496,8 +506,6 @@ private class TelegramBot(
             incoming
             client
             (id, request) => requestApproval(chatId, incoming.senderId, id, request)
-            maxToolRounds = 50
-            maxRetries = 4
 
         match turnRes
         case Ok(_)  => pass

@@ -6,7 +6,7 @@
   ! `/c/<id>` URL.
   !
   ! This layout is a *driver* decision. The section maps an id to its structured
-  ! per-session log (`forSession`, while `load` and `loadTurns` derive its views)
+  ! per-session log (`forSession`, while `load` and `loadRecords` derive its views)
   ! and scans the directory to list past sessions for the picker. Ids are
   ! time-sortable, so newest-first is just a reverse id sort.
 //]
@@ -24,12 +24,13 @@ import harpe.ApprovalRequest
 import harpe.ApprovalDecision
 import harpe.ApprovalTimedOut
 import harpe.ApprovalCancelled
-import harpe.Memory
 import harpe.Toolset
 import harpe.Tool
+import harpe.Tool.ToolInput
 import harpe.Context
 import harpe.interact
 import harpe.Transcript
+import harpe.transcript.Journal
 import harpe.TurnData
 import harpe.workspace
 import harpe.logging.JsonlLogger
@@ -37,23 +38,26 @@ import harpe.logging.Logger
 import harpe.logging.logger
 import harpe.logging.Entry
 import harpe.logging.entryFromDict
+import harpe.logging.valueFromJson
 import harpe.Model
 import harpe.Model.Message
 import harpe.Model.UserInput
+import harpe.Model.Assistant
 import harpe.Model.Attachment
 import harpe.turns.Success
 import harpe.turns.Interrupted
 import harpe.turns.Failed
+import harpe.logging.Value
 
 
 //[ Whether a session has a turn in flight.
   !
-  ! `Active` carries the `UserInput` that started the turn — the same message value
-  ! the engine runs and later commits — so a tab loading (or reloading) mid-turn can
-  ! render the pending user message immediately, before it is in the transcript, and
-  ! then subscribe to the turn's events.
+  ! `Active` carries the turn's opening transcript payload — what the user
+  ! actually sent — so a tab loading (or reloading) mid-turn renders the pending
+  ! message from the same value `/api/history` will render it from afterwards,
+  ! and then subscribes to the turn's events.
 //]
-union SessionState = Idle | Active(input: UserInput)
+union SessionState = Idle | Active(request: Value)
 
 //[ One attached event sink
   !
@@ -72,13 +76,19 @@ end
   ! Its id, its append log, and the pieces each of its turns is run with: the
   ! `brain`, the `tools` it is offered, the `routes` that run them, and the
   ! `context`, which owns the running transcript window and is therefore the one
-  ! piece that must survive between turns. Plus its working memory. A lock
+  ! piece that must survive between turns. A lock
   ! serializes turns within the session so its state stays consistent under
   ! concurrent requests.
 //]
 class Session(
-    id: String, log: Logger, brain: Model, tools: Toolset, context: Context,
-    memory: Memory, memoryPath: String)
+    id: String, log: Logger, brain: Model, tools: Toolset, context: Context)
+  //[ This session's conversation, recorded into its own log.
+    !
+    ! Typed as the concrete journal, not as `Transcript`, because `turn` — the
+    ! driver's bracket — deliberately is not on the interface.
+  //]
+  val transcript = new Journal(log)
+
   val lock = threading.lock()
 
   //[ Set (via `POST /api/stop`) to request cancellation of the running turn
@@ -208,71 +218,64 @@ class Session(
     ! other tabs may attach via `addSink`. All of them see the same stream. When
     ! the turn finishes, `idle` is set, which releases every subscriber.
   //]
-  def runTurn(input: UserInput, initiatorSink: Sink, maxToolRounds: Int, maxRetries: Int): Unit =
-    lastActive = time.now()
+  def runTurn(request: Value, prompt: String, initiatorSink: Sink): Unit =
+    // Opening the bracket HERE, outside the lock the body takes, is what makes
+    // the gap to `harpe.turn.started` the real queue wait. `turn` writes the
+    // closing record from what the body returns, so the two cannot drift.
+    transcript.turn: request, () =>
+      lastActive = time.now()
 
-    this.lock.acquire()
-    state = Active(input)
-    idle.clear()
-    val subId = addSink(initiatorSink)
+      this.lock.acquire()
+      state = Active(request)
+      idle.clear()
+      val subId = addSink(initiatorSink)
 
-    val emit: Sink = obj => this.broadcast(obj)
-    val channel = new WebInteract(emit, this.stop, (id, request) => requestApproval(id, request))
+      val emit: Sink = obj => this.broadcast(obj)
+      val channel = new WebInteract(emit, this.stop, (id, request) => requestApproval(id, request))
 
-    val turn = with logger = log, interact = channel in
-      Agent.runTurn(input, brain, tools, context, maxToolRounds, maxRetries)
+      val turn = with logger = log, interact = channel in
+        Agent.ask(prompt, brain = brain, tools = tools, context = context, transcript = transcript)
 
-    match turn.result
-    case Success =>
-      this.commit()
-      // The finished turn, rendered exactly as `/api/history` would render it once
-      // reloaded — so the page folds the live reply into its committed form (code
-      // trace, delivered files) from this event alone, with nothing to re-fetch.
-      broadcast: py.dict:
-        "type" ~ "turnFinish"
-        "rows" ~ TurnView.rows(turn, Session.existingDataDir(this.id))
+      // The driver's reading of the finished turn: how it ended, and which files
+      // the agent delivered. `sendFile` is the agent's channel for putting a file
+      // in front of the user, so its deliveries are a high-level OUTPUT of the
+      // turn — recorded here as fact, rather than inferred later by matching tool
+      // names against the journal.
+      val response = Journal.payload("sent" ~ Session.delivered(turn))
 
-    case Interrupted =>
-      this.rollback()
-      broadcast(py.dict("type" ~ "interrupted"))
+      // The same value `/api/history` will rebuild from disk, so the live view and
+      // the reloaded one are rendered from identical inputs.
+      val record = Journal.TurnRecord(request, response, turn)
 
-    case Failed(detail) =>
-      this.rollback()
-      broadcast(py.dict("type" ~ "failed", "detail" ~ detail))
+      match turn.result
+      case Success =>
+        // The finished turn, rendered exactly as `/api/history` would render it once
+        // reloaded — so the page folds the live reply into its committed form (code
+        // trace, delivered files) from this event alone, with nothing to re-fetch.
+        broadcast: py.dict:
+          "type" ~ "turnFinish"
+          "rows" ~ TurnView.rows(record, Session.existingDataDir(this.id))
 
-    case _ => pass
+      case Interrupted =>
+        broadcast(py.dict("type" ~ "interrupted"))
 
-    removeSink(subId)
-    state = Idle
-    stop.clear()
-    idle.set()
-    this.lock.release()
+      case Failed(detail) =>
+        broadcast(py.dict("type" ~ "failed", "detail" ~ detail))
+
+      case _ => pass
+
+      removeSink(subId)
+      state = Idle
+      stop.clear()
+      idle.set()
+      this.lock.release()
+      response
 
   //[ Request cancellation only when this session has a turn in flight. //]
   def requestStop(): Unit =
     match state
     case Active(_) => stop.set()
     case Idle      => pass
-
-  //[ Commit a completed turn's working memory
-    !
-    ! Transcript entries have already flowed through the structured logger
-    ! channel.
-  //]
-  private def commit(): Unit =
-    saveMemory()
-
-  //[ Finish a cancelled or failed turn
-    !
-    ! Memory is still persisted — it is deliberate and not rolled back with the
-    ! provisional assistant transcript. The engine retains the user message.
-  //]
-  private def rollback(): Unit =
-    saveMemory()
-
-  //[ Persist the working memory beside the transcript archive. //]
-  private def saveMemory(): Unit =
-    if !memory.isEmpty then Memory.save(memoryPath, memory)
 
   //[ Release the session's open journal before its stored files are removed. //]
   def close(): Unit = log.close()
@@ -349,18 +352,12 @@ section Session
   def forSession(id: String): Logger receives workspace =
     new JsonlLogger(sessionPath(id))
 
-  def memoryPath(id: String): String receives workspace =
-    val path = sessionPath(id)
-    path.substring(0, path.size - 6) + ".memory.json"
-
-  //[ Permanently remove a session's transcript, memory, and data directory. //]
+  //[ Permanently remove a session's transcript and data directory. //]
   def removeStored(id: String): Unit receives workspace =
     val transcript = sessionPath(id)
-    val memory = memoryPath(id)
     val data = workspace.relative("data/" + id)
 
     if os.path.isfile(transcript) then os.unlink(transcript)
-    if os.path.isfile(memory) then os.unlink(memory)
     if os.path.isdir(data) then py.module("shutil").rmtree(data)
 
   //[ Reconstruct this id's conversation from disk
@@ -369,11 +366,32 @@ section Session
     ! an empty conversation.
   //]
   def load(id: String): List[Message] receives workspace =
-    Transcript.fromEntries(loadEntries(id))
+    Journal.fromEntries(loadEntries(id))
 
-  //[ Reconstruct structured turns for application history. //]
-  def loadTurns(id: String): List[TurnData] receives workspace =
-    Transcript.turns(loadEntries(id))
+  //[ Reconstruct this driver's transcript for application history.
+    !
+    ! Only turns this driver bracketed. A turn some other part of the system ran
+    ! against the same session — a subagent, a maintenance job — is in the log
+    ! for auditing and is not part of the conversation the user sees.
+  //]
+  def loadRecords(id: String): List[Journal.TurnRecord] receives workspace =
+    Journal.records(loadEntries(id))
+
+  //[ The files this turn delivered, in the order the agent sent them
+    !
+    ! The turn's only high-level OUTPUT, and the whole of its closing payload.
+    ! How the turn ended is not repeated here — that is `Journal.TurnRecord.data.result`.
+    !
+    ! Names only: whether each file still exists, and its size and type, are
+    ! resolved when the page renders, so one deleted since the delivery shows as
+    ! a muted card rather than disappearing from the dialog.
+  //]
+  def delivered(turn: TurnData): Value =
+    var names: List[Value] = []
+    for m in turn.messages do
+      if m is Assistant(_, calls) then
+        for c in calls if c.name == "sendFile" do names = names + c.input.string("fileName")
+    names
 
   //[ Decode this driver's per-session JSONL file. //]
   private def loadEntries(id: String): List[Entry] receives workspace =
@@ -416,8 +434,11 @@ section Session
           startTime = time.fromRfc3339(d.get("time", "").asString)
           sawFirst = true
 
-        if title == "" && d.get("role", "").asString == "user" then
-          title = d.get("text", "").asString
+        // The turn's OPENING record, which holds what the user typed. The
+        // engine's own `harpe.turn.started` carries the model-facing text, with
+        // any file manifest appended — not a title.
+        if title == "" && d.get("category", "").asString == Journal.requestCategory then
+          title = TurnView.requestText(valueFromJson(d.get("data", py.dict())))
 
     new SessionMeta(id, if title == "" then "New chat" else title, startTime)
 end

@@ -22,7 +22,7 @@ import harpe.logging.logger
 //[ Model
   !
   ! The agent's brain. `startTurn` begins one user turn, seeded ONCE with the
-  ! `base` context (system prompt + transcript + transient tail) the `Context`
+  ! `base` context (system prompt + transcript) the `Context`
   ! composed for the user's message. The returned `Session` drives that turn's
   ! tool loop. The engine never re-renders `base` for it.
   !
@@ -56,14 +56,6 @@ section Model
     | Assistant(text: String, calls: List[ToolCall])
     | ToolResults(results: List[ToolResult])
 
-  //[ A bare string as the user's input, carrying no files
-    !
-    ! The coercion behind `runTurn`'s `input` parameter, so the plainest call is
-    ! `Agent.runTurn("hello")`. A driver that accepts uploads builds the
-    ! `UserInput` itself, with the attachments it saved.
-  //]
-  def stringInput(text: String): UserInput = UserInput(text, [])
-
   //[ Attachment
     !
     ! One file the user shared. It rides in the transcript as pure metadata —
@@ -77,18 +69,22 @@ section Model
     ! framework's: whoever creates an attachment knows where the file is, so no
     ! layer below has to be told the directory to resolve it against.
     !
-    ! `inline` marks that this attachment should ALSO be shown to the model
-    ! directly, as a real image/document content block, rather than only by
-    ! reference. It is honored only when the carrying message is the newest one
-    ! in the rendered window (see `agent/models/Anthropic.jo`, `OpenAI.jo`) — an
-    ! older message's `inline` is inert, so a past image is never silently
-    ! re-sent (and re-billed) on a later turn. `Tool.ToolResult.attachments` uses the
-    ! same type and is always fresh (a tool result exists only for the turn it
-    ! was produced in), so it inlines unconditionally within that turn. Never
-    ! persisted differently: `inline` is stored as given, the render layer alone
-    ! decides whether to act on it.
+    ! ATTACHING IS THE DECISION. An attachment here is one the model should be
+    ! SHOWN — rendered as a real image/document content block where the provider
+    ! supports the type. A file the model should merely know about is not an
+    ! attachment: name it in the message text, and let the model read it with
+    ! `fs` or pull it into view with `uploadMedia`. That choice belongs to
+    ! whoever builds the message, which is why it is not a flag here.
+    !
+    ! Only the newest message in a rendered window is shown (see
+    ! `agent/models/Anthropic.jo`, `OpenAI.jo`), so a past image is never
+    ! silently re-sent — and re-billed — on a later turn. It still rides in that
+    ! message's text manifest, so the model keeps knowing the file exists.
+    ! `Tool.ToolResult.attachments` uses the same type and is always fresh (a tool
+    ! result exists only for the turn it was produced in), so it is shown
+    ! unconditionally within that turn.
   //]
-  class Attachment(name: String, size: Int, mime: String, inline: Bool, path: String)
+  class Attachment(name: String, size: Int, mime: String, path: String)
 
   //[ The user text a provider sends for one `UserInput`
     !
@@ -107,15 +103,17 @@ section Model
   //[ Rendered
     !
     ! What the model sees for one request, composed by a `Context`: the stable
-    ! `system` prompt, the `messages` transcript window, and a `transient` tail.
+    ! `system` prompt and the `messages` transcript window.
     !
-    ! `transient` is per-request context (currently the agent's working memory)
-    ! placed AFTER the transcript — past any provider cache breakpoint — so
-    ! editing it never invalidates the cached transcript prefix. It carries no
-    ! operator authority (it renders as user content, not system), and it is `""`
+    ! There is no separate slot for per-request content. A `Context` that wants
+    ! volatile material in front of the model — working notes, retrieved
+    ! documents — appends it to `messages` as an ordinary user message, which is
+    ! all a dedicated field ever did. Putting it last keeps it past any provider
+    ! cache breakpoint, so changing it leaves the cached prefix intact, and it
+    ! carries no operator authority because it is user content, not system.
     ! when there is nothing to append.
   //]
-  class Rendered(system: String, messages: List[Message], transient: String)
+  class Rendered(system: String, messages: List[Message])
 
   //[ Usage
     !
@@ -158,8 +156,8 @@ section Model
     !
     ! `reply` `receives logger` — read at call time — so a provider can emit its
     ! token usage to the turn's logging context (see `harpe.models.logUsage`).
-    ! An inline attachment carries its own `path`, so nothing here needs to be
-    ! told a data directory to resolve it against.
+    ! An attachment carries its own `path`, so nothing here needs to be told a
+    ! data directory to resolve it against.
     !
     ! Retry contract: `reply` is IDEMPOTENT. `results` are committed to the tail
     ! only on a successful `Reply` (atomically with the assistant message), so a
@@ -189,7 +187,7 @@ section Model
         if results.isEmpty then messages
         else messages + ToolResults(results)
 
-      val res = send(new Rendered(base.system, outgoing, base.transient), tools)
+      val res = send(new Rendered(base.system, outgoing), tools)
 
       // Commit the results and the reply together — only on success.
       if res is Reply(msg, _) then

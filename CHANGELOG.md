@@ -1,5 +1,108 @@
 # Changelog
 
+## 0.5.0 — 2026-08-21
+
+Fifth developer-preview release. It separates the *transcript* — the conversation
+a user had — from the *log* of everything that happened, and removes two
+abstractions the framework had no business fixing. A driver written against 0.4.0
+needs the changes listed below.
+
+0.4.0 wrote conversation records through a `Transcript` section wired to the
+ambient logger, and every turn the engine ran produced them — a subagent's, a
+background job's, a script's. Nothing distinguished those from the user's own
+turns, so a page rendering "the conversation" was rendering whatever had passed
+through the process. A turn is now part of the transcript because a driver
+bracketed it, and both the page and the model's resumed history derive from that
+same gate.
+
+### harpe-caps 0.5.0
+
+- No changes. The capability interfaces are identical to 0.4.0. The version moves
+  with `harpe` so the two packages a project depends on always carry the same
+  number — a mismatched pair reads like a mistake even when it is correct.
+
+### harpe 0.5.0
+
+Breaking changes:
+
+- `Agent.runTurn` is now `Agent.ask`, and takes the message and its attachments
+  rather than a `UserInput`:
+
+  ```jo
+  Agent.ask("what is on this chart?", ["reports/q3.png"], brain = brain, tools = tools)
+  ```
+
+  `attachments` are paths; their name, size, and mime type are read off disk.
+  `Model.stringInput` is gone with the coercion it existed for. Note the
+  parameter order — `attachments` is second, so calls that passed `brain`
+  positionally must now name it.
+
+- `Transcript` is an interface, and the framework's implementation is `Journal`.
+  It declares only what the engine calls — `start`, `append`, `commit`,
+  `interrupted`, `failed` — and an application that keeps conversations in a
+  database implements it instead. `Agent.ask` takes a `transcript` parameter,
+  defaulting to `Transcript.NoTranscript`.
+
+  The reading side moved with it: `Transcript.turns` is gone, and
+  `Transcript.records`/`fromEntries` are now `Journal.records`/`fromEntries`.
+  `TurnRecord` is `Journal.TurnRecord`, and carries `(request, response, data)`
+  with no id — a journal holds one conversation whose turns pair in order.
+
+- A turn only enters the transcript if a driver brackets it. `Journal.turn(data,
+  work)` writes the opening record, runs the turn, and writes the closing one
+  from what the work returns; `request`/`response` write the halves separately
+  where they cannot share a call. Both payloads are opaque `Value`s the driver
+  defines and parses. Turns without a bracket stay in the log and appear in
+  neither the transcript nor the resumed history.
+
+- `Attachment` loses `inline`. Attaching a file now *is* the decision to show it
+  to the model. A driver that wants the model merely told about a file names it
+  in the message text — `Model.userContent` builds that manifest — which is what
+  the web and Telegram drivers do, so an upload costs nothing until the agent
+  reaches for it.
+
+- `Memory` and `MemoryTools` are removed. Working memory was a second way to
+  persist state next to a filesystem the agent already has. An agent that needs
+  it keeps a notes file and maintains it with `fs`; a driver that wants those
+  notes in front of the model renders them from its own `Context`.
+
+- `Rendered` loses `transient`. Every provider rendered it as one trailing user
+  message, which a `Context` can append to `messages` itself. `FullContext`,
+  `WindowedContext`, and `SummarizingContext` all take `(baseSystem, initial)`
+  now, with `SummarizingContext`'s knobs following.
+
+- Model history derives from the transcript. `Journal.fromEntries` folds only
+  bracketed turns, so what the model resumes with and what the page shows cannot
+  disagree — and a subagent sharing a session's log can no longer splice its
+  conversation into the parent's history.
+
+Added:
+
+- `Http` — WSGI plumbing shared by anything harpe serves: an ambient `Request`,
+  verb and path patterns (`Http.Get`, `Http.Post`, `Http.Segments`), body and
+  query readers, response helpers, and a threaded `Http.server`. The web driver
+  is built on it.
+
+- A journal viewer. Declare a module linking `harpe.transcript.serve` and run
+  `jo run view -- logs/sessions/<session>.jsonl` for a live browser view of one
+  session: turns as cards with their outcome, machinery shown outside them, and
+  filtering. It binds `127.0.0.1` and has no authentication.
+
+Fixed:
+
+- Web returned `500` on an empty or malformed request body across seven
+  endpoints. `Http.readJson` yields an empty object instead, so each handler's
+  own validation answers.
+
+- Web routes that never checked the method — `POST /api/info` and `GET
+  /api/message` both used to succeed — now match on verb and path together.
+
+Migration:
+
+Two things are not handled for you. Sessions recorded by 0.4.0 have no brackets,
+so they render as empty history and resume cold; convert them or accept the
+break. And `.memory.json` files are no longer read by anything.
+
 ## 0.4.0 — 2026-08-20
 
 Fourth developer-preview release. It removes the `Agent` class and wires a

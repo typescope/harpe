@@ -1,0 +1,327 @@
+//[ Journal.jo
+  !
+  ! The framework's `Transcript`: every record appended through a `Logger`, as
+  ! one structured entry per event.
+  !
+  ! Because the sink is a `Logger`, a conversation lands wherever that backend
+  ! points — `JsonlLogger`'s per-session file, a socket, a database adapter.
+  !
+  ! Whether it shares that backend with the turn's tools is the driver's call.
+  ! Handing it the same one puts a tool's diagnostics in causal order beside the
+  ! messages that caused them, which is what the bundled drivers do. Handing it a
+  ! different one keeps the conversation apart from the diagnostics. Nothing here
+  ! assumes either.
+  !
+  ! The reading half lives in the `Transcript` section (`records`,
+  ! `fromEntries`), because it decodes the `Entry` values this class writes.
+//]
+
+namespace harpe.transcript
+import harpe.ffi.time
+import harpe.util.truncate
+import harpe.Transcript
+import harpe.TurnData
+import harpe.Model.*
+import harpe.Tool.*
+import harpe.logging.*
+import harpe.turns.*
+
+//[ A transcript kept as structured log records.
+  !
+  ! `log` is the sink. A driver usually hands it the same per-session backend the
+  ! turn's tools log through, so one file holds the whole story.
+//]
+class Journal(log: Logger)
+  view Transcript
+
+  def start(input: UserInput): Unit =
+    emit("harpe.turn.started", input)
+
+  def append(message: Assistant | ToolResults): Unit =
+    emit("harpe.turn.message", message)
+
+  def commit(): Unit = log.log("harpe.turn.answered")
+  def interrupted(): Unit = log.log("harpe.turn.interrupted")
+  def failed(detail: String): Unit =
+    if detail == "" then log.log("harpe.turn.failed")
+    else log.error("harpe.turn.failed", detail)
+
+  //[ Record one user-facing turn, opening and closing its bracket around `work`
+    !
+    ! What makes a turn part of the transcript rather than machinery. `data` is
+    ! the high-level request — what the user actually did, before the engine
+    ! desugared it into a prompt — and `work` returns the closing payload, the
+    ! driver's reading of how the turn went. Neither is interpreted here.
+    !
+    ! Call it at the TOP of the handler, with whatever queue or lock the request
+    ! waits behind inside `work`: the gap between the opening record and the
+    ! `start` that eventually follows is then exactly how long the request was
+    ! queued before it became an agent turn.
+    !
+    ! Pairing the two writes in one call is why this is not on the `Transcript`
+    ! interface. `Agent.ask` never calls it — only a driver does — so leaving it
+    ! here keeps the interface to what the engine needs, and leaves an
+    ! application free to give its own transcript a bracket over its own types
+    ! rather than `Value`.
+    !
+    ! `work` throwing writes no closing record, which is correct: an unclosed
+    ! bracket is a fragment, and `records` yields nothing for it.
+    ! Where the two halves cannot share a call — a bracket that spans threads,
+    ! as when one thread queues the request and another runs it — use `request`
+    ! and `response` directly.
+  //]
+  def turn(data: Value, work: () => Value): Unit =
+    request(data)
+    response(work())
+
+  //[ See `Transcript.request`. Written as a `harpe.turn.request` record. //]
+  def request(data: Value): Unit =
+    log.log(Journal.requestCategory, "data" ~ data)
+
+  //[ See `Transcript.response`. Written as a `harpe.turn.response` record. //]
+  def response(data: Value): Unit =
+    log.log(Journal.responseCategory, "data" ~ data)
+
+  private def emit(category: String, message: Message): Unit =
+    log.logEntry(new Entry(time.now(), category, messageFields(message)))
+
+
+  private def messageFields(message: Message): Map[String, Value] =
+    val d = messageDict(message)
+    var fields = Map.empty[String, Value]
+    for k in py.iter(d.keys()) do fields = fields.add(k.asString, valueFromJson(d.get(k)))
+    fields
+
+  private def messageDict(message: Message): py.Dict =
+    match message
+    case UserInput(text, attachments) =>
+      py.dict("role" ~ "user", "text" ~ text, "attachments" ~ attachmentsDict(attachments))
+    case Assistant(text, calls) =>
+      val list = py.list()
+      for call in calls do
+        list.append(py.dict("id" ~ call.id, "name" ~ call.name, "input" ~ call.input.raw))
+      py.dict("role" ~ "assistant", "text" ~ text, "calls" ~ list)
+    case ToolResults(results) =>
+      val list = py.list()
+      for result in results do
+        list.append(py.dict("id" ~ result.id, "content" ~ result.content,
+                            "attachments" ~ attachmentsDict(result.attachments)))
+      py.dict("role" ~ "tool_results", "results" ~ list)
+
+  private def attachmentsDict(attachments: List[Attachment]): py.List =
+    val list = py.list()
+    for a in attachments do
+      list.append:
+        py.dict:
+          "name"   ~ a.name
+          "size"   ~ a.size
+          "mime"   ~ a.mime
+          "path"   ~ a.path
+    list
+end
+
+//[ Reading a journal back
+  !
+  ! The other half of what this class writes: the record categories, the payload
+  ! builder, and the folds that turn decoded `Entry` values into a transcript
+  ! (`records`) or into model history (`fromEntries`).
+  !
+  ! All of it is `Entry`-shaped, which is why it lives here and not under
+  ! `Transcript`. A transcript kept in a database reads itself back its own way,
+  ! and owes none of this.
+//]
+section Journal
+  //[ One user-facing turn: its bracket, and the journal entries it spans
+    !
+    ! There is no id. A journal holds one conversation, whose turns are recorded in
+    ! order, so an opening record pairs with the next closing one and nothing has to
+    ! be minted or matched. A driver that wants a stable handle — for retry, a
+    ! permalink, a delete — puts its own in `request`, where it is already carrying
+    ! everything else it knows about the turn.
+    !
+    ! A record is COMPLETE by construction: an opening payload, a closing one, and
+    ! the turn between them. `Journal.records` builds none for a bracket missing
+    ! any of the three, which is what a process killed mid-turn leaves behind. Such
+    ! a turn is not a conversation the user had — it is a fragment — and admitting
+    ! it here would put a null check in every consumer to render half a bubble.
+    ! The fragment is still in the journal for anyone auditing it.
+  //]
+  class TurnRecord(request: Value, response: Value, data: TurnData)
+
+  def maxResumeChars: Int = 1000000
+
+  def requestCategory: String  = "harpe.turn.request"
+  def responseCategory: String = "harpe.turn.response"
+
+  //[ Build a bracket payload — the `Value` that `request` and `response` carry
+    !
+    ! Sugar for the common case, so a driver writes its payload the way it writes
+    ! a log record:
+    !
+    !     transcript.request(id, Journal.payload("kind" ~ "upload", "file" ~ name))
+    !
+    ! Without it the map needs an explicit type — `Map[String, Value](...)` — since
+    ! a bare `Map` of strings infers `Map[String, String]` and no adapter bridges
+    ! it. A payload that is not a map (a bare string, a list) can be passed to
+    ! `request` and `response` directly.
+  //]
+  def payload(fields: ..(String ~ Value)): Value =
+    var map = Map.empty[String, Value]
+    for k ~ v in fields do map = map.add(k, v)
+    map
+
+
+  //[ Locate the user-facing turns in a journal
+    !
+    ! `turns` folds every turn in the journal. This finds only the ones a driver
+    ! bracketed with `request`/`response`. Everything else — a subagent's turn, a
+    ! background job's, a script's — is machinery: it stays in the log for
+    ! auditing and never reaches the transcript.
+    !
+    !
+    ! Only COMPLETE turns. A bracket whose response never arrived, or that holds
+    ! no turn at all, yields nothing — that is what a process killed mid-turn
+    ! leaves, and it is a fragment rather than a conversation the user had. The
+    ! fragment stays in the journal for auditing.
+  //]
+  def records(entries: List[Entry]): List[TurnRecord] =
+    var records: List[TurnRecord] = []
+
+    var open = false
+    var request: Value = ""
+    var span: List[Entry] = []
+
+    for entry in entries do
+      if entry.category == requestCategory then
+        open = true
+        request = entry.fields.getOrElse("data", "")
+        span = []
+
+      // Outside a bracket every record is machinery.
+      else if !open then pass
+
+      else if entry.category == responseCategory then
+        // No turn under the bracket means the process died before `ask` was
+        // ever reached. Nothing was said, so there is nothing to show.
+        match turnOf(span)
+        case turn: TurnData =>
+          records = records + TurnRecord(request, entry.fields.getOrElse("data", ""), turn)
+        case _ => pass
+
+        open = false
+        span = []
+
+      else span = span + entry
+
+    records
+
+  //[ Fold one turn's span of entries into the turn it describes
+    !
+    ! The parsing half of `records`. Nested turns are handled by depth:
+    ! a subagent driving `runTurn` inside a bracketed turn writes its own
+    ! `started` and terminator within the span, and only the outermost pair
+    ! becomes the result. This assumes nested turns are sequential, so that their
+    ! records nest rather than interleave.
+    !
+    ! `None` when the span holds no turn at all — the process died while the
+    ! request was still queued, before `runTurn` was ever reached. A turn that
+    ! started and never finished instead yields a `TurnData` whose own `result`
+    ! is `None`, so a crash mid-turn stays distinguishable from a crash before it.
+  //]
+  private def turnOf(entries: List[Entry]): TurnData | None =
+    var data: TurnData | None = None
+    var depth = 0
+    var user: Option[Message] = None
+    var pending: List[Message] = []
+
+    for entry in entries do
+      // Once the turn has ended, later engine records are not its own.
+      if entry.category == "harpe.turn.started" && data is None then
+        depth = depth + 1
+        if depth == 1 then
+          user = Some(messageFromDict(entryDict(entry)))
+          pending = []
+
+      else if entry.category == "harpe.turn.message" && depth == 1 then
+        pending = pending + messageFromDict(entryDict(entry))
+
+      else if isTerminator(entry.category) && depth > 0 then
+        depth = depth - 1
+        if depth == 0 then
+          match user
+          case Some(message) => data = turnFrom(message, pending, entry)
+          case None          => pass
+          user = None
+          pending = []
+
+    match data
+    case t: TurnData => t
+    case _ =>
+      match user
+      case Some(message) => TurnData(message, pending, None)
+      case None          => None
+
+  private def isTerminator(category: String): Bool =
+    category == "harpe.turn.answered"
+      || category == "harpe.turn.interrupted"
+      || category == "harpe.turn.failed"
+
+  private def turnFrom(user: Message, pending: List[Message], terminator: Entry): TurnData =
+    if terminator.category == "harpe.turn.answered" then TurnData(user, pending, Success)
+    else if terminator.category == "harpe.turn.interrupted" then TurnData(user, [], Interrupted)
+    else TurnData(user, [], Failed(entryDict(terminator).get("error", "").asString))
+
+  //[ Derive model history from the transcript
+    !
+    ! What the model resumes with is what the user sees, because both come from
+    ! `records`. A turn outside the transcript — a subagent's, a background
+    ! job's, a fragment left by a process killed mid-turn — is in the journal for
+    ! auditing and in neither of them. Without that gate a subagent running
+    ! against a session's log would splice its own conversation into the parent's
+    ! history, which is a much worse failure than a missing scrollback.
+    !
+    ! User messages survive every outcome, since a driver closes the bracket on
+    ! failures too. Only answered turns contribute their assistant and tool
+    ! messages. The resume cap drops whole oldest turns.
+  //]
+  def fromEntries(entries: List[Entry]): List[Message] =
+    var messages: List[Message] = []
+    for record in records(entries) do
+      messages = messages + record.data.user
+      if record.data.result is Success then messages = messages ++ record.data.messages
+    truncate(messages, maxResumeChars)
+
+  private def attachmentsFrom(list: py.List): List[Attachment] =
+    var attachments: List[Attachment] = []
+    for item in list do
+      val a = item.cast[py.Dict]
+      val attachment = Attachment:
+        a.get("name", "").asString
+        a.get("size", 0).asInt
+        a.get("mime", "").asString
+        path = a.get("path", "").asString
+      attachments = attachments + attachment
+    attachments
+
+  private def messageFromDict(d: py.Dict): Message =
+    val role = d.get("role", "").asString
+    if role == "user" then
+      UserInput(d.get("text", "").asString, attachmentsFrom(d.get("attachments", py.list()).cast[py.List]))
+    else if role == "assistant" then
+      var calls: List[ToolCall] = []
+      for item in d.get("calls", py.list()).cast[py.List] do
+        val c = item.cast[py.Dict]
+        calls = calls + ToolCall(c.get("id", "").asString, c.get("name", "").asString,
+                                ToolInput(c.get("input", py.dict()).cast[py.Dict]))
+      Assistant(d.get("text", "").asString, calls)
+    else
+      var results: List[ToolResult] = []
+      for item in d.get("results", py.list()).cast[py.List] do
+        val r = item.cast[py.Dict]
+        val toolResult = ToolResult:
+          r.get("id", "").asString
+          r.get("content", "").asString
+          attachmentsFrom(r.get("attachments", py.list()).cast[py.List])
+        results = results + toolResult
+      ToolResults(results)
+end
