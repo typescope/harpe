@@ -2,10 +2,10 @@
   !
   ! The `uploadMedia` tool: the model's channel for asking to actually SEE a file
   ! in its data directory — a photo, a chart, a scan with no legible text —
-  ! rather than only reading text out of it. Marking the returned `Attachment`
-  ! `inline` tells the provider render layer (`agent/models/Anthropic.jo`,
-  ! `OpenAI.jo`) to send the file's bytes as a real image/document content block
-  ! on the model's very next request. See `docs/content/concepts/media.md`.
+  ! rather than only reading text out of it. Returning the file as an
+  ! `Attachment` tells the provider render layer (`agent/models/Anthropic.jo`,
+  ! `OpenAI.jo`) to send its bytes as a real image/document content block on the
+  ! model's very next request. See `docs/content/concepts/media.md`.
   !
   ! Gated to the mime types the vision APIs actually accept
   ! (`harpe.models.InlineMedia`) — anything else comes back as a clear error
@@ -81,5 +81,5 @@ section UploadMediaTool
       new RunOutcome:
         "'\{baseName}' is attached below — look at it directly in your next reply."
         "uploadMedia · \{baseName}"
-        attachments = [Attachment(baseName, os.path.getsize(path), mime, inline = true, path = path)]
+        attachments = [Attachment(baseName, os.path.getsize(path), mime, path = path)]
 end

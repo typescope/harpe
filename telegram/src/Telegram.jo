@@ -39,6 +39,9 @@ import harpe.tools.*
 import harpe.Toolset
 import harpe.Tool.ToolInput
 import harpe.context.WindowedContext
+import harpe.Transcript
+import harpe.logging.Value
+import harpe.logging.logger
 
 //[ The entry point //]
 def main(): Unit receives stdout =
@@ -264,7 +267,7 @@ private class TelegramBot(
 
     // Hand the message to the chat's own worker queue and return immediately, so
     // the poll loop keeps fetching updates while the turn runs.
-    dispatch(chatId, new Incoming(effectiveText, files, senderId))
+    dispatch(chatId, new Incoming("\{message.get("message_id").asInt}", effectiveText, files, senderId))
 
   //[ Resolve an inline approval button without enqueuing a new agent turn. //]
   private def handleApprovalCallback(callback: py.Dict): Unit =
@@ -441,7 +444,7 @@ private class TelegramBot(
     registryLock.acquire()
     val live = registry.contains(chatId)
     if live then
-      registry.get(chatId).cast[Session].queue.put(incoming)
+      enqueue(registry.get(chatId).cast[Session], incoming)
     registryLock.release()
 
     if !live then
@@ -470,9 +473,32 @@ private class TelegramBot(
       val session = new Session(chatId, log, brain, tools, context, memory, memoryPath, dataDir)
       registryLock.acquire()
       registry.set(chatId, session)
-      session.queue.put(incoming)
+      enqueue(session, incoming)
       registryLock.release()
       startWorker(chatId, session)
+
+  //[ Queue a message, opening its transcript turn first
+    !
+    ! The bracket is written at ARRIVAL, before the message waits behind other
+    ! turns for this chat, so the gap between it and the `harpe.turn.started`
+    ! that eventually follows is exactly how long it sat in the queue. Telegram's
+    ! own `message_id` is the transcript record's id — nothing has to be minted,
+    ! and the record ties back to the message the user actually sent.
+    !
+    ! The write happens BEFORE `queue.put`, and therefore inside `registryLock`
+    ! at the live-session call site. It has to: once the message is queued, the
+    ! chat's worker can dequeue and start the turn at any moment, and a
+    ! `harpe.turn.started` landing ahead of its own `harpe.turn.request` would
+    ! leave the turn outside the transcript entirely.
+  //]
+  private def enqueue(session: Session, incoming: Incoming): Unit =
+    var names: List[Value] = []
+    for f in incoming.files do names = names + f.name
+
+    with logger = session.log in
+      Transcript.request(incoming.id, Transcript.payload("text" ~ incoming.text, "files" ~ names))
+
+    session.queue.put(incoming)
 
   //[ The chat's worker: drain its queue, running one turn per message in arrival order
     !

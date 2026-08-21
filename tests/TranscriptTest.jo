@@ -18,6 +18,7 @@ import harpe.turns.Failed
 import harpe.logging.logger
 import harpe.logging.JsonlLogger
 import harpe.logging.entryFromDict
+import harpe.logging.Value
 
 private def check(label: String, cond: Bool): Unit receives stdout =
   assert: cond, "\{label} failed"
@@ -30,6 +31,28 @@ private def readRecords(path: String): List[py.Dict] =
     if line.trim != "" then records = records + json.loads(line).cast[py.Dict]
 
   records
+
+// A string out of an opaque bracket payload.
+private def payloadField(v: Value, key: String): String =
+  match v
+  case m: Map[String, Value] =>
+    match m.getOrElse(key, "")
+    case s: String => s
+    case _         => "(not a string)"
+  case _ => "(no payload)"
+
+private def turnSize(d: TurnData): Int =
+  d.messages.size
+
+private def turnText(d: TurnData): String =
+  d.text
+
+private def turnResult(d: TurnData): String =
+  match d.result
+  case Success        => "Success"
+  case Failed(detail) => "Failed(\{detail})"
+  case None           => "None"
+  case _              => "Interrupted"
 
 def run(): Unit receives stdout =
   val call = ToolCall("c1", "runCode", ToolInput(py.dict("code" ~ "println 1")))
@@ -111,3 +134,53 @@ def run(): Unit receives stdout =
 
   sessionLog.close()
   os.unlink(path)
+
+  // --- records: the user-facing projection ---
+
+  val recPath = os.path.abspath(".build/session-log-test/sub/records.jsonl")
+  if os.path.exists(recPath) then os.unlink(recPath)
+  val recLog = new JsonlLogger(recPath)
+
+  with logger = recLog in
+    // A bracketed turn that delegates to a nested (subagent) turn partway through.
+    Transcript.request("t1", Transcript.payload("kind" ~ "upload", "file" ~ "a.png"))
+    Transcript.start(UserInput("look", []))
+    Transcript.append(Assistant("delegating", [call]))
+    Transcript.start(UserInput("subagent work", []))
+    Transcript.append(Assistant("sub answer", []))
+    Transcript.commit()
+    Transcript.append(ToolResults([ToolResult("c1", "42", [])]))
+    Transcript.append(Assistant("done", []))
+    Transcript.commit()
+    Transcript.response("t1", Transcript.payload("text" ~ "done"))
+
+    // Machinery: a turn nobody bracketed.
+    Transcript.start(UserInput("cron job", []))
+    Transcript.append(Assistant("tick", []))
+    Transcript.commit()
+
+    // Bracketed, but the process died mid-turn.
+    Transcript.request("t2", Transcript.payload("kind" ~ "chat"))
+    Transcript.start(UserInput("and this?", []))
+
+  var recEntries: List[harpe.logging.Entry] = []
+  for record in readRecords(recPath) do recEntries = recEntries + entryFromDict(record)
+
+  val recs = Transcript.records(recEntries)
+  check("only complete bracketed turns become records", recs.size == 1)
+  check("record keeps every request field", payloadField(recs.get(0).request, "file") == "a.png")
+
+  val r1 = recs.get(0)
+  check("record carries the driver's id", r1.id == "t1")
+  check("request payload round-trips", payloadField(r1.request, "kind") == "upload")
+  check("response payload round-trips", payloadField(r1.response, "text") == "done")
+  check("bracketed turn keeps its own messages", turnSize(r1.data) == 3)
+  check("nested turn does not leak into the outer one", turnText(r1.data) == "delegating\n\ndone")
+  check("bracketed turn answered", turnResult(r1.data) == "Success")
+
+  // An unclosed bracket is a fragment, not a turn the user had. It stays in the
+  // journal (the raw entries are all still there) and out of the transcript.
+  check("crash mid-turn yields no record", recs.size == 1)
+
+  recLog.close()
+  os.unlink(recPath)

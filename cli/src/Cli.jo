@@ -91,6 +91,13 @@ private def runChat(): Unit receives stdout, workspace =
 
     if userInput == "" then continue
 
+    // Open the turn's transcript bracket. The console is this driver's live UI,
+    // so nothing reads these records back today — but they are what makes a CLI
+    // journal replayable as a conversation rather than just an audit log.
+    val transcriptId = time.strftime("%Y%m%dT%H%M%S")
+    with logger = sessionLog in
+      Transcript.request(transcriptId, Transcript.payload("text" ~ userInput))
+
     val userMsg = UserInput(userInput, [])
     val runTurn = (turnInteract: Interact) =>
       with logger = sessionLog, interact = turnInteract in
@@ -116,6 +123,11 @@ private def runChat(): Unit receives stdout, workspace =
       println("  " + Style.error("· \{message}"))
 
     case _ => pass
+
+    // A bare marker: the console is this driver's UI, and how the turn ended is
+    // already in the journal. The record exists to close the bracket, nothing more.
+    with logger = sessionLog in
+      Transcript.response(transcriptId, "turnEnd")
 
     // Persist memory regardless of outcome (it is not rolled back with a turn).
     if !memory.isEmpty then Memory.save(memoryPath, memory)

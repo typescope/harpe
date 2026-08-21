@@ -31,6 +31,8 @@ import harpe.logging.Entry
 import harpe.logging.entryFromDict
 import harpe.Model
 import harpe.Tool
+import harpe.Tool.ToolInput
+import harpe.TurnData
 import harpe.Context
 import harpe.Model.Message
 import harpe.Model.UserInput
@@ -39,6 +41,7 @@ import harpe.Model.Attachment
 import harpe.turns.Success
 import harpe.turns.Interrupted
 import harpe.turns.Failed
+import harpe.logging.Value
 
 
 //[ One file the user attached to a Telegram message
@@ -56,7 +59,7 @@ class FileSpec(fileId: String, name: String, mime: String)
   ! it. This is the unit the poll loop enqueues and the worker drains —
   ! replacing the bare text string, so a message can now carry attachments.
 //]
-class Incoming(text: String, files: List[FileSpec], senderId: String)
+class Incoming(id: String, text: String, files: List[FileSpec], senderId: String)
 
 
 //[ One live conversation
@@ -90,17 +93,29 @@ private class Session(
       maxRetries: Int)
   : Unit =
     val attachments = materialize(incoming, client)
-    val userMsg = UserInput(incoming.text, attachments)
+
+    // Told, not shown: the downloaded files stay on disk and cost nothing until
+    // the agent reaches for one with `fs` or `uploadMedia`. `Model.userContent`
+    // builds the same manifest the render layer would, so what the model reads
+    // is unchanged — the token policy just lives with the driver now.
+    val userMsg = UserInput(Model.userContent(incoming.text, attachments), [])
     val channel = new TelegramInteract(client, this.id, approvalHandler)
 
     val result = with logger = log, interact = channel in
       Agent.runTurn(userMsg, brain, tools, context, maxToolRounds, maxRetries)
 
+    // Whether anything actually reached the chat. The engine cannot know it —
+    // an answered turn with empty text sends nothing — and it is the one thing
+    // worth closing the transcript's bracket with here.
+    var delivered = false
+
     match result.result
     case Success =>
       commit()
       val answer = result.finalText
-      if answer.trim != "" then client.sendMessage(this.id, answer)
+      if answer.trim != "" then
+        client.sendMessage(this.id, answer)
+        delivered = true
 
     case Interrupted =>
       rollback()
@@ -111,6 +126,13 @@ private class Session(
         if detail == "" then "Request failed. Please try again."
         else "Request failed: \{detail}"
       client.sendMessage(this.id, message)
+      delivered = true
+
+    // Close the bracket opened when the message was enqueued, on every outcome.
+    with logger = log in
+      Transcript.response:
+        incoming.id
+        Transcript.payload("delivered" ~ delivered, "sent" ~ Session.sent(result))
 
   //[ Download this turn's attached files into the session's data directory
     !
@@ -145,7 +167,6 @@ private class Session(
                 name
                 builtins.len(data)
                 mime
-                inline = false
                 path = os.path.join(dir, name)
               atts = atts + att
 
@@ -233,6 +254,19 @@ section Session
     ! `[]` if it has no file yet, so a chat seen for the first time starts
     ! empty.
   //]
+  //[ The files this turn delivered, in the order the agent sent them
+    !
+    ! `sendFile` is the agent's channel for putting a file in front of the user,
+    ! so its deliveries are a high-level OUTPUT of the turn. Recorded as fact
+    ! here rather than inferred later by matching tool names against the journal.
+  //]
+  def sent(turn: TurnData): Value =
+    var names: List[Value] = []
+    for m in turn.messages do
+      if m is Assistant(_, calls) then
+        for c in calls if c.name == "sendFile" do names = names + c.input.string("fileName")
+    names
+
   def load(chatId: String): List[Message] receives workspace =
     val path = sessionPath(chatId)
     if !file.exists(path) then []
