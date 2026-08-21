@@ -86,8 +86,16 @@ section Tool
     !   just reference by name) — e.g. `uploadMedia` returning the file so the
     !   render layer sends it as a real image/document content block.
     !   `[]` for the ordinary, text-only case.
+    ! - `success` is whether the call did what it was asked to
+    !
+    ! `success` is for CODE, `result` is for the model. A handler that refuses a
+    ! call — a name that resolves to nothing, an argument out of range — explains
+    ! itself in `result` and sets `success = false`, and the two must agree. The
+    ! model reads the prose and can correct itself. A driver reading its own
+    ! output back off the finished turn (see `harpe.web.Session.reply`) reads the
+    ! flag, so a refused call is not mistaken for work done.
   //]
-  class RunOutcome(result: String, summary: String, attachments: List[Attachment])
+  class RunOutcome(result: String, summary: String, attachments: List[Attachment], success: Bool = true)
 
   //[ Tool parameter type
     !
@@ -124,8 +132,13 @@ section Tool
     !
     ! `attachments` mirrors `RunOutcome.attachments` — carried through for the
     ! provider render layer to send as content blocks (see `RunOutcome`).
+    !
+    ! `success` mirrors it too, and rides into the transcript rather than stopping
+    ! at the engine: a turn reloaded from the journal knows which of its calls
+    ! were refused, exactly as the live one did. No provider sends it — the model
+    ! sees `content`.
   //]
-  class ToolResult(id: String, content: String, attachments: List[Attachment])
+  class ToolResult(id: String, content: String, attachments: List[Attachment], success: Bool = true)
 
   //[ Input in a tool call
     !
@@ -189,6 +202,7 @@ section Tool
         "The tool '\{name}' failed: \{e.message}"
         "error · \{name}"
         attachments = []
+        success = false
 
   //[ A required string parameter — the common case when defining a tool. //]
   def strParam(name: String, description: String): ToolParam =

@@ -33,6 +33,14 @@ private def readRecords(path: String): List[py.Dict] =
   records
 
 // A string out of an opaque bracket payload.
+// Does any tool result in this turn report a refusal?
+private def turnRefused(d: TurnData): Bool =
+  var refused = false
+  for m in d.messages do
+    if m is ToolResults(results) then
+      for r in results if !r.success do refused = true
+  refused
+
 private def payloadField(v: Value, key: String): String =
   match v
   case m: Map[String, Value] =>
@@ -69,7 +77,7 @@ def run(): Unit receives stdout =
     journal.start(UserInput("hi", []))
     journal.append(Assistant("on it", [call]))
     logger.log("myagent.debug", "note" ~ "between messages")
-    journal.append(ToolResults([ToolResult("c1", "42", [])]))
+    journal.append(ToolResults([ToolResult("c1", "42", [], success = false)]))
     journal.commit()
 
   val first = readRecords(path)
@@ -102,6 +110,10 @@ def run(): Unit receives stdout =
   check("result id", r0.get("id", "").asString == "c1")
   check("result content", r0.get("content", "").asString == "42")
 
+  // A refused call says so in the journal, so a driver reading its own output
+  // back off a turn cannot mistake a refusal for work done.
+  check("result records the refusal", !r0.get("success", default = true).asBool)
+
   // A user message is durable even when its turn fails, because a driver closes
   // the bracket on every outcome. Assistant messages stay provisional. A turn
   // whose bracket never closed is a fragment, and falls out of the model's
@@ -115,7 +127,8 @@ def run(): Unit receives stdout =
 
     journal.request(Journal.payload("text" ~ "again"))
     journal.start(UserInput("again", []))
-    journal.append(Assistant("done", []))
+    journal.append(Assistant("done", [call]))
+    journal.append(ToolResults([ToolResult("c1", "no such file", [], success = false)]))
     journal.commit()
     journal.response("turnEnd")
 
@@ -135,12 +148,14 @@ def run(): Unit receives stdout =
   check("failed turn is still a record", turnResult(projected.get(0).data) == "Failed(bad model)")
   check("failed turn drops provisional messages", turnSize(projected.get(0).data) == 0)
   check("answered turn keeps its messages", turnResult(projected.get(1).data) == "Success")
+  check("a refused call is still refused after reload", turnRefused(projected.get(1).data))
 
   val loaded = Journal.fromEntries(entries)
-  check("context comes from the transcript alone", loaded.size == 3)
+  check("context comes from the transcript alone", loaded.size == 4)
   check("context keeps a failed turn's user message", loaded.get(0) is UserInput("will fail", _))
   check("context drops its provisional reply", loaded.get(1) is UserInput("again", _))
   check("context keeps an answered turn's reply", loaded.get(2) is Assistant("done", _))
+  check("context keeps its tool results", loaded.get(3) is ToolResults(_))
 
   sessionLog.close()
   os.unlink(path)

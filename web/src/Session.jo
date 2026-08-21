@@ -39,6 +39,7 @@ import harpe.Model
 import harpe.Model.Message
 import harpe.Model.UserInput
 import harpe.Model.Assistant
+import harpe.Model.ToolResults
 import harpe.Model.Attachment
 import harpe.turns.TurnResult
 
@@ -385,12 +386,21 @@ section Session
     ! a muted card rather than disappearing from the dialog.
   //]
   def reply(turn: TurnData): Value =
+    // A `sendFile` the tool refused — a name that resolves to nothing, no data
+    // directory — is not a delivery. Its result says so, so collect the refused
+    // call ids first: the results arrive after the message that made the calls.
+    var refused = Set.empty[String]
+    for m in turn.messages do
+      if m is ToolResults(results) then
+        for r in results if !r.success do refused = refused + r.id
+
     var parts: List[Value] = []
 
     for m in turn.messages do
       if m is Assistant(text, calls) then
         var files: List[Value] = []
-        for c in calls if c.name == "sendFile" do files = files + c.input.string("fileName")
+        for c in calls if c.name == "sendFile" && !refused.contains(c.id) do
+          files = files + c.input.string("fileName")
 
         if text.trim != "" || !files.isEmpty then
           parts = parts + Journal.payload("text" ~ text.trim, "files" ~ files)

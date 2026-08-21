@@ -51,13 +51,18 @@ section UploadMediaTool
     val baseName = os.path.basename(fileName.replace("\\", "/"))
 
     if dir == "" then
-      new RunOutcome("No data directory is available to upload from.", "uploadMedia · no data dir", attachments = [])
+      new RunOutcome:
+        "No data directory is available to upload from."
+        "uploadMedia · no data dir"
+        attachments = []
+        success = false
 
     else if !isDataFile(dir, baseName) then
       new RunOutcome:
         "No such file: '\{fileName}'. Write it to your data directory first, then upload it."
         "uploadMedia · no such file"
         attachments = []
+        success = false
 
     else
       attach(dir, baseName)
@@ -75,6 +80,7 @@ section UploadMediaTool
         "'\{baseName}' is \{mime}, which cannot be shown directly — only JPEG/PNG/GIF/WebP images and PDFs can. Use `ocr`/`pdf`/`fs` to read it instead."
         "uploadMedia · unsupported · \{mime}"
         attachments = []
+        success = false
 
     else
       val path = os.path.join(dir, baseName)

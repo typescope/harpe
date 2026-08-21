@@ -105,7 +105,8 @@ class Journal(log: Logger)
       val list = py.list()
       for result in results do
         list.append(py.dict("id" ~ result.id, "content" ~ result.content,
-                            "attachments" ~ attachmentsDict(result.attachments)))
+                            "attachments" ~ attachmentsDict(result.attachments),
+                            "success" ~ result.success))
       py.dict("role" ~ "tool_results", "results" ~ list)
 
   private def attachmentsDict(attachments: List[Attachment]): py.List =
@@ -322,6 +323,7 @@ section Journal
           r.get("id", "").asString
           r.get("content", "").asString
           attachmentsFrom(r.get("attachments", py.list()).cast[py.List])
+          r.get("success", default = true).asBool
         results = results + toolResult
       ToolResults(results)
 end

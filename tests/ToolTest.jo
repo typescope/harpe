@@ -66,11 +66,13 @@ def run(): Unit receives stdout, logger, interact =
   // --- runSafely: a normal handler's outcome passes through unchanged ---
   val okOut = runSafely("ok", input => new RunOutcome("done", "ran", attachments = []), empty)
   check("runSafely passes success through", okOut.result == "done" && okOut.summary == "ran")
+  check("an outcome is a success unless it says otherwise", okOut.success)
 
   // --- runSafely: a throwing handler becomes an error RunOutcome, not a crash ---
   val badOut = runSafely("boom", input => abort "kaboom", empty)
   check("runSafely summary names the tool", badOut.summary == "error · boom")
   check("runSafely result carries the message", badOut.result.contains("kaboom"))
+  check("a handler that raises did not succeed", !badOut.success)
 
   // --- Toolset: tools accumulate, and wiring one name twice is caught as it is built ---
   val noop: Handler = (i: ToolInput) => new RunOutcome("x", "x", attachments = [])
