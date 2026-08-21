@@ -58,6 +58,23 @@ section Http
   pattern Post(path: String): Partial[Request] =
     case asked if asked.method is Verb.Post then path = asked.path
 
+  //[ A path split into its segments, for routing on the parts of one
+    !
+    ! Composes with the verb patterns, so a route reads as the shape it matches:
+    !
+    !     case Http.Get(Http.Segments ["sessions", id])        => …
+    !     case Http.Get(Http.Segments ["sessions", id, "raw"]) => …
+    !
+    ! Empty segments are dropped, so `/sessions/`, `/sessions`, and
+    ! `//sessions//` all match the same way. `/` is the empty list.
+  //]
+  pattern Segments(parts: List[String]): Partial[String] =
+    case path then parts = segments(path)
+
+  //[ `"/sessions/42/"` as `["sessions", "42"]`. //]
+  def segments(path: String): List[String] =
+    path.split("/").exclude(part => part == "")
+
   //[ The request being served. Bound once per request by the server. //]
   param request: Request
 
