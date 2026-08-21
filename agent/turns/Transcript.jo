@@ -84,57 +84,6 @@ section Transcript
   private def emit(category: String, message: Message): Unit receives logger =
     logger.logEntry(new Entry(time.now(), category, messageFields(message)))
 
-  //[ Project decoded entries into turns
-    !
-    ! Each turn keeps its user message and terminal outcome. Assistant and tool
-    ! messages are retained only for answered turns. Unknown categories are
-    ! ignored, and a start without a terminal event has no result.
-  //]
-  def turns(entries: List[Entry]): List[TurnData] =
-    var turns: List[TurnData] = []
-    var user: Option[Message] = None
-    var pending: List[Message] = []
-
-    for entry in entries do
-      if entry.category == "harpe.turn.started" then
-        match user
-        case Some(message) => turns = turns + TurnData(message, [], None)
-        case None          => pass
-
-        user = Some(messageFromDict(entryDict(entry)))
-        pending = []
-
-      else if entry.category == "harpe.turn.message" && user is Some(_) then
-        pending = pending + messageFromDict(entryDict(entry))
-
-      else if entry.category == "harpe.turn.answered" then
-        match user
-        case Some(message) => turns = turns + TurnData(message, pending, Success)
-        case None          => pass
-        user = None
-        pending = []
-
-      else if entry.category == "harpe.turn.failed" then
-        val detail = entryDict(entry).get("error", "").asString
-        match user
-        case Some(message) => turns = turns + TurnData(message, [], Failed(detail))
-        case None          => pass
-        user = None
-        pending = []
-
-      else if entry.category == "harpe.turn.interrupted" then
-        match user
-        case Some(message) => turns = turns + TurnData(message, [], Interrupted)
-        case None          => pass
-        user = None
-        pending = []
-
-    match user
-    case Some(message) => turns = turns + TurnData(message, [], None)
-    case None          => pass
-
-    turns
-
   //[ Locate the user-facing turns in a journal
     !
     ! `turns` folds every turn in the journal. This finds only the ones a driver
@@ -240,16 +189,24 @@ section Transcript
     case s: String => s
     case _         => ""
 
-  //[ Derive model history from structured turns
+  //[ Derive model history from the transcript
     !
-    ! User messages survive every outcome. Only answered turns contribute their
-    ! assistant and tool messages. The resume cap drops whole oldest turns.
+    ! What the model resumes with is what the user sees, because both come from
+    ! `records`. A turn outside the transcript — a subagent's, a background
+    ! job's, a fragment left by a process killed mid-turn — is in the journal for
+    ! auditing and in neither of them. Without that gate a subagent running
+    ! against a session's log would splice its own conversation into the parent's
+    ! history, which is a much worse failure than a missing scrollback.
+    !
+    ! User messages survive every outcome, since a driver closes the bracket on
+    ! failures too. Only answered turns contribute their assistant and tool
+    ! messages. The resume cap drops whole oldest turns.
   //]
   def fromEntries(entries: List[Entry]): List[Message] =
     var messages: List[Message] = []
-    for turn in turns(entries) do
-      messages = messages + turn.user
-      if turn.result is Success then messages = messages ++ turn.messages
+    for record in records(entries) do
+      messages = messages + record.data.user
+      if record.data.result is Success then messages = messages ++ record.data.messages
     truncate(messages, maxResumeChars)
 
   private def messageFields(message: Message): Map[String, Value] =

@@ -17,6 +17,7 @@ namespace harpe.cli
 import harpe.ffi.glob
 import harpe.ffi.os
 import harpe.ffi.time
+import harpe.ffi.secrets
 import harpe.ffi.file
 import harpe.ffi.json
 
@@ -94,7 +95,7 @@ private def runChat(): Unit receives stdout, workspace =
     // Open the turn's transcript bracket. The console is this driver's live UI,
     // so nothing reads these records back today — but they are what makes a CLI
     // journal replayable as a conversation rather than just an audit log.
-    val transcriptId = time.strftime("%Y%m%dT%H%M%S")
+    val transcriptId = time.strftime("%Y%m%dT%H%M%S") + "-" + secrets.tokenHex(nbytes = 3)
     with logger = sessionLog in
       Transcript.request(transcriptId, Transcript.payload("text" ~ userInput))
 

@@ -101,36 +101,45 @@ def run(): Unit receives stdout =
   check("result id", r0.get("id", "").asString == "c1")
   check("result content", r0.get("content", "").asString == "42")
 
-  // User messages are durable even when their turns fail or crash. Assistant
-  // messages remain provisional, while a later answered turn commits normally.
+  // A user message is durable even when its turn fails, because a driver closes
+  // the bracket on every outcome. Assistant messages stay provisional. A turn
+  // whose bracket never closed is a fragment, and falls out of the model's
+  // context exactly as it falls out of the transcript.
   with logger = sessionLog in
+    Transcript.request("f1", Transcript.payload("text" ~ "will fail"))
     Transcript.start(UserInput("will fail", []))
     Transcript.append(Assistant("partial", []))
     Transcript.failed("bad model")
+    Transcript.response("f1", "turnEnd")
+
+    Transcript.request("f2", Transcript.payload("text" ~ "again"))
     Transcript.start(UserInput("again", []))
     Transcript.append(Assistant("done", []))
     Transcript.commit()
+    Transcript.response("f2", "turnEnd")
+
+    Transcript.request("f3", Transcript.payload("text" ~ "crashed"))
     Transcript.start(UserInput("crashed", []))
 
   var entries: List[harpe.logging.Entry] = []
-  val records = readRecords(path)
-  for record in records do entries = entries + entryFromDict(record)
+  val lines = readRecords(path)
+  for line in lines do entries = entries + entryFromDict(line)
 
-  val failedRecord = records.get(7)
-  check("failed turn contains diagnostic", failedRecord.get("error", "").asString == "bad model")
+  check("failed turn contains diagnostic", lines.get(8).get("error", "").asString == "bad model")
 
-  val turns = Transcript.turns(entries)
-  check("turn projection size", turns.size == 4)
-  check("answered turn result", turns.get(0).result is Success)
-  check("failed turn result", turns.get(1).result is Failed("bad model"))
-  check("failed turn drops provisional messages", turns.get(1).messages.isEmpty)
-  check("open turn has no result", turns.get(3).result is None)
+  // The turn at the head of this file was written WITHOUT a bracket, so it is
+  // machinery: in the log, in neither the transcript nor the context.
+  val projected = Transcript.records(entries)
+  check("unbracketed turn is outside the transcript", projected.size == 2)
+  check("failed turn is still a record", turnResult(projected.get(0).data) == "Failed(bad model)")
+  check("failed turn drops provisional messages", turnSize(projected.get(0).data) == 0)
+  check("answered turn keeps its messages", turnResult(projected.get(1).data) == "Success")
 
   val loaded = Transcript.fromEntries(entries)
-  check("loader keeps every user message", loaded.size == 7)
-  check("loader drops failed assistant message", loaded.get(4) is UserInput("again", _))
-  check("loader keeps later answered turn", loaded.get(5) is Assistant("done", _))
-  check("loader keeps crash user message", loaded.get(6) is UserInput("crashed", _))
+  check("context comes from the transcript alone", loaded.size == 3)
+  check("context keeps a failed turn's user message", loaded.get(0) is UserInput("will fail", _))
+  check("context drops its provisional reply", loaded.get(1) is UserInput("again", _))
+  check("context keeps an answered turn's reply", loaded.get(2) is Assistant("done", _))
 
   sessionLog.close()
   os.unlink(path)
