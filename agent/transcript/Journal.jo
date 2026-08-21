@@ -16,7 +16,6 @@ namespace harpe.transcript
 import harpe.ffi.time
 import harpe.util.truncate
 import harpe.Transcript
-import harpe.TurnRecord
 import harpe.TurnData
 import harpe.Model.*
 import harpe.Tool.*
@@ -67,17 +66,17 @@ class Journal(log: Logger)
     ! as when one thread queues the request and another runs it — use `request`
     ! and `response` directly.
   //]
-  def turn(id: String, data: Value, work: () => Value): Unit =
-    request(id, data)
-    response(id, work())
+  def turn(data: Value, work: () => Value): Unit =
+    request(data)
+    response(work())
 
   //[ See `Transcript.request`. Written as a `harpe.turn.request` record. //]
-  def request(id: String, data: Value): Unit =
-    log.log(Journal.requestCategory, "id" ~ id, "data" ~ data)
+  def request(data: Value): Unit =
+    log.log(Journal.requestCategory, "data" ~ data)
 
   //[ See `Transcript.response`. Written as a `harpe.turn.response` record. //]
-  def response(id: String, data: Value): Unit =
-    log.log(Journal.responseCategory, "id" ~ id, "data" ~ data)
+  def response(data: Value): Unit =
+    log.log(Journal.responseCategory, "data" ~ data)
 
   private def emit(category: String, message: Message): Unit =
     log.logEntry(new Entry(time.now(), category, messageFields(message)))
@@ -128,6 +127,23 @@ end
   ! and owes none of this.
 //]
 section Journal
+  //[ One user-facing turn: its bracket, and the journal entries it spans
+    !
+    ! There is no id. A journal holds one conversation, whose turns are recorded in
+    ! order, so an opening record pairs with the next closing one and nothing has to
+    ! be minted or matched. A driver that wants a stable handle — for retry, a
+    ! permalink, a delete — puts its own in `request`, where it is already carrying
+    ! everything else it knows about the turn.
+    !
+    ! A record is COMPLETE by construction: an opening payload, a closing one, and
+    ! the turn between them. `Journal.records` builds none for a bracket missing
+    ! any of the three, which is what a process killed mid-turn leaves behind. Such
+    ! a turn is not a conversation the user had — it is a fragment — and admitting
+    ! it here would put a null check in every consumer to render half a bubble.
+    ! The fragment is still in the journal for anyone auditing it.
+  //]
+  class TurnRecord(request: Value, response: Value, data: TurnData)
+
   def maxResumeChars: Int = 1000000
 
   def requestCategory: String  = "harpe.turn.request"
@@ -167,28 +183,28 @@ section Journal
   def records(entries: List[Entry]): List[TurnRecord] =
     var records: List[TurnRecord] = []
 
-    var id = ""                      // "" means: not inside a bracket
+    var open = false
     var request: Value = ""
     var span: List[Entry] = []
 
     for entry in entries do
       if entry.category == requestCategory then
-        id = stringField(entry, "id")
+        open = true
         request = entry.fields.getOrElse("data", "")
         span = []
 
       // Outside a bracket every record is machinery.
-      else if id == "" then pass
+      else if !open then pass
 
-      else if entry.category == responseCategory && stringField(entry, "id") == id then
-        // No turn under the bracket means the process died before `runTurn` was
+      else if entry.category == responseCategory then
+        // No turn under the bracket means the process died before `ask` was
         // ever reached. Nothing was said, so there is nothing to show.
         match turnOf(span)
         case turn: TurnData =>
-          records = records + TurnRecord(id, request, entry.fields.getOrElse("data", ""), turn)
+          records = records + TurnRecord(request, entry.fields.getOrElse("data", ""), turn)
         case _ => pass
 
-        id = ""
+        open = false
         span = []
 
       else span = span + entry
@@ -250,11 +266,6 @@ section Journal
     if terminator.category == "harpe.turn.answered" then TurnData(user, pending, Success)
     else if terminator.category == "harpe.turn.interrupted" then TurnData(user, [], Interrupted)
     else TurnData(user, [], Failed(entryDict(terminator).get("error", "").asString))
-
-  private def stringField(entry: Entry, key: String): String =
-    match entry.fields.getOrElse(key, "")
-    case s: String => s
-    case _         => ""
 
   //[ Derive model history from the transcript
     !

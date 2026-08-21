@@ -245,14 +245,9 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       // only knowable once the session is resolved.
       val attachments = parseAttachments(attachmentItems, Session.dataDir(session.id))
 
-      // Open the transcript's bracket here, OUTSIDE the session lock `runTurn`
-      // takes: the gap between this record and the `harpe.turn.started` that
-      // follows is then exactly how long the request queued behind other turns.
-      // It also carries what the user actually sent, before the engine desugars
-      // it into a `UserInput`.
-      val transcriptId = mintTranscriptId()
+      // What the user actually sent, before the engine desugars it into a
+      // `UserInput`. `runTurn` opens the transcript's bracket with it.
       val request = Journal.payload("text" ~ text, "files" ~ uploadedFiles(attachments))
-      session.transcript.request(transcriptId, request)
 
       // The model is TOLD about the files, not shown them: this driver's uploads
       // stay on disk and cost nothing until the agent decides it needs one, and
@@ -261,7 +256,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       // unchanged — the choice of whether to show a file just lives here now,
       // with the driver that has a reason to care about tokens.
       val prompt = Model.userContent(text, attachments)
-      session.runTurn(transcriptId, request, prompt, sink)
+      session.runTurn(request, prompt, sink)
 
     py.list()
 
@@ -357,18 +352,6 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       ++ UploadMediaTool.toolset(dataDir)
       ++ SendFileTool.toolset(dataDir)
       ++ runTool.toolset()
-
-  //[ A transcript record id, in the same time-sortable shape as a session id.
-    !
-    ! Pairs one transcript record's opening and closing halves, and gives it a
-    ! stable handle for retry, permalink, or delete. It names a record in this
-    ! driver's transcript — the engine's turn has no id, and never learns this one.
-    !
-    ! Minted here because the browser sends nothing that would serve. A driver
-    ! whose protocol carries a message id should use that instead.
-  //]
-  private def mintTranscriptId(): String =
-    time.strftime("%Y%m%dT%H%M%S") + "-" + secrets.tokenHex(nbytes = 3)
 
   //[ The files that arrived with a message, for the turn's opening transcript record
     !

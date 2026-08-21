@@ -99,6 +99,25 @@ private class Session(
       client: TelegramClient,
       approvalHandler: TelegramApprovalHandler)
   : Unit =
+    // The bracket is opened HERE, on the worker thread that runs the turn — not
+    // where the message was queued. A journal holds one conversation and pairs
+    // its records in order, so two brackets must never overlap, and queuing on
+    // the poll thread while a turn is in flight would overlap them. How long the
+    // message waited is a `telegram.queued` diagnostic instead.
+    val request = Journal.payload:
+      "messageId" ~ incoming.id
+      "text" ~ incoming.text
+      "files" ~ Session.fileNames(incoming.files)
+
+    transcript.turn: request, () =>
+      run(incoming, client, approvalHandler)
+
+  //[ One turn, from downloading its files to delivering its answer. //]
+  private def run(
+      incoming: Incoming,
+      client: TelegramClient,
+      approvalHandler: TelegramApprovalHandler)
+  : Value =
     val attachments = materialize(incoming, client)
 
     // Told, not shown: the downloaded files stay on disk and cost nothing until
@@ -135,10 +154,8 @@ private class Session(
       client.sendMessage(this.id, message)
       delivered = true
 
-    // Close the bracket opened when the message was enqueued, on every outcome.
-    transcript.response:
-      incoming.id
-      Journal.payload("delivered" ~ delivered, "sent" ~ Session.sent(result))
+    // The driver's reading of the finished turn, closing the bracket.
+    Journal.payload("delivered" ~ delivered, "sent" ~ Session.sent(result))
 
   //[ Download this turn's attached files into the session's data directory
     !
@@ -255,11 +272,6 @@ section Session
     val path = sessionPath(chatId)
     path.substring(0, path.size - 6) + ".memory.json"
 
-  //[ Reconstruct this chat's conversation from disk
-    !
-    ! `[]` if it has no file yet, so a chat seen for the first time starts
-    ! empty.
-  //]
   //[ The files this turn delivered, in the order the agent sent them
     !
     ! `sendFile` is the agent's channel for putting a file in front of the user,
@@ -273,6 +285,17 @@ section Session
         for c in calls if c.name == "sendFile" do names = names + c.input.string("fileName")
     names
 
+  //[ The names of the files that arrived with a message. //]
+  def fileNames(files: List[FileSpec]): Value =
+    var names: List[Value] = []
+    for f in files do names = names + f.name
+    names
+
+  //[ Reconstruct this chat's conversation from disk
+    !
+    ! `[]` if it has no file yet, so a chat seen for the first time starts
+    ! empty.
+  //]
   def load(chatId: String): List[Message] receives workspace =
     val path = sessionPath(chatId)
     if !file.exists(path) then []

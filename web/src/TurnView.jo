@@ -2,7 +2,7 @@
   !
   ! One turn as the chat page renders it.
   !
-  ! `TurnRecord` is the whole input: what the driver bracketed the turn with, and
+  ! `Journal.TurnRecord` is the whole input: what the driver bracketed the turn with, and
   ! the engine's own account of what happened in between. A turn that just
   ! finished and a turn reloaded a week later go through this one function with
   ! the same inputs, so the live view cannot drift from the persisted one.
@@ -24,7 +24,7 @@ import harpe.ffi.os
 import harpe.ffi.mimetypes
 
 import harpe.TurnData
-import harpe.TurnRecord
+import harpe.transcript.Journal
 import harpe.logging.Value
 import harpe.logging.valueToJson
 import harpe.Model.*
@@ -37,7 +37,7 @@ section TurnView
     ! failed. `dataDir` is the session's data directory, used to resolve delivered
     ! files (`None` if it does not exist).
   //]
-  def rows(record: TurnRecord, dataDir: Option[String]): py.List =
+  def rows(record: Journal.TurnRecord, dataDir: Option[String]): py.List =
     val arr = py.list()
 
     arr.append: py.dict:

@@ -17,7 +17,6 @@ namespace harpe.cli
 import harpe.ffi.glob
 import harpe.ffi.os
 import harpe.ffi.time
-import harpe.ffi.secrets
 import harpe.ffi.file
 import harpe.ffi.json
 
@@ -94,11 +93,6 @@ private def runChat(): Unit receives stdout, workspace =
 
     if userInput == "" then continue
 
-    // Open the turn's transcript bracket. The console is this driver's live UI,
-    // so nothing reads these records back today — but they are what makes a CLI
-    // journal replayable as a conversation rather than just an audit log.
-    val transcriptId = time.strftime("%Y%m%dT%H%M%S") + "-" + secrets.tokenHex(nbytes = 3)
-
     val userMsg = UserInput(userInput, [])
     val runTurn = (turnInteract: Interact) =>
       with logger = sessionLog, interact = turnInteract in
@@ -109,7 +103,10 @@ private def runChat(): Unit receives stdout, workspace =
           context = context
           transcript = journal
 
-    journal.request(transcriptId, Journal.payload("text" ~ userInput))
+    // Open the turn's transcript bracket. The console is this driver's live UI,
+    // so nothing reads these records back today — but they are what makes a CLI
+    // journal replayable as a conversation rather than just an audit log.
+    journal.request(Journal.payload("text" ~ userInput))
     val res = console.turn(userMsg, runTurn)
 
     match res.result
@@ -129,7 +126,7 @@ private def runChat(): Unit receives stdout, workspace =
     // already in the journal. The record exists to close the bracket, nothing more.
     // A bare marker: the console is this driver's UI, and how the turn ended is
     // already recorded. The record exists to close the bracket, nothing more.
-    journal.response(transcriptId, "turnEnd")
+    journal.response("turnEnd")
 
     // Persist memory regardless of outcome (it is not rolled back with a turn).
     if !memory.isEmpty then Memory.save(memoryPath, memory)

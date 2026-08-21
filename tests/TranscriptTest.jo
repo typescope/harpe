@@ -108,19 +108,19 @@ def run(): Unit receives stdout =
   // whose bracket never closed is a fragment, and falls out of the model's
   // context exactly as it falls out of the transcript.
   with logger = sessionLog in
-    journal.request("f1", Journal.payload("text" ~ "will fail"))
+    journal.request(Journal.payload("text" ~ "will fail"))
     journal.start(UserInput("will fail", []))
     journal.append(Assistant("partial", []))
     journal.failed("bad model")
-    journal.response("f1", "turnEnd")
+    journal.response("turnEnd")
 
-    journal.request("f2", Journal.payload("text" ~ "again"))
+    journal.request(Journal.payload("text" ~ "again"))
     journal.start(UserInput("again", []))
     journal.append(Assistant("done", []))
     journal.commit()
-    journal.response("f2", "turnEnd")
+    journal.response("turnEnd")
 
-    journal.request("f3", Journal.payload("text" ~ "crashed"))
+    journal.request(Journal.payload("text" ~ "crashed"))
     journal.start(UserInput("crashed", []))
 
   var entries: List[harpe.logging.Entry] = []
@@ -155,7 +155,7 @@ def run(): Unit receives stdout =
 
   with logger = recLog in
     // A bracketed turn that delegates to a nested (subagent) turn partway through.
-    recJournal.request("t1", Journal.payload("kind" ~ "upload", "file" ~ "a.png"))
+    recJournal.request(Journal.payload("kind" ~ "upload", "file" ~ "a.png"))
     recJournal.start(UserInput("look", []))
     recJournal.append(Assistant("delegating", [call]))
     recJournal.start(UserInput("subagent work", []))
@@ -164,7 +164,7 @@ def run(): Unit receives stdout =
     recJournal.append(ToolResults([ToolResult("c1", "42", [])]))
     recJournal.append(Assistant("done", []))
     recJournal.commit()
-    recJournal.response("t1", Journal.payload("text" ~ "done"))
+    recJournal.response(Journal.payload("text" ~ "done"))
 
     // Machinery: a turn nobody bracketed.
     recJournal.start(UserInput("cron job", []))
@@ -172,7 +172,7 @@ def run(): Unit receives stdout =
     recJournal.commit()
 
     // Bracketed, but the process died mid-turn.
-    recJournal.request("t2", Journal.payload("kind" ~ "chat"))
+    recJournal.request(Journal.payload("kind" ~ "chat"))
     recJournal.start(UserInput("and this?", []))
 
   var recEntries: List[harpe.logging.Entry] = []
@@ -183,7 +183,6 @@ def run(): Unit receives stdout =
   check("record keeps every request field", payloadField(recs.get(0).request, "file") == "a.png")
 
   val r1 = recs.get(0)
-  check("record carries the driver's id", r1.id == "t1")
   check("request payload round-trips", payloadField(r1.request, "kind") == "upload")
   check("response payload round-trips", payloadField(r1.response, "text") == "done")
   check("bracketed turn keeps its own messages", turnSize(r1.data) == 3)

@@ -478,26 +478,15 @@ private class TelegramBot(
       registryLock.release()
       startWorker(chatId, session)
 
-  //[ Queue a message, opening its transcript turn first
+  //[ Queue a message for its chat's worker
     !
-    ! The bracket is written at ARRIVAL, before the message waits behind other
-    ! turns for this chat, so the gap between it and the `harpe.turn.started`
-    ! that eventually follows is exactly how long it sat in the queue. Telegram's
-    ! own `message_id` is the transcript record's id — nothing has to be minted,
-    ! and the record ties back to the message the user actually sent.
-    !
-    ! The write happens BEFORE `queue.put`, and therefore inside `registryLock`
-    ! at the live-session call site. It has to: once the message is queued, the
-    ! chat's worker can dequeue and start the turn at any moment, and a
-    ! `harpe.turn.started` landing ahead of its own `harpe.turn.request` would
-    ! leave the turn outside the transcript entirely.
+    ! The transcript's bracket is NOT opened here: a journal pairs its records in
+    ! order, and queuing while a turn is in flight would overlap two brackets.
+    ! The worker opens it when it starts the turn. How long the message waited is
+    ! recorded as an ordinary diagnostic, which is what that measurement is.
   //]
   private def enqueue(session: Session, incoming: Incoming): Unit =
-    var names: List[Value] = []
-    for f in incoming.files do names = names + f.name
-
-    session.transcript.request(incoming.id, Journal.payload("text" ~ incoming.text, "files" ~ names))
-
+    session.log.log("telegram.queued", "messageId" ~ incoming.id, "text" ~ incoming.text)
     session.queue.put(incoming)
 
   //[ The chat's worker: drain its queue, running one turn per message in arrival order

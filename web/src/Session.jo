@@ -33,7 +33,6 @@ import harpe.interact
 import harpe.Transcript
 import harpe.transcript.Journal
 import harpe.TurnData
-import harpe.TurnRecord
 import harpe.workspace
 import harpe.logging.JsonlLogger
 import harpe.logging.Logger
@@ -221,11 +220,11 @@ class Session(
     ! other tabs may attach via `addSink`. All of them see the same stream. When
     ! the turn finishes, `idle` is set, which releases every subscriber.
   //]
-  def runTurn(transcriptId: String, request: Value, prompt: String, initiatorSink: Sink): Unit =
+  def runTurn(request: Value, prompt: String, initiatorSink: Sink): Unit =
     // Opening the bracket HERE, outside the lock the body takes, is what makes
     // the gap to `harpe.turn.started` the real queue wait. `turn` writes the
     // closing record from what the body returns, so the two cannot drift.
-    transcript.turn: transcriptId, request, () =>
+    transcript.turn: request, () =>
       lastActive = time.now()
 
       this.lock.acquire()
@@ -248,7 +247,7 @@ class Session(
 
       // The same value `/api/history` will rebuild from disk, so the live view and
       // the reloaded one are rendered from identical inputs.
-      val record = TurnRecord(transcriptId, request, response, turn)
+      val record = Journal.TurnRecord(request, response, turn)
 
       match turn.result
       case Success =>
@@ -406,13 +405,13 @@ section Session
     ! against the same session — a subagent, a maintenance job — is in the log
     ! for auditing and is not part of the conversation the user sees.
   //]
-  def loadRecords(id: String): List[TurnRecord] receives workspace =
+  def loadRecords(id: String): List[Journal.TurnRecord] receives workspace =
     Journal.records(loadEntries(id))
 
   //[ The files this turn delivered, in the order the agent sent them
     !
     ! The turn's only high-level OUTPUT, and the whole of its closing payload.
-    ! How the turn ended is not repeated here — that is `TurnRecord.data.result`.
+    ! How the turn ended is not repeated here — that is `Journal.TurnRecord.data.result`.
     !
     ! Names only: whether each file still exists, and its size and type, are
     ! resolved when the page renders, so one deleted since the delivery shows as
