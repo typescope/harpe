@@ -4,9 +4,13 @@
   ! one structured entry per event.
   !
   ! Because the sink is a `Logger`, a conversation lands wherever that backend
-  ! points — `JsonlLogger`'s per-session file, a socket, a database adapter —
-  ! and it shares the stream with everything else the turn logs, so a tool's
-  ! diagnostics sit in causal order beside the messages that caused them.
+  ! points — `JsonlLogger`'s per-session file, a socket, a database adapter.
+  !
+  ! Whether it shares that backend with the turn's tools is the driver's call.
+  ! Handing it the same one puts a tool's diagnostics in causal order beside the
+  ! messages that caused them, which is what the bundled drivers do. Handing it a
+  ! different one keeps the conversation apart from the diagnostics. Nothing here
+  ! assumes either.
   !
   ! The reading half lives in the `Transcript` section (`records`,
   ! `fromEntries`), because it decodes the `Entry` values this class writes.

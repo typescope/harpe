@@ -325,8 +325,19 @@ main { padding: 16px 20px 50vh; }
 .fields .k { color: var(--faint); }
 .fields + .fields { margin-top: 2px; }
 
-.clip { display: block; max-height: 5.4em; overflow: hidden; position: relative; }
+/* Short scalars on one line, separated rather than stacked. */
+.fields.inline { display: flex; flex-wrap: wrap; gap: 3px 14px; white-space: normal; }
+.pair { white-space: nowrap; }
+
+.clip { display: block; max-height: 6em; overflow: hidden; position: relative; }
+.clip::after {
+  content: "";
+  position: absolute; inset: auto 0 0 0; height: 1.6em;
+  background: linear-gradient(transparent, var(--panel));
+  pointer-events: none;
+}
 .clip.open { max-height: none; }
+.clip.open::after { display: none; }
 .more {
   font: 11.5px var(--ui);
   color: var(--accent);

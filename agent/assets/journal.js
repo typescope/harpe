@@ -53,16 +53,29 @@ function clip(html, i) {
 
 // ---------------------------------------------------------------- rendering
 
-// Anything that is not `time` or `category`, as key/value lines.
+// Anything that is not `time` or `category`, as key/value pairs.
+//
+// A record of short scalars — a model call's provider and token counts — reads
+// as one run rather than four stacked lines, which is most of the vertical space
+// a busy journal wastes.
 function fieldLines(e, skip) {
-  return Object.keys(e)
-    .filter(k => k !== 'time' && k !== 'category' && !skip.includes(k))
-    .map(k => {
-      let v = e[k];
-      if (v !== null && typeof v === 'object') v = JSON.stringify(v, null, 1);
-      return `<div class="fields"><span class="k">${esc(k)}</span> ${esc(v)}</div>`;
-    })
-    .join('');
+  const keys = Object.keys(e).filter(k => k !== 'time' && k !== 'category' && !skip.includes(k));
+  if (keys.length === 0) return '';
+
+  const pair = k => {
+    let v = e[k];
+    if (v !== null && typeof v === 'object') v = JSON.stringify(v, null, 1);
+    return [k, String(v)];
+  };
+  const pairs = keys.map(pair);
+  const inline = pairs.every(([, v]) => v.length <= 40 && !v.includes('\n'));
+
+  if (inline) {
+    return `<div class="fields inline">`
+      + pairs.map(([k, v]) => `<span class="pair"><span class="k">${esc(k)}</span> ${esc(v)}</span>`).join('')
+      + `</div>`;
+  }
+  return pairs.map(([k, v]) => `<div class="fields"><span class="k">${esc(k)}</span> ${esc(v)}</div>`).join('');
 }
 
 function body(e, i) {
@@ -71,10 +84,12 @@ function body(e, i) {
     const calls = (e.calls || [])
       .map(c => `<span class="call">${esc(c.name)}</span>`)
       .join('');
-    const text = `<div class="speech ${e.role}"><span class="role">${e.role}</span>`
-      + (e.text ? esc(e.text) : '<span class="k">(no text)</span>')
-      + `</div>`;
-    return clip(text, i)
+    // No text but tool calls: the chips are the whole content, and an empty
+    // speech block would be a tinted box saying nothing.
+    const text = e.text
+      ? clip(`<div class="speech ${e.role}"><span class="role">${e.role}</span>${esc(e.text)}</div>`, i)
+      : (calls ? '' : `<div class="speech ${e.role}"><span class="role">${e.role}</span><span class="k">(no text)</span></div>`);
+    return text
       + (calls ? `<div class="calls">${calls}</div>` : '')
       + fieldLines(e, ['role', 'text', 'calls']);
   }
