@@ -38,7 +38,7 @@ def run(): Unit receives stdout =
   val path = os.path.join(dir, "b.sock")
 
   val broker = Broker.start(path, f => echo(f))
-  val client = BrokerClient.connect(path)
+  val client = Broker.connect(path)
 
   val reply = client.request(Frame.of(json.dumps(py.dict("msg" ~ "hello"))))
   check("json header echoed", msgOf(reply) == "hello")

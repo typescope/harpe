@@ -34,8 +34,8 @@ private section CompatibleChat
 
   def imageBlocks(attachments: List[Attachment]): py.List =
     val blocks = py.list()
-    for a in attachments if isInlineImage(a.mime) do
-      match readInlineBase64(a.path)
+    for a in attachments if InlineMedia.isImage(a.mime) do
+      match InlineMedia.readBase64(a.path)
       case Some(data) =>
         blocks.append:
           py.dict:

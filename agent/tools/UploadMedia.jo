@@ -70,7 +70,7 @@ section UploadMediaTool
   private def attach(dir: String, baseName: String): RunOutcome =
     val mime = mimetypes.guessType(baseName).getOrElse("application/octet-stream")
 
-    if !isInlineImage(mime) && !isInlinePdf(mime) then
+    if !InlineMedia.isImage(mime) && !InlineMedia.isPdf(mime) then
       new RunOutcome:
         "'\{baseName}' is \{mime}, which cannot be shown directly — only JPEG/PNG/GIF/WebP images and PDFs can. Use `ocr`/`pdf`/`fs` to read it instead."
         "uploadMedia · unsupported · \{mime}"

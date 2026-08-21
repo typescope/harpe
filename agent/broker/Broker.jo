@@ -2,7 +2,7 @@
   !
   ! The broker: one live host↔guest channel. The host binds a per-run Unix
   ! socket and serves each connection with a single `Frame => Frame` handler.
-  ! The guest connects with a `BrokerClient` and issues `request(frame)` calls
+  ! The guest connects with a `Broker.Client` and issues `request(frame)` calls
   ! that block for a response. This is the live counterpart of the audit log
   ! (which is guest→host, async). It is deliberately generic — a `Frame` in, a
   ! `Frame` out — with no service registry or per-capability call surface: the
@@ -49,7 +49,7 @@ section Frame
 
   //[ An error frame — `{"ok": false, "error": message}`, no trailer.
     !
-    ! The broker replies with this when a handler raises. `BrokerClient.request`
+    ! The broker replies with this when a handler raises. `Broker.Client.request`
     ! recognizes it and aborts.
   //]
   def error(message: String): Frame =
@@ -179,47 +179,46 @@ section Broker
     match py.try(handle(frame))
     case Ok(reply) => reply
     case Err(e)    => Frame.error(e.message)
-end
 
-//------------------------------------------------------------------------------
-// Client (guest)
-//------------------------------------------------------------------------------
+  //------------------------------------------------------------------------------
+  // Client (guest)
+  //------------------------------------------------------------------------------
 
-//[ The guest end of the channel: one connection over which requests are issued sequentially. //]
-class BrokerClient(sock: socket.Socket)
-  //[ Send one request frame and return the response frame.
-    !
-    ! Aborts if the peer closes without answering, or if the reply is a broker error
-    ! frame (`{"ok": false, "error": …}`).
-  //]
-  def request(frame: Frame): Frame =
-    sendFrame(sock, frame)
+  //[ The guest end of the channel: one connection over which requests are issued sequentially. //]
+  class Client(sock: socket.Socket)
+    //[ Send one request frame and return the response frame.
+      !
+      ! Aborts if the peer closes without answering, or if the reply is a broker error
+      ! frame (`{"ok": false, "error": …}`).
+    //]
+    def request(frame: Frame): Frame =
+      sendFrame(sock, frame)
 
-    match recvFrame(sock)
-    case None =>
-      abort "broker: no response"
+      match recvFrame(sock)
+      case None =>
+        abort "broker: no response"
 
-    case Some(resp) =>
-      match errorOf(resp)
-      case Some(message) => abort "broker: \{message}"
-      case None          => resp
+      case Some(resp) =>
+        match errorOf(resp)
+        case Some(message) => abort "broker: \{message}"
+        case None          => resp
 
-  def close(): Unit = sock.close()
+    def close(): Unit = sock.close()
 
-  //[ The error message if `frame` is a broker error frame, else `None`. //]
-  private def errorOf(frame: Frame): Option[String] =
-    match py.try(json.loads(frame.json).cast[py.Dict])
-    case Ok(d) =>
-      if d.get("ok", py.dynamic(true)).asBool then None else Some(d.get("error").asString)
+    //[ The error message if `frame` is a broker error frame, else `None`. //]
+    private def errorOf(frame: Frame): Option[String] =
+      match py.try(json.loads(frame.json).cast[py.Dict])
+      case Ok(d) =>
+        if d.get("ok", py.dynamic(true)).asBool then None else Some(d.get("error").asString)
 
-    case Err(_) =>
-      None
-end
+      case Err(_) =>
+        None
+  end
 
-section BrokerClient
-  //[ Connect to the broker listening at `path`. //]
-  def connect(path: String): BrokerClient =
+  //[ Connect to the broker listening at `path` — the guest end of `start`. //]
+  def connect(path: String): Client =
     val sock = socket.unixStream()
     sock.connect(path)
-    new BrokerClient(sock)
+    new Client(sock)
 end
+

@@ -27,7 +27,6 @@ import harpe.*
 import harpe.logging.JsonlLogger
 import harpe.transcript.Journal
 import harpe.logging.Entry
-import harpe.logging.entryFromDict
 import harpe.logging.logger
 import harpe.Model.UserInput
 import harpe.Model.Message
@@ -148,7 +147,7 @@ section Session
     else
       var entries: List[Entry] = []
       for line in file.read(path).lines if line.trim != "" do
-        entries = entries + entryFromDict(json.loads(line).cast[py.Dict])
+        entries = entries + Entry.fromDict(json.loads(line).cast[py.Dict])
       Journal.fromEntries(entries)
 
   //[ Up to `limit` CLI session logs, newest first. //]

@@ -108,11 +108,11 @@ def run(): Unit receives stdout =
   check("outside the encoding set is Err", fs.openTextFile("legacy.txt", "utf-16").isErr)
 
   // stat: the single metadata record.
-  val info = fs.stat("notes.txt").success.getOrElse(new FileInfo(false, 0, 0))
+  val info = fs.stat("notes.txt").success.getOrElse(new FileSystem.Info(false, 0, 0))
   check("stat is file", info.isFile)
   check("stat size", info.sizeBytes == 18)
   check("stat mtime", info.modifiedAt > 0)
-  check("stat dir", !fs.stat("sub").success.getOrElse(new FileInfo(true, 0, 0)).isFile)
+  check("stat dir", !fs.stat("sub").success.getOrElse(new FileSystem.Info(true, 0, 0)).isFile)
   check("stat missing is None", fs.stat("nope.txt").success is None)
 
   check("isFile file", fs.isFile("notes.txt"))

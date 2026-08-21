@@ -28,7 +28,6 @@ import harpe.logging.JsonlLogger
 import harpe.logging.Logger
 import harpe.logging.logger
 import harpe.logging.Entry
-import harpe.logging.entryFromDict
 import harpe.Model
 import harpe.Tool
 import harpe.Tool.ToolInput
@@ -269,6 +268,6 @@ section Session
     else
       var entries: List[Entry] = []
       for line in file.read(path).lines if line.trim != "" do
-        entries = entries + entryFromDict(json.loads(line).cast[py.Dict])
+        entries = entries + Entry.fromDict(json.loads(line).cast[py.Dict])
       Journal.fromEntries(entries)
 end

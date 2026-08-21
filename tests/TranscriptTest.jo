@@ -17,7 +17,7 @@ import harpe.turns.TurnResult
 import harpe.logging.logger
 import harpe.logging.JsonlLogger
 import harpe.transcript.Journal
-import harpe.logging.entryFromDict
+import harpe.logging.Entry
 import harpe.logging.Value
 
 private def check(label: String, cond: Bool): Unit receives stdout =
@@ -124,7 +124,7 @@ def run(): Unit receives stdout =
 
   var entries: List[harpe.logging.Entry] = []
   val lines = readRecords(path)
-  for line in lines do entries = entries + entryFromDict(line)
+  for line in lines do entries = entries + Entry.fromDict(line)
 
   check("failed turn contains diagnostic", lines.get(8).get("error", "").asString == "bad model")
 
@@ -175,7 +175,7 @@ def run(): Unit receives stdout =
     recJournal.start(UserInput("and this?", []))
 
   var recEntries: List[harpe.logging.Entry] = []
-  for record in readRecords(recPath) do recEntries = recEntries + entryFromDict(record)
+  for record in readRecords(recPath) do recEntries = recEntries + Entry.fromDict(record)
 
   val recs = Journal.records(recEntries)
   check("only complete bracketed turns become records", recs.size == 1)

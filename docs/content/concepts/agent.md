@@ -38,7 +38,7 @@ def ask(
     attachments: List[String] = NoAttachments,
     brain: Model = Defaults.model,
     tools: Toolset = Toolset.empty,
-    context: Context = NoHistory,
+    context: Context = Context.noHistory,
     maxToolRounds: Int = 50,
     maxRetries: Int = 4)
 : TurnData receives logger, interact
@@ -71,7 +71,7 @@ between the two agents is entirely in the arguments.
 ### What the defaults mean
 
 A default is evaluated at each call that omits it, so `context` defaulted is a
-fresh `NoHistory` per turn. It holds the turn it is given — the model sees the
+fresh `Context.noHistory` per turn. It holds the turn it is given — the model sees the
 user's input and every tool result — and is discarded at the end. Two defaulted
 turns never see each other's transcript. Remembering across turns is what a
 driver's own `context` is for, and keeping one alive is the whole of it.

@@ -189,7 +189,7 @@ private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, wo
   val book = fs.openWorkbook("table.xlsx").success
   check("Workbook.sheets", book.sheets.size == 2 && book.sheets.get(0) == "Data" && book.sheets.get(1) == "Notes")
 
-  val dims = book.dimensions("Data").getOrElse(new SheetSize(0, 0))
+  val dims = book.dimensions("Data").getOrElse(new Workbook.SheetSize(0, 0))
   check("Workbook.dimensions", dims.rows == 3 && dims.columns == 3)
   check("Workbook.dimensions unknown is None", book.dimensions("NoSuch") is None)
 

@@ -1,0 +1,76 @@
+//[ Value.jo
+  !
+  ! What a log field — or a transcript payload — is allowed to be: a scalar, an
+  ! array, or a map of them. The framework's JSON-shaped data type, and the one
+  ! place its host representation is mapped in and out.
+//]
+
+namespace harpe.logging
+
+import harpe.ffi.builtins
+
+//[ A loggable value: a scalar, an array, or a map
+  !
+  ! Scalars go in bare — the adapters box `Int`/`Bool` on the way in:
+  !
+  ! logger.log: "runs", "code" ~ src, "secs" ~ 1.5, "exitCode" ~ n, "ok" ~ true
+  !
+  ! The nested map lets a whole sub-record ride under one key (see
+  ! `ContextLogger`).
+//]
+type Value =
+  (String | Float | Value.IntVal | Value.BoolVal | List[Value] | Map[String, Value])
+    :- [Value.IntVal, Value.BoolVal]
+
+section Value
+  //[ Boxes for the two primitives
+    !
+    ! Jo allows at most one numeric/boolean primitive per union.
+  //]
+  class IntVal(value: Int)
+  class BoolVal(value: Bool)
+
+  //[ A value as its underlying host value — the inverse of the `Value` adapters
+    !
+    ! A nested map becomes a nested JSON object.
+  //]
+  def toJson(v: Value): Any =
+    match v
+    case s: String  => s
+    case f: Float   => f
+    case IntVal(n)  => n
+    case BoolVal(b) => b
+
+    case xs: List[Value] =>
+      val list = py.list()
+      for x in xs do list.append(toJson(x))
+      list
+
+    case m: Map[String, Value] =>
+      val d = py.dict()
+      for k ~ vv in m.toList do d.set(k, toJson(vv))
+      d
+
+  //[ A decoded JSON value as a `Value`
+    !
+    ! `bool` is checked before `int` (Python's `bool` is an `int` subclass), so
+    ! `true`/`false` never decode as `1`/`0`.
+  //]
+  def fromJson(obj: py.Dynamic): Value =
+    match builtins.typeName(obj)
+    case "bool"  => BoolVal(obj.asBool)
+    case "int"   => IntVal(obj.asInt)
+    case "float" => obj.asFloat
+    case "list"  =>
+      var list: List[Value] = []
+      for x in obj.cast[py.List] do list = list + fromJson(x)
+      list
+
+    case "dict"  =>
+      var m = Map.empty[String, Value]
+      val d = obj.cast[py.Dict]
+      for k in py.iter(d.keys()) do m = m.add(k.asString, fromJson(d.get(k)))
+      m
+
+    case _ => obj.asString
+end

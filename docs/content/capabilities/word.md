@@ -41,18 +41,20 @@ the binding in `SandboxRuntime.jo` to use another implementation.
 ## Interface reference
 
 ```jo
-class WordHeading(title: String, paragraph: Int, level: Int)
-
 interface WordReader
   def open(src: String): Result[Word, String]
 end
 
 interface Word
   def paragraphCount: Int
-  def outline: List[WordHeading]
+  def outline: List[Word.Heading]
   def paragraphs(start: Int, count: Int): List[String]
   def close(): Unit
 end
 
 param wordReader: WordReader
+
+section Word
+  class Heading(title: String, paragraph: Int, level: Int)
+end
 ```

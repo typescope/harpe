@@ -12,8 +12,7 @@
 
 namespace harpe.caps
 
-//[ A metadata value: text or a number. //]
-type Meta = String | Int
+import harpe.caps.Media.Meta
 
 //[ A media descriptor: MIME type, file name, and typed metadata — not the content. //]
 class Media(mimeType: String, fileName: String, meta: Map[String, Meta])
@@ -28,4 +27,9 @@ class Media(mimeType: String, fileName: String, meta: Map[String, Meta])
     match meta.getOpt(key)
     case Some(n: Int) => Some(n)
     case _            => None
+end
+
+section Media
+  //[ A metadata value: text or a number. //]
+  type Meta = String | Int
 end

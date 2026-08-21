@@ -31,8 +31,8 @@ private class WordImpl(paras: py.List)
 
   def paragraphCount: Int = builtins.len(paras)
 
-  def outline: List[WordHeading] =
-    var result = List.empty[WordHeading]
+  def outline: List[Word.Heading] =
+    var result = List.empty[Word.Heading]
     var i = 0
     val n = paragraphCount
 
@@ -42,7 +42,7 @@ private class WordImpl(paras: py.List)
       // Heading styles are named "Heading 1" .. "Heading 9".
       if style.startsWith("Heading ") && style.size == 9 then
         val level = builtins.ord(style.substring(8, 1)) - 48
-        result = result + new WordHeading(paras.get(i).text.asString, i + 1, level)
+        result = result + new Word.Heading(paras.get(i).text.asString, i + 1, level)
 
       i = i + 1
 

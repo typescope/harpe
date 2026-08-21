@@ -89,7 +89,7 @@ class Journal(log: Logger)
   private def messageFields(message: Message): Map[String, Value] =
     val d = messageDict(message)
     var fields = Map.empty[String, Value]
-    for k in py.iter(d.keys()) do fields = fields.add(k.asString, valueFromJson(d.get(k)))
+    for k in py.iter(d.keys()) do fields = fields.add(k.asString, Value.fromJson(d.get(k)))
     fields
 
   private def messageDict(message: Message): py.Dict =
@@ -239,11 +239,11 @@ section Journal
       if entry.category == "harpe.turn.started" && data is None then
         depth = depth + 1
         if depth == 1 then
-          user = Some(messageFromDict(entryDict(entry)))
+          user = Some(messageFromDict(Entry.toDict(entry)))
           pending = []
 
       else if entry.category == "harpe.turn.message" && depth == 1 then
-        pending = pending + messageFromDict(entryDict(entry))
+        pending = pending + messageFromDict(Entry.toDict(entry))
 
       else if isTerminator(entry.category) && depth > 0 then
         depth = depth - 1
@@ -269,7 +269,7 @@ section Journal
   private def turnFrom(user: Message, pending: List[Message], terminator: Entry): TurnData =
     if terminator.category == "harpe.turn.answered" then TurnData(user, pending, TurnResult.Success)
     else if terminator.category == "harpe.turn.interrupted" then TurnData(user, [], TurnResult.Interrupted)
-    else TurnData(user, [], TurnResult.Failed(entryDict(terminator).get("error", "").asString))
+    else TurnData(user, [], TurnResult.Failed(Entry.toDict(terminator).get("error", "").asString))
 
   //[ Derive model history from the transcript
     !

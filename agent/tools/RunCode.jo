@@ -151,7 +151,7 @@ private def replayAudit(path: String): Unit receives logger =
   if file.exists(path) then
     for line in file.read(path).lines if line.trim != "" do
       match py.try(json.loads(line))
-      case Ok(d)  => logger.logEntry(entryFromDict(d.cast[py.Dict]))
+      case Ok(d)  => logger.logEntry(Entry.fromDict(d.cast[py.Dict]))
       case Err(_) => pass
 
 //[ The core "act" tool: compile + run a Jo program against the agent sandbox.

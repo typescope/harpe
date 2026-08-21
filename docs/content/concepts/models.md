@@ -178,7 +178,7 @@ You can instead construct a provider explicitly or use `echo()` without an API
 key:
 
 ```jo
-val brain = anthropic(apiKey, "claude-opus-4-6", FiveMinutes)
+val brain = anthropic(apiKey, "claude-opus-4-6", Anthropic.FiveMinutes)
 val brain = openai(apiKey, "gpt-5.6", reasoningEffort = "high")
 val brain = openrouter(apiKey, "provider/model-name", reasoningEffort = "high")
 val brain = openai("", "org/model-name", "http://localhost:8000/v1", compatible = true)

@@ -121,23 +121,23 @@ def run(): Unit receives stdout =
   val alog = new JsonlLogger(apath)
   var items: List[Value] = []
   items = items + "a"
-  items = items + IntVal(1)
+  items = items + Value.IntVal(1)
   alog.log("harpe.sandbox.runtime", "info" ~ "ready", "count" ~ 3, "secs" ~ 1.5,
            "ok" ~ true, "items" ~ items)
   alog.close()
 
-  val back = entryFromDict(readRecords(apath).get(0))
+  val back = Entry.fromDict(readRecords(apath).get(0))
   check("codec preserves category", back.category == "harpe.sandbox.runtime")
   check("codec parses RFC 3339 time", back.time > 0.0)
   check("codec preserves field count", back.fields.size == 5)
 
   match back.fields.getOpt("count")
-  case Some(IntVal(n)) => check("codec keeps int typed", n == 3)
-  case _               => check("codec int present", false)
+  case Some(Value.IntVal(n)) => check("codec keeps int typed", n == 3)
+  case _                     => check("codec int present", false)
 
   match back.fields.getOpt("ok")
-  case Some(BoolVal(b)) => check("codec keeps bool typed", b)
-  case _                => check("codec bool present", false)
+  case Some(Value.BoolVal(b)) => check("codec keeps bool typed", b)
+  case _                      => check("codec bool present", false)
 
   match back.fields.getOpt("items")
   case Some(xs: List[Value]) => check("codec keeps arrays typed", xs.size == 2)

@@ -21,30 +21,30 @@ private def check(label: String, cond: Bool): Unit receives stdout =
 
 def run(): Unit receives stdout =
   // --- mime gate ---
-  check("jpeg is an inline image", isInlineImage("image/jpeg"))
-  check("png is an inline image", isInlineImage("image/png"))
-  check("gif is an inline image", isInlineImage("image/gif"))
-  check("webp is an inline image", isInlineImage("image/webp"))
-  check("pdf is not an inline image", !isInlineImage("application/pdf"))
-  check("text is not an inline image", !isInlineImage("text/plain"))
+  check("jpeg is an inline image", InlineMedia.isImage("image/jpeg"))
+  check("png is an inline image", InlineMedia.isImage("image/png"))
+  check("gif is an inline image", InlineMedia.isImage("image/gif"))
+  check("webp is an inline image", InlineMedia.isImage("image/webp"))
+  check("pdf is not an inline image", !InlineMedia.isImage("application/pdf"))
+  check("text is not an inline image", !InlineMedia.isImage("text/plain"))
 
-  check("application/pdf is an inline pdf", isInlinePdf("application/pdf"))
-  check("image/png is not an inline pdf", !isInlinePdf("image/png"))
+  check("application/pdf is an inline pdf", InlineMedia.isPdf("application/pdf"))
+  check("image/png is not an inline pdf", !InlineMedia.isPdf("image/png"))
 
   // --- readInlineBase64: happy path ---
   val dir = tempfile.mkdtemp()
   file.writeBytes(os.path.join(dir, "hi.bin"), py.dynamic("hi").callDynamic("encode", "utf-8"))
 
-  match readInlineBase64(os.path.join(dir, "hi.bin"))
+  match InlineMedia.readBase64(os.path.join(dir, "hi.bin"))
   case Some(b64) => check("reads and base64-encodes", b64 == "aGk=")
   case None      => check("reads and base64-encodes", false)
 
   // --- readInlineBase64: the attachment carries no path ---
-  match readInlineBase64("")
+  match InlineMedia.readBase64("")
   case Some(_) => check("empty path is None", false)
   case None    => check("empty path is None", true)
 
   // --- readInlineBase64: file does not exist ---
-  match readInlineBase64(os.path.join(dir, "missing.bin"))
+  match InlineMedia.readBase64(os.path.join(dir, "missing.bin"))
   case Some(_) => check("missing file is None", false)
   case None    => check("missing file is None", true)

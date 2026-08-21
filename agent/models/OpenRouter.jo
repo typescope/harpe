@@ -37,16 +37,16 @@ private section OpenRouterResponses
   def mediaBlocks(attachments: List[Attachment]): py.List =
     val blocks = py.list()
     for a in attachments do
-      if isInlineImage(a.mime) then
-        match readInlineBase64(a.path)
+      if InlineMedia.isImage(a.mime) then
+        match InlineMedia.readBase64(a.path)
         case Some(data) =>
           blocks.append:
             py.dict:
               "type" ~ "input_image"
               "image_url" ~ "data:\{a.mime};base64,\{data}"
         case None => pass
-      else if isInlinePdf(a.mime) then
-        match readInlineBase64(a.path)
+      else if InlineMedia.isPdf(a.mime) then
+        match InlineMedia.readBase64(a.path)
         case Some(data) =>
           blocks.append:
             py.dict:

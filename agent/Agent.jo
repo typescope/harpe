@@ -58,9 +58,9 @@ section Agent
     ! it. Keeping them apart is what lets one conversation be replayed under a
     ! different window or summarizer. On interruption/failure the provisional
     ! assistant/tool tail is rolled back, while the user's message remains in the
-    ! context. Defaulted, it is a `NoHistory` built fresh for this call — the
-    ! model still sees this turn, and nothing survives into the next one. A
-    ! session that should remember keeps one context alive across turns.
+    ! context. Defaulted, it is a `Context.noHistory` built fresh for this call
+    ! — the model still sees this turn, and nothing survives into the next one.
+    ! A session that should remember keeps one context alive across turns.
     !
     ! A turn is bounded to `maxToolRounds` tool-call rounds. Once spent the model
     ! is asked once more with no tools, forcing a final answer. `maxRetries` is
@@ -79,7 +79,7 @@ section Agent
       attachments: List[String] = NoAttachments,
       brain: Model = Defaults.model,
       tools: Toolset = Toolset.empty,
-      context: Context = NoHistory,
+      context: Context = Context.noHistory,
       transcript: Transcript = Transcript.NoTranscript,
       maxToolRounds: Int = 50,
       maxRetries: Int = 4)

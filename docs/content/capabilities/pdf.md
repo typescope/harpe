@@ -64,22 +64,24 @@ Generated code continues to use `fs.openPDF` and the `PDF` interface.
 ## Interface reference
 
 ```jo
-class Heading(title: String, page: Int, level: Int)
-class PageContent(texts: Int, images: Int, paths: Int)
-
 interface PdfReader
   def open(src: String): Result[PDF, String]
 end
 
 interface PDF
   def pageCount: Int
-  def outline: List[Heading]
+  def outline: List[PDF.Heading]
   def metadata: Map[String, String]
   def pageText(page: Int): Result[String, String]
-  def pageContent(page: Int): PageContent
+  def pageContent(page: Int): PDF.PageContent
   def pageImage(page: Int, target: String, scale: Int = 2): Result[Image.Size, String]
   def close(): Unit
 end
 
 param pdfReader: PdfReader
+
+section PDF
+  class Heading(title: String, page: Int, level: Int)
+  class PageContent(texts: Int, images: Int, paths: Int)
+end
 ```

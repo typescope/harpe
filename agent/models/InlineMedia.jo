@@ -11,27 +11,29 @@ namespace harpe.models
 import harpe.ffi.os
 import harpe.ffi.file
 
-//[ An image format the vision APIs accept inline
-  !
-  ! (Anthropic and OpenAI agree on this set: JPEG, PNG, GIF, WebP).
-//]
-def isInlineImage(mime: String): Bool =
-  mime == "image/jpeg" || mime == "image/png" || mime == "image/gif" || mime == "image/webp"
+section InlineMedia
+  //[ An image format the vision APIs accept inline
+    !
+    ! (Anthropic and OpenAI agree on this set: JPEG, PNG, GIF, WebP).
+  //]
+  def isImage(mime: String): Bool =
+    mime == "image/jpeg" || mime == "image/png" || mime == "image/gif" || mime == "image/webp"
 
-//[ A document format accepted inline — PDF only, on both providers. //]
-def isInlinePdf(mime: String): Bool = mime == "application/pdf"
+  //[ A document format accepted inline — PDF only, on both providers. //]
+  def isPdf(mime: String): Bool = mime == "application/pdf"
 
-//[ The base64 bytes of the attachment stored at `path`
-  !
-  ! Or `None` if the attachment carries no path, the file is gone, or it cannot
-  ! be read. A silent `None` (not a crash) is deliberate: an inline attachment
-  ! is always ALSO referenced in the text manifest, so a render still succeeds —
-  ! just without the direct content block — if the file disappeared between
-  ! attachment and render.
-//]
-def readInlineBase64(path: String): Option[String] =
-  if path == "" || !os.path.isfile(path) then None
-  else
-    match py.try(file.readBytes(path))
-    case Ok(data) => Some(data.cast[Bytes].toBase64)
-    case Err(_)   => None
+  //[ The base64 bytes of the attachment stored at `path`
+    !
+    ! Or `None` if the attachment carries no path, the file is gone, or it cannot
+    ! be read. A silent `None` (not a crash) is deliberate: an inline attachment
+    ! is always ALSO referenced in the text manifest, so a render still succeeds —
+    ! just without the direct content block — if the file disappeared between
+    ! attachment and render.
+  //]
+  def readBase64(path: String): Option[String] =
+    if path == "" || !os.path.isfile(path) then None
+    else
+      match py.try(file.readBytes(path))
+      case Ok(data) => Some(data.cast[Bytes].toBase64)
+      case Err(_)   => None
+end

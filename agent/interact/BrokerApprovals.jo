@@ -13,7 +13,7 @@ import harpe.ffi.os
 import harpe.ffi.threading
 
 //[ One persistent approval connection for the lifetime of a sandbox program. //]
-class BrokerApprovals(client: BrokerClient)
+class BrokerApprovals(client: Broker.Client)
   private val lock = threading.lock()
 
   view Approvals
@@ -41,7 +41,7 @@ section BrokerApprovals
   def connect(): Approvals =
     val path = os.getenv("HARPE_BROKER_SOCKET", "")
     if path == "" then new UnavailableApprovals
-    else new BrokerApprovals(BrokerClient.connect(path))
+    else new BrokerApprovals(Broker.connect(path))
 end
 
 private class UnavailableApprovals

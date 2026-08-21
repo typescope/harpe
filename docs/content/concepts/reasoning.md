@@ -60,7 +60,7 @@ contains models with different reasoning capabilities. Anthropic uses adaptive
 thinking, so constructing it explicitly does not require an effort value:
 
 ```jo
-val brain = anthropic(apiKey, "claude-opus-4-6", FiveMinutes)
+val brain = anthropic(apiKey, "claude-opus-4-6", Anthropic.FiveMinutes)
 ```
 
 The `openai`, `openrouter`, and `anthropic` constructors accept `extraBody` for

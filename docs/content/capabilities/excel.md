@@ -46,18 +46,20 @@ implementation. Generated code continues to use `fs.openWorkbook` and the
 ## Interface reference
 
 ```jo
-class SheetSize(rows: Int, columns: Int)
-
 interface ExcelReader
   def open(src: String): Result[Workbook, String]
 end
 
 interface Workbook
   def sheets: List[String]
-  def dimensions(sheet: String): Option[SheetSize]
+  def dimensions(sheet: String): Option[Workbook.SheetSize]
   def rows(sheet: String, start: Int, count: Int): Option[List[List[String]]]
   def close(): Unit
 end
 
 param excelReader: ExcelReader
+
+section Workbook
+  class SheetSize(rows: Int, columns: Int)
+end
 ```

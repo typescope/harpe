@@ -30,7 +30,7 @@ class JsonlLogger(path: String)
   private val out: py.Dynamic = openLog(path)
 
   def logEntry(entry: Entry): Unit =
-    out.write(json.dumps(entryDict(entry)) + "\n")
+    out.write(json.dumps(Entry.toDict(entry)) + "\n")
     out.flush()
 
   def close(): Unit = out.close()

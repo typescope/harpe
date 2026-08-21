@@ -26,7 +26,6 @@ import harpe.ffi.mimetypes
 import harpe.TurnData
 import harpe.transcript.Journal
 import harpe.logging.Value
-import harpe.logging.valueToJson
 import harpe.Model.*
 import harpe.turns.*
 
@@ -97,7 +96,7 @@ section TurnView
   //]
   def requestFiles(request: Value): py.List =
     val arr = py.list()
-    for f in items(request, "files") do arr.append(valueToJson(f))
+    for f in items(request, "files") do arr.append(Value.toJson(f))
     arr
 
   private def items(payload: Value, key: String): List[Value] =
