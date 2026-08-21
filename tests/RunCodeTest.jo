@@ -57,7 +57,7 @@ private def execWith(
 private def exec(tool: RunCodeTool, code: String): RunOutcome =
   execWith(tool, code, Map.empty[String, String], Interact.unattended)
 
-private class ApprovalInteract(decision: ApprovalDecision)
+private class ApprovalInteract(decision: Approvals.Decision)
   view Interact
 
   var seenTitle = ""
@@ -69,7 +69,7 @@ private class ApprovalInteract(decision: ApprovalDecision)
   def pause(seconds: Float): Bool = false
   def emit(event: turns.TurnEvent): Unit = pass
 
-  def approve(id: String, request: ApprovalRequest): ApprovalDecision =
+  def approve(id: String, request: Approvals.Request): Approvals.Decision =
     seenTitle = request.title
     seenDetail = request.detail
     approvalCount = approvalCount + 1
@@ -84,9 +84,9 @@ private class StuckApprovalInteract
   def pause(seconds: Float): Bool = false
   def emit(event: turns.TurnEvent): Unit = pass
 
-  def approve(id: String, request: ApprovalRequest): ApprovalDecision =
+  def approve(id: String, request: Approvals.Request): Approvals.Decision =
     py.module("time").sleep(py.dynamic(1.0))
-    Approved
+    Approvals.Approved
 end
 
 // Wrap a runTask body in a minimal guest program.
@@ -156,7 +156,7 @@ def run(): Unit receives stdout =
   // A trusted sandbox capability can request approval over the per-run broker.
   // The request stays out of the transcript and the decision returns to the
   // waiting sandbox process.
-  val approvalInteract = new ApprovalInteract(Approved)
+  val approvalInteract = new ApprovalInteract(Approvals.Approved)
   val approvalOut = execWith(
     fast,
     guest("  println 7\n"),

@@ -18,7 +18,7 @@ class BrokerApprovals(client: BrokerClient)
 
   view Approvals
 
-  def request(request: ApprovalRequest): ApprovalDecision =
+  def request(request: Approvals.Request): Approvals.Decision =
     lock.acquire()
     val frame = Frame.of(json.dumps(py.dict(
       "service" ~ "approval",
@@ -29,7 +29,7 @@ class BrokerApprovals(client: BrokerClient)
     lock.release()
 
     val body = json.loads(response.json).cast[py.Dict]
-    ApprovalDecision.fromWire(body.get("decision", "cancelled").asString)
+    Approvals.fromWire(body.get("decision", "cancelled").asString)
 end
 
 section BrokerApprovals
@@ -47,5 +47,5 @@ end
 private class UnavailableApprovals
   view Approvals
 
-  def request(request: ApprovalRequest): ApprovalDecision = ApprovalCancelled
+  def request(request: Approvals.Request): Approvals.Decision = Approvals.Cancelled
 end

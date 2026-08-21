@@ -25,10 +25,7 @@ import harpe.ffi.time
 
 import jo.IO.stdout
 import harpe.Agent
-import harpe.ApprovalRequest
-import harpe.ApprovalDecision
-import harpe.ApprovalTimedOut
-import harpe.ApprovalCancelled
+import harpe.Approvals
 import harpe.workspace
 import harpe.Workspace
 import harpe.Defaults
@@ -312,8 +309,8 @@ private class TelegramBot(
       chatId: String,
       senderId: String,
       id: String,
-      request: ApprovalRequest)
-  : ApprovalDecision =
+      request: Approvals.Request)
+  : Approvals.Decision =
     val pending = new PendingTelegramApproval(id, chatId, senderId)
     approvalLock.acquire()
     pendingApprovals.set(id, pending)
@@ -325,17 +322,17 @@ private class TelegramBot(
       approvalLock.acquire()
       pendingApprovals.pop(id)
       approvalLock.release()
-      return ApprovalCancelled
+      return Approvals.Cancelled
 
     val deadline = time.now() + 600.0
-    var decision: ApprovalDecision = ApprovalTimedOut
+    var decision: Approvals.Decision = Approvals.TimedOut
     var waiting = true
     while waiting do
       if time.now() >= deadline then
-        decision = ApprovalTimedOut
+        decision = Approvals.TimedOut
         waiting = false
       else if pending.ready.wait(0.1).asBool then
-        decision = ApprovalDecision.fromWire(pending.decision)
+        decision = Approvals.fromWire(pending.decision)
         waiting = false
 
     approvalLock.acquire()

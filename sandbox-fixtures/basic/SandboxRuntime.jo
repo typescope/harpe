@@ -22,16 +22,16 @@ private def run(): Unit receives stdout, logger, approvals =
   // The integration suite enables this probe to exercise the real
   // sandbox → broker → Interact → broker → sandbox approval path.
   if os.getenv("HARPE_TEST_APPROVAL", "") == "1" then
-    val decision = approvals.request(ApprovalRequest(
+    val decision = approvals.request(Approvals.Request(
       "Publish report",
       "Publish **quarterly-report.pdf** to the customer portal."
     ))
-    println "approval=\{ApprovalDecision.wire(decision)}"
-    val second = approvals.request(ApprovalRequest(
+    println "approval=\{Approvals.wire(decision)}"
+    val second = approvals.request(Approvals.Request(
       "Notify customer",
       "Send the publication notice after the report is available."
     ))
-    println "approval2=\{ApprovalDecision.wire(second)}"
+    println "approval2=\{Approvals.wire(second)}"
 
   // Grant the guest a FileSystem rooted at its own run dir (its working directory,
   // where the host runs it — so `.` is that isolated dir, holding out.py).

@@ -20,10 +20,7 @@ import harpe.ffi.file
 import harpe.ffi.mimetypes
 
 import harpe.Agent
-import harpe.ApprovalRequest
-import harpe.ApprovalDecision
-import harpe.ApprovalTimedOut
-import harpe.ApprovalCancelled
+import harpe.Approvals
 import harpe.Toolset
 import harpe.Tool
 import harpe.Tool.ToolInput
@@ -66,7 +63,7 @@ union SessionState = Idle | Active(request: Value)
 //]
 class Subscriber(id: Int, sink: Sink)
 
-private class PendingApproval(id: String, request: ApprovalRequest)
+private class PendingApproval(id: String, request: Approvals.Request)
   val ready = threading.event()
   var decision = ""
 end
@@ -166,7 +163,7 @@ class Session(
     )
 
   //[ Ask the connected session user and wait for an approval decision. //]
-  private def requestApproval(id: String, request: ApprovalRequest): ApprovalDecision =
+  private def requestApproval(id: String, request: Approvals.Request): Approvals.Decision =
     val item = new PendingApproval(id, request)
 
     approvalLock.acquire()
@@ -175,24 +172,24 @@ class Session(
     broadcast(approvalEvent(item))
 
     val deadline = time.now() + 600.0
-    var decision: ApprovalDecision = ApprovalTimedOut
+    var decision: Approvals.Decision = Approvals.TimedOut
     var waiting = true
 
     while waiting do
       if stop.is_set().asBool then
-        decision = ApprovalCancelled
+        decision = Approvals.Cancelled
         waiting = false
       else if time.now() >= deadline then
-        decision = ApprovalTimedOut
+        decision = Approvals.TimedOut
         waiting = false
       else if item.ready.wait(0.1).asBool then
-        decision = ApprovalDecision.fromWire(item.decision)
+        decision = Approvals.fromWire(item.decision)
         waiting = false
 
     approvalLock.acquire()
     if pendingApproval is Some(current) && current.id == id then pendingApproval = None
     approvalLock.release()
-    broadcast(py.dict("type" ~ "approval-ended", "id" ~ id, "decision" ~ ApprovalDecision.wire(decision)))
+    broadcast(py.dict("type" ~ "approval-ended", "id" ~ id, "decision" ~ Approvals.wire(decision)))
     decision
 
   //[ Resolve the current request. Stale or duplicate decisions are ignored. //]

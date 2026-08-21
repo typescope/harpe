@@ -34,22 +34,22 @@ private def runBash(command: String): Tool.RunOutcome receives workspace, intera
     return new Tool.RunOutcome("The command is empty.", "empty command", attachments = [])
 
   val id = py.module("uuid").uuid4().toString
-  val request = ApprovalRequest(
+  val request = Approvals.Request(
     "Run a Bash command?",
     "```bash\n\{command}\n```"
   )
 
   match interact.approve(id, request)
-  case Rejected =>
+  case Approvals.Rejected =>
     new Tool.RunOutcome("The user rejected the command.", "command rejected", attachments = [])
 
-  case ApprovalTimedOut =>
+  case Approvals.TimedOut =>
     new Tool.RunOutcome("Approval timed out. The command was not run.", "approval timed out", attachments = [])
 
-  case ApprovalCancelled =>
+  case Approvals.Cancelled =>
     new Tool.RunOutcome("Approval was cancelled. The command was not run.", "approval cancelled", attachments = [])
 
-  case Approved =>
+  case Approvals.Approved =>
     val result = subprocess.runCapped(
       py.list("bash", "-lc", command),
       30.0,

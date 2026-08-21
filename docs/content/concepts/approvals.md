@@ -19,46 +19,46 @@ class PaymentsImpl(approvals: Approvals)
   view Payments
 
   def transfer(input: Transfer): Result[Receipt, String] =
-    val request = ApprovalRequest(
+    val request = Approvals.Request(
       "Transfer funds",
       "Transfer **CHF \{input.amount}** to **\{input.recipient}**."
     )
 
     match approvals.request(request)
-    case Approved =>
+    case Approvals.Approved =>
       executeTransfer(input)
-    case Rejected =>
+    case Approvals.Rejected =>
       Err("The transfer was rejected.")
-    case ApprovalTimedOut =>
+    case Approvals.TimedOut =>
       Err("Approval timed out.")
-    case ApprovalCancelled =>
+    case Approvals.Cancelled =>
       Err("Approval was cancelled.")
 end
 ```
 
 The implementation creates the request from validated action arguments. It
-performs the effect only after receiving `Approved`.
+performs the effect only after receiving `Approvals.Approved`.
 
 ## Request and decision types
 
 An approval request has a short plain-text title and Markdown detail:
 
 ```jo
-class ApprovalRequest(title: String, detail: String)
-
 interface Approvals
-  def request(request: ApprovalRequest): ApprovalDecision
+  def request(request: Approvals.Request): Approvals.Decision
+end
+
+section Approvals
+  class Request(title: String, detail: String)
 end
 ```
 
 The decision distinguishes four outcomes:
 
 ```jo
-union ApprovalDecision =
-    Approved
-  | Rejected
-  | ApprovalTimedOut
-  | ApprovalCancelled
+section Approvals
+  union Decision = Approved | Rejected | TimedOut | Cancelled
+end
 ```
 
 Timeout is not rejection. Cancellation means the enclosing agent run or
@@ -91,7 +91,7 @@ stays in trusted runtime code.
 
 `BrokerApprovals` keeps one connection for the sandbox program and serializes
 requests over it. When a runtime is launched outside `runCode` and has no broker,
-approval requests return `ApprovalCancelled`.
+approval requests return `Approvals.Cancelled`.
 
 ## Interaction flow
 

@@ -185,7 +185,7 @@ private section Console
     def emit(event: TurnEvent): Unit =
       if !cancelled then console.display(event)
 
-    def approve(id: String, request: ApprovalRequest): ApprovalDecision =
+    def approve(id: String, request: Approvals.Request): Approvals.Decision =
       with IO.stdout = console.out in
         Console.askApproval(console, interrupt, active, approvalActive, request)
   end
@@ -195,8 +195,8 @@ private section Console
       interrupt: py.Dynamic,
       active: py.Dynamic,
       approvalActive: py.Dynamic,
-      request: ApprovalRequest)
-  : ApprovalDecision receives stdout =
+      request: Approvals.Request)
+  : Approvals.Decision receives stdout =
     console.stopProgress()
     approvalActive.set()
 
@@ -211,17 +211,17 @@ private section Console
     sys.stdoutFlush()
 
     val deadline = time.now() + 600.0
-    var decision: ApprovalDecision = ApprovalTimedOut
+    var decision: Approvals.Decision = Approvals.TimedOut
     var waiting = true
     var needsNewline = true
 
     while waiting do
       if interrupt.is_set().asBool || !active.is_set().asBool then
-        decision = ApprovalCancelled
+        decision = Approvals.Cancelled
         waiting = false
 
       else if time.now() >= deadline then
-        decision = ApprovalTimedOut
+        decision = Approvals.TimedOut
         waiting = false
 
       else if Console.stdinReady(0.1) then
@@ -229,24 +229,24 @@ private section Console
         if builtins.len(ch) == 1 then
           val code = builtins.ord(ch)
           if code == 121 || code == 89 then
-            decision = Approved
+            decision = Approvals.Approved
             waiting = false
           else if code == 110 || code == 78 || code == 10 || code == 13 then
-            decision = Rejected
+            decision = Approvals.Rejected
             if code == 10 || code == 13 then needsNewline = false
             waiting = false
           else if code == 27 then
-            decision = ApprovalCancelled
+            decision = Approvals.Cancelled
             interrupt.set()
             waiting = false
 
     approvalActive.clear()
     if needsNewline then println ""
     match decision
-    case Approved          => println("  " + Style.success("Approved."))
-    case Rejected          => println("  " + Style.warning("Rejected."))
-    case ApprovalTimedOut  => println("  " + Style.warning("Approval timed out."))
-    case ApprovalCancelled => println("  " + Style.muted("Approval cancelled."))
+    case Approvals.Approved  => println("  " + Style.success("Approved."))
+    case Approvals.Rejected  => println("  " + Style.warning("Rejected."))
+    case Approvals.TimedOut  => println("  " + Style.warning("Approval timed out."))
+    case Approvals.Cancelled => println("  " + Style.muted("Approval cancelled."))
     decision
 
   // Put the terminal in cbreak mode so a single keypress (ESC) is readable
