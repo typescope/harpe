@@ -152,7 +152,7 @@ class DuffelClient(token: String, approvals: Approvals)
       println("searchFlights: offer request failed — " + err)
       return new api.SearchResult("", [])
 
-    val requestId = reqResp.get("data").cast[py.Dict].get("id").asString
+    val requestId = reqResp["data"]["id"].asString
 
     // Fetch offers sorted cheapest-first, capped at 10.
     val offersResp = apiCall(
@@ -165,7 +165,7 @@ class DuffelClient(token: String, approvals: Approvals)
       println("searchFlights: list offers failed — " + err)
       return new api.SearchResult(requestId, [])
 
-    val offerList = offersResp.get("data").cast[py.List]
+    val offerList = offersResp["data"].cast[py.List]
     var offers: List[api.FlightOffer] = []
     for offerDyn in offerList do
       offers = offers + parseOffer(offerDyn.cast[py.Dict])
@@ -178,7 +178,7 @@ class DuffelClient(token: String, approvals: Approvals)
     if resp.contains("errors") then
       return new api.OfferDetail("", "", "", [], [])
 
-    val offer = parseOffer(resp.get("data").cast[py.Dict])
+    val offer = parseOffer(resp["data"].cast[py.Dict])
     new api.OfferDetail(offer.id, offer.totalAmount, offer.currency, offer.slices, offer.passengerIds)
 
   //[ Build a human-readable booking summary for the approval card //]
