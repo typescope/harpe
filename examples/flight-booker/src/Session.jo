@@ -1,0 +1,113 @@
+//[ Session.jo
+  !
+  ! The flight-booker's live conversation object (`Session`) and its storage
+  ! layout: one session per Telegram chat, keyed by `chat.id`, persisted as
+  ! `logs/sessions/<chatId>.jsonl` under the workspace.
+  !
+  ! Text-only: no file attachments, no data directory. The booking flow is
+  ! entirely conversational.
+//]
+
+namespace harpe.examples.flightbooker
+import harpe.ffi.file
+import harpe.ffi.json
+
+import harpe.Agent
+import harpe.Context
+import harpe.Toolset
+import harpe.interact
+import harpe.Model
+import harpe.Model.Message
+import harpe.TurnData
+import harpe.Transcript
+import harpe.transcript.Journal
+import harpe.workspace
+import harpe.logging.JsonlLogger
+import harpe.logging.Logger
+import harpe.logging.logger
+import harpe.logging.Entry
+import harpe.logging.entryFromDict
+import harpe.logging.Value
+import harpe.turns.Success
+import harpe.turns.Interrupted
+import harpe.turns.Failed
+
+
+//[ One queued message for a chat's worker //]
+class Incoming(id: String, text: String, senderId: String)
+
+
+//[ One live conversation
+  !
+  ! Each session has a FIFO `queue` drained by its own dedicated worker thread,
+  ! so turns for different chats run concurrently while turns within one chat
+  ! stay ordered and serialized.
+//]
+private class Session(id: String, log: Logger, brain: Model, tools: Toolset, context: Context)
+  val queue = py.module("queue").Queue()
+  val transcript = new Journal(log)
+
+  //[ Run one user turn: open the journal bracket, run the agent, send the reply //]
+  def runTurn(
+      incoming: Incoming,
+      client: TelegramClient,
+      approvalHandler: TelegramApprovalHandler)
+  : Unit =
+    val request = Journal.payload("text" ~ incoming.text)
+    transcript.turn: request, () =>
+      run(incoming, client, approvalHandler)
+
+  private def run(
+      incoming: Incoming,
+      client: TelegramClient,
+      approvalHandler: TelegramApprovalHandler)
+  : Value =
+    val channel = new TelegramInteract(client, this.id, approvalHandler)
+
+    val result = with logger = log, interact = channel in
+      Agent.ask(incoming.text, brain = brain, tools = tools, context = context, transcript = transcript)
+
+    var delivered = false
+
+    match result.result
+    case Success =>
+      val answer = result.finalText
+      if answer.trim != "" then
+        client.sendMessage(this.id, answer)
+        delivered = true
+
+    case Interrupted => pass
+
+    case Failed(detail) =>
+      val message =
+        if detail == "" then "Request failed. Please try again."
+        else "Request failed: \{detail}"
+      client.sendMessage(this.id, message)
+      delivered = true
+
+    Journal.payload("delivered" ~ delivered)
+end
+
+
+section Session
+  //[ The JSONL file backing this chat's session. //]
+  def sessionPath(chatId: String): String receives workspace =
+    workspace.relative("logs/sessions/" + chatId + ".jsonl")
+
+  //[ An append log for this chat's session (file created lazily). //]
+  def forSession(chatId: String): Logger receives workspace =
+    new JsonlLogger(sessionPath(chatId))
+
+  //[ Reconstruct this chat's conversation from disk.
+    !
+    ! Returns `[]` if the chat has no prior transcript.
+  //]
+  def load(chatId: String): List[Message] receives workspace =
+    val path = sessionPath(chatId)
+    if !file.exists(path) then []
+    else
+      var entries: List[Entry] = []
+      for line in file.read(path).lines if line.trim != "" do
+        entries = entries + entryFromDict(json.loads(line).cast[py.Dict])
+      Journal.fromEntries(entries)
+end

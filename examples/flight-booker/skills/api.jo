@@ -1,0 +1,78 @@
+// Duffel Flight API — capability reference for Sky
+//
+// Your `runTask()` must declare `duffel` to use any of these methods:
+//
+//   def runTask(): Unit receives IO.stdout, duffel
+//
+// Import all types with:
+//
+//   import sandbox.api.*
+
+// ── Search ────────────────────────────────────────────────────────────────────
+
+// Search for one-way flights. Returns up to 10 offers sorted cheapest-first.
+// cabinClass: "economy" | "premium_economy" | "business" | "first"
+// departureDate: "YYYY-MM-DD"
+val result: SearchResult = duffel.searchFlights("LHR", "JFK", "2025-10-01", 1, "economy")
+// result.offerRequestId — the search session ID
+// result.offers         — List[FlightOffer], may be empty if no flights found
+
+// FlightOffer fields:
+//   offer.id            — used when calling getOffer / createOrder
+//   offer.totalAmount   — e.g. "250.00"
+//   offer.currency      — e.g. "GBP"
+//   offer.slices        — List[FlightSlice]
+//   offer.passengerIds  — List[String], one per passenger; copy into PassengerInfo.id
+
+// FlightSlice fields:
+//   slice.origin / slice.destination  — IATA codes
+//   slice.departingAt / slice.arrivingAt  — ISO datetimes
+//   slice.duration    — ISO 8601 duration, e.g. "PT7H30M"
+//   slice.segments    — List[FlightSegment] (legs within the slice)
+
+// FlightSegment fields:
+//   seg.carrierName / seg.flightNumber
+//   seg.origin / seg.destination
+//   seg.departingAt / seg.arrivingAt / seg.duration
+
+
+// ── Inspect one offer ─────────────────────────────────────────────────────────
+
+val detail: OfferDetail = duffel.getOffer("off_0000...")
+// Same fields as FlightOffer
+
+
+// ── Book a flight ─────────────────────────────────────────────────────────────
+
+// Build one PassengerInfo per entry in offer.passengerIds.
+// title:       "mr" | "ms" | "mrs" | "miss" | "dr"
+// gender:      "m" | "f"
+// bornOn:      "YYYY-MM-DD"
+// phoneNumber: E.164, e.g. "+14155552671"
+val pax = new PassengerInfo(
+  id          = offer.passengerIds.get(0),
+  title       = "mr",
+  givenName   = "John",
+  familyName  = "Smith",
+  bornOn      = "1990-06-15",
+  email       = "john@example.com",
+  phoneNumber = "+441234567890",
+  gender      = "m"
+)
+
+// paymentAmount / paymentCurrency must match offer.totalAmount / offer.currency exactly.
+// In test mode this always uses Duffel's sandbox balance — no real card needed.
+val confirmation: OrderConfirmation = duffel.createOrder(
+  offer.id,
+  [pax],
+  offer.totalAmount,
+  offer.currency
+)
+
+// Check for errors first:
+if confirmation.error != "" then
+  println "Booking failed: " + confirmation.error
+else
+  println "Booked! Reference: " + confirmation.bookingReference
+  println "Order ID: " + confirmation.id
+  println "Total: " + confirmation.totalAmount + " " + confirmation.currency
