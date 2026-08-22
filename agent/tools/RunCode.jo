@@ -156,25 +156,62 @@ private def replayAudit(path: String): Unit receives logger =
 
 //[ The core "act" tool: compile + run a Jo program against the agent sandbox.
   !
-  ! Built by `runCodeTool`, whose documentation explains the settings this holds.
   ! Requires the sandbox to have been built once (`jo build`), which records the
-  ! compiler invocation each run replays. Until then, calls return a "sandbox
+  ! compiler invocation this tool replays. Until then, calls return a "sandbox
   ! not built" message rather than building anything themselves.
+  !
+  ! `buildTimeout` / `runTimeout` are host-side wall-clock backstops (seconds):
+  ! a guest stuck compiling or in an infinite loop is killed (process group and
+  ! all) rather than hanging the loop. Finer OS-level confinement (memory/CPU
+  ! caps, filesystem, uid) lives outside the process in the optional
+  ! `sandbox/run.sh` wrapper (see docs/concepts/sandbox.md).
+  !
+  ! `approvalDeadline` is the application's watchdog for one approval pause. It
+  ! should be slightly longer than the deadline enforced by the application's
+  ! interaction UI. This prevents a broken interaction handler from leaving the
+  ! sandbox process waiting forever.
+  !
+  ! `maxConcurrent` bounds how many builds+runs proceed at once (each spawns a
+  ! compiler + interpreter process). Further calls wait for a slot. Concurrent
+  ! calls are isolated by construction — each compiles its own source against
+  ! the shared, read-only dependency libraries — so they never corrupt each
+  ! other.
+  !
+  ! Each run emits one `harpe.tools.runCode` `Entry` (code, and the outcome's
+  ! compile/run timings, output or error) to the ambient `logger` channel — read
+  ! at call time, so the turn's `Logging.withContext` tags reach it. Its format
+  ! and destination are the `Logger` backend's policy — see
+  ! `harpe.logging.Logging.withLogger`.
+  !
+  ! `maxResultChars` bounds the result text returned to the model
+  ! (middle-elided, head + tail kept) so one large program output cannot flood
+  ! the context. The full, un-elided output is still written to `logger`, so
+  ! nothing is lost.
+  !
+  ! Defense in depth is external: if `sandbox/run.sh` (at the sandbox project
+  ! root) exists and is executable, each run goes through it — `run.sh <out.py>`
+  ! — and the script owns the interpreter, uid drop, and OS confinement (ulimit,
+  ! landrun, bwrap, docker, …). Absent, the guest runs under the system Python.
+  ! See `docs/concepts/sandbox.md`.
 //]
 class RunCodeTool(
     sandboxDir: String,
     approvalDeadline: Float,
-    buildTimeout: Float,
-    runTimeout: Float,
-    maxConcurrent: Int,
-    maxResultChars: Int)
+    buildTimeout: Float = 120.0,
+    runTimeout: Float = 30.0,
+    maxConcurrent: Int = 4,
+    maxResultChars: Int = 4000)
   view Tool
 
   //[ Bounds how many builds+runs proceed at once — further calls wait here. //]
   private val gate: py.Dynamic = threading.semaphore(maxConcurrent)
 
-  //[ The optional `run.sh` wrapper, at the sandbox project root. //]
-  private val runScript: String = os.path.join(sandboxDir, "run.sh")
+  //[ The optional `run.sh` wrapper, at the sandbox project root
+    !
+    ! Checked once, here, rather than on every call: if it exists but is not
+    ! executable, every run would fail obscurely.
+  //]
+  private val runScript: String = checkedRunScript(sandboxDir)
 
   def name: String = "runCode"
 
@@ -398,57 +435,8 @@ class RunCodeTool(
     new RunOutcome(result, summary, attachments = [])
 end
 
-//[ The core "act" tool: compile + run a Jo program against the agent sandbox.
-  !
-  ! Requires the sandbox to have been built once (`jo build`), which records the
-  ! compiler invocation this tool replays. Until then, calls return a "sandbox
-  ! not built" message rather than building anything themselves.
-  !
-  ! `buildTimeout` / `runTimeout` are host-side wall-clock backstops (seconds):
-  ! a guest stuck compiling or in an infinite loop is killed (process group and
-  ! all) rather than hanging the loop. Finer OS-level confinement (memory/CPU
-  ! caps, filesystem, uid) lives outside the process in the optional
-  ! `sandbox/run.sh` wrapper (see docs/concepts/sandbox.md).
-  !
-  ! `approvalDeadline` is the application's watchdog for one approval pause. It
-  ! should be slightly longer than the deadline enforced by the application's
-  ! interaction UI. This prevents a broken interaction handler from leaving the
-  ! sandbox process waiting forever.
-  !
-  ! `maxConcurrent` bounds how many builds+runs proceed at once (each spawns a
-  ! compiler + interpreter process). Further calls wait for a slot. Concurrent
-  ! calls are isolated by construction — each compiles its own source against
-  ! the shared, read-only dependency libraries — so they never corrupt each
-  ! other.
-  !
-  ! Each run emits one `harpe.tools.runCode` `Entry` (code, and the outcome's
-  ! compile/run timings, output or error) to the ambient `logger` channel — read
-  ! at call time, so the turn's `Logging.withContext` tags reach it. Its format
-  ! and destination are the `Logger` backend's policy — see
-  ! `harpe.logging.Logging.withLogger`.
-  !
-  ! `maxResultChars` bounds the result text returned to the model
-  ! (middle-elided, head + tail kept) so one large program output cannot flood
-  ! the context. The full, un-elided output is still written to `logger`, so
-  ! nothing is lost.
-  !
-  ! Defense in depth is external: if `sandbox/run.sh` (at the sandbox project
-  ! root) exists and is executable, each run goes through it — `run.sh <out.py>`
-  ! — and the script owns the interpreter, uid drop, and OS confinement (ulimit,
-  ! landrun, bwrap, docker, …). Absent, the guest runs under the system Python.
-  ! See `docs/concepts/sandbox.md`.
-  !
-  ! The optional `run.sh` wrapper is checked once here rather than on every
-  ! call: if it exists but is not executable, every run would fail obscurely.
-//]
-def runCodeTool(
-    sandboxDir: String,
-    approvalDeadline: Float,
-    buildTimeout: Float = 120.0,
-    runTimeout: Float = 30.0,
-    maxConcurrent: Int = 4,
-    maxResultChars: Int = 4000)
-: RunCodeTool =
+//[ The optional `run.sh` wrapper in `sandboxDir`, refused if it cannot run. //]
+private def checkedRunScript(sandboxDir: String): String =
   val runScript = os.path.join(sandboxDir, "run.sh")
 
   if os.path.isfile(runScript) then
@@ -456,10 +444,4 @@ def runCodeTool(
     if !osMod.access(runScript, osMod.X_OK).asBool then
       abort "sandbox run.sh exists but is not executable — run `chmod +x \{runScript}` (see docs/concepts/sandbox.md)"
 
-  new RunCodeTool:
-    sandboxDir
-    approvalDeadline
-    buildTimeout
-    runTimeout
-    maxConcurrent
-    maxResultChars
+  runScript

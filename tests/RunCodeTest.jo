@@ -2,7 +2,7 @@
   !
   ! Integration tests for the `runCode` tool (`harpe.tools`). Unlike the pure
   ! `Agent.ask` tests, `runCode` actually compiles and runs a guest program, so
-  ! these drive `runCodeTool` against an on-disk sandbox fixture
+  ! these drive `RunCodeTool` against an on-disk sandbox fixture
   ! (`sandbox-fixtures/basic/`, kept outside the `tests/` source glob) and
   ! assert a normalized outcome tag — covering the host wall-clock timeout, the
   ! `sandbox/run.sh` seam, and provider-key env scrub end to end. They shell out
@@ -145,10 +145,10 @@ def run(): Unit receives stdout =
 
   // An unbuilt sandbox reports clearly instead of building or running anything.
   val unbuilt = tempfile.mkdtemp()
-  check("not-built", exec(runCodeTool(unbuilt, 5.0), guest("  println 1\n")).summary, "sandbox not built")
+  check("not-built", exec(RunCodeTool(unbuilt, 5.0), guest("  println 1\n")).summary, "sandbox not built")
 
-  val fast  = runCodeTool(sandboxDir, 5.0, 120.0, 5.0)   // 5s run backstop
-  val quick = runCodeTool(sandboxDir, 5.0, 120.0, 2.0)   // 2s run backstop
+  val fast  = RunCodeTool(sandboxDir, 5.0, 120.0, 5.0)   // 5s run backstop
+  val quick = RunCodeTool(sandboxDir, 5.0, 120.0, 2.0)   // 2s run backstop
 
   // A well-formed program runs and produces output.
   check("normal", tag(exec(fast, guest("  println 42\n"))), "ran")
@@ -181,7 +181,7 @@ def run(): Unit receives stdout =
 
   // An application-supplied approval deadline stops a run even if its trusted
   // interaction handler never returns.
-  val approvalWatchdog = runCodeTool(sandboxDir, 0.2, 120.0, 5.0)
+  val approvalWatchdog = RunCodeTool(sandboxDir, 0.2, 120.0, 5.0)
   val stuckApproval = execWith(
     approvalWatchdog,
     guest("  println 7\n"),
@@ -198,7 +198,7 @@ def run(): Unit receives stdout =
 
   // Concurrent runs are isolated: 4 parallel programs, 2 building at a time,
   // each must get back its own output (no shared Task.jo / .build clobbering).
-  concurrentCheck(runCodeTool(sandboxDir, 5.0, 120.0, 5.0, 2), 4)
+  concurrentCheck(RunCodeTool(sandboxDir, 5.0, 120.0, 5.0, 2), 4)
 
   // A program that does not type-check is caught at the compile checkpoint.
   val badCompile = exec(fast, guest("  println undefinedThing\n"))

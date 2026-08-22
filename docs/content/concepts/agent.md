@@ -54,7 +54,7 @@ Agent.ask("hello")
 its own pieces supplied:
 
 ```jo
-val runCode = runCodeTool(workspace.sandboxDir, approvalDeadline = 610.0)
+val runCode = RunCodeTool(workspace.sandboxDir, approvalDeadline = 610.0)
 val tools = SkillTools.toolset(skillsDir) ++ runCode.toolset()
 
 val context = new WindowedContext:

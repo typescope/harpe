@@ -90,7 +90,7 @@ agent's final answer.
 
 The framework provides the tools, and your driver wires them:
 
-- **`runCodeTool(sandboxDir, approvalDeadline)`** — `runCode`, which compiles and
+- **`RunCodeTool(sandboxDir, approvalDeadline)`** — `runCode`, which compiles and
   runs a Jo program in the sandbox. This is the agent's main way to act.
 - **`UploadMediaTool`** — `uploadMedia`, which shows an image or PDF from the
   data directory directly to the chat model.
@@ -98,7 +98,7 @@ The framework provides the tools, and your driver wires them:
   access to the agent's `skills/`.
 
 Each offers a `toolset(...)` that wires its specs to its handlers, and one typed
-method per verb if you would rather wire them yourself. Only `runCodeTool` is a constructor: it is the one tool that
+method per verb if you would rather wire them yourself. Only `RunCodeTool` is a class: it is the one tool that
 owns something with a lifetime — the semaphore bounding concurrent sandbox runs
 — while the others own nothing, so they are sections and their per-session
 values arrive as arguments.
