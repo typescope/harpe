@@ -2,6 +2,7 @@ namespace harpe.examples.flightbooker
 
 import harpe.ffi.threading
 import harpe.ffi.time
+import harpe.ffi.os
 
 import jo.IO.stdout
 import harpe.Defaults
@@ -10,34 +11,31 @@ import harpe.ApprovalRequest
 import harpe.ApprovalDecision
 import harpe.ApprovalTimedOut
 import harpe.ApprovalCancelled
-import harpe.Agent
-import harpe.callContext
-import harpe.Memory
 import harpe.Model
 import harpe.Tool
-import harpe.tools.memoryTools
+import harpe.Tool.ToolInput
+import harpe.Toolset
+import harpe.tools.*
 import harpe.context.WindowedContext
+import harpe.transcript.Journal
+import harpe.logging.logger
 
 //[ A lightweight tool that returns today's date and weekday
   !
   ! Called by the agent whenever the user gives a relative date ("this Friday",
   ! "next Monday", "tomorrow"). Runs on the host thread — no sandbox needed.
 //]
-private def getTodayTool(): Tool = new Tool:
-  name = "getToday"
-  description = "Get today's date and day of the week. Call this whenever the user mentions a relative date such as \"this Friday\", \"next Monday\", or \"tomorrow\", then compute the target date from the result."
-  params = []
-  run = _ =>
+private def getTodayToolset(): Toolset =
+  val spec = Tool:
+    "getToday"
+    "Get today's date and day of the week. Call this whenever the user mentions a relative date such as \"this Friday\", \"next Monday\", or \"tomorrow\", then compute the target date from the result."
+    []
+  Toolset.of: spec, _ =>
     val dt = py.module("datetime")
     val today = dt.date.today()
     val iso = today.isoformat().asString
     val weekday = today.strftime("%A").asString
-    new Tool.RunOutcome(
-      "Today is " + weekday + ", " + iso + ".",
-      "getToday · " + iso,
-      []
-    )
-
+    new Tool.RunOutcome("Today is " + weekday + ", " + iso + ".", "getToday · " + iso, attachments = [])
 
 private class PendingTelegramApproval(
     id: String,
@@ -54,6 +52,7 @@ class TelegramBot(
 
   private val registry = py.dict()
   private val registryLock = threading.lock()
+  private val runTool: RunCodeTool = runCodeTool(harpe.workspace.sandboxDir, 610.0)
   private val approvalLock = threading.lock()
   private val pendingApprovals = py.dict()
 
@@ -91,6 +90,7 @@ class TelegramBot(
     val chatType = chat.get("type", "private").asString
     val senderId = "\{message.get("from").cast[py.Dict].get("id").asInt}"
     val text = message.get("text").asString
+    val msgId = "\{message.get("message_id").asInt}"
 
     var effectiveText = text
     if chatType == "group" || chatType == "supergroup" then
@@ -108,7 +108,7 @@ class TelegramBot(
       println "  · rejected message from unlisted sender \{senderId} in \{chatType} \{chatId}"
       return
 
-    dispatch(chatId, new Incoming(effectiveText, senderId))
+    dispatch(chatId, new Incoming(msgId, effectiveText, senderId))
 
   //[ Resolve an inline approval button without enqueuing a new turn //]
   private def handleApprovalCallback(callback: py.Dict): Unit =
@@ -161,7 +161,7 @@ class TelegramBot(
     approvalLock.release()
 
     match client.sendApproval(chatId, id, request.title, request.detail)
-    case Some(messageId) => pending.messageId = messageId
+    case Some(msgId) => pending.messageId = msgId
     case None =>
       approvalLock.acquire()
       pendingApprovals.pop(id)
@@ -235,27 +235,32 @@ class TelegramBot(
     registryLock.acquire()
     val live = registry.contains(chatId)
     if live then
-      registry.get(chatId).cast[Session].queue.put(incoming)
+      enqueue(registry.get(chatId).cast[Session], incoming)
     registryLock.release()
 
     if !live then
       val log = Session.forSession(chatId)
-      val memoryPath = Session.memoryPath(chatId)
-      val memory = Memory.load(memoryPath)
-      val agent = new Agent:
-        brain = brain
-        tools = Defaults.tools(610.0) ++ memoryTools(memory) ++ [getTodayTool()]
-        context = new WindowedContext:
-          baseSystem = workspace.read("AGENT.md").getOrElse("")
-          memory = memory
-          initial = Session.load(chatId)
+      val context = new WindowedContext:
+        baseSystem = workspace.read("AGENT.md").getOrElse("")
+        initial = Session.load(chatId)
 
-      val session = new Session(chatId, log, agent, memory, memoryPath)
+      val duffelKey = os.getenv("DUFFEL_API_KEY", "")
+      val tools =
+        SkillTools.toolset(harpe.workspace.skillsDir)
+          ++ runTool.toolset(Map("DUFFEL_API_KEY" ~ duffelKey))
+          ++ getTodayToolset()
+
+      val session = new Session(chatId, log, brain, tools, context)
       registryLock.acquire()
       registry.set(chatId, session)
-      session.queue.put(incoming)
+      enqueue(session, incoming)
       registryLock.release()
       startWorker(chatId, session)
+
+  //[ Queue a message and log the enqueue event //]
+  private def enqueue(session: Session, incoming: Incoming): Unit =
+    session.log.log("telegram.queued", "messageId" ~ incoming.id, "text" ~ incoming.text)
+    session.queue.put(incoming)
 
   //[ The chat's worker: drain its queue, one turn per message in arrival order //]
   private def workerLoop(chatId: String, session: Session): Unit =
@@ -269,8 +274,6 @@ class TelegramBot(
             incoming
             client
             (id, request) => requestApproval(chatId, incoming.senderId, id, request)
-            maxToolRounds = 50
-            maxRetries = 4
 
         match turnRes
         case Ok(_)  => pass
