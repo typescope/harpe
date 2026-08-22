@@ -60,7 +60,7 @@ rest:
 - [Image](/capabilities/image/) — `image`
 - [OCR](/capabilities/ocr/) — `ocr`
 
-Generated code sees relative paths, never the surrounding workspace or a host
+Generated code sees relative paths, never the agent's own directories or a host
 path. Web and Telegram both take uploads this way. Keep file bytes, credentials,
 storage keys, and host paths out of the transcript.
 

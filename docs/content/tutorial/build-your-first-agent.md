@@ -49,14 +49,14 @@ my-agent/
 Open `src/Main.jo`. It names the pieces a turn will be run with:
 
 ```jo
-val runCode = RunCodeTool(workspace.sandboxDir, approvalDeadline = 610.0)
+val runCode = RunCodeTool(os.path.abspath("sandbox"), approvalDeadline = 610.0)
 
 val brain = Model.default()
 
 // The context is the one piece that must outlive a turn: it carries the
 // conversation from one turn to the next.
 val context = new FullContext:
-  baseSystem = workspace.read("AGENT.md").getOrElse("")
+  baseSystem = file.read("AGENT.md")
   initial = []
 
 // The one tool this agent has: what the model is offered, and what runs.

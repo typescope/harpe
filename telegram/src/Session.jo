@@ -2,7 +2,7 @@
   !
   ! The Telegram driver's live conversation object (`Session`) and its storage layout
   ! (the `Session` section): one conversation per Telegram chat, keyed by its numeric
-  ! `chat.id`, persisted as `logs/sessions/<chatId>.jsonl` under the workspace. The
+  ! `chat.id`, persisted as `logs/sessions/<chatId>.jsonl` under the agent's home. The
   ! chat id is the natural session key — it is stable across messages and survives
   ! restarts, so a chat resumes its history simply by reappearing.
   !
@@ -23,7 +23,6 @@ import harpe.Toolset
 import harpe.interact
 import harpe.Transcript
 import harpe.transcript.Journal
-import harpe.workspace
 import harpe.logging.JsonlLogger
 import harpe.logging.Logger
 import harpe.logging.logger
@@ -219,8 +218,8 @@ private def uniqueName(dir: String, name: String): String =
 
 section Session
   //[ The file backing this chat's session. //]
-  def sessionPath(chatId: String): String receives workspace =
-    workspace.relative("logs/sessions/" + chatId + ".jsonl")
+  def sessionPath(chatId: String): String receives appHome =
+    os.path.join(appHome, "logs/sessions", chatId + ".jsonl")
 
   //[ The per-chat data directory
     !
@@ -229,13 +228,13 @@ section Session
     ! attachments land here, and files the agent writes surface here too.
     ! Created on demand. Scoped by chat id so chats never share a tree.
   //]
-  def dataDir(chatId: String): String receives workspace =
-    val dir = workspace.relative("data/" + chatId)
+  def dataDir(chatId: String): String receives appHome =
+    val dir = os.path.join(appHome, "data", chatId)
     if !os.path.isdir(dir) then os.makedirs(dir)
     dir
 
   //[ An append log for this chat's session (its file is created lazily). //]
-  def forSession(chatId: String): Logger receives workspace =
+  def forSession(chatId: String): Logger receives appHome =
     new JsonlLogger(sessionPath(chatId))
 
   //[ The files this turn delivered, in the order the agent sent them
@@ -262,7 +261,7 @@ section Session
     ! `[]` if it has no file yet, so a chat seen for the first time starts
     ! empty.
   //]
-  def load(chatId: String): List[Message] receives workspace =
+  def load(chatId: String): List[Message] receives appHome =
     val path = sessionPath(chatId)
     if !file.exists(path) then []
     else

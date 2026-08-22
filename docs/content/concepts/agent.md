@@ -54,11 +54,11 @@ Agent.ask("hello")
 its own pieces supplied:
 
 ```jo
-val runCode = RunCodeTool(workspace.sandboxDir, approvalDeadline = 610.0)
+val runCode = RunCodeTool(sandboxDir, approvalDeadline = 610.0)
 val tools = SkillTools.toolset(skillsDir) ++ runCode.toolset()
 
 val context = new WindowedContext:
-  baseSystem = workspace.read("AGENT.md").getOrElse("")
+  baseSystem = "You are a helpful assistant."
   initial = history
 
 with interact = channel in

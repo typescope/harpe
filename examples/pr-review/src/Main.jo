@@ -3,6 +3,7 @@ namespace harpe.examples.prreview
 import jo.IO.stdout
 import jo.IO.args
 import harpe.*
+import harpe.ffi.file
 import harpe.ffi.os
 import harpe.ffi.time
 import harpe.ffi.dotenv
@@ -15,6 +16,11 @@ import harpe.tools.RunCodeTool
 import harpe.tools.SkillTools
 import harpe.context.FullContext
 
+//[ Where this application's files live: `sandbox/`, `skills/`, `logs/`, `AGENT.md`
+  ! — its own convention, not the framework's.
+//]
+param appHome: String
+
 //[ agent entry point  //]
 def main(): Unit receives args, stdout =
   if args.size < 1 then
@@ -23,16 +29,15 @@ def main(): Unit receives args, stdout =
   val pr = args[0]
 
   dotenv.load(".env")
-  val wspace = new Workspace(os.path.abspath("."))
-  with workspace = wspace in
+  with appHome = os.path.abspath(".") in
     Logging.withLogger:
-      new JsonlLogger: wspace.relative("logs/agent.jsonl")
+      new JsonlLogger: os.path.join(appHome, "logs/agent.jsonl")
       () => review(pr)
 
-private def review(pr: String): Unit receives stdout, workspace, logger =
-  val basePrompt = workspace.read("AGENT.md") rescue None => ""
-  val runCode = RunCodeTool(workspace.sandboxDir, 610.0)
-  val skillsDir = workspace.skillsDir
+private def review(pr: String): Unit receives stdout, appHome, logger =
+  val basePrompt = file.read(os.path.join(appHome, "AGENT.md"))
+  val runCode = RunCodeTool(os.path.join(appHome, "sandbox"), 610.0)
+  val skillsDir = os.path.join(appHome, "skills")
 
   val context = new FullContext(basePrompt, [])
   val channel = new PrintInteract(stdout)

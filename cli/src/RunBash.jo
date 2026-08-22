@@ -16,7 +16,7 @@ class RunBashTool
   def name: String = "runBash"
 
   def description: String =
-    "Run a Bash command in the agent workspace after asking the user for approval."
+    "Run a Bash command in the agent home directory after asking the user for approval."
 
   def params: List[Tool.ToolParam] =
     [Tool.strParam("command", "The exact Bash command to run")]
@@ -25,11 +25,11 @@ class RunBashTool
   def toolset(): Toolset =
     Toolset.of: this, (i: Tool.ToolInput) => run(i["command"])
 
-  def run(command: String): Tool.RunOutcome receives workspace, interact =
+  def run(command: String): Tool.RunOutcome receives appHome, interact =
     runBash(command)
 end
 
-private def runBash(command: String): Tool.RunOutcome receives workspace, interact =
+private def runBash(command: String): Tool.RunOutcome receives appHome, interact =
   if command.trim == "" then
     return new Tool.RunOutcome("The command is empty.", "empty command", attachments = [])
 
@@ -53,7 +53,7 @@ private def runBash(command: String): Tool.RunOutcome receives workspace, intera
     val result = subprocess.runCapped(
       py.list("bash", "-lc", command),
       30.0,
-      cwd = workspace.relative("")
+      cwd = appHome
     )
 
     if result.timedOut then

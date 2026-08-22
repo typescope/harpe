@@ -2,7 +2,7 @@
   !
   ! The web driver's live conversation object (`Session`) and its storage layout
   ! (the `Session` section): conversations live as `logs/sessions/<id>.jsonl` under
-  ! the workspace, one file per session, keyed by the id that also appears in its
+  ! the agent's home, one file per session, keyed by the id that also appears in its
   ! `/c/<id>` URL.
   !
   ! This layout is a *driver* decision. The section maps an id to its structured
@@ -29,7 +29,6 @@ import harpe.interact
 import harpe.Transcript
 import harpe.transcript.Journal
 import harpe.TurnData
-import harpe.workspace
 import harpe.logging.JsonlLogger
 import harpe.logging.Logger
 import harpe.logging.logger
@@ -292,8 +291,8 @@ class SessionFile(name: String, size: Int, mime: String, modified: Float)
 
 section Session
   //[ The file backing the session with this id. //]
-  def sessionPath(id: String): String receives workspace =
-    workspace.relative("logs/sessions/" + id + ".jsonl")
+  def sessionPath(id: String): String receives appHome =
+    os.path.join(appHome, "logs/sessions", id + ".jsonl")
 
   //[ The per-session data directory
     !
@@ -303,8 +302,8 @@ section Session
     ! Created on demand. Scoped by id so sessions never share a tree (the
     ! multi-tenant reason a single shared `data/` will not do).
   //]
-  def dataDir(id: String): String receives workspace =
-    val dir = workspace.relative("data/" + id)
+  def dataDir(id: String): String receives appHome =
+    val dir = os.path.join(appHome, "data", id)
     if !os.path.isdir(dir) then os.makedirs(dir)
     dir
 
@@ -313,11 +312,11 @@ section Session
     ! For rendering, which must resolve delivered files without creating a
     ! directory as a side effect.
   //]
-  def existingDataDir(id: String): Option[String] receives workspace =
+  def existingDataDir(id: String): Option[String] receives appHome =
     val base = os.path.basename(id.replace("\\", "/"))
     if base == "" || base == "." || base == ".." then None
     else
-      val dir = workspace.relative("data/" + base)
+      val dir = os.path.join(appHome, "data", base)
       if os.path.isdir(dir) then Some(dir) else None
 
   //[ The files in the data directory `dir`, newest first — uploads and agent output alike
@@ -343,13 +342,13 @@ section Session
       files.sortBy(f => f.modified).reverse
 
   //[ An append log for this id's session (its file is created lazily). //]
-  def forSession(id: String): Logger receives workspace =
+  def forSession(id: String): Logger receives appHome =
     new JsonlLogger(sessionPath(id))
 
   //[ Permanently remove a session's transcript and data directory. //]
-  def removeStored(id: String): Unit receives workspace =
+  def removeStored(id: String): Unit receives appHome =
     val transcript = sessionPath(id)
-    val data = workspace.relative("data/" + id)
+    val data = os.path.join(appHome, "data", id)
 
     if os.path.isfile(transcript) then os.unlink(transcript)
     if os.path.isdir(data) then py.module("shutil").rmtree(data)
@@ -359,7 +358,7 @@ section Session
     ! `[]` if it has no file yet, so a freshly-minted (or unknown) id loads as
     ! an empty conversation.
   //]
-  def load(id: String): List[Message] receives workspace =
+  def load(id: String): List[Message] receives appHome =
     Journal.fromEntries(loadEntries(id))
 
   //[ Reconstruct this driver's transcript for application history.
@@ -368,7 +367,7 @@ section Session
     ! against the same session — a subagent, a maintenance job — is in the log
     ! for auditing and is not part of the conversation the user sees.
   //]
-  def loadRecords(id: String): List[Journal.TurnRecord] receives workspace =
+  def loadRecords(id: String): List[Journal.TurnRecord] receives appHome =
     Journal.records(loadEntries(id))
 
   //[ What the agent said and sent this turn, in the order it happened
@@ -408,7 +407,7 @@ section Session
     parts
 
   //[ Decode this driver's per-session JSONL file. //]
-  private def loadEntries(id: String): List[Entry] receives workspace =
+  private def loadEntries(id: String): List[Entry] receives appHome =
     val path = sessionPath(id)
     if !file.exists(path) then []
     else
@@ -422,8 +421,8 @@ section Session
     ! Scans the sessions directory and reads each file's head for a title (its
     ! first user message) and start time, without loading whole conversations.
   //]
-  def listSessions(): List[SessionMeta] receives workspace =
-    val dir = workspace.relative("logs/sessions")
+  def listSessions(): List[SessionMeta] receives appHome =
+    val dir = os.path.join(appHome, "logs/sessions")
     var metas: List[SessionMeta] = []
 
     if os.path.isdir(dir) then

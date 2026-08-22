@@ -19,28 +19,33 @@ import harpe.ffi.file
 
 import jo.IO.stdout
 import harpe.Http
-import harpe.Workspace
 import harpe.Model
-import harpe.workspace
 import harpe.ffi.os
+
+//[ Where this application's files live: `assets/`, `sandbox/`, `skills/`, `data/`, `logs/`, `AGENT.md`
+  !
+  ! This driver's own convention, not the framework's. Provided once at startup
+  ! and re-provided per request thread by `ChatServer.route`, so every handler
+  ! resolves its paths without being handed a directory.
+//]
+param appHome: String
 
 //[ The entry point //]
 def main(): Unit receives stdout =
   dotenv.load(".env")
-  val wspace = new Workspace(os.path.abspath("."))
-  with workspace = wspace in serve()
+  with appHome = os.path.abspath(".") in serve()
 
-private def serve(): Unit receives stdout, workspace =
+private def serve(): Unit receives stdout, appHome =
   // The chat page is the agent's own file, served from disk (see Server.route),
   // so the agent owns and customizes it. Fail fast with a pointer if it is missing.
-  if !file.exists(workspace.relative("assets/index.html")) then
+  if !file.exists(os.path.join(appHome, "assets/index.html")) then
     println "Error: assets/index.html not found — the web driver serves the chat page from the agent's assets/ directory."
     println "  It ships with the web agent; restore it from the harpe repo (web/assets/index.html)."
     sys.exit(1)
 
   val brain = Model.default()
 
-  val server = new ChatServer(brain, "Clair", workspace)
+  val server = new ChatServer(brain, "Clair", appHome)
 
   val host = os.getenv("HOST", "127.0.0.1")
   val port = Int.parse(os.getenv("PORT", "8765")) rescue None => 8765

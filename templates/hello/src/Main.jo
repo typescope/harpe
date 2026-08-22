@@ -7,6 +7,7 @@ import harpe.*
 import harpe.Model.UserInput
 import harpe.context.FullContext
 import harpe.ffi.dotenv
+import harpe.ffi.file
 import harpe.ffi.os
 import harpe.logging.Logging
 import harpe.logging.logger
@@ -15,28 +16,29 @@ import harpe.turns.TurnResult
 
 def main(): Unit receives stdout =
   dotenv.load(".env")
+  Logging.withLogger(Logging.discard, () => chat())
 
-  val workspace = new Workspace(os.path.abspath("."))
-  with harpe.workspace = workspace in
-    Logging.withLogger(Logging.discard, () => chat())
-
-private def chat(): Unit receives stdout, harpe.workspace, logger =
-  val runCode = RunCodeTool(workspace.sandboxDir, approvalDeadline = 610.0)
+// This application keeps its files beside itself — `sandbox/`, `data/`, and
+// `AGENT.md` — and is run from its own directory, so paths are relative to it.
+// That is this application's arrangement, not the framework's: every tool below
+// is handed the directory it works in.
+private def chat(): Unit receives stdout, logger =
+  val runCode = RunCodeTool(os.path.abspath("sandbox"), approvalDeadline = 610.0)
 
   val brain = Model.default()
 
   // The context is the one piece that must outlive a turn: it carries the
   // conversation from one turn to the next.
   val context = new FullContext:
-    baseSystem = workspace.read("AGENT.md").getOrElse("")
+    baseSystem = file.read("AGENT.md")
     initial = []
 
   // The one tool this agent has: what the model is offered, and what runs.
   val tools = runCode.toolset()
 
-  val data = workspace.relative("data")
+  val data = os.path.abspath("data")
   os.makedirs(data)
-  val dataDir = os.path.abspath(data)
+  val dataDir = data
   val channel = new SimpleInteract
 
   println "Ask the agent something. Type 'quit' to stop."

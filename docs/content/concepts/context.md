@@ -52,20 +52,21 @@ The strategy is per-session, constructed where the driver builds its `Agent`:
 ```jo
 // default: a sliding window (fixed size, no knobs)
 new WindowedContext:
-  baseSystem = workspace.read("AGENT.md").getOrElse("")
+  baseSystem = "You are a helpful assistant."
   initial = history
 
 // or: summarize instead of dropping
 new SummarizingContext:
-  baseSystem = workspace.read("AGENT.md").getOrElse("")
+  baseSystem = "You are a helpful assistant."
   initial = history
   highWaterTokens = 120000
   lowWaterChars = 160000
   distill = distiller
 ```
 
-- `baseSystem` is your `AGENT.md`. `history` seeds the window (a resumed session's
-  transcript, or `[]` for a fresh one).
+- `baseSystem` is the system prompt — a string, however you produce it. The
+  shipped applications read theirs from `AGENT.md`. `history` seeds the window
+  (a resumed session's transcript, or `[]` for a fresh one).
 - `distiller` is any `Model` — the agent's brain, or a cheaper model reserved for
   summaries.
 - `highWaterTokens` is the budget you compact at. It's a **policy, not the model's
