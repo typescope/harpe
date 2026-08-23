@@ -8,7 +8,6 @@
 namespace harpe.logging
 
 import harpe.ffi.builtins
-import harpe.util.Py
 
 //[ A loggable value: a scalar, an array, or a map
   !
@@ -52,13 +51,9 @@ section Value
       for k ~ vv in m.toList do d.set(k, toJson(vv))
       d
 
-  //[ A decoded JSON value as a `Value`
-    !
-    ! `bool` is checked before `int` (Python's `bool` is an `int` subclass), so
-    ! `true`/`false` never decode as `1`/`0`.
-  //]
+  //[ A decoded JSON value as a `Value` //]
   def fromJson(obj: py.Dynamic): Value =
-    match Py.typeName(obj)
+    match typeName(obj)
     case "bool"  => BoolVal(obj.asBool)
     case "int"   => IntVal(obj.asInt)
     case "float" => obj.asFloat
@@ -74,4 +69,17 @@ section Value
       m
 
     case _ => obj.asString
+
+  //[ The name of a decoded value's Python type (`"str"`, `"int"`, `"dict"`, …)
+    !
+    ! The EXACT type, not an `isInstance` test, and that is the point: Python's
+    ! `bool` is a subclass of `int`, so an `isInstance` chain decodes `true` as
+    ! `1` unless `bool` is tested first — a correctness bug one reordering away.
+    ! JSON has six types and a value is exactly one of them, so the exact name is
+    ! both the safer question and the right one. Private because that reasoning
+    ! holds for decoding JSON and nowhere else: a caller asking whether a value
+    ! can be USED as something wants `py.isInstance` (see `Http.readJson`).
+  //]
+  private def typeName(obj: py.Dynamic): String =
+    builtins.getattr(builtins.typeOf(obj), "__name__").asString
 end
