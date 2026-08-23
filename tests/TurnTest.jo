@@ -23,7 +23,6 @@ import harpe.Tool.*
 import harpe.logging.logger
 import harpe.logging.Logger
 import harpe.logging.Entry
-import harpe.logging.entryDict
 
 
 // A reply carrying only text (no tool calls).
@@ -37,22 +36,22 @@ private def toolReply(name: String): ReplyResult =
 
 private def eventTag(e: TurnEvent): String =
   match e
-  case ModelRequestStarted(_, _) => "start"
-  case ModelRequestEnded         => "end"
-  case TransientError(_, _)      => "transient"
-  case AssistantMessage(text)    => "assistant:\{text}"
-  case ToolBudgetReached(_)      => "budget"
-  case ToolCallStarted(n)        => "tool+\{n}"
-  case ToolCallEnded(n, _)       => "tool-\{n}"
-  case ContextCompacted(_)       => "compact"
+  case TurnEvent.ModelRequestStarted(_, _) => "start"
+  case TurnEvent.ModelRequestEnded         => "end"
+  case TurnEvent.TransientError(_, _)      => "transient"
+  case TurnEvent.AssistantMessage(text)    => "assistant:\{text}"
+  case TurnEvent.ToolBudgetReached(_)      => "budget"
+  case TurnEvent.ToolCallStarted(n)        => "tool+\{n}"
+  case TurnEvent.ToolCallEnded(n, _)       => "tool-\{n}"
+  case TurnEvent.ContextCompacted(_)       => "compact"
 
 // The turn's outcome and its visible text, as one tag. `Answered(x)` is kept as
 // the wording so the expectations still read as "what did the turn say".
 private def resultTag(t: TurnData): String =
   match t.result
-  case Success        => "Answered(\{t.finalText})"
-  case Interrupted    => "Interrupted"
-  case Failed(detail) => "Failed(\{detail})"
+  case TurnResult.Success        => "Answered(\{t.finalText})"
+  case TurnResult.Interrupted    => "Interrupted"
+  case TurnResult.Failed(detail) => "Failed(\{detail})"
   case _              => "None"
 
 private def joinPy(xs: py.List): String =
@@ -96,7 +95,7 @@ private class CaptureLogger
 
   def logEntry(entry: Entry): Unit =
     if entry.category == "harpe.turn.message" then
-      val d = entryDict(entry)
+      val d = Entry.toDict(entry)
       val role = d.get("role", "").asString
       if role == "assistant" && d.get("calls", py.list()).cast[py.List].size > 0 then
         events = events + "assistant-calls"
@@ -137,7 +136,7 @@ private class TestInteract(state: State)
 
   def pause(seconds: Float): Bool = state.pauseNow
 
-  def approve(id: String, request: ApprovalRequest): ApprovalDecision = ApprovalCancelled
+  def approve(id: String, request: Approvals.Request): Approvals.Decision = Approvals.Cancelled
 end
 
 private class State(cancelled: Bool, pause: Bool)

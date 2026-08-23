@@ -7,20 +7,8 @@
 
 namespace harpe.caps
 
-//[ Metadata for one file or directory — the single stat record.
-  !
-  ! Kind, size in bytes, and modification time (seconds since the Unix epoch). One
-  ! cheap call (a stat, no read), so a program can rank by recency or plan a window
-  ! before opening. `sizeBytes` is meaningful for files.
-//]
-class FileInfo(isFile: Bool, sizeBytes: Int, modifiedAt: Int)
-
-//[ One directory entry: the child path and whether it is a directory.
-  !
-  ! The type information a listing carries for free, so a tree walk needs no stat
-  ! per entry.
-//]
-class DirEntry(path: String, isDirectory: Bool)
+import harpe.caps.FileSystem.Info
+import harpe.caps.FileSystem.Entry
 
 //[ A confined filesystem the guest reads and writes via relative string paths.
   !
@@ -47,13 +35,13 @@ interface FileSystem
   def isFile(path: String): Bool
 
   //[ The metadata record for `path`. `Ok(None)` when nothing exists there. //]
-  def stat(path: String): Result[Option[FileInfo], String]
+  def stat(path: String): Result[Option[Info], String]
 
   //[ The entries directly under `dir`, sorted by name. Pass `""` for the root.
     !
     ! `Err` when `dir` is not a directory.
   //]
-  def list(dir: String): Result[List[DirEntry], String]
+  def list(dir: String): Result[List[Entry], String]
 
   //[ Open the file at `path` for text reads. Close it when done.
     !
@@ -132,6 +120,21 @@ interface FileSystem
 end
 
 section FileSystem
+  //[ Metadata for one file or directory — the single stat record.
+    !
+    ! Kind, size in bytes, and modification time (seconds since the Unix epoch). One
+    ! cheap call (a stat, no read), so a program can rank by recency or plan a window
+    ! before opening. `sizeBytes` is meaningful for files.
+  //]
+  class Info(isFile: Bool, sizeBytes: Int, modifiedAt: Int)
+
+  //[ One directory entry: the child path and whether it is a directory.
+    !
+    ! The type information a listing carries for free, so a tree walk needs no stat
+    ! per entry.
+  //]
+  class Entry(path: String, isDirectory: Bool)
+
   //[ Validate a portable path inside a confined filesystem.
     !
     ! `""` names the root. Every other accepted path is relative, uses `/`, and

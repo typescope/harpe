@@ -15,6 +15,7 @@ namespace harpe.media
 import harpe.caps.*
 
 import harpe.ffi.os
+import harpe.util.File
 import harpe.ffi.builtins
 
 private def pilMod: py.Dynamic = py.module("PIL.Image")
@@ -23,7 +24,7 @@ private def pilMod: py.Dynamic = py.module("PIL.Image")
 class PillowImage(root: String)
   view Image
 
-  def dimensions(src: String): Result[ImageSize, String] =
+  def dimensions(src: String): Result[Image.Size, String] =
     val real = resolvePath(root, src) rescue err: Err[String] => return err
     orMessage:
       py.try:
@@ -35,30 +36,30 @@ class PillowImage(root: String)
       py.try:
         metadataOf(real)
 
-  def resize(src: String, width: Int, height: Int, target: String): Result[ImageSize, String] =
+  def resize(src: String, width: Int, height: Int, target: String): Result[Image.Size, String] =
     val realSrc = resolvePath(root, src) rescue err: Err[String] => return err
     val realTarget = resolvePath(root, target) rescue err: Err[String] => return err
     orMessage:
       py.try:
         resizeTo(realSrc, width, height, realTarget)
 
-  def crop(src: String, x: Int, y: Int, width: Int, height: Int, target: String): Result[ImageSize, String] =
+  def crop(src: String, x: Int, y: Int, width: Int, height: Int, target: String): Result[Image.Size, String] =
     val realSrc = resolvePath(root, src) rescue err: Err[String] => return err
     val realTarget = resolvePath(root, target) rescue err: Err[String] => return err
     orMessage:
       py.try:
         cropTo(realSrc, x, y, width, height, realTarget)
 
-  def convert(src: String, target: String): Result[ImageSize, String] =
+  def convert(src: String, target: String): Result[Image.Size, String] =
     val realSrc = resolvePath(root, src) rescue err: Err[String] => return err
     val realTarget = resolvePath(root, target) rescue err: Err[String] => return err
     orMessage:
       py.try:
         convertTo(realSrc, realTarget)
 
-  private def dimensionsOf(realSrc: String): ImageSize =
+  private def dimensionsOf(realSrc: String): Image.Size =
     val img = pilMod.open(realSrc)
-    new ImageSize(img.width.asInt, img.height.asInt)
+    new Image.Size(img.width.asInt, img.height.asInt)
 
   private def metadataOf(realSrc: String): Map[String, String] =
     val img = pilMod.open(realSrc)
@@ -85,18 +86,18 @@ class PillowImage(root: String)
 
     result
 
-  private def resizeTo(realSrc: String, width: Int, height: Int, realTarget: String): ImageSize =
+  private def resizeTo(realSrc: String, width: Int, height: Int, realTarget: String): Image.Size =
     val img = pilMod.open(realSrc)
     img.thumbnail(py.tuple(width, height))
     save(img, realTarget)
 
-  private def cropTo(realSrc: String, x: Int, y: Int, width: Int, height: Int, realTarget: String): ImageSize =
+  private def cropTo(realSrc: String, x: Int, y: Int, width: Int, height: Int, realTarget: String): Image.Size =
     val img = pilMod.open(realSrc)
     save:
       img.crop: py.tuple(x, y, x + width, y + height)
       realTarget
 
-  private def convertTo(realSrc: String, realTarget: String): ImageSize =
+  private def convertTo(realSrc: String, realTarget: String): Image.Size =
     val img = pilMod.open(realSrc)
     save(img, realTarget)
 
@@ -104,12 +105,12 @@ class PillowImage(root: String)
     !
     ! A mode the format cannot hold (RGBA → JPEG, say) is retried as RGB.
   //]
-  private def save(img: py.Dynamic, realTarget: String): ImageSize =
-    os.makedirs(os.path.dirname(realTarget))
+  private def save(img: py.Dynamic, realTarget: String): Image.Size =
+    File.ensureDir(os.path.dirname(realTarget))
 
     match py.try(img.save(realTarget))
     case Ok(_)  => pass
     case Err(_) => img.convert("RGB").save(realTarget)
 
-    new ImageSize(img.width.asInt, img.height.asInt)
+    new Image.Size(img.width.asInt, img.height.asInt)
 end

@@ -34,8 +34,8 @@ private section CompatibleChat
 
   def imageBlocks(attachments: List[Attachment]): py.List =
     val blocks = py.list()
-    for a in attachments if isInlineImage(a.mime) do
-      match readInlineBase64(a.path)
+    for a in attachments if InlineMedia.isImage(a.mime) do
+      match InlineMedia.readBase64(a.path)
       case Some(data) =>
         blocks.append:
           py.dict:
@@ -101,7 +101,7 @@ private section CompatibleChat
     val rawCalls = message.tool_calls
     if !rawCalls.isNone then
       for call in rawCalls.cast[py.List] do
-        val fn = builtins.attr(call, "function")
+        val fn = builtins.getattr(call, "function")
         val args = json.loads(fn.arguments.asString).cast[py.Dict]
         calls = calls + ToolCall(call.id.asString, fn.name.asString, ToolInput(args))
 
@@ -166,7 +166,7 @@ private class CompatibleSession(
       // cache hit can still report 0 here.
       val details =
         if usage.isNone then py.none
-        else builtins.attrOr(usage, "prompt_tokens_details", py.none)
+        else builtins.getattrOr(usage, "prompt_tokens_details", py.none)
 
       val cacheRead = if details.isNone then 0 else usageInt(details, "cached_tokens")
       logUsage("openai-compatible", model, inTok, outTok, cacheRead)

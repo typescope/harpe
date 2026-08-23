@@ -131,7 +131,7 @@ section Http
   def readJson(): py.Dict receives request =
     match py.try(json.loads(readBody()))
     case Ok(value) =>
-      if builtins.typeName(value) == "dict" then value.cast[py.Dict] else py.dict()
+      if py.isInstance(value, builtins.dict) then value.cast[py.Dict] else py.dict()
     case Err(_) => py.dict()
 
   def queryParam(key: String): String receives request =

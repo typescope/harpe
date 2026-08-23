@@ -10,6 +10,7 @@ namespace harpe.media
 import harpe.caps.*
 
 import harpe.ffi.os
+import harpe.util.File
 import harpe.ffi.builtins
 
 //[ Validate and resolve a relative path against the real `root`.
@@ -18,7 +19,7 @@ import harpe.ffi.builtins
   ! An invalid guest path is returned as `Err` and propagated by the capability
   ! operation. It never aborts the generated program.
 //]
-def resolvePath(root: String, path: String): Result[String, String] =
+private[media] def resolvePath(root: String, path: String): Result[String, String] =
   match FileSystem.validate(path)
   case None        => Ok(if path == "" then root else os.path.join(root, path))
   case Some(error) => Err("invalid path '\{path}': \{error}")
@@ -33,10 +34,11 @@ private def orMessage[T](result: Result[T, py.Error]): Result[T, String] =
   case Ok(value) => Ok(value)
   case Err(e)    => Err(e.message)
 
-//[ A `FileSystem` (local reads) that also carries the `MediaProvider` view.
+//[ The local `FileSystem`: reads and writes under a real root directory.
   !
-  ! Granted-media `resolve`/`load` are inert (`None`/`false`): media loading is now
-  ! host-side staging into the shared run dir, read back through `FileSystem`.
+  ! Files a turn was given are staged into the shared run dir host-side, before
+  ! the guest starts, so the guest reaches everything through this one
+  ! capability rather than a second granted-media channel.
 //]
 class FileSystemImpl
   val realRoot: String
@@ -63,31 +65,31 @@ class FileSystemImpl
     val real = resolvePath(realRoot, path) rescue Err(_) => return false
     os.path.isfile(real)
 
-  def stat(path: String): Result[Option[FileInfo], String] =
+  def stat(path: String): Result[Option[FileSystem.Info], String] =
     resolvePath(realRoot, path).map: real =>
       if !os.path.exists(real) then None
       else
-        val info = new FileInfo(os.path.isfile(real), os.path.getsize(real), os.path.getmtime(real).toInt)
+        val info = new FileSystem.Info(os.path.isfile(real), os.path.getsize(real), os.path.getmtime(real).toInt)
         Some(info)
 
-  def list(dir: String): Result[List[DirEntry], String] =
+  def list(dir: String): Result[List[FileSystem.Entry], String] =
     val real = resolvePath(realRoot, dir) rescue err: Err[String] => return err
     listResolved(dir, real)
 
-  private def listResolved(dir: String, real: String): Result[List[DirEntry], String] =
+  private def listResolved(dir: String, real: String): Result[List[FileSystem.Entry], String] =
     if !os.path.isdir(real) then Err("not a directory: '\{dir}'")
     else
       val names: py.List = os.listdir(real)
       py.dynamic(names).sort()
 
-      var result = List.empty[DirEntry]
+      var result = List.empty[FileSystem.Entry]
       var i = builtins.len(names) - 1
 
       while i >= 0 do
         val name = names.get(i).asString
         val child = if dir == "" then name else dir + "/" + name
         val realChild = if dir == "" then os.path.join(realRoot, name) else os.path.join(real, name)
-        result = result.prepend(new DirEntry(child, os.path.isdir(realChild)))
+        result = result.prepend(new FileSystem.Entry(child, os.path.isdir(realChild)))
         i = i - 1
 
       Ok(result)
@@ -140,7 +142,7 @@ class FileSystemImpl
   //]
   private def ensureParent(real: String): Unit =
     val parent = os.path.dirname(real)
-    if parent != "" && !os.path.isdir(parent) then os.makedirs(parent)
+    if parent != "" && !os.path.isdir(parent) then File.ensureDir(parent)
 
   //[ Whether `name` is in the interface's fixed, runtime-portable encoding set. //]
   private def validEncoding(name: String): Bool =

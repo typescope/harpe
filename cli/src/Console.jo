@@ -5,12 +5,14 @@
 
 namespace harpe.cli
 import harpe.ffi.os
+import harpe.util.Process
+import harpe.util.Clock
+import harpe.util.File
 import harpe.ffi.sys
 import harpe.ffi.threading
 import harpe.ffi.signal
-import harpe.ffi.terminal
+import harpe.util.Terminal
 import harpe.ffi.builtins
-import harpe.ffi.file
 import harpe.ffi.time
 
 import jo.IO.stdout
@@ -27,27 +29,27 @@ private union WorkerOutcome =
 private class Console(out: String => Unit, historyFile: String)
   // One spinner resource for the whole session.
   private val spinner = new Spinner
-  private val workerLock = threading.lock()
+  private val workerLock = threading.Lock()
 
   //[ Init console interaction
     !
     ! Enable `readline`.
   //]
   def init(): Unit =
-    os.makedirs("data")
+    File.ensureDir("data")
     val rl = py.module("readline")
-    if file.exists(historyFile) then rl.read_history_file(historyFile)
+    if File.exists(historyFile) then rl.read_history_file(historyFile)
 
     // Ctrl-C quits cleanly from anywhere. Capture the terminal's cooked-mode
     // settings now so the handler can restore them: a turn puts the terminal in
     // cbreak mode (for the ESC watcher), and exiting from there would otherwise
     // leave the user's shell in a broken state. Installed on the main thread, as
     // Python requires.
-    val cooked = terminal.getAttrs(0)
-    signal.onSigint: (signum: Int, frame: py.Dynamic) =>
-      terminal.setAttrs(0, cooked)
-      sys.stdoutWrite("\n  " + Style.success("♪ Elise stopped.") + "\n")
-      sys.stdoutFlush()
+    val cooked = Terminal.getAttrs(0)
+    Process.onSigint: (signum: Int, frame: py.Dynamic) =>
+      Terminal.setAttrs(0, cooked)
+      sys.stdout.write("\n  " + Style.success("♪ Elise stopped.") + "\n")
+      sys.stdout.flush()
       val _ = sys.exit(0)
 
     println ""
@@ -92,7 +94,7 @@ private class Console(out: String => Unit, historyFile: String)
     ! Called after every message so it survives any exit (Ctrl-C, a crash, …)
   //]
   private def saveInputHistory(): Unit =
-    os.makedirs("data")
+    File.ensureDir("data")
     val _ = py.try(py.module("readline").write_history_file(historyFile))
 
   def turn(userMsg: Message, f: Interact => TurnData): TurnData =
@@ -104,10 +106,10 @@ private class Console(out: String => Unit, historyFile: String)
     // Cancellation is per-turn. The worker thread may outlive the CLI's visible
     // turn after ESC. It must keep seeing its own cancelled state, even after
     // the next prompt starts a fresh turn with a fresh watcher.
-    val interrupt = threading.event()
-    val stopWatch = threading.event()
-    val active = threading.event()
-    val approvalActive = threading.event()
+    val interrupt = threading.Event()
+    val stopWatch = threading.Event()
+    val active = threading.Event()
+    val approvalActive = threading.Event()
     active.set()
     val turnInteract = Console.turnInteract(this, interrupt, active, approvalActive)
     val savedTerm = Console.enterCbreak()
@@ -126,37 +128,37 @@ private class Console(out: String => Unit, historyFile: String)
     // that never committed.
     match outcome
     case WorkerCompleted(res)   => res
-    case WorkerCancelled        => TurnData(userMsg, [], Interrupted)
-    case WorkerCrashed(message) => TurnData(userMsg, [], Failed(message))
+    case WorkerCancelled        => TurnData(userMsg, [], TurnResult.Interrupted)
+    case WorkerCrashed(message) => TurnData(userMsg, [], TurnResult.Failed(message))
 
   def display(event: TurnEvent): Unit = with IO.stdout = out in
     match event
-    case ModelRequestStarted(attempt, maxAttempts) =>
+    case TurnEvent.ModelRequestStarted(attempt, maxAttempts) =>
       val label =
         if attempt == 0 then "thinking · ESC to interrupt"
         else "retrying \{attempt}/\{maxAttempts} · ESC to interrupt"
       spinner.start(label)
 
-    case ModelRequestEnded =>
+    case TurnEvent.ModelRequestEnded =>
       spinner.stop()
 
-    case TransientError(detail, delaySeconds) =>
+    case TurnEvent.TransientError(detail, delaySeconds) =>
       println("  " + Style.warning("· transient error") + " (\{detail}); retrying in \{delaySeconds}s")
 
-    case AssistantMessage(text) =>
+    case TurnEvent.AssistantMessage(text) =>
       agentResponse(text)
 
-    case ToolBudgetReached(budget) =>
+    case TurnEvent.ToolBudgetReached(budget) =>
       println("  " + Style.warning("· tool budget reached") + " (\{budget}); requesting final answer")
 
-    case ToolCallStarted(name) =>
+    case TurnEvent.ToolCallStarted(name) =>
       spinner.start("\{name} · ESC to interrupt")
 
-    case ToolCallEnded(name, summary) =>
+    case TurnEvent.ToolCallEnded(name, summary) =>
       spinner.stop()
       println("  " + Style.note("·") + " \{summary}")
 
-    case ContextCompacted(droppedMessages) =>
+    case TurnEvent.ContextCompacted(droppedMessages) =>
       println("  " + Style.muted("· context compacted (\{droppedMessages} messages summarized)"))
 end
 
@@ -185,7 +187,7 @@ private section Console
     def emit(event: TurnEvent): Unit =
       if !cancelled then console.display(event)
 
-    def approve(id: String, request: ApprovalRequest): ApprovalDecision =
+    def approve(id: String, request: Approvals.Request): Approvals.Decision =
       with IO.stdout = console.out in
         Console.askApproval(console, interrupt, active, approvalActive, request)
   end
@@ -195,8 +197,8 @@ private section Console
       interrupt: py.Dynamic,
       active: py.Dynamic,
       approvalActive: py.Dynamic,
-      request: ApprovalRequest)
-  : ApprovalDecision receives stdout =
+      request: Approvals.Request)
+  : Approvals.Decision receives stdout =
     console.stopProgress()
     approvalActive.set()
 
@@ -207,21 +209,21 @@ private section Console
       println ""
       println(Markdown.toTerminal(request.detail))
     println ""
-    sys.stdoutWrite("  " + Style.muted("Approve? [y/N] "))
-    sys.stdoutFlush()
+    sys.stdout.write("  " + Style.muted("Approve? [y/N] "))
+    sys.stdout.flush()
 
-    val deadline = time.now() + 600.0
-    var decision: ApprovalDecision = ApprovalTimedOut
+    val deadline = Clock.now() + 600.0
+    var decision: Approvals.Decision = Approvals.TimedOut
     var waiting = true
     var needsNewline = true
 
     while waiting do
       if interrupt.is_set().asBool || !active.is_set().asBool then
-        decision = ApprovalCancelled
+        decision = Approvals.Cancelled
         waiting = false
 
-      else if time.now() >= deadline then
-        decision = ApprovalTimedOut
+      else if Clock.now() >= deadline then
+        decision = Approvals.TimedOut
         waiting = false
 
       else if Console.stdinReady(0.1) then
@@ -229,42 +231,42 @@ private section Console
         if builtins.len(ch) == 1 then
           val code = builtins.ord(ch)
           if code == 121 || code == 89 then
-            decision = Approved
+            decision = Approvals.Approved
             waiting = false
           else if code == 110 || code == 78 || code == 10 || code == 13 then
-            decision = Rejected
+            decision = Approvals.Rejected
             if code == 10 || code == 13 then needsNewline = false
             waiting = false
           else if code == 27 then
-            decision = ApprovalCancelled
+            decision = Approvals.Cancelled
             interrupt.set()
             waiting = false
 
     approvalActive.clear()
     if needsNewline then println ""
     match decision
-    case Approved          => println("  " + Style.success("Approved."))
-    case Rejected          => println("  " + Style.warning("Rejected."))
-    case ApprovalTimedOut  => println("  " + Style.warning("Approval timed out."))
-    case ApprovalCancelled => println("  " + Style.muted("Approval cancelled."))
+    case Approvals.Approved  => println("  " + Style.success("Approved."))
+    case Approvals.Rejected  => println("  " + Style.warning("Rejected."))
+    case Approvals.TimedOut  => println("  " + Style.warning("Approval timed out."))
+    case Approvals.Cancelled => println("  " + Style.muted("Approval cancelled."))
     decision
 
   // Put the terminal in cbreak mode so a single keypress (ESC) is readable
   // without Enter. Returns the saved settings to restore later.
   private[cli] def enterCbreak(): py.Dynamic =
-    val saved = terminal.getAttrs(0)
-    terminal.setCbreak(0)
+    val saved = Terminal.getAttrs(0)
+    Terminal.setCbreak(0)
     saved
 
   private[cli] def restoreTerminal(saved: py.Dynamic): Unit =
-    terminal.setAttrs(0, saved)
+    Terminal.setAttrs(0, saved)
 
   // ============================================
   // ESC-to-interrupt: watch stdin for the ESC key while the agent works
   // ============================================
 
   // True if stdin has a byte ready within `timeout` seconds.
-  def stdinReady(timeout: Float): Bool = terminal.readable(0, timeout)
+  def stdinReady(timeout: Float): Bool = Terminal.readable(0, timeout)
 
   // Background thread: set `interrupt` when the user presses ESC (a lone ESC,
   // not an escape sequence like an arrow key). Stops when `stop` is set.
@@ -278,7 +280,7 @@ private section Console
           if builtins.len(ch) == 1 && builtins.ord(ch) == 27 then
             // a lone ESC (no byte follows) — not part of an arrow-key sequence
             if !stdinReady(0.02) then interrupt.set()
-    val thread = threading.thread(watcher)
+    val thread = Process.daemon(watcher)
     thread.start()
 
   // Run `work` on a background thread. Return `WorkerCancelled` if `interrupt`
@@ -288,14 +290,14 @@ private section Console
   def callInterruptible(interact: Interact, work: () => TurnData, cleanup: () => Unit): WorkerOutcome =
     val box  = py.list(py.none)
     val err  = py.list("")
-    val done = threading.event()
+    val done = threading.Event()
     val worker = () =>
       match py.try(work())
       case Ok(value) => box.set(0, value)
       case Err(e)    => err.set(0, e.message)
       cleanup()
       done.set()
-    val thread = threading.thread(worker)
+    val thread = Process.daemon(worker)
     thread.start()
 
     var out: WorkerOutcome = WorkerCancelled

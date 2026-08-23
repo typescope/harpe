@@ -12,19 +12,8 @@
 
 namespace harpe.caps
 
-//[ One outline (table-of-contents) entry.
-  !
-  ! A heading title, the 1-based page it points to (0 when the entry has no page
-  ! destination), and its nesting depth (0 for a top-level entry).
-//]
-class Heading(title: String, page: Int, level: Int)
-
-//[ A PDF page's content profile.
-  !
-  ! How many text runs, embedded images, and vector paths (lines, rectangles,
-  ! curves) the page's content stream holds.
-//]
-class PageContent(texts: Int, images: Int, paths: Int)
+import harpe.caps.PDF.Heading
+import harpe.caps.PDF.PageContent
 
 //[ An open PDF document. Pages are 1-based. //]
 interface PDF
@@ -65,8 +54,24 @@ interface PDF
     ! the page and hand `target` to `OCR.text`. `scale` multiplies the page's
     ! natural 72-dpi size — the default 2 (≈ 144 dpi) is enough for OCR.
   //]
-  def pageImage(page: Int, target: String, scale: Int = 2): Result[ImageSize, String]
+  def pageImage(page: Int, target: String, scale: Int = 2): Result[Image.Size, String]
 
   //[ Release the parsed document. Safe to call more than once. //]
   def close(): Unit
+end
+
+section PDF
+  //[ One outline (table-of-contents) entry.
+    !
+    ! A heading title, the 1-based page it points to (0 when the entry has no page
+    ! destination), and its nesting depth (0 for a top-level entry).
+  //]
+  class Heading(title: String, page: Int, level: Int)
+
+  //[ A PDF page's content profile.
+    !
+    ! How many text runs, embedded images, and vector paths (lines, rectangles,
+    ! curves) the page's content stream holds.
+  //]
+  class PageContent(texts: Int, images: Int, paths: Int)
 end

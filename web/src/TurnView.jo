@@ -21,12 +21,11 @@
 namespace harpe.web
 
 import harpe.ffi.os
-import harpe.ffi.mimetypes
+import harpe.util.File
 
 import harpe.TurnData
 import harpe.transcript.Journal
 import harpe.logging.Value
-import harpe.logging.valueToJson
 import harpe.Model.*
 import harpe.turns.*
 
@@ -58,19 +57,26 @@ section TurnView
         for r in results if pending.contains(r.id) do
           steps.append: py.dict("code" ~ pending.get(r.id).asString, "output" ~ r.content)
 
-    // Resolved at render time, not when the delivery was recorded, so a file
-    // that has since vanished still shows as a muted card.
-    val sent = py.list()
-    for name in items(record.response, "sent") do
-      sent.append: sentFileJson(dataDir, asString(name))
+    // One row per thing the agent said, each carrying whatever it delivered in
+    // the same breath. The code trace rides on the first, where the work began.
+    if turn.result is TurnResult.Success then
+      var trace = steps
+      for part in items(record.response, "reply") do
+        // Files resolved at render time, not when the delivery was recorded, so
+        // one that has since vanished still shows as a muted card.
+        val sent = py.list()
+        for name in items(part, "files") do
+          sent.append: sentFileJson(dataDir, asString(name))
 
-    // `turn.text` joins every visible reply across the turn's tool rounds, so a
-    // turn that spoke before calling a tool keeps that text.
-    val reply = turn.text
-    if turn.result is Success && reply != "" then
-      arr.append: py.dict("role" ~ "agent", "text" ~ reply, "steps" ~ steps, "sent" ~ sent)
+        arr.append: py.dict:
+          "role" ~ "agent"
+          "text" ~ asString(field(part, "text"))
+          "steps" ~ trace
+          "sent" ~ sent
 
-    if turn.result is Failed(detail) then
+        trace = py.list()
+
+    if turn.result is TurnResult.Failed(detail) then
       val message = if detail == "" then "Please try again." else detail
       arr.append: py.dict("role" ~ "error", "text" ~ message)
 
@@ -97,7 +103,7 @@ section TurnView
   //]
   def requestFiles(request: Value): py.List =
     val arr = py.list()
-    for f in items(request, "files") do arr.append(valueToJson(f))
+    for f in items(request, "files") do arr.append(Value.toJson(f))
     arr
 
   private def items(payload: Value, key: String): List[Value] =
@@ -133,7 +139,7 @@ section TurnView
       py.dict(
         "name" ~ name,
         "size" ~ os.path.getsize(p),
-        "mime" ~ mimetypes.guessType(name).getOrElse("application/octet-stream"))
+        "mime" ~ File.mimeType(name).getOrElse("application/octet-stream"))
 
     case None =>
       py.dict("name" ~ (if name != "" then name else fileName), "missing" ~ true)

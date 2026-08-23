@@ -12,7 +12,7 @@ namespace harpe.test.ProcessorTest
 import harpe.media.*
 import harpe.caps.*
 import harpe.ffi.tempfile
-import harpe.ffi.file
+import harpe.util.File
 import harpe.ffi.os
 
 import jo.IO.stdout
@@ -21,7 +21,7 @@ private def check(label: String, cond: Bool): Unit receives stdout =
   assert: cond, "\{label} failed"
   println "  ok \{label}"
 
-private def isSize(s: ImageSize, w: Int, h: Int): Bool = s.width == w && s.height == h
+private def isSize(s: Image.Size, w: Int, h: Int): Bool = s.width == w && s.height == h
 
 // Build a `w`x`h` image at `path` with Pillow.
 private def makeImage(path: String, w: Int, h: Int): Unit =
@@ -121,7 +121,7 @@ def run(): Unit receives stdout =
 private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, wordReader =
   val fs: FileSystem = FileSystemImpl.local(dir)
 
-  file.write(os.path.join(dir, "note.txt"), "not a real document")
+  File.write(os.path.join(dir, "note.txt"), "not a real document")
 
   // Word via python-docx — paragraph windows and the heading outline.
   makeDocx(os.path.join(dir, "memo.docx"))
@@ -157,7 +157,7 @@ private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, wo
   check("PDF.close is safe", true)
 
   // Outline and metadata from the handwritten fixture.
-  file.write(os.path.join(dir, "outlined.pdf"), outlinedPdf)
+  File.write(os.path.join(dir, "outlined.pdf"), outlinedPdf)
   val outlined = fs.openPDF("outlined.pdf").success
   val headings = outlined.outline
   check("PDF.outline entries", headings.size == 2)
@@ -189,7 +189,7 @@ private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, wo
   val book = fs.openWorkbook("table.xlsx").success
   check("Workbook.sheets", book.sheets.size == 2 && book.sheets.get(0) == "Data" && book.sheets.get(1) == "Notes")
 
-  val dims = book.dimensions("Data").getOrElse(new SheetSize(0, 0))
+  val dims = book.dimensions("Data").getOrElse(new Workbook.SheetSize(0, 0))
   check("Workbook.dimensions", dims.rows == 3 && dims.columns == 3)
   check("Workbook.dimensions unknown is None", book.dimensions("NoSuch") is None)
 

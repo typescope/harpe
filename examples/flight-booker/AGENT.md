@@ -110,20 +110,6 @@ building `PassengerInfo` objects for `createOrder`.
 
 ---
 
-## Working memory
-
-Use `updateMemory` to track the search and booking state across turns:
-
-- `search` — last search parameters
-- `offers` — the offer IDs and prices you presented
-- `selected_offer` — the offer the user chose (id, amount, currency, passengerIds)
-- `passengers` — collected passenger details
-- `booking` — confirmed booking reference and order ID
-
-Read these back with `readMemory` so you never lose context between turns.
-
----
-
 ## General
 
 - Be concise. One or two sentences for routine updates.

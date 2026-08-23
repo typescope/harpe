@@ -36,9 +36,9 @@ a default:
 def ask(
     message: String,
     attachments: List[String] = NoAttachments,
-    brain: Model = Defaults.model,
+    brain: Model = Model.default,
     tools: Toolset = Toolset.empty,
-    context: Context = NoHistory,
+    context: Context = Context.noHistory,
     maxToolRounds: Int = 50,
     maxRetries: Int = 4)
 : TurnData receives logger, interact
@@ -54,11 +54,11 @@ Agent.ask("hello")
 its own pieces supplied:
 
 ```jo
-val runCode = runCodeTool(workspace.sandboxDir, approvalDeadline = 610.0)
+val runCode = RunCodeTool(sandboxDir, approvalDeadline = 610.0)
 val tools = SkillTools.toolset(skillsDir) ++ runCode.toolset()
 
 val context = new WindowedContext:
-  baseSystem = workspace.read("AGENT.md").getOrElse("")
+  baseSystem = "You are a helpful assistant."
   initial = history
 
 with interact = channel in
@@ -71,7 +71,7 @@ between the two agents is entirely in the arguments.
 ### What the defaults mean
 
 A default is evaluated at each call that omits it, so `context` defaulted is a
-fresh `NoHistory` per turn. It holds the turn it is given — the model sees the
+fresh `Context.noHistory` per turn. It holds the turn it is given — the model sees the
 user's input and every tool result — and is discarded at the end. Two defaulted
 turns never see each other's transcript. Remembering across turns is what a
 driver's own `context` is for, and keeping one alive is the whole of it.

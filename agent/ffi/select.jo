@@ -1,0 +1,19 @@
+//[ select.jo
+  !
+  ! Python's `select` module, bound as a typed value.
+//]
+
+namespace harpe.ffi
+
+//[ Python's `select` module. //]
+@py.interop
+interface SelectApi
+  //[ Wait up to `timeout` seconds for readiness.
+    !
+    ! Returns the `(readable, writable, exceptional)` triple, each a subset of
+    ! the list passed in.
+  //]
+  def select(rlist: py.List, wlist: py.List, xlist: py.List, timeout: Float): py.List
+end
+
+def select: SelectApi = py.module("select").cast[SelectApi]

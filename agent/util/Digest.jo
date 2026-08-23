@@ -1,0 +1,19 @@
+//[ Digest.jo
+  !
+  ! Content-derived identifiers, the Jo-shaped way.
+  !
+  ! The counterpart to `harpe.ffi.hashlib`, which builds and reads a hash the way
+  ! Python does. Callers here have a `String` and want hex out, so the UTF-8
+  ! encoding either side of the hash is settled here. For identifiers, not for
+  ! secrets.
+//]
+
+namespace harpe.util
+
+import harpe.ffi.hashlib
+
+private[harpe] section Digest
+  //[ The SHA-256 digest of `s` (UTF-8 encoded) as a lowercase hex string. //]
+  def sha256Hex(s: String): String =
+    hashlib.sha256(py.dynamic(s).encode("utf-8")).hexdigest()
+end

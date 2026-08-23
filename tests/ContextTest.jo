@@ -11,7 +11,6 @@ namespace harpe.test.ContextTest
 import jo.IO.stdout
 import harpe.*
 import harpe.turns.TurnEvent
-import harpe.turns.ContextCompacted
 import harpe.util.truncate
 import harpe.context.FullContext
 import harpe.context.WindowedContext
@@ -37,7 +36,7 @@ private class NoInteract
 
   def pause(seconds: Float): Bool = false
 
-  def approve(id: String, request: ApprovalRequest): ApprovalDecision = ApprovalCancelled
+  def approve(id: String, request: Approvals.Request): Approvals.Decision = Approvals.Cancelled
 end
 
 private class CompactInteract
@@ -46,13 +45,13 @@ private class CompactInteract
   var compactions = 0
 
   def emit(event: TurnEvent): Unit =
-    if event is ContextCompacted(_) then compactions = compactions + 1
+    if event is TurnEvent.ContextCompacted(_) then compactions = compactions + 1
 
   def cancelled: Bool = false
 
   def pause(seconds: Float): Bool = false
 
-  def approve(id: String, request: ApprovalRequest): ApprovalDecision = ApprovalCancelled
+  def approve(id: String, request: Approvals.Request): Approvals.Decision = Approvals.Cancelled
 end
 
 // A distiller double: records each request's excerpt text and returns a canned

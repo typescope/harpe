@@ -79,14 +79,11 @@ See [PDF](/capabilities/pdf/), [Excel](/capabilities/excel/), and
 ## Interface reference
 
 ```jo
-class FileInfo(isFile: Bool, sizeBytes: Int, modifiedAt: Int)
-class DirEntry(path: String, isDirectory: Bool)
-
 interface FileSystem
   def exists(path: String): Bool
   def isFile(path: String): Bool
-  def stat(path: String): Result[Option[FileInfo], String]
-  def list(dir: String): Result[List[DirEntry], String]
+  def stat(path: String): Result[Option[FileSystem.Info], String]
+  def list(dir: String): Result[List[FileSystem.Entry], String]
 
   def openTextFile(path: String, encoding: String = "utf-8"): Result[TextFile, String]
   def openBinaryFile(path: String): Result[BinaryFile, String]
@@ -118,4 +115,9 @@ interface BinaryFile
 end
 
 param fs: FileSystem
+
+section FileSystem
+  class Info(isFile: Bool, sizeBytes: Int, modifiedAt: Int)
+  class Entry(path: String, isDirectory: Bool)
+end
 ```

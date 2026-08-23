@@ -49,14 +49,14 @@ my-agent/
 Open `src/Main.jo`. It names the pieces a turn will be run with:
 
 ```jo
-val runCode = runCodeTool(workspace.sandboxDir, approvalDeadline = 610.0)
+val runCode = RunCodeTool(os.path.abspath("sandbox"), approvalDeadline = 610.0)
 
-val brain = Defaults.model()
+val brain = Model.default()
 
 // The context is the one piece that must outlive a turn: it carries the
 // conversation from one turn to the next.
 val context = new FullContext:
-  baseSystem = workspace.read("AGENT.md").getOrElse("")
+  baseSystem = file.read("AGENT.md")
   initial = []
 
 // The one tool this agent has: what the model is offered, and what runs.
@@ -89,8 +89,8 @@ private class SimpleInteract
     py.module("time").sleep(py.dynamic(seconds))
     false
 
-  def approve(id: String, request: ApprovalRequest): ApprovalDecision =
-    ApprovalCancelled
+  def approve(id: String, request: Approvals.Request): Approvals.Decision =
+    Approvals.Cancelled
 
   def emit(event: harpe.turns.TurnEvent): Unit = pass
 end

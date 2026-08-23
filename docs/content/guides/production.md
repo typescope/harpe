@@ -30,7 +30,7 @@ Review capability interfaces and implementations:
 
 Require [human approval](/concepts/approvals/) inside the trusted implementation
 of consequential capabilities. Validate and scope the request before presenting
-it for approval. Perform the effect only after `Approved`.
+it for approval. Perform the effect only after `Approvals.Approved`.
 
 Make externally visible operations idempotent where retries could duplicate
 them. Record the request, decision, and resulting effect in the audit log.

@@ -1,17 +1,18 @@
 //[ mimetypes.jo
   !
-  ! MIME-type guessing from filenames, wrapping Python's `mimetypes` module —
-  ! mirroring `os` and `time`. Referenced as `mimetypes.guessType(...)`.
-//]
-
-namespace harpe.ffi.mimetypes
-
-private def module: py.Dynamic = py.module("mimetypes")
-
-//[ Guess a file's MIME type from its name (e.g. `"application/pdf"`).
+  ! Python's `mimetypes` module, bound as a typed value.
   !
-  ! `None` when the type cannot be determined from the name.
+  ! `guess_type` returns Python's `(type, encoding)` pair verbatim. Reading a
+  ! `Option[String]` out of it is `Mime`'s job, not this file's.
 //]
-def guessType(path: String): Option[String] =
-  val guessed = module.guess_type(path)[0]
-  if py.isNone(guessed) then None else Some(guessed.asString)
+
+namespace harpe.ffi
+
+//[ Python's `mimetypes` module. //]
+@py.interop
+interface MimetypesApi
+  //[ `(type, encoding)` guessed from a file name. Both may be `None`. //]
+  def guess_type(path: String): py.List
+end
+
+def mimetypes: MimetypesApi = py.module("mimetypes").cast[MimetypesApi]

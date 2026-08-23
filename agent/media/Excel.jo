@@ -46,7 +46,7 @@ private class WorkbookImpl(wb: py.Dynamic)
 
     result
 
-  def dimensions(sheet: String): Option[SheetSize] =
+  def dimensions(sheet: String): Option[Workbook.SheetSize] =
     match worksheet(sheet)
     case None => None
 
@@ -54,7 +54,7 @@ private class WorkbookImpl(wb: py.Dynamic)
       // A foreign file may lack the cached dimension record — force a scan then.
       if py.isNone(ws.max_row) then ws.calculate_dimension(force = true)
 
-      Some(new SheetSize(ws.max_row.asInt, ws.max_column.asInt))
+      Some(new Workbook.SheetSize(ws.max_row.asInt, ws.max_column.asInt))
 
   def rows(sheet: String, start: Int, count: Int): Option[List[List[String]]] =
     if start < 1 then abort "row \{start} is out of range: rows are 1-based"

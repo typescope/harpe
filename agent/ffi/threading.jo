@@ -1,27 +1,29 @@
 //[ threading.jo
   !
-  ! Threads and synchronization primitives, wrapping Python's `threading` module —
-  ! mirroring `os` and `time`. The primitives are returned as `py.Dynamic` handles
-  ! (call `.acquire()`/`.release()`, `.set()`/`.is_set()`/`.wait()`, `.start()`).
-//]
-
-namespace harpe.ffi.threading
-
-private def module: py.Dynamic = py.module("threading")
-
-//[ A counting semaphore permitting `count` concurrent holders. //]
-def semaphore(count: Int): py.Dynamic = module.Semaphore(count)
-
-//[ A mutual-exclusion lock. //]
-def lock(): py.Dynamic = module.Lock()
-
-//[ An event flag (`set`/`clear`/`is_set`/`wait`). //]
-def event(): py.Dynamic = module.Event()
-
-//[ A daemon thread running `target` (dies with the process). Call `.start()`.
+  ! Python's `threading` module, bound as a typed value.
   !
-  ! `target` is typed `Any` because a thread body may close over effects (a
-  ! `logger`, say) that Jo tracks but that never cross the thread boundary at
-  ! runtime — the caller discharges them into the closure before spawning.
+  ! The primitives it returns stay `py.Dynamic` handles (call `.acquire()` /
+  ! `.release()`, `.set()` / `.is_set()` / `.wait()`, `.start()`): `Event.wait`
+  ! is used both with and without a timeout, which one interop declaration
+  ! cannot express, and typing the rest for its sake would buy little.
 //]
-def thread(target: Any): py.Dynamic = module.Thread(target = target, daemon = true)
+
+namespace harpe.ffi
+
+//[ Python's `threading` module. //]
+@py.interop
+interface ThreadingApi
+  //[ A counting semaphore permitting `count` concurrent holders. //]
+  def Semaphore(count: Int): py.Dynamic
+
+  //[ A mutual-exclusion lock. //]
+  def Lock(): py.Dynamic
+
+  //[ An event flag (`set`/`clear`/`is_set`/`wait`). //]
+  def Event(): py.Dynamic
+
+  //[ A thread running `target`. Call `.start()`. //]
+  def Thread(target: Any @py.keyword, daemon: Bool @py.keyword): py.Dynamic
+end
+
+def threading: ThreadingApi = py.module("threading").cast[ThreadingApi]

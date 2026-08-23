@@ -1,5 +1,114 @@
 # Changelog
 
+## 0.6.0 — 2026-08-23
+
+Sixth developer-preview release. It is a naming and layering pass: the framework
+stops assuming where an agent keeps its files, the FFI layer stops using
+namespaces as module aliases, and types that were loose at the package root move
+under the section that owns them. A driver written against 0.5.0 needs the
+changes listed below, all of which are mechanical.
+
+Nothing here changes what an agent *does*. The turn engine, the context
+strategies, the transcript, and the sandbox behave exactly as in 0.5.0.
+
+### harpe-caps 0.6.0
+
+Breaking changes:
+
+- The loose record types now live in the section of the capability that returns
+  them: `DirEntry` and `FileInfo` under `FileSystem`, `Heading` and
+  `PageContent` under `PDF`, `WordHeading` under `Word`, `SheetSize` under
+  `Workbook`, and `ImageSize` under `Image`. A guest program written against
+  0.5.0 renames its references — `Heading(...)` becomes `PDF.Heading(...)`.
+
+- `MediaProvider`, the `media` param, and the `Media` record are removed. They
+  were the pre-`fs` way to hand a guest one file, and nothing has used them since
+  `FileSystem` gained document opening. Guests read files through `fs`.
+
+### harpe 0.6.0
+
+Breaking changes:
+
+- `Workspace` and the `workspace` param are gone, with nothing replacing them in
+  the framework. Where an agent keeps `sandbox/`, `skills/`, `data/`, and
+  `logs/` is that application's convention, not Harpe's, and every built-in tool
+  already takes the directory it works in as an ordinary argument. A driver that
+  wants one root resolved once declares its own context parameter:
+
+  ```jo
+  param appHome: String
+
+  def main(): Unit receives stdout =
+    with appHome = os.path.abspath(".") in serve()
+  ```
+
+  `workspace.sandboxDir` becomes `os.path.join(appHome, "sandbox")`,
+  `workspace.read("AGENT.md")` becomes `File.read(...)`, and so on. The shipped
+  drivers show the pattern; `templates/hello` skips the parameter entirely and
+  resolves paths against its own directory.
+
+- `Defaults.model()` is now `Model.default()`, and the `Defaults` section is
+  gone. The env-var contract (`OPENAI_API_KEY` / `OPENROUTER_API_KEY` /
+  `ANTHROPIC_API_KEY`, `MODEL`, `OPENAI_BASE_URL`) is unchanged.
+
+- `runCodeTool(...)` is removed. `RunCodeTool(...)` was always available — a
+  class carries its own factory — and it now holds the defaults and the
+  `run.sh` check the function existed to add. Call sites change only in case.
+
+- The FFI layer is one namespace. Each `harpe.ffi.<module>` namespace of
+  forwarding functions is now an `@py.interop` interface plus one binding in
+  `harpe.ffi`, so the declarations carry Python's own names and signatures and
+  no bodies to keep in sync. `import harpe.ffi.os` still yields `os.path.join`,
+  but members that were Jo-shaped moved out (below), and a few take Python's
+  spelling now: `secrets.tokenHex(nbytes = 8)` is `secrets.token_hex(8)`,
+  `sys.stdoutWrite(s)` is `sys.stdout.write(s)`.
+
+- Everything in `harpe.ffi` that was not a faithful binding moved to
+  `harpe.util`, grouped by what it is for:
+
+  | 0.5.0 | 0.6.0 |
+  |---|---|
+  | `file.read` / `write` / `exists` | `File.read` / `write` / `exists` |
+  | `os.makedirs` | `File.ensureDir` |
+  | `os.extname`, `os.walk` | `File.extname`, `File.walk` |
+  | `mimetypes.guessType` | `File.mimeType` |
+  | `subprocess.runCapped` | `Process.runCapped` |
+  | `subprocess.guestEnv` | `Process.guestEnv` |
+  | `dotenv.load` | `Process.loadDotenv` |
+  | `signal.onSigint` / `shutdownOnSigint` | `Process.onSigint` / `shutdownOnSigint` |
+  | `threading.thread` | `Process.daemon` |
+  | `time.now` / `toRfc3339` / `fromRfc3339` | `Clock.now` / `toRfc3339` / `fromRfc3339` |
+  | `terminal.*` | `Terminal.*` |
+  | `text.stripAnsi` | `Terminal.stripAnsi` |
+  | `hashlib.sha256Hex` | `Digest.sha256Hex` |
+
+  `Digest`, `UnixSocket`, and `util.truncate` are `private[harpe]`: they are
+  framework plumbing with no third-party use. `File`, `Process`, `Clock`, and
+  `Terminal` are public.
+
+- Loose types move under the section that owns them, mirroring the caps change:
+  `AnthropicCache` is `Anthropic.Cache`, `ApprovalRequest` and the
+  `ApprovalDecision` union are `Approvals.Request` and `Approvals.*`, `IntVal`
+  and `BoolVal` are `Value.IntVal` and `Value.BoolVal`, `valueToJson` and
+  `valueFromJson` are `Value.toJson` and `Value.fromJson`, `BrokerClient` is
+  `Broker.Client`, and the `TurnEvent` / `TurnResult` unions gain sections of
+  the same name. `Context.NoHistory` is `Context.noHistory`.
+
+New:
+
+- `Tool.RunOutcome` and `Tool.ToolResult` carry `success`, defaulting to `true`.
+  It is for code, not for the model: a handler that refuses a call explains
+  itself in `result` and sets `success = false`, and a driver reading its own
+  output back off the finished turn can tell a refusal from work done. Nothing
+  is sent to the provider for it, and it rides into the transcript, so a
+  reloaded turn knows which of its calls were refused. See
+  [Tools](https://harpe.typescope.ai/concepts/tools/).
+
+- `Entry.readJsonl(path)` reads a JSONL log back into `Entry` values — the
+  missing half of `JsonlLogger`. It is strict: a missing file raises, because
+  what an absent journal means is the caller's to decide. A driver reading it as
+  "this session has not spoken yet" checks `File.exists` first.
+
 ## 0.5.0 — 2026-08-21
 
 Fifth developer-preview release. It separates the *transcript* — the conversation

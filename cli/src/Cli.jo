@@ -16,35 +16,38 @@
 namespace harpe.cli
 import harpe.ffi.glob
 import harpe.ffi.os
+import harpe.util.File
 import harpe.ffi.time
-import harpe.ffi.file
-import harpe.ffi.json
 
-import harpe.ffi.dotenv
+import harpe.util.Process
 
 import jo.IO.stdout
 import harpe.*
 import harpe.logging.JsonlLogger
 import harpe.transcript.Journal
 import harpe.logging.Entry
-import harpe.logging.entryFromDict
 import harpe.logging.logger
 import harpe.Model.UserInput
 import harpe.Model.Message
 import harpe.tools.*
 import harpe.context.WindowedContext
-import harpe.turns.Success
-import harpe.turns.Failed
-import harpe.turns.Interrupted
+import harpe.turns.TurnResult
+
+//[ Where this application's files live: `sandbox/`, `skills/`, `data/`, `logs/`, `AGENT.md`
+  !
+  ! This driver's own convention, not the framework's. Provided once at startup
+  ! and picked up as context by every layer that resolves a path, so nothing
+  ! below has to be handed a directory it did not ask for.
+//]
+param appHome: String
 
 //[ The entry point   //]
 def main(): Unit receives stdout =
-  dotenv.load(".env")
-  val wspace = new Workspace(os.path.abspath("."))
-  with workspace = wspace in runChat()
+  Process.loadDotenv(".env")
+  with appHome = os.path.abspath(".") in runChat()
 
-private def runChat(): Unit receives stdout, workspace =
-  val inputHistory = workspace.relative("logs/inputs.txt")
+private def runChat(): Unit receives stdout, appHome =
+  val inputHistory = os.path.join(appHome, "logs/inputs.txt")
   val console = new Console(stdout, inputHistory)
   console.init()
 
@@ -53,21 +56,21 @@ private def runChat(): Unit receives stdout, workspace =
   val journal = new Journal(sessionLog)
   // `runCode` owns a build semaphore, so it is an object built once here. The
   // rest own nothing and are reached through their sections.
-  val runCode = runCodeTool(workspace.sandboxDir, 610.0)
+  val runCode = RunCodeTool(os.path.join(appHome, "sandbox"), 610.0)
   val bash    = new RunBashTool
-  val skillsDir = workspace.skillsDir
+  val skillsDir = os.path.join(appHome, "skills")
 
-  val brain = Defaults.model()
+  val brain = Model.default()
 
   // The context is what carries the conversation between turns, so it is built
   // once here and handed to every turn below.
   val context = new WindowedContext:
-    baseSystem = workspace.read("AGENT.md").getOrElse("")
+    baseSystem = File.read(os.path.join(appHome, "AGENT.md"))
     initial = Session.load(sessionPath)
 
   // One local working directory for the whole run.
-  val data = workspace.relative("data")
-  if !os.path.isdir(data) then os.makedirs(data)
+  val data = os.path.join(appHome, "data")
+  if !os.path.isdir(data) then File.ensureDir(data)
   val dataDir = os.path.abspath(data)
 
   // What the model is offered, and what actually runs for each name — one
@@ -106,13 +109,13 @@ private def runChat(): Unit receives stdout, workspace =
     val res = console.turn(userMsg, runTurn)
 
     match res.result
-    case Success =>
+    case TurnResult.Success =>
       console.agentResponse(res.finalText)
 
-    case Interrupted =>
+    case TurnResult.Interrupted =>
       println("  " + Style.warning("⎋ interrupted"))
 
-    case Failed(detail) =>
+    case TurnResult.Failed(detail) =>
       val message = if detail == "" then "request failed" else "request failed: \{detail}"
       println("  " + Style.error("· \{message}"))
 
@@ -142,20 +145,17 @@ private def resumeRequested(): Bool =
 
 section Session
   //[ A new CLI session log, named from its start time. //]
-  def newLog(): String receives workspace =
-    workspace.relative(time.strftime("logs/sessions/%Y/%m/%d/%H-%M-%S") + ".jsonl")
+  def newLog(): String receives appHome =
+    os.path.join(appHome, time.strftime("logs/sessions/%Y/%m/%d/%H-%M-%S") + ".jsonl")
 
+  //[ A session's transcript, or `[]` for a log this run is about to create. //]
   def load(path: String): List[Message] =
-    if !file.exists(path) then []
-    else
-      var entries: List[Entry] = []
-      for line in file.read(path).lines if line.trim != "" do
-        entries = entries + entryFromDict(json.loads(line).cast[py.Dict])
-      Journal.fromEntries(entries)
+    if !File.exists(path) then []
+    else Journal.fromEntries(Entry.readJsonl(path))
 
   //[ Up to `limit` CLI session logs, newest first. //]
-  def recentFiles(limit: Int): List[String] receives workspace =
-    val root = workspace.relative("logs/sessions")
+  def recentFiles(limit: Int): List[String] receives appHome =
+    val root = os.path.join(appHome, "logs/sessions")
     if limit <= 0 || !os.path.isdir(root) then []
     else
       var paths: List[String] = []
@@ -176,7 +176,7 @@ end
   !
   ! The normal startup path creates a fresh session without another prompt.
 //]
-private def chooseSession(resume: Bool): String receives stdout, workspace =
+private def chooseSession(resume: Bool): String receives stdout, appHome =
   val recent = Session.recentFiles(5)
   val interactive = py.module("sys").stdin.isatty().asBool
 

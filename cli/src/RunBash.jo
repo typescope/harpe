@@ -6,8 +6,9 @@
 namespace harpe.cli
 
 import harpe.*
-import harpe.ffi.subprocess
-import harpe.ffi.text
+import harpe.util.Process
+import harpe.util.Capped
+import harpe.util.Terminal
 
 //[ The `runBash` tool: its spec, and the command runner a route calls. //]
 class RunBashTool
@@ -16,7 +17,7 @@ class RunBashTool
   def name: String = "runBash"
 
   def description: String =
-    "Run a Bash command in the agent workspace after asking the user for approval."
+    "Run a Bash command in the agent home directory after asking the user for approval."
 
   def params: List[Tool.ToolParam] =
     [Tool.strParam("command", "The exact Bash command to run")]
@@ -25,35 +26,35 @@ class RunBashTool
   def toolset(): Toolset =
     Toolset.of: this, (i: Tool.ToolInput) => run(i["command"])
 
-  def run(command: String): Tool.RunOutcome receives workspace, interact =
+  def run(command: String): Tool.RunOutcome receives appHome, interact =
     runBash(command)
 end
 
-private def runBash(command: String): Tool.RunOutcome receives workspace, interact =
+private def runBash(command: String): Tool.RunOutcome receives appHome, interact =
   if command.trim == "" then
     return new Tool.RunOutcome("The command is empty.", "empty command", attachments = [])
 
   val id = py.module("uuid").uuid4().toString
-  val request = ApprovalRequest(
+  val request = Approvals.Request(
     "Run a Bash command?",
     "```bash\n\{command}\n```"
   )
 
   match interact.approve(id, request)
-  case Rejected =>
+  case Approvals.Rejected =>
     new Tool.RunOutcome("The user rejected the command.", "command rejected", attachments = [])
 
-  case ApprovalTimedOut =>
+  case Approvals.TimedOut =>
     new Tool.RunOutcome("Approval timed out. The command was not run.", "approval timed out", attachments = [])
 
-  case ApprovalCancelled =>
+  case Approvals.Cancelled =>
     new Tool.RunOutcome("Approval was cancelled. The command was not run.", "approval cancelled", attachments = [])
 
-  case Approved =>
-    val result = subprocess.runCapped(
+  case Approvals.Approved =>
+    val result = Process.runCapped(
       py.list("bash", "-lc", command),
       30.0,
-      cwd = workspace.relative("")
+      cwd = appHome
     )
 
     if result.timedOut then
@@ -64,7 +65,7 @@ private def runBash(command: String): Tool.RunOutcome receives workspace, intera
 
     else
       val out = result.out.trim
-      val err = text.stripAnsi(result.err).trim
+      val err = Terminal.stripAnsi(result.err).trim
       val combined =
         if out == "" then err
         else if err == "" then out

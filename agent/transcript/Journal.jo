@@ -18,6 +18,7 @@
 
 namespace harpe.transcript
 import harpe.ffi.time
+import harpe.util.Clock
 import harpe.util.truncate
 import harpe.Transcript
 import harpe.TurnData
@@ -83,13 +84,13 @@ class Journal(log: Logger)
     log.log(Journal.responseCategory, "data" ~ data)
 
   private def emit(category: String, message: Message): Unit =
-    log.logEntry(new Entry(time.now(), category, messageFields(message)))
+    log.logEntry(new Entry(Clock.now(), category, messageFields(message)))
 
 
   private def messageFields(message: Message): Map[String, Value] =
     val d = messageDict(message)
     var fields = Map.empty[String, Value]
-    for k in py.iter(d.keys()) do fields = fields.add(k.asString, valueFromJson(d.get(k)))
+    for k in py.iter(d.keys()) do fields = fields.add(k.asString, Value.fromJson(d.get(k)))
     fields
 
   private def messageDict(message: Message): py.Dict =
@@ -105,7 +106,8 @@ class Journal(log: Logger)
       val list = py.list()
       for result in results do
         list.append(py.dict("id" ~ result.id, "content" ~ result.content,
-                            "attachments" ~ attachmentsDict(result.attachments)))
+                            "attachments" ~ attachmentsDict(result.attachments),
+                            "success" ~ result.success))
       py.dict("role" ~ "tool_results", "results" ~ list)
 
   private def attachmentsDict(attachments: List[Attachment]): py.List =
@@ -239,11 +241,11 @@ section Journal
       if entry.category == "harpe.turn.started" && data is None then
         depth = depth + 1
         if depth == 1 then
-          user = Some(messageFromDict(entryDict(entry)))
+          user = Some(messageFromDict(Entry.toDict(entry)))
           pending = []
 
       else if entry.category == "harpe.turn.message" && depth == 1 then
-        pending = pending + messageFromDict(entryDict(entry))
+        pending = pending + messageFromDict(Entry.toDict(entry))
 
       else if isTerminator(entry.category) && depth > 0 then
         depth = depth - 1
@@ -267,9 +269,9 @@ section Journal
       || category == "harpe.turn.failed"
 
   private def turnFrom(user: Message, pending: List[Message], terminator: Entry): TurnData =
-    if terminator.category == "harpe.turn.answered" then TurnData(user, pending, Success)
-    else if terminator.category == "harpe.turn.interrupted" then TurnData(user, [], Interrupted)
-    else TurnData(user, [], Failed(entryDict(terminator).get("error", "").asString))
+    if terminator.category == "harpe.turn.answered" then TurnData(user, pending, TurnResult.Success)
+    else if terminator.category == "harpe.turn.interrupted" then TurnData(user, [], TurnResult.Interrupted)
+    else TurnData(user, [], TurnResult.Failed(Entry.toDict(terminator).get("error", "").asString))
 
   //[ Derive model history from the transcript
     !
@@ -288,7 +290,7 @@ section Journal
     var messages: List[Message] = []
     for record in records(entries) do
       messages = messages + record.data.user
-      if record.data.result is Success then messages = messages ++ record.data.messages
+      if record.data.result is TurnResult.Success then messages = messages ++ record.data.messages
     truncate(messages, maxResumeChars)
 
   private def attachmentsFrom(list: py.List): List[Attachment] =
@@ -322,6 +324,7 @@ section Journal
           r.get("id", "").asString
           r.get("content", "").asString
           attachmentsFrom(r.get("attachments", py.list()).cast[py.List])
+          r.get("success", default = true).asBool
         results = results + toolResult
       ToolResults(results)
 end

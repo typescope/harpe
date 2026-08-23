@@ -11,7 +11,7 @@ namespace harpe.test.FileSystemTest
 import harpe.media.*
 import harpe.caps.*
 import harpe.ffi.tempfile
-import harpe.ffi.file
+import harpe.util.File
 import harpe.ffi.os
 
 import jo.IO.stdout
@@ -49,9 +49,9 @@ private def joinLines(f: TextFile): String =
 
 def run(): Unit receives stdout =
   val dir = tempfile.mkdtemp()
-  file.write(os.path.join(dir, "notes.txt"), "line1\nline2\nline3\n")
-  os.makedirs(os.path.join(dir, "sub"))
-  file.write(os.path.join(dir, "sub", "a.txt"), "hi")
+  File.write(os.path.join(dir, "notes.txt"), "line1\nline2\nline3\n")
+  File.ensureDir(os.path.join(dir, "sub"))
+  File.write(os.path.join(dir, "sub", "a.txt"), "hi")
 
   val fs: FileSystem = FileSystemImpl.local(dir)
 
@@ -84,7 +84,7 @@ def run(): Unit receives stdout =
   // Tail across block boundaries: ~100 KB read backward in 64 KB blocks, and a
   // final line without a trailing newline.
   val filler = py.dynamic("line\n").callDynamic("__mul__", 20000).asString
-  file.write(os.path.join(dir, "big.txt"), filler + "last")
+  File.write(os.path.join(dir, "big.txt"), filler + "last")
   val big = fs.openTextFile("big.txt").success
   val bt = big.tail(2)
   check("tail across blocks", bt.size == 2 && bt.get(0) == "line" && bt.get(1) == "last")
@@ -102,17 +102,17 @@ def run(): Unit receives stdout =
 
   // Encoding: UTF-8 default with replacement. Windows-1252 by name. Others →
   // Err.
-  file.writeBytes(os.path.join(dir, "legacy.txt"), py.dynamic("caf\u{E9}").callDynamic("encode", "windows-1252"))
+  File.writeBytes(os.path.join(dir, "legacy.txt"), py.dynamic("caf\u{E9}").callDynamic("encode", "windows-1252"))
   check("utf-8 default replaces", fs.readText("legacy.txt").success == "caf\u{FFFD}")
   check("explicit encoding", fs.readText("legacy.txt", "windows-1252").success == "caf\u{E9}")
   check("outside the encoding set is Err", fs.openTextFile("legacy.txt", "utf-16").isErr)
 
   // stat: the single metadata record.
-  val info = fs.stat("notes.txt").success.getOrElse(new FileInfo(false, 0, 0))
+  val info = fs.stat("notes.txt").success.getOrElse(new FileSystem.Info(false, 0, 0))
   check("stat is file", info.isFile)
   check("stat size", info.sizeBytes == 18)
   check("stat mtime", info.modifiedAt > 0)
-  check("stat dir", !fs.stat("sub").success.getOrElse(new FileInfo(true, 0, 0)).isFile)
+  check("stat dir", !fs.stat("sub").success.getOrElse(new FileSystem.Info(true, 0, 0)).isFile)
   check("stat missing is None", fs.stat("nope.txt").success is None)
 
   check("isFile file", fs.isFile("notes.txt"))

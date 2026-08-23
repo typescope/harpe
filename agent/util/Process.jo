@@ -1,0 +1,195 @@
+//[ Process.jo
+  !
+  ! This process and its children: the environment they run with, running one
+  ! under a wall-clock cap, what an interrupt does, and the threads spawned
+  ! alongside.
+  !
+  ! One category, because these are one subject seen from four sides — a child
+  ! inherits an environment, is killed by a signal, is waited on by a thread, and
+  ! the interrupt that stops the parent has to stop them too. Every decision
+  ! about what any of that *means* here is in this file, with its reason beside
+  ! it. Python's own surface is `harpe.ffi.subprocess` and the modules around it.
+//]
+
+namespace harpe.util
+
+import harpe.ffi.subprocess
+import harpe.ffi.os
+import harpe.ffi.signal
+import harpe.ffi.sys
+import harpe.ffi.threading
+import harpe.ffi.time
+import harpe.util.File
+
+//[ The outcome of a capped run
+  !
+  ! Process exit code, captured stdout/stderr, and whether the wall-clock
+  ! timeout fired (in which case `returnCode` is -1 and the captured streams are
+  ! empty).
+//]
+class Capped(
+    returnCode: Int,
+    out: String,
+    err: String,
+    timedOut: Bool,
+    pauseTimedOut: Bool = false)
+
+section Process
+  //[ The minimal environment for running untrusted guest code
+    !
+    ! `PATH` only, so the interpreter (and any `run.sh` confinement tool) can
+    ! still be found. EVERY other variable is dropped — the provider keys and
+    ! every other host secret — rather than guessing which are sensitive. A
+    ! `sandbox/run.sh` wrapper adds back whatever the guest legitimately needs.
+  //]
+  def guestEnv(): py.Dict =
+    val env = py.dict()
+    val path = os.environ.get("PATH", py.none)
+
+    if !py.isNone(path) then env.set("PATH", path)
+
+    env
+
+  //[ Load `KEY=VALUE` lines from a `.env` file at `path` into this process's environment.
+    !
+    ! Blank lines and `#` comments are skipped. A missing file is a no-op.
+  //]
+  def loadDotenv(path: String): Unit =
+    if File.exists(path) then
+      val env = os.environ
+      for line in File.read(path).lines do
+        val t = line.trim
+        val eq = indexOf(t, '=')
+        if t.size > 0 && !t.startsWith("#") && eq > 0 then
+          val key = t.substring(0, eq).trim
+          val value = t.substring(eq + 1, t.size).trim
+          env.set(key, value)
+
+  //[ Run a subprocess with a wall-clock timeout.
+    !
+    ! The child is started in its own session, so on expiry the whole process
+    ! group is SIGKILLed — a spinning or forking guest cannot outlive the
+    ! timeout. This is the host-side backstop a stuck guest cannot disable.
+    ! OS-level confinement lives OUTSIDE the process in an optional
+    ! `sandbox/run.sh` wrapper (see `docs/concepts/sandbox.md`).
+    !
+    ! `env` sets the child's environment: the default `py.none` inherits the
+    ! parent's — used for the trusted build step, which needs the toolchain env.
+    ! Pass `guestEnv()` when running untrusted guest code, so it inherits none of
+    ! the host's secrets.
+  //]
+  def runCapped(args: py.List, timeoutSecs: Float, env: Any = py.none, cwd: Any = py.none): Capped =
+    val proc = start(args, env, cwd)
+
+    match py.try(proc.communicate(timeout = timeoutSecs))
+      case Ok(pair) =>
+        new Capped(proc.returncode.asInt, pair[0].asString, pair[1].asString, false)
+
+      case Err(_) =>
+        reap(proc)
+        new Capped(-1, "", "", true)
+
+  //[ Run a subprocess while excluding approved pauses from its execution budget.
+    !
+    ! Time while `paused` is set does not consume `timeoutSecs`. A continuous
+    ! pause may last at most `maxPauseSecs`. The caller chooses that limit, so the
+    ! process runner provides a watchdog without owning the application's
+    ! approval policy.
+  //]
+  def runCappedWithPauses(
+      args: py.List,
+      timeoutSecs: Float,
+      paused: py.Dynamic,
+      maxPauseSecs: Float,
+      env: Any = py.none,
+      cwd: Any = py.none)
+  : Capped =
+    val proc = start(args, env, cwd)
+    var last = time.monotonic()
+    var executionLeft = timeoutSecs
+    var pauseStarted = 0.0
+
+    while true do
+      match py.try(proc.communicate(timeout = 0.1))
+      case Ok(pair) =>
+        return new Capped(proc.returncode.asInt, pair[0].asString, pair[1].asString, false)
+
+      case Err(_) =>
+        val now = time.monotonic()
+        val elapsed = now - last
+        last = now
+
+        if paused.is_set().asBool then
+          if pauseStarted == 0.0 then pauseStarted = now
+
+          if now - pauseStarted >= maxPauseSecs then
+            reap(proc)
+            return new Capped(-1, "", "", true, true)
+
+        else
+          pauseStarted = 0.0
+          executionLeft = executionLeft - elapsed
+
+        if executionLeft <= 0.0 then
+          reap(proc)
+          return new Capped(-1, "", "", true)
+
+    new Capped(-1, "", "", true)
+
+  //[ Install a handler for SIGINT (Ctrl-C), replacing the default that raises `KeyboardInterrupt`
+    !
+    ! Must be called from the main thread. The handler runs there at the next
+    ! bytecode boundary, so it can set a `threading` event a worker polls, or
+    ! raise to abort a blocking main-thread call such as `input()`.
+  //]
+  def onSigint(handler: (Int, py.Dynamic) => Unit): Unit =
+    signal.signal(signal.SIGINT, handler)
+
+  //[ Make Ctrl-C shut the process down cleanly, with no Python traceback.
+    !
+    ! For long-running server agents whose main thread blocks in an accept/poll
+    ! loop (the web and Telegram drivers). On Ctrl-C the handler prints `message`
+    ! and exits via `sys.exit`, whose `SystemExit` unwinds quietly and is not
+    ! swallowed by the `py.try` (`except Exception`) blocks around network calls.
+  //]
+  def shutdownOnSigint(message: String): Unit =
+    onSigint: (signum: Int, frame: py.Dynamic) =>
+      sys.stdout.write(message + "\n")
+      sys.stdout.flush()
+      sys.exit(0)
+
+  //[ A daemon thread running `target` (dies with the process). Call `.start()`.
+    !
+    ! Every thread this codebase starts is a daemon — it should not keep the
+    ! process alive past its driver — so that decision is made here rather than at
+    ! each spawn.
+    !
+    ! `target` is typed `Any` because a thread body may close over effects (a
+    ! `logger`, say) that Jo tracks but that never cross the thread boundary at
+    ! runtime — the caller discharges them into the closure before spawning.
+  //]
+  def daemon(target: Any): py.Dynamic = threading.Thread(target = target, daemon = true)
+
+  //[ Start a child in its own session, with both streams piped back. //]
+  private def start(args: py.List, env: Any, cwd: Any): py.Dynamic =
+    subprocess.Popen:
+      args
+      stdout = subprocess.PIPE
+      stderr = subprocess.PIPE
+      text = true
+      start_new_session = true
+      env = env
+      cwd = cwd
+
+  //[ Kill the whole process group, then wait so no zombie lingers. //]
+  private def reap(proc: py.Dynamic): Unit =
+    val _ = py.try: os.killpg(os.getpgid(proc.pid.asInt), signal.SIGKILL)
+    val _ = py.try: proc.communicate()
+
+  private def indexOf(s: String, c: Char): Int =
+    var i = 0
+    while i < s.size do
+      if s.get(i) == c then return i
+      i = i + 1
+    -1
+end

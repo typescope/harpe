@@ -12,6 +12,7 @@
 
 namespace harpe.tools
 import harpe.ffi.os
+import harpe.util.File
 import harpe.ffi.builtins
 
 import harpe.Tool
@@ -36,11 +37,11 @@ private def collectSkills(skillsDir: String): List[String ~ String] =
   if !os.path.isdir(skillsDir) then return []
 
   var files: List[String ~ String] = []
-  val walkIter = os.walk(skillsDir)
+  val walkIter = File.walk(skillsDir)
   var nextEntry: py.Dynamic = builtins.next(walkIter, py.none)
 
   while !py.isNone(nextEntry) do
-    val entry: os.WalkEntry = nextEntry.cast[os.WalkEntry]
+    val entry: File.WalkEntry = nextEntry.cast[File.WalkEntry]
     val dirpath = entry.dirpath
     val filenames = entry.filenames
     var i = 0

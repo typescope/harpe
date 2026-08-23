@@ -36,7 +36,7 @@ interface Interact
     ! not enter the model transcript. `id` identifies this request within the
     ! active run so a stale response cannot approve a later action.
   //]
-  def approve(id: String, request: ApprovalRequest): ApprovalDecision
+  def approve(id: String, request: Approvals.Request): Approvals.Decision
 end
 
 //[ The current turn's interaction channel
@@ -66,5 +66,5 @@ private class UnattendedInteract
   def cancelled: Bool = false
   def pause(seconds: Float): Bool = false
   def emit(event: TurnEvent): Unit = pass
-  def approve(id: String, request: ApprovalRequest): ApprovalDecision = ApprovalCancelled
+  def approve(id: String, request: Approvals.Request): Approvals.Decision = Approvals.Cancelled
 end

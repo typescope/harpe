@@ -23,7 +23,7 @@ section Markdown
     if tokens.size == 0 then false
     else
       val first = tokens.get(0)
-      val kind = builtins.attr(first, "type").asString
+      val kind = builtins.getattr(first, "type").asString
       val block = kind == "fence" || kind == "code_block"
       block && lineCount(first.content.asString) > 1
 
@@ -43,7 +43,7 @@ section Markdown
     while i < tokens.size do
       val token = tokens.get(i)
       i = i + 1
-      val kind = builtins.attr(token, "type").asString
+      val kind = builtins.getattr(token, "type").asString
 
       if token.hidden.asBool then continue
 
@@ -125,7 +125,7 @@ section Markdown
     while i < tokens.size do
       val token = tokens.get(i)
       i = i + 1
-      val kind = builtins.attr(token, "type").asString
+      val kind = builtins.getattr(token, "type").asString
 
       if kind == "text" then
         var text = token.content.asString

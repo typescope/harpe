@@ -39,7 +39,7 @@ after the process restarts.
 Change the agent name shown in the left sidebar. In `src/Web.jo`, find:
 
 ```jo
-val server = new ChatServer(brain, "Clair", workspace, logger)
+val server = new ChatServer(brain, "Clair", …)
 ```
 
 Replace `"Clair"` with your agent's name. Edit `AGENT.md` to give it a matching

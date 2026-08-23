@@ -1,19 +1,19 @@
 //[ socket.jo
   !
-  ! Unix-domain stream sockets, wrapping Python's `socket` module — mirroring `os`
-  ! and `threading`. The broker (the host↔guest channel) is built on these: the host
-  ! binds and listens on a per-run socket path, the guest connects to it.
+  ! Python's `socket` module and its socket object, bound as typed values. The
+  ! broker (the host↔guest channel) is built on these: the host binds and listens
+  ! on a per-run socket path, the guest connects to it.
   !
-  ! A socket is a typed `Socket` handle (see `os.PathApi` for the same `@py.interop`
-  ! pattern). Payloads are raw `py.Dynamic` bytes — framing is the broker's concern,
-  ! not this layer's.
+  ! Both the module and the handle are `@py.interop` interfaces, so this file
+  ! declares and never forwards. Payloads are raw `py.Dynamic` bytes — framing is
+  ! the broker's concern, not this layer's. The Jo-shaped way to open one of
+  ! these is `UnixSocket`, which is where the AF_UNIX/SOCK_STREAM pair and
+  ! `accept`'s tuple live.
 //]
 
-namespace harpe.ffi.socket
+namespace harpe.ffi
 
-private def module: py.Dynamic = py.module("socket")
-
-//[ A Unix-domain stream socket. Methods map to Python's `socket` object. //]
+//[ A socket object. Methods map to Python's `socket` object. //]
 @py.interop
 interface Socket
   //[ Bind to a filesystem `path` (which must not already exist). //]
@@ -31,17 +31,26 @@ interface Socket
   //[ Receive up to `bufsize` bytes. Fewer if that is all that arrived, empty at EOF. //]
   def recv(bufsize: Int): py.Dynamic
 
+  //[ Accept a pending connection, as a `(conn, addr)` pair. //]
+  def accept(): py.List
+
   //[ Close the socket. //]
   def close(): Unit
 end
 
-//[ A new AF_UNIX stream socket, unbound and unconnected. //]
-def unixStream(): Socket =
-  module.socket(module.AF_UNIX, module.SOCK_STREAM).cast[Socket]
+//[ Python's `socket` module. //]
+@py.interop
+interface SocketApi
+  //[ The Unix-domain address family. //]
+  @py.property
+  def AF_UNIX: Int
 
-//[ Block until a client connects. Return the connection socket.
-  !
-  ! Python's `accept` yields a `(conn, addr)` pair — this returns the `conn`.
-//]
-def accept(sock: Socket): Socket =
-  py.dynamic(sock).accept()[0].cast[Socket]
+  //[ The stream (as opposed to datagram) socket type. //]
+  @py.property
+  def SOCK_STREAM: Int
+
+  //[ A new socket of `family` and `kind`, unbound and unconnected. //]
+  def socket(family: Int, kind: Int): Socket
+end
+
+def socket: SocketApi = py.module("socket").cast[SocketApi]

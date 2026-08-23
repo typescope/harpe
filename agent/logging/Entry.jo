@@ -1,30 +1,27 @@
 //[ Entry.jo
   !
-  ! The one thing a log producer and a log backend share: a neutral,
-  ! format-agnostic record. It knows nothing about JSON, sqlite, files, or
-  ! targets — only the data. A producer (the `runCode` tool, or any third-party
-  ! tool) builds an `Entry`. A `Logger` decides how and where to store it.
+  ! The one thing a log producer and a log backend share: a neutral record of
+  ! what happened. The record itself knows nothing of sqlite, files, or targets
+  ! — only the data. A producer (the `runCode` tool, or any third-party tool)
+  ! builds an `Entry`. A `Logger` decides how and where to store it.
+  !
+  ! `Entry.toDict` / `fromDict` are the one place the record meets its host
+  ! representation, kept here rather than in a backend because both directions
+  ! are needed off the JSONL path: the sandbox runtime serializes an entry to
+  ! cross the subprocess boundary, and the host (`runCode`) rebuilds it to
+  ! replay through its own contextual logger.
+  !
+  ! `readJsonl` is the missing half of `JsonlLogger`: what that backend writes,
+  ! read back. It belongs beside `fromDict` rather than in a JSON helper, because
+  ! JSON is the encoding this record happens to use, not the subject.
 //]
 
 namespace harpe.logging
 
-//[ Boxes for the two primitives
-  !
-  ! Jo allows at most one numeric/boolean primitive per union.
-//]
-class IntVal(value: Int)
-class BoolVal(value: Bool)
-
-//[ A loggable value: a scalar, an array, or a map
-  !
-  ! Scalars go in bare — the adapters box `Int`/`Bool` on the way in:
-  !
-  ! logger.log: "runs", "code" ~ src, "secs" ~ 1.5, "exitCode" ~ n, "ok" ~ true
-  !
-  ! The nested map lets a whole sub-record ride under one key (see
-  ! `ContextLogger`).
-//]
-type Value = (String | Float | IntVal | BoolVal | List[Value] | Map[String, Value]) :- [IntVal, BoolVal]
+import harpe.ffi.time
+import harpe.ffi.json
+import harpe.util.Clock
+import harpe.util.File
 
 //[ A log record: when it happened (`time`), its `category`, and named `fields`.
   !
@@ -55,3 +52,50 @@ type Value = (String | Float | IntVal | BoolVal | List[Value] | Map[String, Valu
   ! `select(has("warning") or has("error"))` for warn-and-up.
 //]
 class Entry(time: Float, category: String, fields: Map[String, Value])
+
+section Entry
+  //[ An entry as a JSON-able dict
+    !
+    ! `time`, `category`, then its fields (each `Value` unwrapped to its
+    ! underlying host value. A nested map becomes a nested object).
+    !
+    ! `JsonlLogger` serializes with it.
+  //]
+  def toDict(entry: Entry): py.Dict =
+    val d = py.dict("time" ~ Clock.toRfc3339(entry.time), "category" ~ entry.category)
+    for k ~ v in entry.fields.toList do d.set(k, Value.toJson(v))
+    d
+
+  //[ The inverse of `toDict`
+    !
+    ! Rebuild an `Entry` from a decoded JSON dict, its non-reserved keys becoming
+    ! typed fields. Used to replay a sandboxed program's records on the host.
+  //]
+  def fromDict(d: py.Dict): Entry =
+    val timestamp = Clock.fromRfc3339(d.get("time", "").asString)
+    val category = d.get("category", "").asString
+
+    var fields = Map.empty[String, Value]
+    for k in py.iter(d.keys()) do
+      val key = k.asString
+      if key != "time" && key != "category" then
+        fields = fields.add(key, Value.fromJson(d.get(key)))
+
+    new Entry(timestamp, category, fields)
+
+  //[ Every entry in the JSONL file at `path`, in the order written
+    !
+    ! Blank lines are skipped. A missing file raises, and so does a malformed
+    ! line: what either means is the caller's to decide, not this record's. A
+    ! driver for which no file means "this session has not spoken yet" checks
+    ! `File.exists` first and reads the absence as `[]` — that is its policy, and
+    ! a driver that would rather hear about a vanished journal is equally
+    ! entitled. `runCode`'s audit replay tolerates a malformed line for the same
+    ! reason, and keeps its own loop to do it.
+  //]
+  def readJsonl(path: String): List[Entry] =
+    var entries: List[Entry] = []
+    for line in File.read(path).lines if line.trim != "" do
+      entries = entries + fromDict(json.loads(line).cast[py.Dict])
+    entries
+end

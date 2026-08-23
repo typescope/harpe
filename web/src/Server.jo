@@ -23,20 +23,17 @@
 
 namespace harpe.web
 import harpe.ffi.secrets
+import harpe.util.Clock
 import harpe.ffi.time
 import harpe.ffi.json
 import harpe.ffi.os
+import harpe.util.File
 import harpe.ffi.threading
-import harpe.ffi.file
-import harpe.ffi.mimetypes
 import harpe.ffi.builtins
 
 import harpe.Agent
 import harpe.Interact
 import harpe.interact
-import harpe.Defaults
-import harpe.Workspace
-import harpe.workspace
 import harpe.logging.logger
 import harpe.Model
 import harpe.Model.Assistant
@@ -50,7 +47,6 @@ import harpe.Tool
 import harpe.Handler
 import harpe.Toolset
 import harpe.Tool.ToolInput
-import harpe.turns.Failed
 import harpe.Http
 import harpe.Http.request
 import harpe.Transcript
@@ -91,12 +87,14 @@ section SendFileTool
         "No data directory is available to send from."
         "sendFile · no data dir"
         attachments = []
+        success = false
 
     else if baseName == "" || baseName == "." || baseName == ".." || !os.path.isfile(os.path.join(dir, baseName)) then
       new Tool.RunOutcome:
         "No such file: '\{fileName}'. Write it to your data directory first, then send it."
         "sendFile · no such file"
         attachments = []
+        success = false
 
     else
       new Tool.RunOutcome:
@@ -104,28 +102,28 @@ section SendFileTool
         "sendFile · \{baseName}"
         attachments = []
 
-class ChatServer(brain: Model, name: String, wspace: Workspace)
+class ChatServer(brain: Model, name: String, home: String)
   // Resident sessions, id -> Session. Persisted sessions not yet touched this
   // run are loaded from disk on first access. The server is threaded (each
   // request on its own thread), so registry access is guarded by registryLock.
   // Turns within one session are serialized by the session's own lock.
   private val registry = py.dict()
-  private val registryLock = threading.lock()
+  private val registryLock = threading.Lock()
 
   // The `runCode` tool the interactive editor (`/api/run`) executes against — the
   // same compile+sandbox machinery the agent uses, so an edited script runs exactly
   // as the agent's would, with the session's data dir as its `fs` root.
   // `runTool` holds the build semaphore, so one instance bounds concurrent
   // sandbox runs across the whole server. The other tools own nothing.
-  private val runTool: RunCodeTool = runCodeTool(wspace.sandboxDir, 610.0)
+  private val runTool: RunCodeTool = RunCodeTool(os.path.join(home, "sandbox"), 610.0)
 
   //[ The WSGI application: establish the request context, then route
     !
     ! Each request runs on its own thread, which does not inherit the process's
-    ! context, so `workspace` is re-provided here from the server's field.
+    ! context, so `appHome` is re-provided here from the server's field.
   //]
   def route(): py.List receives request =
-    with workspace = wspace in dispatch()
+    with appHome = home in dispatch()
 
   //[ Which handler answers this request
     !
@@ -133,7 +131,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! accident — which the previous string comparisons allowed for every path
     ! that forgot to check one.
   //]
-  private def dispatch(): py.List receives request, workspace =
+  private def dispatch(): py.List receives request, appHome =
     match request
     case Http.Get("/")                => page()
     case Http.Get(Http.Segments ["c", _]) => page()
@@ -165,12 +163,12 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! Read from disk on every request, so editing the page needs no rebuild or
     ! restart.
   //]
-  private def indexPath(): String receives workspace =
-    workspace.relative("assets/index.html")
+  private def indexPath(): String receives appHome =
+    os.path.join(appHome, "assets/index.html")
 
   //[ The chat page itself, read from disk per request. //]
-  private def page(): py.List receives request, workspace =
-    Http.respond: "200 OK", "text/html; charset=utf-8", file.read(indexPath())
+  private def page(): py.List receives request, appHome =
+    Http.respond: "200 OK", "text/html; charset=utf-8", File.read(indexPath())
 
   //[ Serve the page's split stylesheet/script (`/app.css`, `/app.js`)
     !
@@ -178,9 +176,9 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! the page, so editing them needs no rebuild. The name is reduced to a
     ! basename, so the path can never escape `assets/`. A missing file is a 404.
   //]
-  private def staticAsset(asset: String): py.List receives request, workspace =
+  private def staticAsset(asset: String): py.List receives request, appHome =
     val name = sanitizeName(asset)   // basename → strips any traversal
-    val p = workspace.relative("assets/" + name)
+    val p = os.path.join(appHome, "assets", name)
 
     if name == "" || !os.path.isfile(p) then
       Http.respond("404 Not Found", "text/plain", "not found")
@@ -189,7 +187,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       val ctype = if name.endsWith(".css") then "text/css"
                   else if name.endsWith(".js") then "application/javascript"
                   else "text/plain"
-      Http.respond: "200 OK", ctype + "; charset=utf-8", file.read(p)
+      Http.respond: "200 OK", ctype + "; charset=utf-8", File.read(p)
 
   //[ Run one turn, streaming its progress and final answer as NDJSON.
     !
@@ -197,7 +195,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! the browser can adopt the `/c/<id>` URL. A request that carries a
     ! `session` resumes it (from memory, or loaded from disk).
   //]
-  private def handleMessage(): py.List receives request, workspace =
+  private def handleMessage(): py.List receives request, appHome =
     val body = Http.readJson()
     val text = body.get("text", "").asString
     val reqId = body.get("session", "").asString
@@ -333,7 +331,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
   //]
   private def tools(id: String): Toolset =
     val dataDir = os.path.abspath(Session.dataDir(id))
-    SkillTools.toolset(wspace.skillsDir)
+    SkillTools.toolset(os.path.join(home, "skills"))
       ++ UploadMediaTool.toolset(dataDir)
       ++ SendFileTool.toolset(dataDir)
       ++ runTool.toolset()
@@ -351,10 +349,10 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     out
 
   //[ A fresh session under a newly-minted, time-sortable id. //]
-  private def createSession(): Session receives workspace =
-    val id = time.strftime("%Y%m%dT%H%M%S") + "-" + secrets.tokenHex(nbytes = 2)
+  private def createSession(): Session receives appHome =
+    val id = time.strftime("%Y%m%dT%H%M%S") + "-" + secrets.token_hex(2)
     val context = new WindowedContext:
-      baseSystem = workspace.read("AGENT.md").getOrElse("")
+      baseSystem = File.read(os.path.join(appHome, "AGENT.md"))
       initial = []
 
     val session = new Session:
@@ -377,7 +375,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! of the same id both load. The second registration wins — harmless, since
     ! the loser is dropped before running a turn.
   //]
-  private def openSession(id: String): Session receives workspace =
+  private def openSession(id: String): Session receives appHome =
     registryLock.acquire()
     val resident: Option[Session] = if registry.contains(id) then Some(registry.get(id).cast[Session]) else None
     registryLock.release()
@@ -390,7 +388,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       // `Session.load` caps the replayed transcript (a RAM backstop). The full
       // transcript stays on disk.
       val context = new WindowedContext:
-        baseSystem = workspace.read("AGENT.md").getOrElse("")
+        baseSystem = File.read(os.path.join(appHome, "AGENT.md"))
         initial = Session.load(id)
 
       val session = new Session(id, log, brain, tools(id), context)
@@ -412,7 +410,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! commits to disk.
   //]
   private def evictIdle(): Unit =
-    val cutoff = time.now() - 1800.0
+    val cutoff = Clock.now() - 1800.0
 
     registryLock.acquire()
     val stale = py.list()
@@ -425,14 +423,14 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
     registryLock.release()
 
-  private def handleSessions(): py.List receives request, workspace =
+  private def handleSessions(): py.List receives request, appHome =
     val arr = py.list()
     for m in Session.listSessions() do
       arr.append(py.dict("id" ~ m.id, "title" ~ m.title, "time" ~ m.time))
     Http.respondJson(py.dict("sessions" ~ arr))
 
   //[ Permanently remove one idle session and all of its stored files. //]
-  private def handleDeleteSession(): py.List receives request, workspace =
+  private def handleDeleteSession(): py.List receives request, appHome =
     val body = Http.readJson()
     val requested = body.get("session", "").asString
     val id = sanitizeName(requested)
@@ -466,11 +464,11 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
   //[ One session's user/agent messages, for rendering on load.
     !
-    ! Each user message and each turn's FINAL reply are shown as bubbles. The turn's
-    ! intermediate traffic is not hidden but folded into that reply: the `runCode`
-    ! programs the agent ran (as `steps`, code paired with output by call id) and the
-    ! files it delivered via `sendFile` (as `sent`, resolved against the session
-    ! dir). Both come from the transcript — the tool calls the model itself made — so
+    ! Each user message is one bubble. Each thing the agent said is another, in the
+    ! order it said them, carrying the files it delivered in the same breath (as
+    ! `sent`, resolved against the session dir). The `runCode` programs it ran ride
+    ! on the first of those bubbles (as `steps`, code paired with output by call
+    ! id). Both come from the transcript — the tool calls the model itself made — so
     ! they persist across reloads and never fork from what the model reasons over.
     !
     ! `received` and `sent` name file lists from the AGENT's side: `received` is what
@@ -479,7 +477,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! that has since vanished still shows as a muted card), so they stay separate
     ! fields rather than one merged list.
   //]
-  private def handleHistory(): py.List receives request, workspace =
+  private def handleHistory(): py.List receives request, appHome =
     val id = Http.queryParam("session")
     val dataDir = existingDataDir(id)
 
@@ -561,11 +559,11 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! `data/`), and the directory must already exist — listing and serving never
     ! create one.
   //]
-  private def existingDataDir(id: String): Option[String] receives workspace =
+  private def existingDataDir(id: String): Option[String] receives appHome =
     val safe = sanitizeName(id)
     if safe == "" then None
     else
-      val dir = workspace.relative("data/" + safe)
+      val dir = os.path.join(appHome, "data", safe)
       if os.path.isdir(dir) then Some(dir) else None
 
   //[ A name not already taken in `dir`
@@ -577,7 +575,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     if !os.path.exists(os.path.join(dir, name)) then name
     else
       val stem = os.path.basename(name.replace("\\", "/"))
-      val ext = os.extname(stem)
+      val ext = File.extname(stem)
       val root = if ext == "" then stem else stem.substring(0, stem.size - ext.size)
       var i = 1
       var candidate = root + "-" + i.toString + ext
@@ -622,7 +620,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! file's metadata. The name is sanitized and de-duplicated, so an upload can
     ! neither escape the session dir nor clobber an existing file.
   //]
-  private def handleUpload(): py.List receives request, workspace =
+  private def handleUpload(): py.List receives request, appHome =
     val body = Http.readJson()
     val reqId = body.get("session", "").asString
     val name = sanitizeName(body.get("name", "").asString)
@@ -641,18 +639,18 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
 
       else
         val stored = uniqueName(dir, name)
-        file.writeBytes(os.path.join(dir, stored), data)
+        File.writeBytes(os.path.join(dir, stored), data)
         val given = body.get("mime", "").asString
         val mime = if given != "" then given
-                   else mimetypes.guessType(stored).getOrElse("application/octet-stream")
+                   else File.mimeType(stored).getOrElse("application/octet-stream")
         Http.respondJson: py.dict("session" ~ session.id, "name" ~ stored, "size" ~ size, "mime" ~ mime)
 
   //[ List a session's data directory
     !
-    ! The files currently in its workspace, whether uploaded by the user or
-    ! written by the agent. Newest first.
+    ! The files currently in its data directory, whether uploaded by the user
+    ! or written by the agent. Newest first.
   //]
-  private def handleFiles(): py.List receives request, workspace =
+  private def handleFiles(): py.List receives request, appHome =
     val files = match existingDataDir(Http.queryParam("session"))
                 case None      => []
                 case Some(dir) => Session.listFiles(dir)
@@ -665,7 +663,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! verified to stay within the session dir — an unknown session, missing
     ! file, or any traversal attempt is a 404.
   //]
-  private def handleFile(): py.List receives request, workspace =
+  private def handleFile(): py.List receives request, appHome =
     val name = sanitizeName(Http.queryParam("name"))
 
     match existingDataDir(Http.queryParam("session"))
@@ -676,8 +674,8 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
         Http.respond("404 Not Found", "text/plain", "not found")
 
       else
-        val mime = mimetypes.guessType(name).getOrElse("application/octet-stream")
-        respondBytes(mime, name, file.readBytes(p))
+        val mime = File.mimeType(name).getOrElse("application/octet-stream")
+        respondBytes(mime, name, File.readBytes(p))
 
   //[ Run a Jo program in a session's sandbox — the interactive editor's execute.
     !
@@ -687,7 +685,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     ! mints one (so a script written in a fresh chat gets a home), and the client
     ! adopts the returned id.
   //]
-  private def handleRun(): py.List receives request, workspace =
+  private def handleRun(): py.List receives request, appHome =
     val body = Http.readJson()
     val code = body.get("code", "").asString
     val reqId = body.get("session", "").asString
@@ -708,7 +706,7 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
     !
     ! Mints a session if the request carries none.
   //]
-  private def handleSave(): py.List receives request, workspace =
+  private def handleSave(): py.List receives request, appHome =
     val body = Http.readJson()
     val reqId = body.get("session", "").asString
     val name = sanitizeName(body.get("name", "").asString)
@@ -719,6 +717,6 @@ class ChatServer(brain: Model, name: String, wspace: Workspace)
       Http.respondJson: py.dict("error" ~ "missing name or session")
 
     else
-      file.write(os.path.join(Session.dataDir(sessionId), name), content)
+      File.write(os.path.join(Session.dataDir(sessionId), name), content)
       Http.respondJson: py.dict("session" ~ sessionId, "name" ~ name)
 end

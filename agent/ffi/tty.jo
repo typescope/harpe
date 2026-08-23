@@ -1,0 +1,15 @@
+//[ tty.jo
+  !
+  ! Python's `tty` module, bound as a typed value.
+//]
+
+namespace harpe.ffi
+
+//[ Python's `tty` module. //]
+@py.interop
+interface TtyApi
+  //[ Put `fd` in cbreak mode, so a single keypress is readable without Enter. //]
+  def setcbreak(fd: Int): Unit
+end
+
+def tty: TtyApi = py.module("tty").cast[TtyApi]

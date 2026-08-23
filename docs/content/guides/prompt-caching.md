@@ -52,14 +52,16 @@ is explicit: the request carries cache breakpoints, and the policy chooses their
 lifetime.
 
 ```jo
-union AnthropicCache = NoCache | FiveMinutes | OneHour
+section Anthropic
+  union Cache = NoCache | FiveMinutes | OneHour
+end
 ```
 
-`FiveMinutes` is the default ephemeral lifetime. `OneHour` survives longer idle
-gaps, which suits an agent whose user pauses between turns, but its writes are
-billed at 2x the base input rate against 1.25x for the five-minute cache, so it
-only pays off if the gap it covers is real. `NoCache` sends no breakpoints at
-all, and the system prompt reverts to a plain string, byte-identical to a request
+`Anthropic.FiveMinutes` is the default ephemeral lifetime. `Anthropic.OneHour`
+survives longer idle gaps, which suits an agent whose user pauses between turns,
+but its writes are billed at 2x the base input rate against 1.25x for the
+five-minute cache, so it only pays off if the gap it covers is real.
+`Anthropic.NoCache` sends no breakpoints at all, and the system prompt reverts to a plain string, byte-identical to a request
 from an agent that never enabled caching.
 
 Anthropic's minimum cacheable prompt varies by model — shorter prompts are simply
@@ -70,10 +72,10 @@ if a small agent shows no cache reads at all.
 The policy is an argument to the constructor:
 
 ```jo
-val brain = anthropic(apiKey, "claude-opus-4-6", cache = OneHour)
+val brain = anthropic(apiKey, "claude-opus-4-6", cache = Anthropic.OneHour)
 ```
 
-[`Defaults.model()`](/concepts/models/) uses `FiveMinutes`. It selects a
+[`Model.default()`](/concepts/models/) uses `Anthropic.FiveMinutes`. It selects a
 provider from environment variables and deliberately stops there: a cache policy
 is provider-specific tuning, so an agent that wants a different one calls
 `anthropic(...)` itself rather than reaching for an environment variable that

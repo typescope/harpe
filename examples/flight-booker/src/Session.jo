@@ -9,8 +9,7 @@
 //]
 
 namespace harpe.examples.flightbooker
-import harpe.ffi.file
-import harpe.ffi.json
+import harpe.ffi.os
 
 import harpe.Agent
 import harpe.Context
@@ -21,16 +20,13 @@ import harpe.Model.Message
 import harpe.TurnData
 import harpe.Transcript
 import harpe.transcript.Journal
-import harpe.workspace
 import harpe.logging.JsonlLogger
 import harpe.logging.Logger
 import harpe.logging.logger
 import harpe.logging.Entry
-import harpe.logging.entryFromDict
+import harpe.util.File
 import harpe.logging.Value
-import harpe.turns.Success
-import harpe.turns.Interrupted
-import harpe.turns.Failed
+import harpe.turns.TurnResult
 
 
 //[ One queued message for a chat's worker //]
@@ -70,15 +66,15 @@ private class Session(id: String, log: Logger, brain: Model, tools: Toolset, con
     var delivered = false
 
     match result.result
-    case Success =>
+    case TurnResult.Success =>
       val answer = result.finalText
       if answer.trim != "" then
         client.sendMessage(this.id, answer)
         delivered = true
 
-    case Interrupted => pass
+    case TurnResult.Interrupted => pass
 
-    case Failed(detail) =>
+    case TurnResult.Failed(detail) =>
       val message =
         if detail == "" then "Request failed. Please try again."
         else "Request failed: \{detail}"
@@ -91,23 +87,19 @@ end
 
 section Session
   //[ The JSONL file backing this chat's session. //]
-  def sessionPath(chatId: String): String receives workspace =
-    workspace.relative("logs/sessions/" + chatId + ".jsonl")
+  def sessionPath(chatId: String): String receives appHome =
+    os.path.join(appHome, "logs/sessions", chatId + ".jsonl")
 
   //[ An append log for this chat's session (file created lazily). //]
-  def forSession(chatId: String): Logger receives workspace =
+  def forSession(chatId: String): Logger receives appHome =
     new JsonlLogger(sessionPath(chatId))
 
   //[ Reconstruct this chat's conversation from disk.
     !
     ! Returns `[]` if the chat has no prior transcript.
   //]
-  def load(chatId: String): List[Message] receives workspace =
+  def load(chatId: String): List[Message] receives appHome =
     val path = sessionPath(chatId)
-    if !file.exists(path) then []
-    else
-      var entries: List[Entry] = []
-      for line in file.read(path).lines if line.trim != "" do
-        entries = entries + entryFromDict(json.loads(line).cast[py.Dict])
-      Journal.fromEntries(entries)
+    if !File.exists(path) then []
+    else Journal.fromEntries(Entry.readJsonl(path))
 end

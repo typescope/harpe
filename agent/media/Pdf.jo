@@ -15,6 +15,7 @@ namespace harpe.media
 import harpe.caps.*
 
 import harpe.ffi.os
+import harpe.util.File
 import harpe.ffi.builtins
 
 private def pdfiumMod: py.Dynamic = py.module("pypdfium2")
@@ -43,10 +44,10 @@ private class PdfImpl(doc: py.Dynamic, root: String)
 
   def pageCount: Int = builtins.len(doc)
 
-  def outline: List[Heading] =
+  def outline: List[PDF.Heading] =
     val items = builtins.list(doc.get_toc())
 
-    var result = List.empty[Heading]
+    var result = List.empty[PDF.Heading]
     var i = builtins.len(items) - 1
 
     while i >= 0 do
@@ -74,7 +75,7 @@ private class PdfImpl(doc: py.Dynamic, root: String)
     checkPage(page)
     orMessage: py.try(doc.get_page(page - 1).get_textpage().get_text_range().asString)
 
-  def pageContent(page: Int): PageContent =
+  def pageContent(page: Int): PDF.PageContent =
     checkPage(page)
     val objs = builtins.list(doc.get_page(page - 1).callDynamic("get_objects"))
     val n = builtins.len(objs)
@@ -86,7 +87,7 @@ private class PdfImpl(doc: py.Dynamic, root: String)
     var i = 0
 
     while i < n do
-      val kind = builtins.attr(objs.get(i), "type").asInt
+      val kind = builtins.getattr(objs.get(i), "type").asInt
 
       if kind == 1 then texts = texts + 1
       else if kind == 2 then paths = paths + 1
@@ -94,9 +95,9 @@ private class PdfImpl(doc: py.Dynamic, root: String)
 
       i = i + 1
 
-    new PageContent(texts, images, paths)
+    new PDF.PageContent(texts, images, paths)
 
-  def pageImage(page: Int, target: String, scale: Int = 2): Result[ImageSize, String] =
+  def pageImage(page: Int, target: String, scale: Int = 2): Result[Image.Size, String] =
     checkPage(page)
     val real = resolvePath(root, target) rescue err: Err[String] => return err
     orMessage:
@@ -108,11 +109,11 @@ private class PdfImpl(doc: py.Dynamic, root: String)
     case Ok(_)  => pass
     case Err(_) => pass
 
-  private def render(page: Int, realTarget: String, scale: Int): ImageSize =
+  private def render(page: Int, realTarget: String, scale: Int): Image.Size =
     val image = doc.get_page(page - 1).render(scale).to_pil()
-    os.makedirs(os.path.dirname(realTarget))
+    File.ensureDir(os.path.dirname(realTarget))
     image.save(realTarget)
-    new ImageSize(image.width.asInt, image.height.asInt)
+    new Image.Size(image.width.asInt, image.height.asInt)
 
   //[ Naming a page outside the document is a program bug
     !
@@ -127,7 +128,7 @@ private class PdfImpl(doc: py.Dynamic, root: String)
     ! 0-based dest page → 1-based `page`, or 0 when the bookmark has no page
     ! destination.
   //]
-  private def heading(bookmark: py.Dynamic): Heading =
+  private def heading(bookmark: py.Dynamic): PDF.Heading =
     val dest = bookmark.get_dest()
     val page =
       if py.isNone(dest) then 0
@@ -135,5 +136,5 @@ private class PdfImpl(doc: py.Dynamic, root: String)
         val index = dest.get_index()
         if py.isNone(index) then 0 else index.asInt + 1
 
-    new Heading(bookmark.get_title().asString, page, bookmark.level.asInt)
+    new PDF.Heading(bookmark.get_title().asString, page, bookmark.level.asInt)
 end

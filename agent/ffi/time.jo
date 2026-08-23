@@ -1,32 +1,34 @@
 //[ time.jo
   !
-  ! Host wall-clock time, wrapping Python's `time` module — the one place that
-  ! touches it, mirroring `os`. Referenced as `time.now()` / `time.strftime(...)`.
-//]
-
-namespace harpe.ffi.time
-
-private def module: py.Dynamic = py.module("time")
-
-//[ Seconds since the epoch, as a float (Python `time.time`). //]
-def now(): Float = module.time().asFloat
-
-//[ Format epoch seconds as an RFC 3339 UTC timestamp with microseconds. //]
-def toRfc3339(seconds: Float): String =
-  val datetime = py.module("datetime")
-  val instant = datetime.datetime.fromtimestamp:
-    seconds
-    tz = datetime.timezone.utc
-  instant.isoformat(timespec = "microseconds").asString.replace("+00:00", "Z")
-
-//[ Parse an RFC 3339 timestamp into epoch seconds. //]
-def fromRfc3339(value: String): Float =
-  py.module("datetime").datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp().asFloat
-
-//[ Format the current local time with a Python `strftime` pattern.
+  ! Python's `time` module, bound as a typed value — the one place that touches
+  ! the host wall clock.
   !
-  ! One call captures a single instant, so a pattern that spans both directory
-  ! and file parts (e.g. `"logs/sessions/%Y/%m/%H-%M-%S"`) stays internally
-  ! consistent — no risk of the date and time straddling a tick.
+  ! `time()` and `strftime` keep Python's names and meaning. `Clock` is where the
+  ! epoch-seconds-to-RFC-3339 conversions live, since Python spells those with
+  ! `datetime`, not here.
 //]
-def strftime(fmt: String): String = module.strftime(fmt).asString
+
+namespace harpe.ffi
+
+//[ Python's `time` module. //]
+@py.interop
+interface TimeApi
+  //[ Seconds since the epoch, as a float. //]
+  def time(): Float
+
+  //[ Seconds from an unspecified origin, never going backwards.
+    !
+    ! For measuring elapsed time, where the wall clock could jump.
+  //]
+  def monotonic(): Float
+
+  //[ Format the current local time with a `strftime` pattern.
+    !
+    ! One call captures a single instant, so a pattern that spans both directory
+    ! and file parts (e.g. `"logs/sessions/%Y/%m/%H-%M-%S"`) stays internally
+    ! consistent — no risk of the date and time straddling a tick.
+  //]
+  def strftime(fmt: String): String
+end
+
+def time: TimeApi = py.module("time").cast[TimeApi]

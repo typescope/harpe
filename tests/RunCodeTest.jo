@@ -2,7 +2,7 @@
   !
   ! Integration tests for the `runCode` tool (`harpe.tools`). Unlike the pure
   ! `Agent.ask` tests, `runCode` actually compiles and runs a guest program, so
-  ! these drive `runCodeTool` against an on-disk sandbox fixture
+  ! these drive `RunCodeTool` against an on-disk sandbox fixture
   ! (`sandbox-fixtures/basic/`, kept outside the `tests/` source glob) and
   ! assert a normalized outcome tag — covering the host wall-clock timeout, the
   ! `sandbox/run.sh` seam, and provider-key env scrub end to end. They shell out
@@ -15,8 +15,9 @@
 
 namespace harpe.test.RunCodeTest
 import harpe.ffi.os
+import harpe.util.Process
 import harpe.ffi.threading
-import harpe.ffi.subprocess
+import harpe.util.Capped
 import harpe.ffi.tempfile
 
 import jo.IO.stdout
@@ -57,7 +58,7 @@ private def execWith(
 private def exec(tool: RunCodeTool, code: String): RunOutcome =
   execWith(tool, code, Map.empty[String, String], Interact.unattended)
 
-private class ApprovalInteract(decision: ApprovalDecision)
+private class ApprovalInteract(decision: Approvals.Decision)
   view Interact
 
   var seenTitle = ""
@@ -69,7 +70,7 @@ private class ApprovalInteract(decision: ApprovalDecision)
   def pause(seconds: Float): Bool = false
   def emit(event: turns.TurnEvent): Unit = pass
 
-  def approve(id: String, request: ApprovalRequest): ApprovalDecision =
+  def approve(id: String, request: Approvals.Request): Approvals.Decision =
     seenTitle = request.title
     seenDetail = request.detail
     approvalCount = approvalCount + 1
@@ -84,9 +85,9 @@ private class StuckApprovalInteract
   def pause(seconds: Float): Bool = false
   def emit(event: turns.TurnEvent): Unit = pass
 
-  def approve(id: String, request: ApprovalRequest): ApprovalDecision =
+  def approve(id: String, request: Approvals.Request): Approvals.Decision =
     py.module("time").sleep(py.dynamic(1.0))
-    Approved
+    Approvals.Approved
 end
 
 // Wrap a runTask body in a minimal guest program.
@@ -116,7 +117,7 @@ private def concurrentCheck(tool: RunCodeTool, n: Int): Unit receives stdout =
   while k < n do
     val idx = k
     val worker = () => results.set(idx, py.dynamic(exec(tool, guest("  println \{idx}\n")).result))
-    val t = threading.thread(worker)
+    val t = Process.daemon(worker)
     threads.append(t)
     t.start()
     k = k + 1
@@ -140,15 +141,15 @@ def run(): Unit receives stdout =
 
   // The tool replays the invocation recorded by `jo build`, so the fixture must be
   // built once up front (the user's normal one-time prep).
-  val prep = subprocess.runCapped(py.list("jo", "build", "--spec", os.path.join(sandboxDir, "jo.toml"), "guest"), 180.0)
+  val prep = Process.runCapped(py.list("jo", "build", "--spec", os.path.join(sandboxDir, "jo.toml"), "guest"), 180.0)
   assert: !prep.timedOut && prep.returnCode == 0, "runCode tests: failed to pre-build the sandbox fixture:\n\{prep.err}"
 
   // An unbuilt sandbox reports clearly instead of building or running anything.
   val unbuilt = tempfile.mkdtemp()
-  check("not-built", exec(runCodeTool(unbuilt, 5.0), guest("  println 1\n")).summary, "sandbox not built")
+  check("not-built", exec(RunCodeTool(unbuilt, 5.0), guest("  println 1\n")).summary, "sandbox not built")
 
-  val fast  = runCodeTool(sandboxDir, 5.0, 120.0, 5.0)   // 5s run backstop
-  val quick = runCodeTool(sandboxDir, 5.0, 120.0, 2.0)   // 2s run backstop
+  val fast  = RunCodeTool(sandboxDir, 5.0, 120.0, 5.0)   // 5s run backstop
+  val quick = RunCodeTool(sandboxDir, 5.0, 120.0, 2.0)   // 2s run backstop
 
   // A well-formed program runs and produces output.
   check("normal", tag(exec(fast, guest("  println 42\n"))), "ran")
@@ -156,7 +157,7 @@ def run(): Unit receives stdout =
   // A trusted sandbox capability can request approval over the per-run broker.
   // The request stays out of the transcript and the decision returns to the
   // waiting sandbox process.
-  val approvalInteract = new ApprovalInteract(Approved)
+  val approvalInteract = new ApprovalInteract(Approvals.Approved)
   val approvalOut = execWith(
     fast,
     guest("  println 7\n"),
@@ -181,7 +182,7 @@ def run(): Unit receives stdout =
 
   // An application-supplied approval deadline stops a run even if its trusted
   // interaction handler never returns.
-  val approvalWatchdog = runCodeTool(sandboxDir, 0.2, 120.0, 5.0)
+  val approvalWatchdog = RunCodeTool(sandboxDir, 0.2, 120.0, 5.0)
   val stuckApproval = execWith(
     approvalWatchdog,
     guest("  println 7\n"),
@@ -198,7 +199,7 @@ def run(): Unit receives stdout =
 
   // Concurrent runs are isolated: 4 parallel programs, 2 building at a time,
   // each must get back its own output (no shared Task.jo / .build clobbering).
-  concurrentCheck(runCodeTool(sandboxDir, 5.0, 120.0, 5.0, 2), 4)
+  concurrentCheck(RunCodeTool(sandboxDir, 5.0, 120.0, 5.0, 2), 4)
 
   // A program that does not type-check is caught at the compile checkpoint.
   val badCompile = exec(fast, guest("  println undefinedThing\n"))

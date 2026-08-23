@@ -1,0 +1,45 @@
+//[ Terminal.jo
+  !
+  ! Raw-terminal control for the interactive console: cbreak mode and readiness
+  ! polling.
+  !
+  ! Grouped by what it is for, not by which Python module each call comes from —
+  ! `termios`, `tty`, `select`, and `re` each contribute one piece, and a caller
+  ! wanting a single keypress, or output without colour in it, should not have to
+  ! know which.
+  !
+  ! ANSI escapes belong here for the same reason: they are the terminal's own
+  ! encoding, whether this process is writing them to its tty or stripping them
+  ! back out of what a child wrote for one.
+//]
+
+namespace harpe.util
+
+import harpe.ffi.termios
+import harpe.ffi.tty
+import harpe.ffi.select
+import harpe.ffi.re
+
+section Terminal
+  //[ The terminal attributes of `fd`, to restore later with `setAttrs`. //]
+  def getAttrs(fd: Int): py.Dynamic = termios.tcgetattr(fd)
+
+  //[ Restore attributes saved by `getAttrs`, draining any pending output first. //]
+  def setAttrs(fd: Int, saved: py.Dynamic): Unit =
+    termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+
+  //[ Put `fd` in cbreak mode, so a single keypress is readable without Enter. //]
+  def setCbreak(fd: Int): Unit = tty.setcbreak(fd)
+
+  //[ True if `fd` has a byte ready to read within `timeout` seconds. //]
+  def readable(fd: Int, timeout: Float): Bool =
+    val ready = select.select(py.list(fd), py.list(), py.list(), timeout)
+    ready[0].cast[py.List].size > 0
+
+  //[ Strip ANSI SGR colour escapes (`ESC [ … m`) from `s`.
+    !
+    ! For output a child process coloured for a terminal it never had, on its way
+    ! to a model or a log.
+  //]
+  def stripAnsi(s: String): String = re.sub("\\[[0-9;]*m", "", s)
+end

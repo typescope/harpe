@@ -1,12 +1,24 @@
 //[ glob.jo
   !
-  ! Filename globbing, wrapping Python's `glob` module — mirroring `os` and `time`.
-  ! Referenced as `glob.glob(...)`.
+  ! Python's `glob` module, bound as a typed value.
+  !
+  ! The module is an `@py.interop` interface plus one `def` — not a namespace of
+  ! forwarding functions. `glob` is then an ordinary term: it can be passed and
+  ! read as what it is (a foreign object), and the declaration carries no bodies
+  ! to keep in sync with Python's.
+  !
+  ! Declarations only. A `glob` call that wants a Jo-shaped signature — a
+  ! defaulted argument, a converted result — belongs in the layer above, not
+  ! here: `@py.interop` states what Python offers, and nothing more.
 //]
 
-namespace harpe.ffi.glob
+namespace harpe.ffi
 
-private def module: py.Dynamic = py.module("glob")
+//[ Python's `glob` module. //]
+@py.interop
+interface GlobApi
+  //[ The paths matching a shell-style `spec`. //]
+  def glob(spec: String, recursive: Bool @py.keyword): py.List
+end
 
-//[ The paths matching a shell-style `spec`. //]
-def glob(spec: String, recursive: Bool = false): py.List = module.glob(spec, recursive = recursive).cast[py.List]
+def glob: GlobApi = py.module("glob").cast[GlobApi]

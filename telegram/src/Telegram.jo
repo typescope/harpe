@@ -17,21 +17,17 @@
 
 namespace harpe.telegram
 import harpe.ffi.os
+import harpe.util.Process
+import harpe.util.Clock
+import harpe.util.File
 import harpe.ffi.sys
 import harpe.ffi.threading
 import harpe.ffi.signal
-import harpe.ffi.dotenv
 import harpe.ffi.time
 
 import jo.IO.stdout
 import harpe.Agent
-import harpe.ApprovalRequest
-import harpe.ApprovalDecision
-import harpe.ApprovalTimedOut
-import harpe.ApprovalCancelled
-import harpe.workspace
-import harpe.Workspace
-import harpe.Defaults
+import harpe.Approvals
 import harpe.Model
 import harpe.Tool
 import harpe.tools.*
@@ -43,19 +39,25 @@ import harpe.transcript.Journal
 import harpe.logging.Value
 import harpe.logging.logger
 
+//[ Where this application's files live: `sandbox/`, `skills/`, `data/`, `logs/`, `AGENT.md`
+  !
+  ! This driver's own convention, not the framework's. Provided once at startup
+  ! and picked up as context by every layer that resolves a path.
+//]
+param appHome: String
+
 //[ The entry point //]
 def main(): Unit receives stdout =
-  dotenv.load(".env")
-  val wspace = new Workspace(os.path.abspath("."))
-  with workspace = wspace in serve()
+  Process.loadDotenv(".env")
+  with appHome = os.path.abspath(".") in serve()
 
-private def serve(): Unit receives stdout, workspace =
+private def serve(): Unit receives stdout, appHome =
   val token = os.getenv("TELEGRAM_BOT_TOKEN", "")
   if token == "" then
     println "Error: TELEGRAM_BOT_TOKEN is not set (get one from @BotFather, put it in .env)."
     sys.exit(1)
 
-  val brain = Defaults.model()
+  val brain = Model.default()
   val rawAllowed = os.getenv("TELEGRAM_ALLOWED_SENDERS", "")
   var allowed: List[String] = []
 
@@ -98,7 +100,7 @@ private def serve(): Unit receives stdout, workspace =
     println "  ⚠ TELEGRAM_ALLOWED_SENDERS is empty — all messages are rejected until you add sender ids."
 
   // Stop cleanly on Ctrl-C instead of dumping a traceback out of the poll loop.
-  signal.shutdownOnSigint("\n  ♪ Carmen stopped.")
+  Process.shutdownOnSigint("\n  ♪ Carmen stopped.")
 
   bot.run()
 
@@ -156,7 +158,7 @@ private class PendingTelegramApproval(
     id: String,
     chatId: String,
     senderId: String)
-  val ready = threading.event()
+  val ready = threading.Event()
   var decision = ""
   var messageId = -1
 end
@@ -170,14 +172,14 @@ private class TelegramBot(
   // genuinely concurrent interaction: the poll thread enqueuing to a session
   // versus a worker reaping its idle session (see `dispatch`/`workerLoop`).
   private val registry = py.dict()
-  private val registryLock = threading.lock()
+  private val registryLock = threading.Lock()
 
   // The tools every chat shares. `runTool` holds the build semaphore, so one
   // instance bounds concurrent sandbox runs across every chat.
-  private val runTool: RunCodeTool = runCodeTool(harpe.workspace.sandboxDir, 610.0)
+  private val runTool: RunCodeTool = RunCodeTool(os.path.join(appHome, "sandbox"), 610.0)
   private val sendFile: SendFileTool = new SendFileTool(client)
 
-  private val approvalLock = threading.lock()
+  private val approvalLock = threading.Lock()
   private val pendingApprovals = py.dict()
 
   //[ The long-poll loop: fetch updates, advance the offset past each one, and dispatch text messages
@@ -185,7 +187,7 @@ private class TelegramBot(
     ! `getUpdates` blocks until messages arrive or the poll times out, so this
     ! loop idles cheaply.
   //]
-  def run(): Unit receives stdout, workspace =
+  def run(): Unit receives stdout, appHome =
     var offset = 0
 
     while true do
@@ -217,7 +219,7 @@ private class TelegramBot(
     ! it ignores them silently (logging to the console) rather than spamming a
     ! rejection into the group.
   //]
-  private def handleUpdate(update: py.Dict): Unit receives stdout, workspace =
+  private def handleUpdate(update: py.Dict): Unit receives stdout, appHome =
     if update.contains("callback_query") then
       handleApprovalCallback(update.get("callback_query").cast[py.Dict])
       return
@@ -312,8 +314,8 @@ private class TelegramBot(
       chatId: String,
       senderId: String,
       id: String,
-      request: ApprovalRequest)
-  : ApprovalDecision =
+      request: Approvals.Request)
+  : Approvals.Decision =
     val pending = new PendingTelegramApproval(id, chatId, senderId)
     approvalLock.acquire()
     pendingApprovals.set(id, pending)
@@ -325,17 +327,17 @@ private class TelegramBot(
       approvalLock.acquire()
       pendingApprovals.pop(id)
       approvalLock.release()
-      return ApprovalCancelled
+      return Approvals.Cancelled
 
-    val deadline = time.now() + 600.0
-    var decision: ApprovalDecision = ApprovalTimedOut
+    val deadline = Clock.now() + 600.0
+    var decision: Approvals.Decision = Approvals.TimedOut
     var waiting = true
     while waiting do
-      if time.now() >= deadline then
-        decision = ApprovalTimedOut
+      if Clock.now() >= deadline then
+        decision = Approvals.TimedOut
         waiting = false
       else if pending.ready.wait(0.1).asBool then
-        decision = ApprovalDecision.fromWire(pending.decision)
+        decision = Approvals.fromWire(pending.decision)
         waiting = false
 
     approvalLock.acquire()
@@ -440,7 +442,7 @@ private class TelegramBot(
     ! a dead queue. Session load (disk) happens outside the lock. Only the poll
     ! thread creates, so the check-then-create needs no extra guard.
   //]
-  private def dispatch(chatId: String, incoming: Incoming): Unit receives workspace =
+  private def dispatch(chatId: String, incoming: Incoming): Unit receives appHome =
     registryLock.acquire()
     val live = registry.contains(chatId)
     if live then
@@ -452,7 +454,7 @@ private class TelegramBot(
       // `Session.load` caps the replayed transcript (a RAM backstop). The full
       // transcript stays on disk.
       val context = new WindowedContext:
-        baseSystem = workspace.read("AGENT.md").getOrElse("")
+        baseSystem = File.read(os.path.join(appHome, "AGENT.md"))
         initial = Session.load(chatId)
 
       // Each chat is its own session, rooted at its own data directory:
@@ -461,7 +463,7 @@ private class TelegramBot(
       // tools.
       val dataDir = os.path.abspath(Session.dataDir(chatId))
       val tools =
-        SkillTools.toolset(harpe.workspace.skillsDir)
+        SkillTools.toolset(os.path.join(appHome, "skills"))
           ++ UploadMediaTool.toolset(dataDir)
           ++ sendFile.toolset(chatId, dataDir)
           ++ runTool.toolset()
@@ -524,7 +526,7 @@ private class TelegramBot(
   //[ Start a chat's dedicated worker on a daemon thread (dies with the process). //]
   private def startWorker(chatId: String, session: Session): Unit =
     val loop = () => workerLoop(chatId, session)
-    val thread = threading.thread(loop)
+    val thread = Process.daemon(loop)
     thread.start()
 
   //[ Is this sender permitted? An empty allowlist admits no one. //]

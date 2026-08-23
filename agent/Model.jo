@@ -6,6 +6,11 @@
   ! impl converts to/from its own wire format. The loop owns the history and
   ! runs the tools. The model only turns (system, history, tools) into the next
   ! reply.
+  !
+  ! The interface names no provider. The one exception is `Model.default`, the
+  ! ready-made model the drivers wire in: it picks a provider from the
+  ! environment, so it has to know them all. It lives here because what it
+  ! returns is a `Model` and nothing else about it is a provider's business.
 //]
 
 namespace harpe
@@ -18,6 +23,9 @@ import harpe.Tool
 import harpe.Tool.ToolResult
 import harpe.Tool.ToolCall
 import harpe.logging.logger
+import harpe.models.*
+import harpe.ffi.os
+import harpe.ffi.sys
 
 //[ Model
   !
@@ -38,6 +46,54 @@ interface Model
 end
 
 section Model
+  //[ The chat model, selected by env vars
+    !
+    ! What the cli/web/telegram drivers wire in, and what `Agent.ask` falls back
+    ! to. A plain function, not a hook: an agent customizes itself by editing its
+    ! own driver code, which delegates here for the common case and diverges by
+    ! simply writing code.
+    !
+    ! The provider is chosen by API key: OpenAI, then OpenRouter, then Anthropic.
+    !
+    !   OPENAI_API_KEY     selects + authenticates OpenAI
+    !   OPENROUTER_API_KEY selects + authenticates OpenRouter
+    !   ANTHROPIC_API_KEY  selects + authenticates Anthropic
+    !   MODEL              model id — defaults to "claude-opus-4-6" for Anthropic,
+    !                      "gpt-5.6" for OpenAI, and is required for OpenRouter
+    !   OPENAI_BASE_URL    optional OpenAI Responses API endpoint (Azure, a proxy)
+    !
+    ! Provider-specific tuning is deliberately out of scope here — Anthropic's
+    ! prompt cache is fixed to the default 5-minute policy. An agent wanting
+    ! another policy calls `anthropic(...)` (or `openai(...)`) itself.
+    !
+    ! There is deliberately no matching default toolset. A driver constructs the
+    ! tools it wants and wires each name to a handler itself, so the whole map of
+    ! what the model can call — and what actually runs — is readable in one place.
+  //]
+  def default(): Model receives IO.stdout =
+    val openAiKey = os.getenv("OPENAI_API_KEY", "")
+    val openRouterKey = os.getenv("OPENROUTER_API_KEY", "")
+    val anthropicKey = os.getenv("ANTHROPIC_API_KEY", "")
+    if openAiKey != "" then
+      val baseUrl = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+      openai(openAiKey, os.getenv("MODEL", "gpt-5.6"), baseUrl)
+
+    else if openRouterKey != "" then
+      val modelId = os.getenv("MODEL", "")
+      if modelId == "" then
+        println "Error: MODEL is required when OPENROUTER_API_KEY is set."
+        sys.exit(1)
+        abort "Not reachable"
+      openrouter(openRouterKey, modelId)
+
+    else if anthropicKey != "" then
+      anthropic(anthropicKey, os.getenv("MODEL", "claude-opus-4-6"), cache = Anthropic.FiveMinutes)
+
+    else
+      println "Error: set OPENAI_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY (in .env or the environment)."
+      sys.exit(1)
+      abort "Not reachable"
+
   //[ Message
     !
     ! One entry in the conversation, as the loop sees it — independent of any

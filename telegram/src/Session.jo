@@ -2,7 +2,7 @@
   !
   ! The Telegram driver's live conversation object (`Session`) and its storage layout
   ! (the `Session` section): one conversation per Telegram chat, keyed by its numeric
-  ! `chat.id`, persisted as `logs/sessions/<chatId>.jsonl` under the workspace. The
+  ! `chat.id`, persisted as `logs/sessions/<chatId>.jsonl` under the agent's home. The
   ! chat id is the natural session key — it is stable across messages and survives
   ! restarts, so a chat resumes its history simply by reappearing.
   !
@@ -13,9 +13,7 @@
 namespace harpe.telegram
 import harpe.ffi.time
 import harpe.ffi.os
-import harpe.ffi.file
-import harpe.ffi.json
-import harpe.ffi.mimetypes
+import harpe.util.File
 import harpe.ffi.builtins
 
 import harpe.Agent
@@ -23,12 +21,10 @@ import harpe.Toolset
 import harpe.interact
 import harpe.Transcript
 import harpe.transcript.Journal
-import harpe.workspace
 import harpe.logging.JsonlLogger
 import harpe.logging.Logger
 import harpe.logging.logger
 import harpe.logging.Entry
-import harpe.logging.entryFromDict
 import harpe.Model
 import harpe.Tool
 import harpe.Tool.ToolInput
@@ -38,9 +34,7 @@ import harpe.Model.Message
 import harpe.Model.UserInput
 import harpe.Model.Assistant
 import harpe.Model.Attachment
-import harpe.turns.Success
-import harpe.turns.Interrupted
-import harpe.turns.Failed
+import harpe.turns.TurnResult
 import harpe.logging.Value
 
 
@@ -135,15 +129,15 @@ private class Session(
     var delivered = false
 
     match result.result
-    case Success =>
+    case TurnResult.Success =>
       val answer = result.finalText
       if answer.trim != "" then
         client.sendMessage(this.id, answer)
         delivered = true
 
-    case Interrupted => pass
+    case TurnResult.Interrupted => pass
 
-    case Failed(detail) =>
+    case TurnResult.Failed(detail) =>
       val message =
         if detail == "" then "Request failed. Please try again."
         else "Request failed: \{detail}"
@@ -179,9 +173,9 @@ private class Session(
           case Some(data) =>
             val name = uniqueName(dir, sanitizeName(spec.name))
             if name != "" then
-              file.writeBytes(os.path.join(dir, name), data)
+              File.writeBytes(os.path.join(dir, name), data)
               val mime = if spec.mime != "" then spec.mime
-                         else mimetypes.guessType(name).getOrElse("application/octet-stream")
+                         else File.mimeType(name).getOrElse("application/octet-stream")
               val att = Attachment:
                 name
                 builtins.len(data)
@@ -211,7 +205,7 @@ private def sanitizeName(raw: String): String =
 private def uniqueName(dir: String, name: String): String =
   if name == "" || !os.path.exists(os.path.join(dir, name)) then name
   else
-    val ext = os.extname(name)
+    val ext = File.extname(name)
     val root = if ext == "" then name else name.substring(0, name.size - ext.size)
     var i = 1
     var candidate = root + "-" + i.toString + ext
@@ -222,8 +216,8 @@ private def uniqueName(dir: String, name: String): String =
 
 section Session
   //[ The file backing this chat's session. //]
-  def sessionPath(chatId: String): String receives workspace =
-    workspace.relative("logs/sessions/" + chatId + ".jsonl")
+  def sessionPath(chatId: String): String receives appHome =
+    os.path.join(appHome, "logs/sessions", chatId + ".jsonl")
 
   //[ The per-chat data directory
     !
@@ -232,13 +226,13 @@ section Session
     ! attachments land here, and files the agent writes surface here too.
     ! Created on demand. Scoped by chat id so chats never share a tree.
   //]
-  def dataDir(chatId: String): String receives workspace =
-    val dir = workspace.relative("data/" + chatId)
-    if !os.path.isdir(dir) then os.makedirs(dir)
+  def dataDir(chatId: String): String receives appHome =
+    val dir = os.path.join(appHome, "data", chatId)
+    if !os.path.isdir(dir) then File.ensureDir(dir)
     dir
 
   //[ An append log for this chat's session (its file is created lazily). //]
-  def forSession(chatId: String): Logger receives workspace =
+  def forSession(chatId: String): Logger receives appHome =
     new JsonlLogger(sessionPath(chatId))
 
   //[ The files this turn delivered, in the order the agent sent them
@@ -265,12 +259,8 @@ section Session
     ! `[]` if it has no file yet, so a chat seen for the first time starts
     ! empty.
   //]
-  def load(chatId: String): List[Message] receives workspace =
+  def load(chatId: String): List[Message] receives appHome =
     val path = sessionPath(chatId)
-    if !file.exists(path) then []
-    else
-      var entries: List[Entry] = []
-      for line in file.read(path).lines if line.trim != "" do
-        entries = entries + entryFromDict(json.loads(line).cast[py.Dict])
-      Journal.fromEntries(entries)
+    if !File.exists(path) then []
+    else Journal.fromEntries(Entry.readJsonl(path))
 end

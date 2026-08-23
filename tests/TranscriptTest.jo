@@ -7,18 +7,17 @@ namespace harpe.test.TranscriptTest
 import harpe.ffi.os
 import harpe.ffi.time
 import harpe.ffi.json
-import harpe.ffi.file
+import harpe.util.File
 
 import jo.IO.stdout
 import harpe.*
 import harpe.Model.*
 import harpe.Tool.*
-import harpe.turns.Success
-import harpe.turns.Failed
+import harpe.turns.TurnResult
 import harpe.logging.logger
 import harpe.logging.JsonlLogger
 import harpe.transcript.Journal
-import harpe.logging.entryFromDict
+import harpe.logging.Entry
 import harpe.logging.Value
 
 private def check(label: String, cond: Bool): Unit receives stdout =
@@ -28,12 +27,20 @@ private def check(label: String, cond: Bool): Unit receives stdout =
 // Read a session file back as one parsed dict per non-empty line.
 private def readRecords(path: String): List[py.Dict] =
   var records: List[py.Dict] = []
-  for line in file.read(path).lines do
+  for line in File.read(path).lines do
     if line.trim != "" then records = records + json.loads(line).cast[py.Dict]
 
   records
 
 // A string out of an opaque bracket payload.
+// Does any tool result in this turn report a refusal?
+private def turnRefused(d: TurnData): Bool =
+  var refused = false
+  for m in d.messages do
+    if m is ToolResults(results) then
+      for r in results if !r.success do refused = true
+  refused
+
 private def payloadField(v: Value, key: String): String =
   match v
   case m: Map[String, Value] =>
@@ -50,10 +57,10 @@ private def turnText(d: TurnData): String =
 
 private def turnResult(d: TurnData): String =
   match d.result
-  case Success        => "Success"
-  case Failed(detail) => "Failed(\{detail})"
-  case None           => "None"
-  case _              => "Interrupted"
+  case TurnResult.Success        => "Success"
+  case TurnResult.Failed(detail) => "Failed(\{detail})"
+  case None                      => "None"
+  case _                         => "Interrupted"
 
 def run(): Unit receives stdout =
   val call = ToolCall("c1", "runCode", ToolInput(py.dict("code" ~ "println 1")))
@@ -70,7 +77,7 @@ def run(): Unit receives stdout =
     journal.start(UserInput("hi", []))
     journal.append(Assistant("on it", [call]))
     logger.log("myagent.debug", "note" ~ "between messages")
-    journal.append(ToolResults([ToolResult("c1", "42", [])]))
+    journal.append(ToolResults([ToolResult("c1", "42", [], success = false)]))
     journal.commit()
 
   val first = readRecords(path)
@@ -103,6 +110,10 @@ def run(): Unit receives stdout =
   check("result id", r0.get("id", "").asString == "c1")
   check("result content", r0.get("content", "").asString == "42")
 
+  // A refused call says so in the journal, so a driver reading its own output
+  // back off a turn cannot mistake a refusal for work done.
+  check("result records the refusal", !r0.get("success", default = true).asBool)
+
   // A user message is durable even when its turn fails, because a driver closes
   // the bracket on every outcome. Assistant messages stay provisional. A turn
   // whose bracket never closed is a fragment, and falls out of the model's
@@ -116,7 +127,8 @@ def run(): Unit receives stdout =
 
     journal.request(Journal.payload("text" ~ "again"))
     journal.start(UserInput("again", []))
-    journal.append(Assistant("done", []))
+    journal.append(Assistant("done", [call]))
+    journal.append(ToolResults([ToolResult("c1", "no such file", [], success = false)]))
     journal.commit()
     journal.response("turnEnd")
 
@@ -125,7 +137,7 @@ def run(): Unit receives stdout =
 
   var entries: List[harpe.logging.Entry] = []
   val lines = readRecords(path)
-  for line in lines do entries = entries + entryFromDict(line)
+  for line in lines do entries = entries + Entry.fromDict(line)
 
   check("failed turn contains diagnostic", lines.get(8).get("error", "").asString == "bad model")
 
@@ -136,12 +148,14 @@ def run(): Unit receives stdout =
   check("failed turn is still a record", turnResult(projected.get(0).data) == "Failed(bad model)")
   check("failed turn drops provisional messages", turnSize(projected.get(0).data) == 0)
   check("answered turn keeps its messages", turnResult(projected.get(1).data) == "Success")
+  check("a refused call is still refused after reload", turnRefused(projected.get(1).data))
 
   val loaded = Journal.fromEntries(entries)
-  check("context comes from the transcript alone", loaded.size == 3)
+  check("context comes from the transcript alone", loaded.size == 4)
   check("context keeps a failed turn's user message", loaded.get(0) is UserInput("will fail", _))
   check("context drops its provisional reply", loaded.get(1) is UserInput("again", _))
   check("context keeps an answered turn's reply", loaded.get(2) is Assistant("done", _))
+  check("context keeps its tool results", loaded.get(3) is ToolResults(_))
 
   sessionLog.close()
   os.unlink(path)
@@ -176,7 +190,7 @@ def run(): Unit receives stdout =
     recJournal.start(UserInput("and this?", []))
 
   var recEntries: List[harpe.logging.Entry] = []
-  for record in readRecords(recPath) do recEntries = recEntries + entryFromDict(record)
+  for record in readRecords(recPath) do recEntries = recEntries + Entry.fromDict(record)
 
   val recs = Journal.records(recEntries)
   check("only complete bracketed turns become records", recs.size == 1)

@@ -11,13 +11,12 @@
 
 namespace harpe.caps
 
-//[ Image pixel dimensions. //]
-class ImageSize(width: Int, height: Int)
+import harpe.caps.Image.Size
 
 //[ Read and transform an image. //]
 interface Image
   //[ The image's pixel dimensions. //]
-  def dimensions(src: String): Result[ImageSize, String]
+  def dimensions(src: String): Result[Size, String]
 
   //[ The image's metadata.
     !
@@ -30,20 +29,25 @@ interface Image
     !
     ! Aspect ratio preserved, never enlarged. Returns the resulting size.
   //]
-  def resize(src: String, width: Int, height: Int, target: String): Result[ImageSize, String]
+  def resize(src: String, width: Int, height: Int, target: String): Result[Size, String]
 
   //[ Cut the `width` x `height` region at top-left (`x`, `y`) into `target`.
     !
     ! Returns the resulting size.
   //]
-  def crop(src: String, x: Int, y: Int, width: Int, height: Int, target: String): Result[ImageSize, String]
+  def crop(src: String, x: Int, y: Int, width: Int, height: Int, target: String): Result[Size, String]
 
   //[ Re-encode the image in the format `target`'s extension names.
     !
     ! `.png`, `.jpg`, `.webp`, …. Returns the pixel size.
   //]
-  def convert(src: String, target: String): Result[ImageSize, String]
+  def convert(src: String, target: String): Result[Size, String]
 end
 
 //[ The ambient image capability. //]
 param image: Image
+
+section Image
+  //[ Image pixel dimensions. //]
+  class Size(width: Int, height: Int)
+end

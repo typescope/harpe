@@ -19,7 +19,7 @@ namespace harpe
 
 import harpe.turns.*
 import harpe.ffi.os
-import harpe.ffi.mimetypes
+import harpe.util.File
 import harpe.logging.logger
 import harpe.Model
 import harpe.Model.*
@@ -58,9 +58,9 @@ section Agent
     ! it. Keeping them apart is what lets one conversation be replayed under a
     ! different window or summarizer. On interruption/failure the provisional
     ! assistant/tool tail is rolled back, while the user's message remains in the
-    ! context. Defaulted, it is a `NoHistory` built fresh for this call — the
-    ! model still sees this turn, and nothing survives into the next one. A
-    ! session that should remember keeps one context alive across turns.
+    ! context. Defaulted, it is a `Context.noHistory` built fresh for this call
+    ! — the model still sees this turn, and nothing survives into the next one.
+    ! A session that should remember keeps one context alive across turns.
     !
     ! A turn is bounded to `maxToolRounds` tool-call rounds. Once spent the model
     ! is asked once more with no tools, forcing a final answer. `maxRetries` is
@@ -77,9 +77,9 @@ section Agent
   def ask(
       message: String,
       attachments: List[String] = NoAttachments,
-      brain: Model = Defaults.model,
+      brain: Model = Model.default,
       tools: Toolset = Toolset.empty,
-      context: Context = NoHistory,
+      context: Context = Context.noHistory,
       transcript: Transcript = Transcript.NoTranscript,
       maxToolRounds: Int = 50,
       maxRetries: Int = 4)
@@ -87,7 +87,7 @@ section Agent
 
     val input = UserInput(message, filesAt(attachments))
     var rounds = 0
-    var result: TurnResult = Failed("")
+    var result: TurnResult = TurnResult.Failed("")
 
     // The turn's own traffic, accumulated as it is appended to the context, so the
     // finished turn is a value the caller can render without re-reading the journal.
@@ -108,7 +108,7 @@ section Agent
 
     while true do
       if interact.cancelled then
-        result = Interrupted
+        result = TurnResult.Interrupted
         context.rollback()
         context.append(input)
         transcript.interrupted()
@@ -119,18 +119,18 @@ section Agent
       val offer: List[Tool] = if rounds >= maxToolRounds then [] else tools.specs
 
       if rounds == maxToolRounds then
-        interact.emit: ToolBudgetReached(maxToolRounds)
+        interact.emit: TurnEvent.ToolBudgetReached(maxToolRounds)
 
       match fetchReply(session, pending, offer, maxRetries, interact)
         case Stopped =>
-          result = Interrupted
+          result = TurnResult.Interrupted
           context.rollback()
           context.append(input)
           transcript.interrupted()
           break
 
         case GaveUp(detail) =>
-          result = Failed(detail)
+          result = TurnResult.Failed(detail)
           context.rollback()
           context.append(input)
           transcript.failed(detail)
@@ -143,12 +143,12 @@ section Agent
           transcript.append(reply)
 
           if reply.calls.isEmpty then
-            result = Success
+            result = TurnResult.Success
             transcript.commit()
             break
 
           if reply.text.trim != "" then
-            interact.emit: AssistantMessage(reply.text.trim)
+            interact.emit: TurnEvent.AssistantMessage(reply.text.trim)
 
           var toolResults: List[ToolResult] = []
           var cancelled = false
@@ -159,7 +159,7 @@ section Agent
               break
 
             val toolName = call.name
-            interact.emit: ToolCallStarted(toolName)
+            interact.emit: TurnEvent.ToolCallStarted(toolName)
 
             val outcome =
               if tools.contains(toolName) then
@@ -167,15 +167,15 @@ section Agent
               else
                 RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}", attachments = [])
 
-            interact.emit: ToolCallEnded(toolName, outcome.summary)
+            interact.emit: TurnEvent.ToolCallEnded(toolName, outcome.summary)
 
-            toolResults = toolResults + ToolResult(call.id, outcome.result, outcome.attachments)
+            toolResults = toolResults + ToolResult(call.id, outcome.result, outcome.attachments, outcome.success)
           end
 
           if cancelled || interact.cancelled then
             context.rollback()
             context.append(input)
-            result = Interrupted
+            result = TurnResult.Interrupted
             transcript.interrupted()
             break
 
@@ -191,7 +191,7 @@ section Agent
     // A rolled-back turn contributes nothing to history, and `Journal.records`
     // replays it with no messages — so drop them here too, and the live value and
     // the reloaded one agree.
-    if result is Success then TurnData(input, produced, result)
+    if result is TurnResult.Success then TurnData(input, produced, result)
     else TurnData(input, [], result)
 
   //[ `Attachment` metadata for each path
@@ -211,7 +211,7 @@ section Agent
         abort "no such file: '\{p}'"
 
       val fileName = os.path.basename(abs)
-      val mime = mimetypes.guessType(fileName).getOrElse("application/octet-stream")
+      val mime = File.mimeType(fileName).getOrElse("application/octet-stream")
       out = out + Attachment(fileName, os.path.getsize(abs), mime, path = abs)
 
     out
@@ -258,13 +258,13 @@ section Agent
         outcome = Stopped
         break
 
-      interact.emit: ModelRequestStarted(attempt, maxRetries)
+      interact.emit: TurnEvent.ModelRequestStarted(attempt, maxRetries)
 
       // `reply` is idempotent — the Session commits `results` only on success, so
       // every attempt (including retries) passes the same `results`.
       val res = session.reply(results, tools)
 
-      interact.emit: ModelRequestEnded
+      interact.emit: TurnEvent.ModelRequestEnded
 
       if interact.cancelled then
         outcome = Stopped
@@ -290,7 +290,7 @@ section Agent
           else
             val delay = backoffSeconds(attempt)
             logger.warn("harpe.model.request", detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
-            interact.emit: TransientError(detail, delay)
+            interact.emit: TurnEvent.TransientError(detail, delay)
             // pause returns true if cancellation fired during the backoff.
             if interact.pause(delay) then
               outcome = Stopped

@@ -3,17 +3,23 @@ namespace harpe.examples.prreview
 import jo.IO.stdout
 import jo.IO.args
 import harpe.*
+import harpe.util.File
 import harpe.ffi.os
 import harpe.ffi.time
-import harpe.ffi.dotenv
+import harpe.util.Process
 import harpe.logging.Logging
 import harpe.logging.JsonlLogger
 import harpe.logging.logger
 import harpe.Model.UserInput
-import harpe.turns.Success
-import harpe.tools.runCodeTool
+import harpe.turns.TurnResult
+import harpe.tools.RunCodeTool
 import harpe.tools.SkillTools
 import harpe.context.FullContext
+
+//[ Where this application's files live: `sandbox/`, `skills/`, `logs/`, `AGENT.md`
+  ! — its own convention, not the framework's.
+//]
+param appHome: String
 
 //[ agent entry point  //]
 def main(): Unit receives args, stdout =
@@ -22,17 +28,16 @@ def main(): Unit receives args, stdout =
 
   val pr = args[0]
 
-  dotenv.load(".env")
-  val wspace = new Workspace(os.path.abspath("."))
-  with workspace = wspace in
+  Process.loadDotenv(".env")
+  with appHome = os.path.abspath(".") in
     Logging.withLogger:
-      new JsonlLogger: wspace.relative("logs/agent.jsonl")
+      new JsonlLogger: os.path.join(appHome, "logs/agent.jsonl")
       () => review(pr)
 
-private def review(pr: String): Unit receives stdout, workspace, logger =
-  val basePrompt = workspace.read("AGENT.md") rescue None => ""
-  val runCode = runCodeTool(workspace.sandboxDir, 610.0)
-  val skillsDir = workspace.skillsDir
+private def review(pr: String): Unit receives stdout, appHome, logger =
+  val basePrompt = File.read(os.path.join(appHome, "AGENT.md"))
+  val runCode = RunCodeTool(os.path.join(appHome, "sandbox"), 610.0)
+  val skillsDir = os.path.join(appHome, "skills")
 
   val context = new FullContext(basePrompt, [])
   val channel = new PrintInteract(stdout)
@@ -51,13 +56,13 @@ private def review(pr: String): Unit receives stdout, workspace, logger =
     with interact = channel in
       Agent.ask:
         "please start review the pr"
-        brain = Defaults.model()
+        brain = Model.default()
         tools = tools
         context = context
         maxToolRounds = 30
 
   match turn.result
-  case Success =>
+  case TurnResult.Success =>
     println ("  · review completed: " + turn.text)
 
   case _ =>

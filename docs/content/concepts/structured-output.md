@@ -63,38 +63,80 @@ The tool call itself carries the structure. The web agent delivers files this
 way, with a tool that moves no bytes at all:
 
 ```jo
-class SendFileTool
-  view Tool
-
-  def name: String = "sendFile"
-  def description: String =
-    "Deliver a file to the user — it appears as an attachment in your reply."
-  def params: List[Tool.ToolParam] =
-    [Tool.strParam("fileName", "The name of the file in your data directory to send")]
+section SendFileTool
+  private def spec: Tool =
+    Tool:
+      "sendFile"
+      "Deliver a file to the user — it appears as an attachment in your reply."
+      [Tool.strParam("fileName", "The name of the file in your data directory to send")]
 
   def send(fileName: String, dir: String): Tool.RunOutcome =
     val baseName = os.path.basename(fileName)
-    // validation elided
-    new Tool.RunOutcome:
-      "Sent '\{baseName}' to the user."
-      "sendFile · \{baseName}"
-      media = []
+
+    if !os.path.isfile(os.path.join(dir, baseName)) then
+      new Tool.RunOutcome:
+        "No such file: '\{fileName}'. Write it to your data directory first, then send it."
+        "sendFile · no such file"
+        attachments = []
+        success = false
+
+    else
+      new Tool.RunOutcome:
+        "Sent '\{baseName}' to the user."
+        "sendFile · \{baseName}"
+        attachments = []
 end
 ```
 
 The route validates the name and returns prose for the model. The *delivery* is
-not something the handler does. The call is recorded in the transcript, and the
-driver reads it back when rendering the conversation:
+not something the handler does. `Agent.ask` hands back the finished turn, and the
+driver reads its own output out of it — the calls the agent made are the record:
 
 ```jo
-// Each `sendFile` the agent made becomes an attachment on the reply.
-for c in calls if c.name == "sendFile" do
-  sent.append: sentFileJson(dataDir, c.input.string("fileName"))
+//[ What the agent said and sent this turn, in the order it happened. //]
+def reply(turn: TurnData): Value =
+  // A `sendFile` the tool refused is not a delivery. Collect the refused call
+  // ids first: the results arrive after the message that made the calls.
+  var refused = Set.empty[String]
+  for m in turn.messages do
+    if m is ToolResults(results) then
+      for r in results if !r.success do refused = refused + r.id
+
+  var parts: List[Value] = []
+
+  for m in turn.messages do
+    if m is Assistant(text, calls) then
+      var files: List[Value] = []
+      for c in calls if c.name == "sendFile" && !refused.contains(c.id) do
+        files = files + c.input.string("fileName")
+
+      if text.trim != "" || !files.isEmpty then
+        parts = parts + Journal.payload("text" ~ text.trim, "files" ~ files)
+
+  parts
+```
+
+One entry per assistant message, so a file stays with the words it arrived with.
+
+A refusal is where the two audiences separate. The model is told in prose why
+nothing was sent, and reads that as its next turn's input. The driver reads
+[`success`](/concepts/tools/) off the `ToolResult` instead, so the call it made
+never becomes an attachment on the page. Both come off the same record, which is
+what keeps them from disagreeing.
+
+That value closes the turn's transcript bracket, beside the driver's own record
+of what the user asked:
+
+```jo
+transcript.turn: request, () =>
+  val turn = Agent.ask(prompt, brain = brain, tools = tools, transcript = transcript)
+  Journal.payload("reply" ~ Session.reply(turn))
 ```
 
 One event, two renderings. The model sees a tool call it made and knows what it
-sent. The user sees an attachment on the message. Neither view is derived from
-parsing the assistant's prose, so they cannot disagree.
+sent. The user sees an attachment on the message, rendered from the record —
+live, or rebuilt from disk a week later. Neither view is derived from parsing the
+assistant's prose, so they cannot disagree.
 
 This is why the parameters matter as much as the handler. `params` is the schema,
 each provider renders its own wire format from it, and the model's arguments
@@ -106,7 +148,7 @@ readable error the model can act on:
 new Tool.RunOutcome:
   "No such file: '\{fileName}'. Write it to your data directory first, then send it."
   "sendFile · no such file"
-  media = []
+  attachments = []
 ```
 
 ## Choosing a route

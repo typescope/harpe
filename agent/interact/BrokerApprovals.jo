@@ -13,12 +13,12 @@ import harpe.ffi.os
 import harpe.ffi.threading
 
 //[ One persistent approval connection for the lifetime of a sandbox program. //]
-class BrokerApprovals(client: BrokerClient)
-  private val lock = threading.lock()
+class BrokerApprovals(client: Broker.Client)
+  private val lock = threading.Lock()
 
   view Approvals
 
-  def request(request: ApprovalRequest): ApprovalDecision =
+  def request(request: Approvals.Request): Approvals.Decision =
     lock.acquire()
     val frame = Frame.of(json.dumps(py.dict(
       "service" ~ "approval",
@@ -29,7 +29,7 @@ class BrokerApprovals(client: BrokerClient)
     lock.release()
 
     val body = json.loads(response.json).cast[py.Dict]
-    ApprovalDecision.fromWire(body.get("decision", "cancelled").asString)
+    Approvals.fromWire(body.get("decision", "cancelled").asString)
 end
 
 section BrokerApprovals
@@ -41,11 +41,11 @@ section BrokerApprovals
   def connect(): Approvals =
     val path = os.getenv("HARPE_BROKER_SOCKET", "")
     if path == "" then new UnavailableApprovals
-    else new BrokerApprovals(BrokerClient.connect(path))
+    else new BrokerApprovals(Broker.connect(path))
 end
 
 private class UnavailableApprovals
   view Approvals
 
-  def request(request: ApprovalRequest): ApprovalDecision = ApprovalCancelled
+  def request(request: Approvals.Request): Approvals.Decision = Approvals.Cancelled
 end

@@ -1,124 +1,106 @@
 +++
 title = "Media"
 +++
-Harpe keeps file transport in the application and file processing in generated
-programs. A driver receives and stores files, the sandbox works with them
-through typed capabilities, and the driver delivers generated files back to the
-user.
+A user uploads a scanned invoice. A tool pulls down a spreadsheet. A turn
+renders a chart the user should get back. Each time, something has to decide how
+much of the file the model actually sees — a 40-page PDF pushed through a
+multimodal request costs real tokens, and a spreadsheet shown as a picture is a
+poor way to read a spreadsheet.
 
-## One data directory per session
+Harpe gives you both routes — process the file locally, in code the agent
+writes, or send the file itself to the model — and leaves the choice with you,
+file by file.
 
-The driver owns the data directory: it passes the path to the tools that need it
-when it wires their routes, and gives each `Attachment` the path its bytes live
-at. Nothing in the framework has to be told where the directory is. The shipped
-agents scope it differently:
+## Sending a file to the model
 
-- CLI uses the application's `data/` directory.
-- Web creates `data/<session-id>/`.
-- Telegram creates `data/<chat-id>/`.
-
-The sandbox's file and document capabilities are rooted there. Generated code
-sees relative paths, never the surrounding workspace or a host path.
-
-For the guest-facing APIs, see:
-
-- [File System](/capabilities/file-system/)
-- [PDF](/capabilities/pdf/)
-- [Excel](/capabilities/excel/)
-- [Word](/capabilities/word/)
-- [Image](/capabilities/image/)
-- [OCR](/capabilities/ocr/)
-
-## Receiving files
-
-Web uploads and Telegram attachments are saved into the session data directory
-before the agent processes the message. Neither driver sends them to the model:
-an upload should cost nothing until the agent decides it needs the file. Both
-name the files in the message text instead, with `Model.userContent`, and the
-turn's transcript record carries what the user actually uploaded.
-
-An `Attachment` is what a file looks like when the model *is* shown it —
-metadata and a path, never the bytes:
-
-```jo
-class Attachment(name: String, size: Int, mime: String, path: String)
-```
-
-The model receives a short manifest appended to the user message:
-
-```text
-[The user attached these files, available in your data directory — read them
-with `fs`: report.pdf, orders.xlsx]
-```
-
-To add file input to another driver:
-
-1. create a data directory scoped to the user or session
-2. sanitize and de-duplicate inbound filenames
-3. save the bytes before calling `Agent.ask`
-4. decide whether the model should SEE each file or merely know it exists. To
-   show it, pass its path in `attachments`. To keep it out of the request — what
-   the web and Telegram drivers do, so an upload costs nothing until the agent
-   wants it — name it in the message text with `Model.userContent` and let the
-   agent reach for `fs` or `uploadMedia`
-5. pass the directory to the routes that need it (`uploadMedia`, your `sendFile`)
-   and to your sandbox runtime as its own environment variable
-
-Do not put file bytes, credentials, storage keys, or host paths in the
-transcript. For remote storage, materialize only the files granted to this
-session into its data directory.
-
-## Showing a file to the model
-
-Naming a file is the default. The model knows it exists and can read it through
-generated code, which is usually cheaper and more precise than sending the whole
-thing to a multimodal model.
-
-Attaching one is the exception, and it is what `Attachment` means: a file in
-`attachments` is *shown*, rendered as a real image or document block where the
-provider takes the type. `Agent.ask` builds them from paths:
+Sending one means passing its path to `Agent.ask`:
 
 ```jo
 Agent.ask("what is on this chart?", ["reports/q3.png"])
 ```
 
-When layout or pixels matter mid-conversation—a chart, screenshot, photo, or
-scan the agent only now realizes it needs—the built-in `uploadMedia` tool pulls
-a file from the data directory into the model's view. It supports JPEG, PNG,
-GIF, WebP, and PDF, and returns it as an `Attachment` so Anthropic and OpenAI
-render the bytes on the next request.
+What the model actually sees depends on the type: JPEG, PNG, GIF, and WebP on
+every provider, PDF on Anthropic, OpenAI, and OpenRouter. Attach a spreadsheet
+and nothing is sent — the model gets its name, and nothing more.
 
-Showing a file is request-scoped:
+What is sent is scoped to a single request:
 
 - a user message's attachments are sent only while it is the newest message
 - media returned by a tool is sent with that tool result
-- older transcript entries retain metadata but are not uploaded again
+- older transcript entries keep their metadata but are not uploaded again
 
-This avoids resending and rebilling the same media on later turns. The model can
-call `uploadMedia` again when it needs the original pixels again.
+So the same image is never resent, and never rebilled, on a later turn.
 
-## Returning a file to the user
+## Programmatic file processing
 
-Generated programs create files in the data directory through `fs`, document
-renderers, or image operations. Delivery is driver-specific.
+A user drops a 40-page contract into the chat and asks what the penalty clause
+says. Send it and the whole document rides into the request, every page billed,
+for one clause the agent could have found in code.
 
-The shipped Web and Telegram agents add a `sendFile` tool:
+So don't send user uploads blindly. Save them into a directory — one per user or
+session, handed to your sandbox runtime — and name the file in the message
+instead:
+
+```text
+what does the penalty clause say?
+
+[The user attached these files, available in your data directory — read them
+with `fs`: contract.pdf]
+```
+
+The model learns the file is there, and nothing else goes out. It opens the
+contract with `fs` and `pdfReader`, finds the clause, answers. `fs` reads
+anything in that directory, and the document, image, and OCR capabilities do the
+rest:
+
+- [File System](/capabilities/file-system/) — `fs`
+- [PDF](/capabilities/pdf/) — `pdfReader`
+- [Excel](/capabilities/excel/) — `excelReader`
+- [Word](/capabilities/word/) — `wordReader`
+- [Image](/capabilities/image/) — `image`
+- [OCR](/capabilities/ocr/) — `ocr`
+
+Generated code sees relative paths, never the agent's own directories or a host
+path. Web and Telegram both take uploads this way. Keep file bytes, credentials,
+storage keys, and host paths out of the transcript.
+
+## On-demand file reading
+
+Withholding the bytes is only safe because the agent can ask for them. Code is
+not always enough — OCR comes back empty on a scan, or the agent renders a chart
+and wants to check its own work, and it has to look at the thing. That is what
+`uploadMedia` is for: give it a file name in the data directory and it returns
+the file as an attachment on its own tool result, so the bytes go out with the
+next request. Wire it with the directory it may read from:
+
+```jo
+val tools = runCode.toolset() ++ UploadMediaTool.toolset(dataDir)
+```
+
+It takes the same five types. Anything else comes back as a refusal that points
+the model at `ocr`, `pdf`, or `fs` — usually what it wanted anyway, and cheaper.
+
+## Handing files back
+
+The agent writes its output into the data directory, so by the time the turn
+ends the file is already there. What the driver still needs is which one the user
+should get — and that is structured output, not a capability. The model says it
+by calling a tool.
+
+The Web agent's `sendFile` moves no bytes at all. It checks the name, returns a
+line of prose for the model, and the driver reads the calls back off the finished
+turn to render attachments on the reply — see
+[Structured output](/concepts/structured-output/) for the pattern.
 
 ```text
 sendFile(fileName: "summary.pdf")
 ```
 
-The argument is a basename in the session data directory. Web renders a file
-attachment and serves it from that session. Telegram uploads the file to the
-chat.
+Yours might not be a tool at all, and carry generated files in the response
+protocol instead. Whatever it is, keep it distinct from `uploadMedia`:
 
-`uploadMedia` and `sendFile` have different audiences:
-
-- `uploadMedia` shows a file to the model
+- `uploadMedia` sends a file to the model
 - `sendFile` delivers a file to the user
-
-A custom driver can implement a different delivery tool or include generated
-files in its response protocol.
 
 ## Customizing media support
 
@@ -136,8 +118,8 @@ omitted capability will not compile.
 `sandbox/SandboxRuntime.jo` binds each interface to a trusted implementation,
 all rooted at the guest's data directory (named by whatever environment variable
 the driver and its runtime agree on, passed through `runCode`'s `guestEnv`).
-Replace a backend there without changing the
-guest API. Keep credentials and remote clients in the trusted runtime.
+Replace a backend there without changing the guest API. Keep credentials and
+remote clients in the trusted runtime.
 
 Parsers and OCR engines still process untrusted input. Use the optional runtime
 isolation described in [Add Defense in Depth](/guides/defense-in-depth/) for

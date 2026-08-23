@@ -17,25 +17,26 @@ import harpe.Tool.*
 import harpe.logging.logger
 
 
-//[ Cache
-  !
-  ! Prompt-cache policy for the Anthropic provider. `NoCache` sends no cache
-  ! breakpoints (every request is priced in full).
-  !
-  ! The two ephemeral-cache lifetimes Anthropic supports: 5 minutes (default)
-  ! and 1 hour (2x write cost, held across longer idle gaps).
-  !
-  ! Anthropic's prompt caching — breakpoints are placed on the tool list + system
-  ! prompt and on the last transcript message, so the (append-only) transcript
-  ! prefix is read back cheaply across a turn's tool loop. The transient tail
-  ! stays uncached.
-//]
-union AnthropicCache = NoCache | FiveMinutes | OneHour
-  def toDict: py.Dict =
-    match this
-    case OneHour => py.dict("type" ~ "ephemeral", "ttl" ~ "1h")
-    case FiveMinutes => py.dict("type" ~ "ephemeral")
-    case NoCache => abort "NoCache"
+section Anthropic
+  //[ Cache
+    !
+    ! Prompt-cache policy for the Anthropic provider. `NoCache` sends no cache
+    ! breakpoints (every request is priced in full).
+    !
+    ! The two ephemeral-cache lifetimes Anthropic supports: 5 minutes (default)
+    ! and 1 hour (2x write cost, held across longer idle gaps).
+    !
+    ! Anthropic's prompt caching — breakpoints are placed on the tool list + system
+    ! prompt and on the last transcript message, so the (append-only) transcript
+    ! prefix is read back cheaply across a turn's tool loop. The transient tail
+    ! stays uncached.
+  //]
+  union Cache = NoCache | FiveMinutes | OneHour
+    def toDict: py.Dict =
+      match this
+      case OneHour => py.dict("type" ~ "ephemeral", "ttl" ~ "1h")
+      case FiveMinutes => py.dict("type" ~ "ephemeral")
+      case NoCache => abort "NoCache"
 end
 
 //[ One tool's Anthropic spec, derived from the Jo `Tool` model. //]
@@ -64,8 +65,8 @@ private def anthropicMediaBlocks(attachments: List[Attachment]): py.List =
   val blocks = py.list()
 
   for a in attachments do
-    if isInlineImage(a.mime) then
-      match readInlineBase64(a.path)
+    if InlineMedia.isImage(a.mime) then
+      match InlineMedia.readBase64(a.path)
       case Some(data) =>
         blocks.append:
           py.dict:
@@ -73,8 +74,8 @@ private def anthropicMediaBlocks(attachments: List[Attachment]): py.List =
             "source" ~ py.dict("type" ~ "base64", "media_type" ~ a.mime, "data" ~ data)
       case None => pass
 
-    else if isInlinePdf(a.mime) then
-      match readInlineBase64(a.path)
+    else if InlineMedia.isPdf(a.mime) then
+      match InlineMedia.readBase64(a.path)
       case Some(data) =>
         blocks.append:
           py.dict:
@@ -100,13 +101,13 @@ private def anthropicMediaBlocks(attachments: List[Attachment]): py.List =
   ! once a later turn rebuilds this same history from scratch. `dataDir` is the
   ! session's data directory (`""` if none), resolved once by the caller.
 //]
-private def toMessages(history: List[Message], cache: AnthropicCache): py.List =
+private def toMessages(history: List[Message], cache: Anthropic.Cache): py.List =
   val msgs = py.list()
   val lastIdx = history.size - 1
   var i = 0
 
   for m in history do
-    val shouldCache = i == lastIdx && cache is !NoCache
+    val shouldCache = i == lastIdx && cache is !Anthropic.NoCache
 
     match m
     case UserInput(text, attachments) =>
@@ -166,7 +167,7 @@ private def parseReply(response: py.Dynamic): Assistant =
   var calls: List[ToolCall] = []
 
   for block in content do
-    val btype = builtins.attr(block, "type").asString
+    val btype = builtins.getattr(block, "type").asString
     if btype == "text" then
       text = text + block.text.asString
     else if btype == "tool_use" then
@@ -180,7 +181,7 @@ private def parseReply(response: py.Dynamic): Assistant =
     new Assistant(text.trim, calls)
 
 private class AnthropicModel(
-    client: py.Dynamic, model: String, cache: AnthropicCache, extraBody: py.Dict)
+    client: py.Dynamic, model: String, cache: Anthropic.Cache, extraBody: py.Dict)
   view Model
 
   def startTurn(base: Rendered): Session =
@@ -197,7 +198,7 @@ end
   ! the reasoning rides in the wire history, never in the semantic `Message`.
 //]
 private class AnthropicSession(
-    client: py.Dynamic, model: String, cache: AnthropicCache,
+    client: py.Dynamic, model: String, cache: Anthropic.Cache,
     extraBody: py.Dict, base: Rendered)
   view Session
 
@@ -293,10 +294,10 @@ private def toolResultMessage(results: List[ToolResult]): py.Dict =
   ! uncached request.
 //]
 private def anthropicCreate(
-    client: py.Dynamic, model: String, cache: AnthropicCache,
+    client: py.Dynamic, model: String, cache: Anthropic.Cache,
     system: String, messages: py.List, toolSpecs: py.List, extraBody: py.Dict)
 : Result[py.Dynamic, py.Error] =
-  if cache is NoCache then
+  if cache is Anthropic.NoCache then
     py.try:
       client.messages.create:
         model = model
@@ -327,7 +328,7 @@ private def anthropicCreate(
 def anthropic(
     apiKey: String,
     model: String,
-    cache: AnthropicCache,
+    cache: Anthropic.Cache,
     timeoutSeconds: Int = 120,
     extraBody: py.Dict = py.none)
 : Model =
