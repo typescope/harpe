@@ -4,7 +4,7 @@
   !
   ! The counterpart to `harpe.ffi.builtins`. What lands here is what Python has
   ! no single call for: naming a value's type as a string, which is two nested
-  ! built-ins, and minting a class, which is a built-in wearing a second meaning.
+  ! built-ins.
 //]
 
 namespace harpe.util
@@ -19,12 +19,4 @@ section Py
   //]
   def typeName(x: Any): String =
     builtins.getattr(builtins.typeOf(x), "__name__").asString
-
-  //[ Build a class dynamically
-    !
-    ! Python's three-argument `type(name, bases, attrs)`, which is a different
-    ! function from the one-argument `type` in everything but spelling.
-  //]
-  def newType(name: String, bases: Any, attrs: Any): py.Dynamic =
-    builtins.newType(name, bases, attrs)
 end
