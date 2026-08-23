@@ -43,9 +43,9 @@ private def emptyBytes: py.Dynamic = py.dynamic("").callDynamic("encode", "ascii
 //------------------------------------------------------------------------------
 
 //[ One wire frame: a JSON header and a raw (possibly empty) binary trailer. //]
-class Frame(json: String, blob: py.Dynamic)
+private[harpe] class Frame(json: String, blob: py.Dynamic)
 
-section Frame
+private[harpe] section Frame
   //[ A frame carrying a JSON header and no binary trailer. //]
   def of(json: String): Frame = new Frame(json, emptyBytes)
 
@@ -126,7 +126,7 @@ private def recvFrame(sock: Socket): Option[Frame] =
   ! the handler's own protocol. A handler that raises is answered with
   ! `Frame.error`.
 //]
-class Broker(server: Socket, path: String, handle: Frame => Frame)
+private[harpe] class Broker(server: Socket, path: String, handle: Frame => Frame)
   //[ Stop accepting and remove the socket file.
     !
     ! In-flight connections finish on their own threads. New `accept` calls
@@ -138,7 +138,7 @@ class Broker(server: Socket, path: String, handle: Frame => Frame)
     pass
 end
 
-section Broker
+private[harpe] section Broker
   //[ Bind a broker at `path` and start serving
     !
     ! Each connection is served on its own thread, so concurrent guest calls do
