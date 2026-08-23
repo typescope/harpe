@@ -408,13 +408,10 @@ section Session
 
   //[ Decode this driver's per-session JSONL file. //]
   private def loadEntries(id: String): List[Entry] receives appHome =
+    // No file means the session has not spoken yet — this driver's reading of
+    // an absent journal, not the record's.
     val path = sessionPath(id)
-    if !File.exists(path) then []
-    else
-      var entries: List[Entry] = []
-      for line in File.read(path).lines if line.trim != "" do
-        entries = entries + Entry.fromDict(json.loads(line).cast[py.Dict])
-      entries
+    if File.exists(path) then Entry.readJsonl(path) else []
 
   //[ The persisted sessions, newest first — id, title, and start time.
     !

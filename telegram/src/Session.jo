@@ -14,7 +14,6 @@ namespace harpe.telegram
 import harpe.ffi.time
 import harpe.ffi.os
 import harpe.util.File
-import harpe.ffi.json
 import harpe.ffi.builtins
 
 import harpe.Agent
@@ -263,9 +262,5 @@ section Session
   def load(chatId: String): List[Message] receives appHome =
     val path = sessionPath(chatId)
     if !File.exists(path) then []
-    else
-      var entries: List[Entry] = []
-      for line in File.read(path).lines if line.trim != "" do
-        entries = entries + Entry.fromDict(json.loads(line).cast[py.Dict])
-      Journal.fromEntries(entries)
+    else Journal.fromEntries(Entry.readJsonl(path))
 end

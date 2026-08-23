@@ -10,12 +10,18 @@
   ! are needed off the JSONL path: the sandbox runtime serializes an entry to
   ! cross the subprocess boundary, and the host (`runCode`) rebuilds it to
   ! replay through its own contextual logger.
+  !
+  ! `readJsonl` is the missing half of `JsonlLogger`: what that backend writes,
+  ! read back. It belongs beside `fromDict` rather than in a JSON helper, because
+  ! JSON is the encoding this record happens to use, not the subject.
 //]
 
 namespace harpe.logging
 
 import harpe.ffi.time
+import harpe.ffi.json
 import harpe.util.Clock
+import harpe.util.File
 
 //[ A log record: when it happened (`time`), its `category`, and named `fields`.
   !
@@ -76,4 +82,20 @@ section Entry
         fields = fields.add(key, Value.fromJson(d.get(key)))
 
     new Entry(timestamp, category, fields)
+
+  //[ Every entry in the JSONL file at `path`, in the order written
+    !
+    ! Blank lines are skipped. A missing file raises, and so does a malformed
+    ! line: what either means is the caller's to decide, not this record's. A
+    ! driver for which no file means "this session has not spoken yet" checks
+    ! `File.exists` first and reads the absence as `[]` — that is its policy, and
+    ! a driver that would rather hear about a vanished journal is equally
+    ! entitled. `runCode`'s audit replay tolerates a malformed line for the same
+    ! reason, and keeps its own loop to do it.
+  //]
+  def readJsonl(path: String): List[Entry] =
+    var entries: List[Entry] = []
+    for line in File.read(path).lines if line.trim != "" do
+      entries = entries + fromDict(json.loads(line).cast[py.Dict])
+    entries
 end

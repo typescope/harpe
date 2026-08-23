@@ -18,7 +18,6 @@ import harpe.ffi.glob
 import harpe.ffi.os
 import harpe.util.File
 import harpe.ffi.time
-import harpe.ffi.json
 
 import harpe.util.Process
 
@@ -149,13 +148,10 @@ section Session
   def newLog(): String receives appHome =
     os.path.join(appHome, time.strftime("logs/sessions/%Y/%m/%d/%H-%M-%S") + ".jsonl")
 
+  //[ A session's transcript, or `[]` for a log this run is about to create. //]
   def load(path: String): List[Message] =
     if !File.exists(path) then []
-    else
-      var entries: List[Entry] = []
-      for line in File.read(path).lines if line.trim != "" do
-        entries = entries + Entry.fromDict(json.loads(line).cast[py.Dict])
-      Journal.fromEntries(entries)
+    else Journal.fromEntries(Entry.readJsonl(path))
 
   //[ Up to `limit` CLI session logs, newest first. //]
   def recentFiles(limit: Int): List[String] receives appHome =
