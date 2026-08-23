@@ -1,13 +1,26 @@
 //[ hashlib.jo
   !
-  ! Cryptographic digests, wrapping Python's `hashlib` — mirrors `secrets` and
-  ! `os`. Used for content-derived identifiers, not for secrets.
+  ! Python's `hashlib` module and its hash objects, bound as typed values.
+  !
+  ! Only what Harpe uses. The encode-then-hex composition callers actually want
+  ! is `Digest`, not this: here a hash is built and read exactly as Python builds
+  ! and reads one.
 //]
 
-namespace harpe.ffi.hashlib
+namespace harpe.ffi
 
-private def module: py.Dynamic = py.module("hashlib")
+//[ A hash object, mid-computation. //]
+@py.interop
+interface Hash
+  //[ The digest so far, as a lowercase hex string. //]
+  def hexdigest(): String
+end
 
-//[ The SHA-256 digest of `s` (UTF-8 encoded) as a lowercase hex string. //]
-def sha256Hex(s: String): String =
-  module.sha256(py.dynamic(s).encode("utf-8")).hexdigest().asString
+//[ Python's `hashlib` module. //]
+@py.interop
+interface HashlibApi
+  //[ A SHA-256 hash over `data` (bytes). //]
+  def sha256(data: py.Dynamic): Hash
+end
+
+def hashlib: HashlibApi = py.module("hashlib").cast[HashlibApi]

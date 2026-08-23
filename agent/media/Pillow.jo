@@ -15,6 +15,7 @@ namespace harpe.media
 import harpe.caps.*
 
 import harpe.ffi.os
+import harpe.util.File
 import harpe.ffi.builtins
 
 private def pilMod: py.Dynamic = py.module("PIL.Image")
@@ -105,7 +106,7 @@ class PillowImage(root: String)
     ! A mode the format cannot hold (RGBA → JPEG, say) is retried as RGB.
   //]
   private def save(img: py.Dynamic, realTarget: String): Image.Size =
-    os.makedirs(os.path.dirname(realTarget))
+    File.ensureDir(os.path.dirname(realTarget))
 
     match py.try(img.save(realTarget))
     case Ok(_)  => pass

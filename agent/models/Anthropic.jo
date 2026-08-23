@@ -167,7 +167,7 @@ private def parseReply(response: py.Dynamic): Assistant =
   var calls: List[ToolCall] = []
 
   for block in content do
-    val btype = builtins.attr(block, "type").asString
+    val btype = builtins.getattr(block, "type").asString
     if btype == "text" then
       text = text + block.text.asString
     else if btype == "tool_use" then

@@ -8,6 +8,7 @@
 namespace harpe.logging
 
 import harpe.ffi.builtins
+import harpe.util.Py
 
 //[ A loggable value: a scalar, an array, or a map
   !
@@ -57,7 +58,7 @@ section Value
     ! `true`/`false` never decode as `1`/`0`.
   //]
   def fromJson(obj: py.Dynamic): Value =
-    match builtins.typeName(obj)
+    match Py.typeName(obj)
     case "bool"  => BoolVal(obj.asBool)
     case "int"   => IntVal(obj.asInt)
     case "float" => obj.asFloat

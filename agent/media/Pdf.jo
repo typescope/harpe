@@ -15,6 +15,7 @@ namespace harpe.media
 import harpe.caps.*
 
 import harpe.ffi.os
+import harpe.util.File
 import harpe.ffi.builtins
 
 private def pdfiumMod: py.Dynamic = py.module("pypdfium2")
@@ -86,7 +87,7 @@ private class PdfImpl(doc: py.Dynamic, root: String)
     var i = 0
 
     while i < n do
-      val kind = builtins.attr(objs.get(i), "type").asInt
+      val kind = builtins.getattr(objs.get(i), "type").asInt
 
       if kind == 1 then texts = texts + 1
       else if kind == 2 then paths = paths + 1
@@ -110,7 +111,7 @@ private class PdfImpl(doc: py.Dynamic, root: String)
 
   private def render(page: Int, realTarget: String, scale: Int): Image.Size =
     val image = doc.get_page(page - 1).render(scale).to_pil()
-    os.makedirs(os.path.dirname(realTarget))
+    File.ensureDir(os.path.dirname(realTarget))
     image.save(realTarget)
     new Image.Size(image.width.asInt, image.height.asInt)
 

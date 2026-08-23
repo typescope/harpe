@@ -7,7 +7,8 @@
 
 namespace harpe.test.SocketTest
 
-import harpe.ffi.socket
+import harpe.util.UnixSocket
+import harpe.util.Process
 import harpe.ffi.threading
 import harpe.ffi.tempfile
 import harpe.ffi.os
@@ -22,19 +23,19 @@ def run(): Unit receives stdout =
   val dir = tempfile.mkdtemp()
   val path = os.path.join(dir, "s.sock")
 
-  val server = socket.unixStream()
+  val server = UnixSocket.open()
   server.bind(path)
   server.listen(1)
 
   // Server thread: accept one connection and echo its first message back.
   val serve = () =>
-    val conn = socket.accept(server)
+    val conn = UnixSocket.accept(server)
     conn.sendall(conn.recv(1024))
     conn.close()
 
-  threading.thread(serve).start()
+  Process.daemon(serve).start()
 
-  val client = socket.unixStream()
+  val client = UnixSocket.open()
   client.connect(path)
   client.sendall(py.dynamic("ping").callDynamic("encode", "utf-8"))
 

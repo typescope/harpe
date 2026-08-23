@@ -1,30 +1,17 @@
-namespace harpe.ffi.os
+//[ os.jo
+  !
+  ! Python's `os` module and its `os.path` submodule, bound as typed values.
+  !
+  ! Declarations only, and faithful ones: every member here has Python's own name
+  ! and Python's own signature, so a reader can check this file against Python's
+  ! documentation and nothing else. What Harpe wants `os` to do *for it* —
+  ! extensions Python has no name for, arguments it always passes the same way —
+  ! is a separate concern and lives in `Paths`.
+//]
 
-private def module: py.Dynamic = py.module("os")
-def path: PathApi = module.path.cast[PathApi]
+namespace harpe.ffi
 
-// The process environment as a mutable string map.
-def environ: py.Dict = module.environ.cast[py.Dict]
-
-// An environment variable's value, or `fallback` if unset.
-def getenv(name: String, fallback: String): String =
-  environ.get(name, fallback).asString
-
-// Read up to `count` bytes from file descriptor `fd` (raw os.read).
-def read(fd: Int, count: Int): py.Dynamic = module.read(fd, count)
-
-// The process-group id of process `pid`.
-def getpgid(pid: Int): Int = module.getpgid(pid).asInt
-
-// Send signal `sig` to every process in group `pgid`.
-def killpg(pgid: Int, sig: Int): Unit = module.killpg(pgid, sig)
-
-interface WalkEntry
-  def dirpath: String = py.dynamic(this)[0].asString
-
-  def filenames: py.List = py.dynamic(this)[2].cast[py.List]
-end
-
+//[ Python's `os.path` submodule. //]
 @py.interop
 interface PathApi
   def exists(path: String): Bool
@@ -50,24 +37,55 @@ interface PathApi
   def getsize(path: String): Int
 
   def getmtime(path: String): Float
+
+  //[ `(root, ext)` — the extension keeps its dot. //]
+  def splitext(path: String): py.List
 end
 
-// The file extension of `path`, including the dot (e.g. `".pdf"`). "" if none.
-def extname(path: String): String = module.path.splitext(path)[1].asString
+//[ Python's `os` module. //]
+@py.interop
+interface OsApi
+  @py.property
+  def path: PathApi
 
-def listdir(path: String): py.List = module.listdir(path).cast[py.List]
+  //[ The process environment as a mutable string map. //]
+  @py.property
+  def environ: py.Dict
 
-def fstat(fd: Int): py.Dynamic = module.fstat(fd)
+  //[ An environment variable's value, or `fallback` if unset. //]
+  def getenv(name: String, fallback: String): String
 
-def unlink(path: String): Unit = module.unlink(path)
+  //[ Read up to `count` bytes from file descriptor `fd`. //]
+  def read(fd: Int, count: Int): py.Dynamic
 
-def makedirs(path: String): Unit = module.makedirs(path, exist_ok = true)
+  def fstat(fd: Int): py.Dynamic
 
-def rename(src: String, dst: String): Unit = module.rename(src, dst)
+  //[ The process-group id of process `pid`. //]
+  def getpgid(pid: Int): Int
 
-def symlink(target: String, link: String): Unit = module.symlink(target, link)
+  //[ Send signal `sig` to every process in group `pgid`. //]
+  def killpg(pgid: Int, sig: Int): Unit
 
-// Follows directory symlinks: a link placed inside a walked tree is deliberate
-// (it is how an agent shares reference material into skills/), so the walk
-// descends into it. Cyclic links would loop — do not create them.
-def walk(top: String): py.Dynamic = module.walk(top, followlinks = true)
+  def listdir(path: String): py.List
+
+  def unlink(path: String): Unit
+
+  def rename(src: String, dst: String): Unit
+
+  def symlink(target: String, link: String): Unit
+
+  def chmod(path: String, mode: Int): Unit
+
+  //[ Is `path` accessible in `mode` (see `X_OK`) to the calling process? //]
+  def access(path: String, mode: Int): Bool
+
+  //[ The `access` mode bit asking whether a file may be executed. //]
+  @py.property
+  def X_OK: Int
+
+  def makedirs(path: String, exist_ok: Bool @py.keyword): Unit
+
+  def walk(top: String, followlinks: Bool @py.keyword): py.Dynamic
+end
+
+def os: OsApi = py.module("os").cast[OsApi]

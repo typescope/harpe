@@ -15,6 +15,7 @@
 namespace harpe.logging
 
 import harpe.ffi.time
+import harpe.util.Clock
 
 //[ A log record: when it happened (`time`), its `category`, and named `fields`.
   !
@@ -55,7 +56,7 @@ section Entry
     ! `JsonlLogger` serializes with it.
   //]
   def toDict(entry: Entry): py.Dict =
-    val d = py.dict("time" ~ time.toRfc3339(entry.time), "category" ~ entry.category)
+    val d = py.dict("time" ~ Clock.toRfc3339(entry.time), "category" ~ entry.category)
     for k ~ v in entry.fields.toList do d.set(k, Value.toJson(v))
     d
 
@@ -65,7 +66,7 @@ section Entry
     ! typed fields. Used to replay a sandboxed program's records on the host.
   //]
   def fromDict(d: py.Dict): Entry =
-    val timestamp = time.fromRfc3339(d.get("time", "").asString)
+    val timestamp = Clock.fromRfc3339(d.get("time", "").asString)
     val category = d.get("category", "").asString
 
     var fields = Map.empty[String, Value]

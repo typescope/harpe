@@ -26,13 +26,15 @@
 
 namespace harpe.tools
 import harpe.ffi.os
+import harpe.util.Clock
 import harpe.ffi.time
 import harpe.ffi.glob
 import harpe.ffi.threading
-import harpe.ffi.subprocess
+import harpe.util.Process
+import harpe.util.Capped
 import harpe.ffi.builtins
-import harpe.ffi.file
-import harpe.ffi.text
+import harpe.util.File
+import harpe.util.Terminal
 import harpe.ffi.json
 
 import harpe.*
@@ -94,8 +96,8 @@ private def replayArgs(lines: List[String], runSrc: String, runOut: String): py.
   args
 
 private def compilerErrorText(outText: String, errText: String): String =
-  val out = text.stripAnsi(outText).trim
-  val err = text.stripAnsi(errText).trim
+  val out = Terminal.stripAnsi(outText).trim
+  val err = Terminal.stripAnsi(errText).trim
 
   if out == "" then err
   else if err == "" then out
@@ -148,8 +150,8 @@ private def handleBroker(
   ! tool's own. A malformed line is skipped rather than failing the run.
 //]
 private def replayAudit(path: String): Unit receives logger =
-  if file.exists(path) then
-    for line in file.read(path).lines if line.trim != "" do
+  if File.exists(path) then
+    for line in File.read(path).lines if line.trim != "" do
       match py.try(json.loads(line))
       case Ok(d)  => logger.logEntry(Entry.fromDict(d.cast[py.Dict]))
       case Err(_) => pass
@@ -204,7 +206,7 @@ class RunCodeTool(
   view Tool
 
   //[ Bounds how many builds+runs proceed at once — further calls wait here. //]
-  private val gate: py.Dynamic = threading.semaphore(maxConcurrent)
+  private val gate: py.Dynamic = threading.Semaphore(maxConcurrent)
 
   //[ The optional `run.sh` wrapper, at the sandbox project root
     !
@@ -269,7 +271,7 @@ class RunCodeTool(
     ! not been built yet.
   //]
   private def findDoneFile: Option[String] =
-    val hits = glob.glob(os.path.join(sandboxDir, ".build/*/jo-*/target/*.py.done"))
+    val hits = glob.glob(os.path.join(sandboxDir, ".build/*/jo-*/target/*.py.done"), recursive = false)
     if hits.size == 0 then None else Some(hits.get(0).asString)
 
   //[ Compile and run `code` in `runDir`
@@ -286,14 +288,14 @@ class RunCodeTool(
     val runOut   = os.path.join(runDir, "out.py")
     val runAudit = os.path.join(runDir, "audit.jsonl")
 
-    file.write(runSrc, code)
+    File.write(runSrc, code)
 
-    val args = replayArgs(file.read(donePath).lines, runSrc, runOut)
+    val args = replayArgs(File.read(donePath).lines, runSrc, runOut)
 
     // 1. Compile — the security checkpoint — timed, bounded, and error-captured.
-    val t0 = time.now()
-    val build = subprocess.runCapped(args, buildTimeout)
-    val compileSeconds = builtins.round(time.now() - t0, 2)
+    val t0 = Clock.now()
+    val build = Process.runCapped(args, buildTimeout)
+    val compileSeconds = builtins.round(Clock.now() - t0, 2)
 
     if build.timedOut then
       logger.log:
@@ -333,13 +335,12 @@ class RunCodeTool(
     val useRunSh = os.path.isfile(runScript)
 
     if useRunSh then
-      val osMod = py.module("os")
-      osMod.chmod(runDir, 493)   // 0o755 — traverse + read the directory
-      osMod.chmod(runOut, 420)   // 0o644 — read the compiled program
+      os.chmod(runDir, 493)   // 0o755 — traverse + read the directory
+      os.chmod(runOut, 420)   // 0o644 — read the compiled program
       // Pre-create the audit log world-writable, so a uid-dropping run.sh can still
       // append to it (the dir is not writable to the dropped user).
-      file.write(runAudit, "")
-      osMod.chmod(runAudit, 438) // 0o666
+      File.write(runAudit, "")
+      os.chmod(runAudit, 438) // 0o666
 
     val runCmd = if useRunSh then py.list(runScript, runOut)
                  else py.list("python3", runOut)
@@ -347,14 +348,14 @@ class RunCodeTool(
     // Start the untrusted guest with PATH only, then add the audit-log path and
     // the driver's selected `guestEnv` values below. It inherits no other
     // host variables. The trusted compiler above keeps the full toolchain env.
-    val runEnv = subprocess.guestEnv()
+    val runEnv = Process.guestEnv()
     runEnv.set("HARPE_AUDIT_LOG", runAudit)
 
     // One broker belongs to one sandbox run. Approval requests travel over this
     // socket and are forwarded to the current Interact without entering the model
     // transcript.
     val brokerPath = os.path.join(runDir, "broker.sock")
-    val approvalActive = threading.event()
+    val approvalActive = threading.Event()
     val broker = Broker.start:
       brokerPath
       frame => handleBroker(frame, interact, approvalActive)
@@ -370,9 +371,9 @@ class RunCodeTool(
 
     // Run the guest IN its own run dir, so its working directory (`.`) is that
     // isolated scratch — never the host's agent dir — with no env var needed to name it.
-    val t1 = time.now()
+    val t1 = Clock.now()
     val attemptedRun = py.try:
-      subprocess.runCappedWithPauses:
+      Process.runCappedWithPauses:
         runCmd
         runTimeout
         approvalActive
@@ -384,7 +385,7 @@ class RunCodeTool(
       match attemptedRun
       case Ok(value)   => value
       case Err(error) => abort error.message
-    val runSeconds = builtins.round(time.now() - t1, 2)
+    val runSeconds = builtins.round(Clock.now() - t1, 2)
 
     if run.timedOut then
       logger.log:
@@ -409,7 +410,7 @@ class RunCodeTool(
 
     val runReturnCode = run.returnCode
     val runOutText = run.out.trim
-    val runErr = text.stripAnsi(run.err).trim
+    val runErr = Terminal.stripAnsi(run.err).trim
 
     // Replay the records the sandboxed program logged (a JSONL file it wrote to)
     // through this (contextual) logger, so they carry the turn's session context.
@@ -440,8 +441,7 @@ private def checkedRunScript(sandboxDir: String): String =
   val runScript = os.path.join(sandboxDir, "run.sh")
 
   if os.path.isfile(runScript) then
-    val osMod = py.module("os")
-    if !osMod.access(runScript, osMod.X_OK).asBool then
+    if !os.access(runScript, os.X_OK) then
       abort "sandbox run.sh exists but is not executable — run `chmod +x \{runScript}` (see docs/concepts/sandbox.md)"
 
   runScript

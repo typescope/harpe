@@ -13,9 +13,8 @@
 namespace harpe.telegram
 import harpe.ffi.time
 import harpe.ffi.os
-import harpe.ffi.file
+import harpe.util.File
 import harpe.ffi.json
-import harpe.ffi.mimetypes
 import harpe.ffi.builtins
 
 import harpe.Agent
@@ -175,9 +174,9 @@ private class Session(
           case Some(data) =>
             val name = uniqueName(dir, sanitizeName(spec.name))
             if name != "" then
-              file.writeBytes(os.path.join(dir, name), data)
+              File.writeBytes(os.path.join(dir, name), data)
               val mime = if spec.mime != "" then spec.mime
-                         else mimetypes.guessType(name).getOrElse("application/octet-stream")
+                         else File.mimeType(name).getOrElse("application/octet-stream")
               val att = Attachment:
                 name
                 builtins.len(data)
@@ -207,7 +206,7 @@ private def sanitizeName(raw: String): String =
 private def uniqueName(dir: String, name: String): String =
   if name == "" || !os.path.exists(os.path.join(dir, name)) then name
   else
-    val ext = os.extname(name)
+    val ext = File.extname(name)
     val root = if ext == "" then name else name.substring(0, name.size - ext.size)
     var i = 1
     var candidate = root + "-" + i.toString + ext
@@ -230,7 +229,7 @@ section Session
   //]
   def dataDir(chatId: String): String receives appHome =
     val dir = os.path.join(appHome, "data", chatId)
-    if !os.path.isdir(dir) then os.makedirs(dir)
+    if !os.path.isdir(dir) then File.ensureDir(dir)
     dir
 
   //[ An append log for this chat's session (its file is created lazily). //]
@@ -263,10 +262,10 @@ section Session
   //]
   def load(chatId: String): List[Message] receives appHome =
     val path = sessionPath(chatId)
-    if !file.exists(path) then []
+    if !File.exists(path) then []
     else
       var entries: List[Entry] = []
-      for line in file.read(path).lines if line.trim != "" do
+      for line in File.read(path).lines if line.trim != "" do
         entries = entries + Entry.fromDict(json.loads(line).cast[py.Dict])
       Journal.fromEntries(entries)
 end

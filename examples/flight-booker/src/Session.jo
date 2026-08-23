@@ -9,7 +9,7 @@
 //]
 
 namespace harpe.examples.flightbooker
-import harpe.ffi.file
+import harpe.util.File
 import harpe.ffi.json
 import harpe.ffi.os
 
@@ -101,10 +101,10 @@ section Session
   //]
   def load(chatId: String): List[Message] receives appHome =
     val path = sessionPath(chatId)
-    if !file.exists(path) then []
+    if !File.exists(path) then []
     else
       var entries: List[Entry] = []
-      for line in file.read(path).lines if line.trim != "" do
+      for line in File.read(path).lines if line.trim != "" do
         entries = entries + Entry.fromDict(json.loads(line).cast[py.Dict])
       Journal.fromEntries(entries)
 end

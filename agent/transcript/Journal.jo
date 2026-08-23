@@ -18,6 +18,7 @@
 
 namespace harpe.transcript
 import harpe.ffi.time
+import harpe.util.Clock
 import harpe.util.truncate
 import harpe.Transcript
 import harpe.TurnData
@@ -83,7 +84,7 @@ class Journal(log: Logger)
     log.log(Journal.responseCategory, "data" ~ data)
 
   private def emit(category: String, message: Message): Unit =
-    log.logEntry(new Entry(time.now(), category, messageFields(message)))
+    log.logEntry(new Entry(Clock.now(), category, messageFields(message)))
 
 
   private def messageFields(message: Message): Map[String, Value] =

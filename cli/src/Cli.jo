@@ -16,11 +16,11 @@
 namespace harpe.cli
 import harpe.ffi.glob
 import harpe.ffi.os
+import harpe.util.File
 import harpe.ffi.time
-import harpe.ffi.file
 import harpe.ffi.json
 
-import harpe.ffi.dotenv
+import harpe.util.Process
 
 import jo.IO.stdout
 import harpe.*
@@ -44,7 +44,7 @@ param appHome: String
 
 //[ The entry point   //]
 def main(): Unit receives stdout =
-  dotenv.load(".env")
+  Process.loadDotenv(".env")
   with appHome = os.path.abspath(".") in runChat()
 
 private def runChat(): Unit receives stdout, appHome =
@@ -66,12 +66,12 @@ private def runChat(): Unit receives stdout, appHome =
   // The context is what carries the conversation between turns, so it is built
   // once here and handed to every turn below.
   val context = new WindowedContext:
-    baseSystem = file.read(os.path.join(appHome, "AGENT.md"))
+    baseSystem = File.read(os.path.join(appHome, "AGENT.md"))
     initial = Session.load(sessionPath)
 
   // One local working directory for the whole run.
   val data = os.path.join(appHome, "data")
-  if !os.path.isdir(data) then os.makedirs(data)
+  if !os.path.isdir(data) then File.ensureDir(data)
   val dataDir = os.path.abspath(data)
 
   // What the model is offered, and what actually runs for each name — one
@@ -150,10 +150,10 @@ section Session
     os.path.join(appHome, time.strftime("logs/sessions/%Y/%m/%d/%H-%M-%S") + ".jsonl")
 
   def load(path: String): List[Message] =
-    if !file.exists(path) then []
+    if !File.exists(path) then []
     else
       var entries: List[Entry] = []
-      for line in file.read(path).lines if line.trim != "" do
+      for line in File.read(path).lines if line.trim != "" do
         entries = entries + Entry.fromDict(json.loads(line).cast[py.Dict])
       Journal.fromEntries(entries)
 

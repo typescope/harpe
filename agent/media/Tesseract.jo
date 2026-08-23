@@ -13,7 +13,8 @@
 namespace harpe.media
 
 import harpe.caps.*
-import harpe.ffi.subprocess
+import harpe.util.Process
+import harpe.util.Capped
 
 //[ A Tesseract-backed OCR reader, resolving a relative path against `root`. //]
 class TesseractOcr
@@ -42,7 +43,7 @@ class TesseractOcr
     recognizeResolved(real)
 
   private def recognizeResolved(real: String): Result[String, String] =
-    val out = subprocess.runCapped:
+    val out = Process.runCapped:
       py.list:
         "tesseract"
         real

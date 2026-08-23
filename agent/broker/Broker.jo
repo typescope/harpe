@@ -25,7 +25,9 @@
 
 namespace harpe.broker
 
-import harpe.ffi.socket
+import harpe.ffi.Socket
+import harpe.util.Process
+import harpe.util.UnixSocket
 import harpe.ffi.threading
 import harpe.ffi.json
 import harpe.ffi.builtins
@@ -60,7 +62,7 @@ end
   !
   ! Abort if the stream ends before `n` bytes arrive (a truncated frame).
 //]
-private def recvExactly(sock: socket.Socket, n: Int): py.Dynamic =
+private def recvExactly(sock: Socket, n: Int): py.Dynamic =
   val chunks = py.list()
   var got = 0
 
@@ -77,11 +79,11 @@ private def recvExactly(sock: socket.Socket, n: Int): py.Dynamic =
   emptyBytes.callDynamic("join", chunks)
 
 //[ Read a 4-byte big-endian length. //]
-private def recvLen(sock: socket.Socket): Int =
+private def recvLen(sock: Socket): Int =
   structMod.unpack(">I", recvExactly(sock, 4))[0].asInt
 
 //[ Send one frame: JSON header, then the raw blob (its length always prefixed). //]
-private def sendFrame(sock: socket.Socket, frame: Frame): Unit =
+private def sendFrame(sock: Socket, frame: Frame): Unit =
   val jdata = py.dynamic(frame.json).encode("utf-8")
   val blen = builtins.len(frame.blob)
 
@@ -93,7 +95,7 @@ private def sendFrame(sock: socket.Socket, frame: Frame): Unit =
     sock.sendall(frame.blob)
 
 //[ Read one frame, or `None` if the peer closed cleanly at a frame boundary. //]
-private def recvFrame(sock: socket.Socket): Option[Frame] =
+private def recvFrame(sock: Socket): Option[Frame] =
   val head = sock.recv(4)
   val n0 = builtins.len(head)
 
@@ -124,7 +126,7 @@ private def recvFrame(sock: socket.Socket): Option[Frame] =
   ! the handler's own protocol. A handler that raises is answered with
   ! `Frame.error`.
 //]
-class Broker(server: socket.Socket, path: String, handle: Frame => Frame)
+class Broker(server: Socket, path: String, handle: Frame => Frame)
   //[ Stop accepting and remove the socket file.
     !
     ! In-flight connections finish on their own threads. New `accept` calls
@@ -143,26 +145,26 @@ section Broker
     ! not block one another.
   //]
   def start(path: String, handle: Frame => Frame): Broker =
-    val server = socket.unixStream()
+    val server = UnixSocket.open()
     server.bind(path)
     server.listen(8)
 
     val broker = new Broker(server, path, handle)
-    threading.thread(() => acceptLoop(broker)).start()
+    Process.daemon(() => acceptLoop(broker)).start()
     broker
 
   //[ Accept connections until the server socket is closed (by `stop`). //]
   private def acceptLoop(broker: Broker): Unit =
     val body = () =>
       while true do
-        val conn = socket.accept(broker.server)
-        threading.thread(() => serveConn(conn, broker.handle)).start()
+        val conn = UnixSocket.accept(broker.server)
+        Process.daemon(() => serveConn(conn, broker.handle)).start()
 
     val _ = py.try(body())
     pass
 
   //[ Serve one connection: request/response until the peer closes it. //]
-  private def serveConn(conn: socket.Socket, handle: Frame => Frame): Unit =
+  private def serveConn(conn: Socket, handle: Frame => Frame): Unit =
     val body = () =>
       var running = true
       while running do
@@ -185,7 +187,7 @@ section Broker
   //------------------------------------------------------------------------------
 
   //[ The guest end of the channel: one connection over which requests are issued sequentially. //]
-  class Client(sock: socket.Socket)
+  class Client(sock: Socket)
     //[ Send one request frame and return the response frame.
       !
       ! Aborts if the peer closes without answering, or if the reply is a broker error
@@ -217,7 +219,7 @@ section Broker
 
   //[ Connect to the broker listening at `path` — the guest end of `start`. //]
   def connect(path: String): Client =
-    val sock = socket.unixStream()
+    val sock = UnixSocket.open()
     sock.connect(path)
     new Client(sock)
 end

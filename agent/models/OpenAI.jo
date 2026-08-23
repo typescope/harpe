@@ -13,7 +13,7 @@
 namespace harpe.models
 import harpe.ffi.json
 import harpe.ffi.builtins
-import harpe.ffi.hashlib
+import harpe.util.Digest
 
 
 import harpe.Model
@@ -134,7 +134,7 @@ private section OpenAIResponses
     // `type` is a Jo keyword, so read the item's tag with getattr.
     var calls: List[ToolCall] = []
     for it in response.output.cast[py.List] do
-      if builtins.attr(it, "type").asString == "function_call" then
+      if builtins.getattr(it, "type").asString == "function_call" then
         val argsDict = json.loads(it.arguments.asString).cast[py.Dict]
         calls = calls + ToolCall(it.call_id.asString, it.name.asString, ToolInput(argsDict))
 
@@ -180,7 +180,7 @@ private class OpenAIResponsesSession(
   private var prevId: String = ""
 
   // Stable for the turn, and across every turn built on the same system prompt.
-  private val cacheKey: String = "harpe:" + hashlib.sha256Hex(base.system).substring(0, 16)
+  private val cacheKey: String = "harpe:" + Digest.sha256Hex(base.system).substring(0, 16)
 
   def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
     val toolSpecs = py.list()
@@ -231,7 +231,7 @@ private class OpenAIResponsesSession(
       // cache counters below are a breakdown OF it, not additions to it, so
       // nothing is added back here. `cache_write_tokens` appears on gpt-5.6 and
       // later. `usageInt` reads 0 where a model or endpoint omits either field.
-      val details = builtins.attrOr(u, "input_tokens_details", py.none)
+      val details = builtins.getattrOr(u, "input_tokens_details", py.none)
       val cacheRead = if details.isNone then 0 else usageInt(details, "cached_tokens")
       val cacheWrite = if details.isNone then 0 else usageInt(details, "cache_write_tokens")
       val inTok = u.input_tokens.asInt

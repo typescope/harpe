@@ -23,12 +23,12 @@
 
 namespace harpe.web
 import harpe.ffi.secrets
+import harpe.util.Clock
 import harpe.ffi.time
 import harpe.ffi.json
 import harpe.ffi.os
+import harpe.util.File
 import harpe.ffi.threading
-import harpe.ffi.file
-import harpe.ffi.mimetypes
 import harpe.ffi.builtins
 
 import harpe.Agent
@@ -108,7 +108,7 @@ class ChatServer(brain: Model, name: String, home: String)
   // request on its own thread), so registry access is guarded by registryLock.
   // Turns within one session are serialized by the session's own lock.
   private val registry = py.dict()
-  private val registryLock = threading.lock()
+  private val registryLock = threading.Lock()
 
   // The `runCode` tool the interactive editor (`/api/run`) executes against — the
   // same compile+sandbox machinery the agent uses, so an edited script runs exactly
@@ -168,7 +168,7 @@ class ChatServer(brain: Model, name: String, home: String)
 
   //[ The chat page itself, read from disk per request. //]
   private def page(): py.List receives request, appHome =
-    Http.respond: "200 OK", "text/html; charset=utf-8", file.read(indexPath())
+    Http.respond: "200 OK", "text/html; charset=utf-8", File.read(indexPath())
 
   //[ Serve the page's split stylesheet/script (`/app.css`, `/app.js`)
     !
@@ -187,7 +187,7 @@ class ChatServer(brain: Model, name: String, home: String)
       val ctype = if name.endsWith(".css") then "text/css"
                   else if name.endsWith(".js") then "application/javascript"
                   else "text/plain"
-      Http.respond: "200 OK", ctype + "; charset=utf-8", file.read(p)
+      Http.respond: "200 OK", ctype + "; charset=utf-8", File.read(p)
 
   //[ Run one turn, streaming its progress and final answer as NDJSON.
     !
@@ -350,9 +350,9 @@ class ChatServer(brain: Model, name: String, home: String)
 
   //[ A fresh session under a newly-minted, time-sortable id. //]
   private def createSession(): Session receives appHome =
-    val id = time.strftime("%Y%m%dT%H%M%S") + "-" + secrets.tokenHex(nbytes = 2)
+    val id = time.strftime("%Y%m%dT%H%M%S") + "-" + secrets.token_hex(2)
     val context = new WindowedContext:
-      baseSystem = file.read(os.path.join(appHome, "AGENT.md"))
+      baseSystem = File.read(os.path.join(appHome, "AGENT.md"))
       initial = []
 
     val session = new Session:
@@ -388,7 +388,7 @@ class ChatServer(brain: Model, name: String, home: String)
       // `Session.load` caps the replayed transcript (a RAM backstop). The full
       // transcript stays on disk.
       val context = new WindowedContext:
-        baseSystem = file.read(os.path.join(appHome, "AGENT.md"))
+        baseSystem = File.read(os.path.join(appHome, "AGENT.md"))
         initial = Session.load(id)
 
       val session = new Session(id, log, brain, tools(id), context)
@@ -410,7 +410,7 @@ class ChatServer(brain: Model, name: String, home: String)
     ! commits to disk.
   //]
   private def evictIdle(): Unit =
-    val cutoff = time.now() - 1800.0
+    val cutoff = Clock.now() - 1800.0
 
     registryLock.acquire()
     val stale = py.list()
@@ -575,7 +575,7 @@ class ChatServer(brain: Model, name: String, home: String)
     if !os.path.exists(os.path.join(dir, name)) then name
     else
       val stem = os.path.basename(name.replace("\\", "/"))
-      val ext = os.extname(stem)
+      val ext = File.extname(stem)
       val root = if ext == "" then stem else stem.substring(0, stem.size - ext.size)
       var i = 1
       var candidate = root + "-" + i.toString + ext
@@ -639,10 +639,10 @@ class ChatServer(brain: Model, name: String, home: String)
 
       else
         val stored = uniqueName(dir, name)
-        file.writeBytes(os.path.join(dir, stored), data)
+        File.writeBytes(os.path.join(dir, stored), data)
         val given = body.get("mime", "").asString
         val mime = if given != "" then given
-                   else mimetypes.guessType(stored).getOrElse("application/octet-stream")
+                   else File.mimeType(stored).getOrElse("application/octet-stream")
         Http.respondJson: py.dict("session" ~ session.id, "name" ~ stored, "size" ~ size, "mime" ~ mime)
 
   //[ List a session's data directory
@@ -674,8 +674,8 @@ class ChatServer(brain: Model, name: String, home: String)
         Http.respond("404 Not Found", "text/plain", "not found")
 
       else
-        val mime = mimetypes.guessType(name).getOrElse("application/octet-stream")
-        respondBytes(mime, name, file.readBytes(p))
+        val mime = File.mimeType(name).getOrElse("application/octet-stream")
+        respondBytes(mime, name, File.readBytes(p))
 
   //[ Run a Jo program in a session's sandbox — the interactive editor's execute.
     !
@@ -717,6 +717,6 @@ class ChatServer(brain: Model, name: String, home: String)
       Http.respondJson: py.dict("error" ~ "missing name or session")
 
     else
-      file.write(os.path.join(Session.dataDir(sessionId), name), content)
+      File.write(os.path.join(Session.dataDir(sessionId), name), content)
       Http.respondJson: py.dict("session" ~ sessionId, "name" ~ name)
 end

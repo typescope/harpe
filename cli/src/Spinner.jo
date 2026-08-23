@@ -8,6 +8,8 @@
 
 namespace harpe.cli
 import harpe.ffi.sys
+import harpe.util.Clock
+import harpe.util.Process
 import harpe.ffi.threading
 import harpe.ffi.builtins
 
@@ -23,24 +25,24 @@ class Spinner
 
   def start(message: String): Unit =
     stop()
-    val event   = threading.event()
-    val started = time.now()
+    val event   = threading.Event()
+    val started = Clock.now()
     val animate = () =>
       val frames = py.list("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
       var i = 0
       while !event.is_set().asBool do
         val frame = frames.get(i % 10).asString
-        val secs  = builtins.round(time.now() - started, 1)
-        sys.stdoutWrite:
+        val secs  = builtins.round(Clock.now() - started, 1)
+        sys.stdout.write:
           "\r  " + Style.note(frame) + " " + message + " " +
           Style.muted(secs.toString + "s") + " "
-        sys.stdoutFlush()
+        sys.stdout.flush()
         i = i + 1
         event.wait(0.1)
-      sys.stdoutWrite(clearLine())
-      sys.stdoutFlush()
+      sys.stdout.write(clearLine())
+      sys.stdout.flush()
 
-    val t = threading.thread(animate)
+    val t = Process.daemon(animate)
     stopEvent = Some(event)
     thread = Some(t)
     t.start()

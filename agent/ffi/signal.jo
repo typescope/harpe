@@ -1,40 +1,32 @@
 //[ signal.jo
   !
-  ! Signal handling, wrapping Python's `signal` module — mirroring `os` and `time`.
-  ! Holds the SIGINT (Ctrl-C) helpers and the SIGKILL constant used to reap a timed
-  ! out process group.
+  ! Python's `signal` module, bound as a typed value. Holds the signal numbers
+  ! and the handler installer.
+  !
+  ! What Harpe does with them — the Ctrl-C policy every driver shares — is
+  ! `Signals`, not this file.
 //]
 
-namespace harpe.ffi.signal
+namespace harpe.ffi
 
-import harpe.ffi.sys
+//[ Python's `signal` module. //]
+@py.interop
+interface SignalApi
+  //[ The SIGKILL signal number, used to reap a timed-out process group. //]
+  @py.property
+  def SIGKILL: Int
 
-private def module: py.Dynamic = py.module("signal")
+  //[ The SIGINT (Ctrl-C) signal number. //]
+  @py.property
+  def SIGINT: Int
 
-//[ The SIGKILL signal number. //]
-def SIGKILL: Int = module.SIGKILL.asInt
+  //[ Install `handler` for `signalnum`, replacing the default.
+    !
+    ! Must be called from the main thread. `handler` receives the signal number
+    ! and the interrupted stack frame (a Python frame object, or `py.none`), and
+    ! runs on the main thread at the next bytecode boundary.
+  //]
+  def signal(signalnum: Int, handler: (Int, py.Dynamic) => Unit): Unit
+end
 
-//[ Install a handler for SIGINT (Ctrl-C), replacing the default that raises `KeyboardInterrupt`
-  !
-  ! Must be called from the main thread.
-  !
-  ! `handler` receives the signal number and the interrupted stack frame (a
-  ! Python frame object, or `py.none`). It runs on the main thread at the next
-  ! bytecode boundary, so it can set a `threading` event a worker polls, or
-  ! raise to abort a blocking main-thread call such as `input()`.
-//]
-def onSigint(handler: (Int, py.Dynamic) => Unit): Unit =
-  module.signal(module.SIGINT, handler)
-
-//[ Make Ctrl-C shut the process down cleanly, with no Python traceback.
-  !
-  ! For long-running server agents whose main thread blocks in an accept/poll loop
-  ! (the web and Telegram drivers). On Ctrl-C the handler prints `message` and exits
-  ! via `sys.exit`, whose `SystemExit` unwinds quietly and is not swallowed by the
-  ! `py.try` (`except Exception`) blocks around network calls.
-//]
-def shutdownOnSigint(message: String): Unit =
-  onSigint: (signum: Int, frame: py.Dynamic) =>
-    sys.stdoutWrite(message + "\n")
-    sys.stdoutFlush()
-    sys.exit(0)
+def signal: SignalApi = py.module("signal").cast[SignalApi]

@@ -33,9 +33,10 @@
 namespace harpe.transcript
 
 import harpe.ffi.sys
+import harpe.util.Process
 import harpe.ffi.signal
 import harpe.ffi.os
-import harpe.ffi.file
+import harpe.util.File
 import harpe.ffi.json
 
 import harpe.Http
@@ -55,7 +56,7 @@ def serve(): Unit receives stdout =
     println "Usage: jo run view -- <path/to/session.jsonl>"
     sys.exit(2)
 
-  if !file.exists(path) then
+  if !File.exists(path) then
     println "No such journal: \{path}"
     sys.exit(1)
 
@@ -70,7 +71,7 @@ def serve(): Unit receives stdout =
   println "  Ctrl-C to stop"
 
   // Stop cleanly on Ctrl-C instead of dumping a traceback from serve_forever.
-  signal.shutdownOnSigint("\n  stopped.")
+  Process.shutdownOnSigint("\n  stopped.")
 
   httpd.serve_forever()
 
@@ -111,8 +112,8 @@ private def events(path: String, seen: Int): String =
   val entries = py.list()
   var count = 0
 
-  if file.exists(path) then
-    for line in file.read(path).lines do
+  if File.exists(path) then
+    for line in File.read(path).lines do
       if line.trim != "" then
         count = count + 1
         if count > seen then

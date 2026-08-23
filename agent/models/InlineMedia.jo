@@ -9,7 +9,7 @@
 
 namespace harpe.models
 import harpe.ffi.os
-import harpe.ffi.file
+import harpe.util.File
 
 section InlineMedia
   //[ An image format the vision APIs accept inline
@@ -33,7 +33,7 @@ section InlineMedia
   def readBase64(path: String): Option[String] =
     if path == "" || !os.path.isfile(path) then None
     else
-      match py.try(file.readBytes(path))
+      match py.try(File.readBytes(path))
       case Ok(data) => Some(data.cast[Bytes].toBase64)
       case Err(_)   => None
 end

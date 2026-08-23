@@ -1,0 +1,28 @@
+//[ UnixSocket.jo
+  !
+  ! Opening and accepting Unix-domain stream sockets, the Jo-shaped way.
+  !
+  ! The counterpart to `harpe.ffi.socket`, which states Python's surface and
+  ! nothing else. Everything Harpe wants said once rather than at every call
+  ! lives here: the AF_UNIX/SOCK_STREAM pair that every socket in this codebase
+  ! is opened with, and the tuple Python's `accept` returns.
+//]
+
+namespace harpe.util
+
+import harpe.ffi.socket
+import harpe.ffi.Socket
+
+section UnixSocket
+  //[ A new AF_UNIX stream socket, unbound and unconnected. //]
+  def open(): Socket =
+    socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+
+  //[ Block until a client connects. Return the connection socket.
+    !
+    ! Python's `accept` yields a `(conn, addr)` pair — this returns the `conn`.
+    ! A Unix-domain address carries nothing a caller here wants.
+  //]
+  def accept(sock: Socket): Socket =
+    sock.accept()[0].cast[Socket]
+end

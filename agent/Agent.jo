@@ -19,7 +19,7 @@ namespace harpe
 
 import harpe.turns.*
 import harpe.ffi.os
-import harpe.ffi.mimetypes
+import harpe.util.File
 import harpe.logging.logger
 import harpe.Model
 import harpe.Model.*
@@ -211,7 +211,7 @@ section Agent
         abort "no such file: '\{p}'"
 
       val fileName = os.path.basename(abs)
-      val mime = mimetypes.guessType(fileName).getOrElse("application/octet-stream")
+      val mime = File.mimeType(fileName).getOrElse("application/octet-stream")
       out = out + Attachment(fileName, os.path.getsize(abs), mime, path = abs)
 
     out

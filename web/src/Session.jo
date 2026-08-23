@@ -13,11 +13,11 @@
 
 namespace harpe.web
 import harpe.ffi.os
+import harpe.util.Clock
+import harpe.util.File
 import harpe.ffi.time
 import harpe.ffi.json
 import harpe.ffi.threading
-import harpe.ffi.file
-import harpe.ffi.mimetypes
 
 import harpe.Agent
 import harpe.Approvals
@@ -60,7 +60,7 @@ union SessionState = Idle | Active(request: Value)
 class Subscriber(id: Int, sink: Sink)
 
 private class PendingApproval(id: String, request: Approvals.Request)
-  val ready = threading.event()
+  val ready = threading.Event()
   var decision = ""
 end
 
@@ -82,16 +82,16 @@ class Session(
   //]
   val transcript = new Journal(log)
 
-  val lock = threading.lock()
+  val lock = threading.Lock()
 
   //[ Set (via `POST /api/stop`) to request cancellation of the running turn
     !
     ! The engine notices between model calls and tool executions. Cleared when
     ! that turn becomes idle.
   //]
-  val stop = threading.event()
+  val stop = threading.Event()
 
-  var lastActive: Float = time.now()
+  var lastActive: Float = Clock.now()
 
   //[ The live turn state (`Idle`/`Active`), reported to a tab on load so it can reconnect to a turn in flight
     !
@@ -99,7 +99,7 @@ class Session(
     ! it for precisely the turn's remaining duration.
   //]
   var state: SessionState = Idle
-  val idle = threading.event()
+  val idle = threading.Event()
 
   //[ The event sinks attached to the running turn
     !
@@ -107,10 +107,10 @@ class Session(
     ! mid-turn — so one turn fans out to every connected view. Guarded by
     ! `sinksLock`. `nextSubId` hands out ids.
   //]
-  private val sinksLock = threading.lock()
+  private val sinksLock = threading.Lock()
   private var subs: List[Subscriber] = []
   private var nextSubId: Int = 0
-  private val approvalLock = threading.lock()
+  private val approvalLock = threading.Lock()
   private var pendingApproval: Option[PendingApproval] = None
 
   //[ Attach `sink` to the running turn, returning its id for later detach. //]
@@ -167,7 +167,7 @@ class Session(
     approvalLock.release()
     broadcast(approvalEvent(item))
 
-    val deadline = time.now() + 600.0
+    val deadline = Clock.now() + 600.0
     var decision: Approvals.Decision = Approvals.TimedOut
     var waiting = true
 
@@ -175,7 +175,7 @@ class Session(
       if stop.is_set().asBool then
         decision = Approvals.Cancelled
         waiting = false
-      else if time.now() >= deadline then
+      else if Clock.now() >= deadline then
         decision = Approvals.TimedOut
         waiting = false
       else if item.ready.wait(0.1).asBool then
@@ -216,7 +216,7 @@ class Session(
     // the gap to `harpe.turn.started` the real queue wait. `turn` writes the
     // closing record from what the body returns, so the two cannot drift.
     transcript.turn: request, () =>
-      lastActive = time.now()
+      lastActive = Clock.now()
 
       this.lock.acquire()
       state = Active(request)
@@ -304,7 +304,7 @@ section Session
   //]
   def dataDir(id: String): String receives appHome =
     val dir = os.path.join(appHome, "data", id)
-    if !os.path.isdir(dir) then os.makedirs(dir)
+    if !os.path.isdir(dir) then File.ensureDir(dir)
     dir
 
   //[ The session's data directory, only if it already exists
@@ -335,7 +335,7 @@ section Session
           val info = SessionFile:
             name
             os.path.getsize(p)
-            mimetypes.guessType(name).getOrElse("application/octet-stream")
+            File.mimeType(name).getOrElse("application/octet-stream")
             os.path.getmtime(p)
           files = files + info
 
@@ -409,10 +409,10 @@ section Session
   //[ Decode this driver's per-session JSONL file. //]
   private def loadEntries(id: String): List[Entry] receives appHome =
     val path = sessionPath(id)
-    if !file.exists(path) then []
+    if !File.exists(path) then []
     else
       var entries: List[Entry] = []
-      for line in file.read(path).lines if line.trim != "" do
+      for line in File.read(path).lines if line.trim != "" do
         entries = entries + Entry.fromDict(json.loads(line).cast[py.Dict])
       entries
 
@@ -439,12 +439,12 @@ section Session
     var startTime = 0.0
     var sawFirst = false
 
-    for line in file.read(path).lines do
+    for line in File.read(path).lines do
       val s = line.trim
       if s != "" then
         val d = json.loads(s).cast[py.Dict]
         if !sawFirst then
-          startTime = time.fromRfc3339(d.get("time", "").asString)
+          startTime = Clock.fromRfc3339(d.get("time", "").asString)
           sawFirst = true
 
         // The turn's OPENING record, which holds what the user typed. The

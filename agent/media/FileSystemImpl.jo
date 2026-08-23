@@ -10,6 +10,7 @@ namespace harpe.media
 import harpe.caps.*
 
 import harpe.ffi.os
+import harpe.util.File
 import harpe.ffi.builtins
 
 //[ Validate and resolve a relative path against the real `root`.
@@ -141,7 +142,7 @@ class FileSystemImpl
   //]
   private def ensureParent(real: String): Unit =
     val parent = os.path.dirname(real)
-    if parent != "" && !os.path.isdir(parent) then os.makedirs(parent)
+    if parent != "" && !os.path.isdir(parent) then File.ensureDir(parent)
 
   //[ Whether `name` is in the interface's fixed, runtime-portable encoding set. //]
   private def validEncoding(name: String): Bool =

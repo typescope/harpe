@@ -15,8 +15,9 @@
 
 namespace harpe.test.RunCodeTest
 import harpe.ffi.os
+import harpe.util.Process
 import harpe.ffi.threading
-import harpe.ffi.subprocess
+import harpe.util.Capped
 import harpe.ffi.tempfile
 
 import jo.IO.stdout
@@ -116,7 +117,7 @@ private def concurrentCheck(tool: RunCodeTool, n: Int): Unit receives stdout =
   while k < n do
     val idx = k
     val worker = () => results.set(idx, py.dynamic(exec(tool, guest("  println \{idx}\n")).result))
-    val t = threading.thread(worker)
+    val t = Process.daemon(worker)
     threads.append(t)
     t.start()
     k = k + 1
@@ -140,7 +141,7 @@ def run(): Unit receives stdout =
 
   // The tool replays the invocation recorded by `jo build`, so the fixture must be
   // built once up front (the user's normal one-time prep).
-  val prep = subprocess.runCapped(py.list("jo", "build", "--spec", os.path.join(sandboxDir, "jo.toml"), "guest"), 180.0)
+  val prep = Process.runCapped(py.list("jo", "build", "--spec", os.path.join(sandboxDir, "jo.toml"), "guest"), 180.0)
   assert: !prep.timedOut && prep.returnCode == 0, "runCode tests: failed to pre-build the sandbox fixture:\n\{prep.err}"
 
   // An unbuilt sandbox reports clearly instead of building or running anything.

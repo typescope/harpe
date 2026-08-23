@@ -1,0 +1,49 @@
+//[ datetime.jo
+  !
+  ! Python's `datetime` module, bound as typed values — only the corner of it
+  ! Harpe uses: converting between epoch seconds and RFC 3339 text, in UTC.
+  !
+  ! `Clock` is the Jo-shaped caller. Here the three-step Python dance (build an
+  ! aware instant, format it, or read one back) is only declared.
+//]
+
+namespace harpe.ffi
+
+//[ A `datetime.datetime` instance. //]
+@py.interop
+interface Instant
+  //[ ISO 8601 text at the requested precision (`"microseconds"`, …). //]
+  def isoformat(timespec: String @py.keyword): String
+
+  //[ Epoch seconds. //]
+  def timestamp(): Float
+end
+
+//[ The `datetime.datetime` class. //]
+@py.interop
+interface DatetimeClass
+  //[ The instant `seconds` after the epoch, in timezone `tz`. //]
+  def fromtimestamp(seconds: Float, tz: py.Dynamic @py.keyword): Instant
+
+  //[ The instant an ISO 8601 string names. //]
+  def fromisoformat(value: String): Instant
+end
+
+//[ The `datetime.timezone` class. //]
+@py.interop
+interface TimezoneClass
+  @py.property
+  def utc: py.Dynamic
+end
+
+//[ Python's `datetime` module. //]
+@py.interop
+interface DatetimeApi
+  @py.property
+  def datetime: DatetimeClass
+
+  @py.property
+  def timezone: TimezoneClass
+end
+
+def datetime: DatetimeApi = py.module("datetime").cast[DatetimeApi]

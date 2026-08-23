@@ -16,6 +16,7 @@
 
 namespace harpe.logging
 import harpe.ffi.time
+import harpe.util.Clock
 
 //[ A log target.
   !
@@ -28,7 +29,7 @@ interface Logger
   def log(category: String, fields: ..(String ~ Value)): Unit =
     var map = Map.empty[String, Value]
     for k ~ v in fields do map = map.add(k, v)
-    logEntry(new Entry(time.now(), category, map))
+    logEntry(new Entry(Clock.now(), category, map))
 
   //[ Log a diagnostic message at a severity — the reserved-key convention on `Entry`
     !

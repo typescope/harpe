@@ -12,7 +12,7 @@ namespace harpe.test.ProcessorTest
 import harpe.media.*
 import harpe.caps.*
 import harpe.ffi.tempfile
-import harpe.ffi.file
+import harpe.util.File
 import harpe.ffi.os
 
 import jo.IO.stdout
@@ -121,7 +121,7 @@ def run(): Unit receives stdout =
 private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, wordReader =
   val fs: FileSystem = FileSystemImpl.local(dir)
 
-  file.write(os.path.join(dir, "note.txt"), "not a real document")
+  File.write(os.path.join(dir, "note.txt"), "not a real document")
 
   // Word via python-docx — paragraph windows and the heading outline.
   makeDocx(os.path.join(dir, "memo.docx"))
@@ -157,7 +157,7 @@ private def suite(dir: String): Unit receives stdout, pdfReader, excelReader, wo
   check("PDF.close is safe", true)
 
   // Outline and metadata from the handwritten fixture.
-  file.write(os.path.join(dir, "outlined.pdf"), outlinedPdf)
+  File.write(os.path.join(dir, "outlined.pdf"), outlinedPdf)
   val outlined = fs.openPDF("outlined.pdf").success
   val headings = outlined.outline
   check("PDF.outline entries", headings.size == 2)

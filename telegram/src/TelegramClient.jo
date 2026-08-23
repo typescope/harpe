@@ -186,7 +186,7 @@ private class TelegramClient(token: String)
   def sendDocument(chatId: String, filePath: String, caption: String): Unit =
     val name = os.path.basename(filePath)
     val data = py.open(filePath, "rb").read()
-    val boundary = "----HarpeBoundary" + secrets.tokenHex(nbytes = 8)
+    val boundary = "----HarpeBoundary" + secrets.token_hex(8)
     val enc = (s: String) => py.dynamic(s).encode()
     val parts = py.list()
 

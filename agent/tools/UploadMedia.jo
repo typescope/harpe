@@ -16,7 +16,7 @@
 namespace harpe.tools
 
 import harpe.ffi.os
-import harpe.ffi.mimetypes
+import harpe.util.File
 
 import harpe.Tool
 import harpe.Toolset
@@ -73,7 +73,7 @@ section UploadMediaTool
 
   //[ Attach `baseName` for the model to see, or explain why its type cannot be. //]
   private def attach(dir: String, baseName: String): RunOutcome =
-    val mime = mimetypes.guessType(baseName).getOrElse("application/octet-stream")
+    val mime = File.mimeType(baseName).getOrElse("application/octet-stream")
 
     if !InlineMedia.isImage(mime) && !InlineMedia.isPdf(mime) then
       new RunOutcome:

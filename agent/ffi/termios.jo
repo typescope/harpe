@@ -1,0 +1,23 @@
+//[ termios.jo
+  !
+  ! Python's `termios` module, bound as a typed value — terminal attributes, as
+  ! the interactive console saves and restores them.
+//]
+
+namespace harpe.ffi
+
+//[ Python's `termios` module. //]
+@py.interop
+interface TermiosApi
+  //[ The terminal attributes of `fd`. //]
+  def tcgetattr(fd: Int): py.Dynamic
+
+  //[ Set the terminal attributes of `fd`, applying them at `when`. //]
+  def tcsetattr(fd: Int, when: Int, attributes: py.Dynamic): Unit
+
+  //[ The `tcsetattr` timing that drains pending output first. //]
+  @py.property
+  def TCSADRAIN: Int
+end
+
+def termios: TermiosApi = py.module("termios").cast[TermiosApi]

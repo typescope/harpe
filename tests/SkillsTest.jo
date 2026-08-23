@@ -12,8 +12,8 @@
 
 namespace harpe.test.SkillsTest
 import harpe.ffi.os
+import harpe.util.File
 import harpe.ffi.tempfile
-import harpe.ffi.file
 
 import jo.IO.stdout
 import harpe.*
@@ -41,21 +41,21 @@ def run(): Unit receives stdout =
   // Build a nested skills tree, plus secrets that live OUTSIDE it.
   val tmp = tempfile.mkdtemp()
   val skillsDir = os.path.join(tmp, "skills")
-  os.makedirs(os.path.join(skillsDir, "sub/deep"))
-  file.write(os.path.join(skillsDir, "top.md"), "top content")
-  file.write(os.path.join(skillsDir, "sub/nested.md"), "nested content")
-  file.write(os.path.join(skillsDir, "sub/deep/leaf.jo"), "leaf content")
+  File.ensureDir(os.path.join(skillsDir, "sub/deep"))
+  File.write(os.path.join(skillsDir, "top.md"), "top content")
+  File.write(os.path.join(skillsDir, "sub/nested.md"), "nested content")
+  File.write(os.path.join(skillsDir, "sub/deep/leaf.jo"), "leaf content")
   // outside the skills dir
-  file.write(os.path.join(tmp, "secret.txt"), "SECRET")
+  File.write(os.path.join(tmp, "secret.txt"), "SECRET")
   // a sibling dir whose name has the skills dir as a prefix (boundary attack)
-  os.makedirs(os.path.join(tmp, "skills-evil"))
-  file.write(os.path.join(tmp, "skills-evil/secret.md"), "EVIL")
+  File.ensureDir(os.path.join(tmp, "skills-evil"))
+  File.write(os.path.join(tmp, "skills-evil/secret.md"), "EVIL")
 
   // A directory SYMLINKED into the skills tree is deliberate sharing (that is how
   // an agent surfaces reference material, e.g. skills/caps -> ../../caps), so the
   // walk follows it and its files are ordinary nested skills.
-  os.makedirs(os.path.join(tmp, "shared"))
-  file.write(os.path.join(tmp, "shared/ref.md"), "linked reference")
+  File.ensureDir(os.path.join(tmp, "shared"))
+  File.write(os.path.join(tmp, "shared/ref.md"), "linked reference")
   os.symlink(os.path.join(tmp, "shared"), os.path.join(skillsDir, "linked"))
 
   val tools = skillsDir

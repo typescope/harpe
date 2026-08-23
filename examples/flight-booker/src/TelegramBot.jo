@@ -1,9 +1,11 @@
 namespace harpe.examples.flightbooker
 
 import harpe.ffi.threading
+import harpe.util.Clock
+import harpe.util.Process
 import harpe.ffi.time
 import harpe.ffi.os
-import harpe.ffi.file
+import harpe.util.File
 
 import jo.IO.stdout
 import harpe.Approvals
@@ -37,7 +39,7 @@ private class PendingTelegramApproval(
     id: String,
     chatId: String,
     senderId: String)
-  val ready = threading.event()
+  val ready = threading.Event()
   var decision = ""
   var messageId = -1
 end
@@ -47,9 +49,9 @@ class TelegramBot(
     botUsername: String, botId: Int)
 
   private val registry = py.dict()
-  private val registryLock = threading.lock()
+  private val registryLock = threading.Lock()
   private val runTool: RunCodeTool = RunCodeTool(os.path.join(appHome, "sandbox"), 610.0)
-  private val approvalLock = threading.lock()
+  private val approvalLock = threading.Lock()
   private val pendingApprovals = py.dict()
 
   //[ The long-poll loop: fetch updates and dispatch text messages //]
@@ -164,11 +166,11 @@ class TelegramBot(
       approvalLock.release()
       return Approvals.Cancelled
 
-    val deadline = time.now() + 600.0
+    val deadline = Clock.now() + 600.0
     var decision: Approvals.Decision = Approvals.TimedOut
     var waiting = true
     while waiting do
-      if time.now() >= deadline then
+      if Clock.now() >= deadline then
         decision = Approvals.TimedOut
         waiting = false
       else if pending.ready.wait(0.1).asBool then
@@ -237,7 +239,7 @@ class TelegramBot(
     if !live then
       val log = Session.forSession(chatId)
       val context = new WindowedContext:
-        baseSystem = file.read(os.path.join(appHome, "AGENT.md"))
+        baseSystem = File.read(os.path.join(appHome, "AGENT.md"))
         initial = Session.load(chatId)
 
       val duffelKey = os.getenv("DUFFEL_API_KEY", "")
@@ -287,7 +289,7 @@ class TelegramBot(
   //[ Start a chat's dedicated worker on a daemon thread //]
   private def startWorker(chatId: String, session: Session): Unit =
     val loop = () => workerLoop(chatId, session)
-    val thread = threading.thread(loop)
+    val thread = Process.daemon(loop)
     thread.start()
 
   //[ Is this sender permitted? An empty allowlist admits no one. //]

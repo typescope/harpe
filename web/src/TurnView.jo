@@ -21,7 +21,7 @@
 namespace harpe.web
 
 import harpe.ffi.os
-import harpe.ffi.mimetypes
+import harpe.util.File
 
 import harpe.TurnData
 import harpe.transcript.Journal
@@ -139,7 +139,7 @@ section TurnView
       py.dict(
         "name" ~ name,
         "size" ~ os.path.getsize(p),
-        "mime" ~ mimetypes.guessType(name).getOrElse("application/octet-stream"))
+        "mime" ~ File.mimeType(name).getOrElse("application/octet-stream"))
 
     case None =>
       py.dict("name" ~ (if name != "" then name else fileName), "missing" ~ true)

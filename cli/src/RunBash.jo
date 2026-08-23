@@ -6,8 +6,9 @@
 namespace harpe.cli
 
 import harpe.*
-import harpe.ffi.subprocess
-import harpe.ffi.text
+import harpe.util.Process
+import harpe.util.Capped
+import harpe.util.Terminal
 
 //[ The `runBash` tool: its spec, and the command runner a route calls. //]
 class RunBashTool
@@ -50,7 +51,7 @@ private def runBash(command: String): Tool.RunOutcome receives appHome, interact
     new Tool.RunOutcome("Approval was cancelled. The command was not run.", "approval cancelled", attachments = [])
 
   case Approvals.Approved =>
-    val result = subprocess.runCapped(
+    val result = Process.runCapped(
       py.list("bash", "-lc", command),
       30.0,
       cwd = appHome
@@ -64,7 +65,7 @@ private def runBash(command: String): Tool.RunOutcome receives appHome, interact
 
     else
       val out = result.out.trim
-      val err = text.stripAnsi(result.err).trim
+      val err = Terminal.stripAnsi(result.err).trim
       val combined =
         if out == "" then err
         else if err == "" then out

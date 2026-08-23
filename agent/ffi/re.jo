@@ -1,0 +1,15 @@
+//[ re.jo
+  !
+  ! Python's `re` module, bound as a typed value.
+//]
+
+namespace harpe.ffi
+
+//[ Python's `re` module. //]
+@py.interop
+interface ReApi
+  //[ `string` with every match of `spec` replaced by `repl`. //]
+  def sub(spec: String, repl: String, target: String): String
+end
+
+def re: ReApi = py.module("re").cast[ReApi]

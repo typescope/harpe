@@ -1,0 +1,28 @@
+//[ Clock.jo
+  !
+  ! The host wall clock, the Jo-shaped way.
+  !
+  ! The counterpart to `harpe.ffi.time` and `harpe.ffi.datetime`. Python spells
+  ! "seconds since the epoch" in one module and "RFC 3339 text" in another, and
+  ! getting between them is a three-step dance with a timezone argument that is
+  ! always UTC here. Settled once, so callers see one clock.
+//]
+
+namespace harpe.util
+
+import harpe.ffi.time
+import harpe.ffi.datetime
+
+section Clock
+  //[ Seconds since the epoch, as a float. //]
+  def now(): Float = time.time()
+
+  //[ Format epoch seconds as an RFC 3339 UTC timestamp with microseconds. //]
+  def toRfc3339(seconds: Float): String =
+    val instant = datetime.datetime.fromtimestamp(seconds, tz = datetime.timezone.utc)
+    instant.isoformat(timespec = "microseconds").replace("+00:00", "Z")
+
+  //[ Parse an RFC 3339 timestamp into epoch seconds. //]
+  def fromRfc3339(value: String): Float =
+    datetime.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+end

@@ -17,11 +17,12 @@
 
 namespace harpe.telegram
 import harpe.ffi.os
-import harpe.ffi.file
+import harpe.util.Process
+import harpe.util.Clock
+import harpe.util.File
 import harpe.ffi.sys
 import harpe.ffi.threading
 import harpe.ffi.signal
-import harpe.ffi.dotenv
 import harpe.ffi.time
 
 import jo.IO.stdout
@@ -47,7 +48,7 @@ param appHome: String
 
 //[ The entry point //]
 def main(): Unit receives stdout =
-  dotenv.load(".env")
+  Process.loadDotenv(".env")
   with appHome = os.path.abspath(".") in serve()
 
 private def serve(): Unit receives stdout, appHome =
@@ -99,7 +100,7 @@ private def serve(): Unit receives stdout, appHome =
     println "  ⚠ TELEGRAM_ALLOWED_SENDERS is empty — all messages are rejected until you add sender ids."
 
   // Stop cleanly on Ctrl-C instead of dumping a traceback out of the poll loop.
-  signal.shutdownOnSigint("\n  ♪ Carmen stopped.")
+  Process.shutdownOnSigint("\n  ♪ Carmen stopped.")
 
   bot.run()
 
@@ -157,7 +158,7 @@ private class PendingTelegramApproval(
     id: String,
     chatId: String,
     senderId: String)
-  val ready = threading.event()
+  val ready = threading.Event()
   var decision = ""
   var messageId = -1
 end
@@ -171,14 +172,14 @@ private class TelegramBot(
   // genuinely concurrent interaction: the poll thread enqueuing to a session
   // versus a worker reaping its idle session (see `dispatch`/`workerLoop`).
   private val registry = py.dict()
-  private val registryLock = threading.lock()
+  private val registryLock = threading.Lock()
 
   // The tools every chat shares. `runTool` holds the build semaphore, so one
   // instance bounds concurrent sandbox runs across every chat.
   private val runTool: RunCodeTool = RunCodeTool(os.path.join(appHome, "sandbox"), 610.0)
   private val sendFile: SendFileTool = new SendFileTool(client)
 
-  private val approvalLock = threading.lock()
+  private val approvalLock = threading.Lock()
   private val pendingApprovals = py.dict()
 
   //[ The long-poll loop: fetch updates, advance the offset past each one, and dispatch text messages
@@ -328,11 +329,11 @@ private class TelegramBot(
       approvalLock.release()
       return Approvals.Cancelled
 
-    val deadline = time.now() + 600.0
+    val deadline = Clock.now() + 600.0
     var decision: Approvals.Decision = Approvals.TimedOut
     var waiting = true
     while waiting do
-      if time.now() >= deadline then
+      if Clock.now() >= deadline then
         decision = Approvals.TimedOut
         waiting = false
       else if pending.ready.wait(0.1).asBool then
@@ -453,7 +454,7 @@ private class TelegramBot(
       // `Session.load` caps the replayed transcript (a RAM backstop). The full
       // transcript stays on disk.
       val context = new WindowedContext:
-        baseSystem = file.read(os.path.join(appHome, "AGENT.md"))
+        baseSystem = File.read(os.path.join(appHome, "AGENT.md"))
         initial = Session.load(chatId)
 
       // Each chat is its own session, rooted at its own data directory:
@@ -525,7 +526,7 @@ private class TelegramBot(
   //[ Start a chat's dedicated worker on a daemon thread (dies with the process). //]
   private def startWorker(chatId: String, session: Session): Unit =
     val loop = () => workerLoop(chatId, session)
-    val thread = threading.thread(loop)
+    val thread = Process.daemon(loop)
     thread.start()
 
   //[ Is this sender permitted? An empty allowlist admits no one. //]
