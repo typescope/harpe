@@ -102,8 +102,8 @@ private class Session(
       "text" ~ incoming.text
       "files" ~ Session.fileNames(incoming.files)
 
-    transcript.turn: request, () =>
-      run(incoming, client, approvalHandler)
+    transcript.request(request)
+    transcript.response(run(incoming, client, approvalHandler))
 
   //[ One turn, from downloading its files to delivering its answer. //]
   private def run(

@@ -49,9 +49,12 @@ private class Session(id: String, log: Logger, brain: Model, tools: Toolset, con
       client: TelegramClient,
       approvalHandler: TelegramApprovalHandler)
   : Unit =
-    val request = Journal.payload("text" ~ incoming.text)
-    transcript.turn: request, () =>
-      run(incoming, client, approvalHandler)
+    val request = Journal.payload:
+      "text" ~ incoming.text
+      "messageId" ~ incoming.id
+
+    transcript.request(request)
+    transcript.response(run(incoming, client, approvalHandler))
 
   private def run(
       incoming: Incoming,
