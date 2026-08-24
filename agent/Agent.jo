@@ -4,8 +4,9 @@
   ! component but the way a model, its tools, and its context are coordinated
   ! for a turn, so there is nothing here to instantiate. `ask` takes each of
   ! those as an ordinary parameter with a default, which is what lets the
-  ! plainest agent be `Agent.ask("hello")` while a driver writes the same
-  ! call with its own components supplied. Drawing a boundary around any subset
+  ! plainest agent be `Agent.ask("hello")` inside an explicit logging scope,
+  ! while a driver writes the same call with its own components supplied.
+  ! Drawing a boundary around any subset
   ! of them and calling *that* the agent would be a choice the code cannot
   ! justify.
   !
@@ -38,7 +39,8 @@ section Agent
     ! Every input is a parameter with a default, so a turn is whatever the
     ! caller says it is and no subset of these is privileged as "the agent":
     !
-    !     Agent.ask("hello")
+    !     with logger = Logging.discard in
+    !       Agent.ask("hello")
     !
     ! answers with a bare model and nothing else, while a driver passes its own
     ! brain, tools, and context.
@@ -79,11 +81,12 @@ section Agent
       attachments: List[String] = NoAttachments,
       brain: Model = Model.default,
       tools: Toolset = Toolset.empty,
+      interact: Interact = Interact.unattended,
       context: Context = Context.noHistory,
       transcript: Transcript = Transcript.NoTranscript,
       maxToolRounds: Int = 50,
       maxRetries: Int = 4)
-  : TurnData receives logger, interact =
+  : TurnData receives logger =
 
     val input = UserInput(message, filesAt(attachments))
     var rounds = 0
@@ -163,7 +166,7 @@ section Agent
 
             val outcome =
               if tools.contains(toolName) then
-                runSafely(toolName, tools.handler(toolName), call.input)
+                runSafely(toolName, tools.handler(toolName), call.input, interact)
               else
                 RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}", attachments = [])
 

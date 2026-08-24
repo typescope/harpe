@@ -31,7 +31,7 @@ private def rep(c: String, n: Int): String =
 private def toolNamed(ts: List[Tool], name: String): Tool =
   ts.find(t => t.name == name) rescue None => abort "no tool named \{name}"
 
-def run(): Unit receives stdout, logger, interact =
+def run(): Unit receives stdout, logger =
   // --- typed ToolInput accessors read values of each schema type ---
   val full = ToolInput(py.dict("s" ~ "hi", "n" ~ 42, "b" ~ true, "f" ~ 3.5))
   check("string reads a string", full.string("s") == "hi")
@@ -64,18 +64,18 @@ def run(): Unit receives stdout, logger, interact =
   check("constructed params are required", sp.required && ip.required && bp.required && np.required)
 
   // --- runSafely: a normal handler's outcome passes through unchanged ---
-  val okOut = runSafely("ok", input => new RunOutcome("done", "ran", attachments = []), empty)
+  val okOut = runSafely("ok", (input, channel) => new RunOutcome("done", "ran", attachments = []), empty, Interact.unattended)
   check("runSafely passes success through", okOut.result == "done" && okOut.summary == "ran")
   check("an outcome is a success unless it says otherwise", okOut.success)
 
   // --- runSafely: a throwing handler becomes an error RunOutcome, not a crash ---
-  val badOut = runSafely("boom", input => abort "kaboom", empty)
+  val badOut = runSafely("boom", (input, channel) => abort "kaboom", empty, Interact.unattended)
   check("runSafely summary names the tool", badOut.summary == "error · boom")
   check("runSafely result carries the message", badOut.result.contains("kaboom"))
   check("a handler that raises did not succeed", !badOut.success)
 
   // --- Toolset: tools accumulate, and wiring one name twice is caught as it is built ---
-  val noop: Handler = (i: ToolInput) => new RunOutcome("x", "x", attachments = [])
+  val noop: Handler = (i: ToolInput, channel: Interact) => new RunOutcome("x", "x", attachments = [])
   val spec = (n: String) => Tool(n, "a test tool", [])
   val two = Toolset.of(spec("alpha"), noop).add(spec("beta"), noop)
   check("tools accumulate", two.contains("alpha") && two.contains("beta"))

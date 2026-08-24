@@ -53,13 +53,13 @@ private def review(pr: String): Unit receives stdout, appHome, logger =
       ++ runCode.toolset(guestEnv)
 
   val turn =
-    with interact = channel in
-      Agent.ask:
+    Agent.ask:
         "please start review the pr"
         brain = Model.default()
         tools = tools
         context = context
         maxToolRounds = 30
+        interact = channel
 
   match turn.result
   case TurnResult.Success =>

@@ -18,7 +18,6 @@ import harpe.ffi.builtins
 
 import harpe.Agent
 import harpe.Toolset
-import harpe.interact
 import harpe.Transcript
 import harpe.transcript.Journal
 import harpe.logging.JsonlLogger
@@ -120,8 +119,14 @@ private class Session(
     val prompt = Model.userContent(incoming.text, attachments)
     val channel = new TelegramInteract(client, this.id, approvalHandler)
 
-    val result = with logger = log, interact = channel in
-      Agent.ask(prompt, brain = brain, tools = tools, context = context, transcript = transcript)
+    val result = with logger = log in
+      Agent.ask:
+        prompt
+        brain = brain
+        tools = tools
+        interact = channel
+        context = context
+        transcript = transcript
 
     // Whether anything actually reached the chat. The engine cannot know it —
     // an answered turn with empty text sends nothing — and it is the one thing

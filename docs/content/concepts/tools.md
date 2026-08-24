@@ -61,7 +61,7 @@ end
 The **handler** is the executor — what actually runs:
 
 ```jo
-type Handler = ToolInput => RunOutcome receives logger, interact
+type Handler = (ToolInput, Interact) => RunOutcome receives logger
 ```
 
 A **`Toolset`** wires each spec to its handler, and that is what `Agent.ask` takes.

@@ -39,19 +39,6 @@ interface Interact
   def approve(id: String, request: Approvals.Request): Approvals.Decision
 end
 
-//[ The current turn's interaction channel
-  !
-  ! The driver binds this around a turn — `with interact = ... in
-  ! Agent.runTurn(...)` — and the turn engine and every tool handler read it
-  ! from there. One binding, one name: the engine does not rebind it around
-  ! tool calls, so a handler sees exactly the channel the driver opened the turn
-  ! with.
-  !
-  ! Unbound it is `Interact.unattended`, so a turn runs with nobody watching
-  ! rather than refusing to run. A driver with a user to answer to binds its own.
-//]
-param interact: Interact = Interact.unattended
-
 section Interact
   //[ An interaction channel for work performed outside an active user turn.
     !

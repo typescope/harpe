@@ -76,7 +76,7 @@ end
 // A set of test tools, wired as the engine wants them.
 private def toolsetOf(tools: List[TestTool]): Toolset =
   var out = Toolset.empty
-  for t in tools do out = out.add: t, (i: ToolInput) => t.run()
+  for t in tools do out = out.add: t, (i: ToolInput, channel: Interact) => t.run()
   out
 
 // A trivial tool that always succeeds, for exercising the tool-call path.
@@ -150,14 +150,14 @@ private def scenario(tools: List[TestTool], maxToolRounds: Int, maxRetries: Int,
   val channel = new TestInteract(state)
   val context = new WindowedContext("", [])
   val res =
-    with interact = channel in
-      Agent.ask:
+    Agent.ask:
         "dummy message"
         brain = model
         tools = toolsetOf(tools)
         context = context
         maxToolRounds = maxToolRounds
         maxRetries = maxRetries
+        interact = channel
   "\{resultTag(res)} | \{joinPy(channel.log)}"
 
 private def msgTag(m: Message): String =
@@ -228,8 +228,12 @@ def run(): Unit receives stdout, logger =
   val failedBrain: Model = base => (results, tools) => Fatal("bad key")
   val failedChannel = new TestInteract(live)
   val failedResult =
-    with interact = failedChannel in
-      Agent.ask("keep me", brain = failedBrain, tools = toolsetOf(tools), context = failedContext)
+    Agent.ask:
+      "keep me"
+      brain = failedBrain
+      tools = toolsetOf(tools)
+      interact = failedChannel
+      context = failedContext
   val failedMessages = failedContext.render(failedChannel).messages
   check:
     "D failed user retained"
@@ -312,13 +316,14 @@ def run(): Unit receives stdout, logger =
 
   val capture = new CaptureLogger
   val toolsK = [loggingTool()]
-  with logger = capture, interact = new TestInteract(live) in
+  with logger = capture in
     val _ = Agent.ask:
       "dummy text"
       brain = askK
       tools = toolsetOf(toolsK)
       context = new WindowedContext("", [])
       transcript = new Journal(capture)
+      interact = new TestInteract(live)
 
   check:
     "K message-logged-before-tool"
@@ -329,13 +334,14 @@ def run(): Unit receives stdout, logger =
   // `runSafely` converts the exception into tool results and the turn continues.
   val captureFailure = new CaptureLogger
   val toolsL = [failingLoggingTool()]
-  with logger = captureFailure, interact = new TestInteract(live) in
+  with logger = captureFailure in
     val _ = Agent.ask:
       "dummy text"
       brain = askK
       tools = toolsetOf(toolsL)
       context = new WindowedContext("", [])
       transcript = new Journal(captureFailure)
+      interact = new TestInteract(live)
 
   check:
     "L message-kept-when-tool-fails"

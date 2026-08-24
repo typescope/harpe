@@ -33,7 +33,6 @@ import harpe.ffi.builtins
 
 import harpe.Agent
 import harpe.Interact
-import harpe.interact
 import harpe.logging.logger
 import harpe.Model
 import harpe.Model.Assistant
@@ -69,7 +68,7 @@ import harpe.logging.Value
 section SendFileTool
   //[ This tool, delivering files from `dataDir`. //]
   def toolset(dataDir: String): Toolset =
-    Toolset.of: spec, (i: ToolInput) => send(i["fileName"], dataDir)
+    Toolset.of: spec, (i: ToolInput, _: Interact) => send(i["fileName"], dataDir)
 
   //[ The spec the model is offered. //]
   private def spec: Tool =
@@ -698,8 +697,8 @@ class ChatServer(brain: Model, name: String, home: String)
       val session = if reqId == "" then createSession() else openSession(requestedId)
       val sessionId = session.id
       val outcome =
-        with logger = session.log, interact = Interact.unattended
-        in runTool.run(code)
+        with logger = session.log in
+          runTool.run(code, interact = Interact.unattended)
       Http.respondJson: py.dict("session" ~ sessionId, "result" ~ outcome.result, "summary" ~ outcome.summary)
 
   //[ Save a script into a session's files (overwriting a same-named one), so it can be reopened, edited, and re-run

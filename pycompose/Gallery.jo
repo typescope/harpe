@@ -189,17 +189,18 @@ section Gallery
     val cv = graphics.create(480.0, 260.0, 3.0, Some(Color.rgb255(246, 247, 251)))
 
     val content =
-      Element.column:
-        Element.row:
-          Prose.heading("Quarterly report")
+      with styles = StyleSheet.default in
+        Element.column:
+          Element.row:
+            Prose.heading("Quarterly report")
+            Element.spring
+            Prose.label("DRAFT")
+          Element.gap(10.0)
+          rule(Color.rgb255(150, 158, 190).fade(0.5))
+          Element.gap(12.0)
+          Prose.body(cardCopy())
           Element.spring
-          Prose.label("DRAFT")
-        Element.gap(10.0)
-        rule(Color.rgb255(150, 158, 190).fade(0.5))
-        Element.gap(12.0)
-        Prose.body(cardCopy())
-        Element.spring
-        Prose.caption("composed with the layout engine")
+          Prose.caption("composed with the layout engine")
 
     val card = Element.background(Element.pad(content, Insets.all(24.0)),
                                   Paint.of(white), 14.0)
@@ -294,7 +295,9 @@ section Gallery
 
   private def booklet(dir: String, backend: CairoGraphics): Unit receives graphics, stdout =
     val pdf = backend.createPdf(pageW, pageH)
-    val pages = [cover(), primitives(), layoutPage()]
+    val pages =
+      with styles = StyleSheet.default in
+        [cover(), primitives(), layoutPage()]
     var i = 0
 
     while i < pages.size do
@@ -310,7 +313,7 @@ section Gallery
     case Err(e) => println "  booklet.pdf failed: \{e}"
 
   //[ A white page: `body` padded, with a hairline footer carrying `n / total`. //]
-  private def page(n: Int, total: Int, body: Element): Element receives graphics =
+  private def page(n: Int, total: Int, body: Element): Element receives graphics, styles =
     val chrome =
       Element.column:
         body
@@ -325,7 +328,7 @@ section Gallery
     Element.background(Element.pad(chrome, Insets.all(46.0)), Paint.of(white), 0.0)
 
   //[ The cover: title block centred on the page. //]
-  private def cover(): Element receives graphics =
+  private def cover(): Element receives graphics, styles =
     val block =
       Element.columnAt:
         Cross.center
@@ -341,7 +344,7 @@ section Gallery
     page(1, 3, block)
 
   //[ Page two: a heading, body, and a bulleted list. //]
-  private def primitives(): Element receives graphics =
+  private def primitives(): Element receives graphics, styles =
     val body =
       Element.column:
         Prose.heading("Primitives")
@@ -356,7 +359,7 @@ section Gallery
     page(2, 3, body)
 
   //[ Page three: the layout story. //]
-  private def layoutPage(): Element receives graphics =
+  private def layoutPage(): Element receives graphics, styles =
     val body =
       Element.column:
         Prose.heading("Layout")

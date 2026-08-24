@@ -12,18 +12,14 @@ import jo.IO.stdout
 import harpe.logging.Logging
 import harpe.logging.logger
 import harpe.Interact
-import harpe.interact
 
-// Suites that drive tools/turns need `logger` and `interact` in scope. Install
-// no-op ones for the whole harness (RunCodeTest self-provides on its worker
-// threads, since context params do not cross thread boundaries).
+// Suites that drive tools/turns need `logger` in scope. Install a no-op one for
+// the whole harness (RunCodeTest self-provides on its worker threads, since
+// context params do not cross thread boundaries).
 def main(): Unit receives stdout =
-  with
-    logger = Logging.discard,
-    interact = Interact.unattended
-  in suites()
+  with logger = Logging.discard in suites()
 
-private def suites(): Unit receives stdout, logger, interact =
+private def suites(): Unit receives stdout, logger =
   println "unix socket (unit):"
   SocketTest.run()
 

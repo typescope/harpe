@@ -38,16 +38,18 @@ def ask(
     attachments: List[String] = NoAttachments,
     brain: Model = Model.default,
     tools: Toolset = Toolset.empty,
+    interact: Interact = Interact.unattended,
     context: Context = Context.noHistory,
     maxToolRounds: Int = 50,
     maxRetries: Int = 4)
-: TurnData receives logger, interact
+: TurnData receives logger
 ```
 
-The smallest agent is one call:
+The smallest agent is one call inside an explicit logging scope:
 
 ```jo
-Agent.ask("hello")
+with logger = Logging.discard in
+  Agent.ask("hello")
 ```
 
 `Agent` there is a namespace, not a thing. A driver writes the same call with
@@ -61,8 +63,13 @@ val context = new WindowedContext:
   baseSystem = "You are a helpful assistant."
   initial = history
 
-with interact = channel in
-  Agent.ask(text, brain = brain, tools = tools, context = context)
+with logger = sessionLog in
+  Agent.ask:
+    text
+    brain = brain
+    tools = tools
+    interact = channel
+    context = context
 ```
 
 Nothing was assembled. The same function served both, and the difference
@@ -76,8 +83,10 @@ user's input and every tool result — and is discarded at the end. Two defaulte
 turns never see each other's transcript. Remembering across turns is what a
 driver's own `context` is for, and keeping one alive is the whole of it.
 
-`logger` and `interact` default too: unbound, a turn records nothing and reports
-to nobody rather than refusing to run.
+`logger` is a required context parameter; a caller that intentionally records
+nothing binds `Logging.discard`. `interact` is an ordinary argument defaulting
+to `Interact.unattended`. Drivers with an active user pass their live channel as
+`interact = channel`.
 
 - `brain` is the provider-independent [model](/concepts/models/).
 - `tools` is a [`Toolset`](/concepts/tools/): each entry is a spec the model is
