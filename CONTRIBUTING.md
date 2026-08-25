@@ -11,15 +11,15 @@ newer.
 
 ```sh
 curl -sSf https://jo-lang.org/install.sh | sh
+
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 jo run test
 ```
 
-The media tests import `pypdfium2`, `python-docx`, `openpyxl`, and `pillow`. They
-must be installed for the interpreter `jo` actually invokes, which is the
-`python3` on your `PATH` — a virtual environment built against a different Python
-version will not be found, and the suite aborts on the missing import rather than
-skipping.
+`jo` runs the `python3` first on your `PATH`, so an activated virtual
+environment is where the media tests find `pypdfium2`, `python-docx`,
+`openpyxl`, and `pillow`.
 
 Each shipped application builds against the sources in this branch through a
 spec in `ci/`, which is what CI does:
