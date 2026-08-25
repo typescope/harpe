@@ -147,21 +147,19 @@ private section OpenAIResponses
 end
 
 private class OpenAIResponsesModel(
-    client: py.Dynamic, model: String, effort: String, extraBody: py.Dict)
+    client: py.Dynamic, model: String, effort: String, store: Bool, extraBody: py.Dict)
   view Model
 
   def startTurn(base: Rendered, maxOutputTokens: Int): Session =
-    new OpenAIResponsesSession(client, model, effort, maxOutputTokens, extraBody, base)
+    new OpenAIResponsesSession(client, model, effort, store, maxOutputTokens, extraBody, base)
 end
 
 //[ A reasoning-preserving turn on the Responses API.
   !
-  ! The first request sends the whole composed base. Every later request sends
-  ! ONLY the new tool results plus `previous_response_id`, so the server retains
-  ! the reasoning items and the model resumes its chain of thought across tool
-  ! calls (rather than re-reasoning from scratch each round). This relies on the
-  ! default server-side `store`. It is the native Responses path for reasoning +
-  ! tools.
+  ! Stored mode sends only new tool results plus `previous_response_id` after
+  ! the first request. Stateless mode instead retains and replays every raw
+  ! output item. Both preserve the reasoning state required by later tool calls;
+  ! neither leaks provider-specific items into Harpe's semantic transcript.
   !
   ! Prompt caching needs no opt-in — OpenAI caches eligible prefixes on its own,
   ! and the default `implicit` mode places a breakpoint on the latest message.
@@ -171,13 +169,17 @@ end
   ! OpenAI's own rule for choosing one — while unrelated agents stay apart.
 //]
 private class OpenAIResponsesSession(
-    client: py.Dynamic, model: String, effort: String,
+    client: py.Dynamic, model: String, effort: String, store: Bool,
     maxOutputTokens: Int, extraBody: py.Dict, base: Rendered)
   view Session
 
   // "" until the first successful reply, then the id to chain the next request
   // from. Committed only on success, so a retry re-sends the same round.
   private var prevId: String = ""
+
+  // Stateless mode owns the complete wire-fidelity turn tail. Committed only
+  // after success, so retries send the same history and pending results.
+  private var committedInput: Option[py.List] = None
 
   // Stable for the turn, and across every turn built on the same system prompt.
   private val cacheKey: String = "harpe:" + Digest.sha256Hex(base.system).substring(0, 16)
@@ -186,18 +188,18 @@ private class OpenAIResponsesSession(
     val toolSpecs = py.list()
     for t in tools do toolSpecs.append(OpenAIResponses.toolSpec(t))
 
-    // First request: the full base conversation. Later
-    // requests: an empty list the tool results are appended to — the prior turn
-    // rides along via `previous_response_id`.
-    val input =
+    val input = py.list()
+    if store then
+      // In stored mode only the first request carries the base; later requests
+      // continue the server-side response and add the new tool results.
       if prevId == "" then
-        val items = OpenAIResponses.toInput(base.messages)
-
-
-        items
-
-      else
-        py.list()
+        for item in OpenAIResponses.toInput(base.messages) do input.append(item)
+    else
+      // In stateless mode replay the base plus every raw output item committed
+      // by successful earlier rounds.
+      match committedInput
+      case Some(items) => for item in items do input.append(item)
+      case None => for item in OpenAIResponses.toInput(base.messages) do input.append(item)
 
     // A fresh tool result's media inlines unconditionally (unlike a `UserInput`'s
     // attachments) — a tool result exists only for the round it was produced in,
@@ -218,15 +220,22 @@ private class OpenAIResponsesSession(
       base.system
       input
       toolSpecs
-      prevId
+      if store then prevId else ""
+      store
       cacheKey
       maxOutputTokens
       extraBody
 
     match attempt
     case Ok(response) =>
-      // Chain the next request from this response — only on success.
-      prevId = response.id.asString
+      if store then
+        // Chain the next request from this response — only on success.
+        prevId = response.id.asString
+      else
+        // Preserve reasoning, messages, and function calls exactly as OpenAI
+        // returned them so the next stateless request can resume the tool loop.
+        for item in response.output.cast[py.List] do input.append(item)
+        committedInput = Some(input)
       val u = response.usage
       // Unlike Anthropic, OpenAI's `input_tokens` is already the total — the
       // cache counters below are a breakdown OF it, not additions to it, so
@@ -262,13 +271,31 @@ end
 private def openaiCreate(
     client: py.Dynamic, model: String, effort: String,
     system: String, input: py.List, toolSpecs: py.List, prevId: String,
-    cacheKey: String, maxOutputTokens: Int, extraBody: py.Dict)
+    store: Bool, cacheKey: String, maxOutputTokens: Int, extraBody: py.Dict)
 : Result[py.Dynamic, py.Error] =
   val body = builtins.dictOf(extraBody)
+
+  // Storage changes continuation semantics, so the typed model option owns it;
+  // an identically named extra-body field cannot silently select the wrong path.
+  body.set("store", store)
+
+  if !store && effort != "none" then
+    // Stateless reasoning continuation needs the encrypted reasoning item in
+    // the returned output. Preserve any other caller-requested include fields.
+    val include = py.list()
+    val configuredValue = body.get("include", py.list())
+    val configured = if configuredValue.isNone then py.list() else configuredValue.cast[py.List]
+    var hasReasoning = false
+    for item in configured do
+      include.append(item)
+      if item.asString == "reasoning.encrypted_content" then hasReasoning = true
+    if !hasReasoning then include.append("reasoning.encrypted_content")
+    body.set("include", include)
 
   if effort != "none" then
     body.set("reasoning", py.dict("effort" ~ effort))
 
+  if body.contains("previous_response_id") then body.pop("previous_response_id")
   if prevId != "" then
     body.set("previous_response_id", prevId)
 
@@ -282,31 +309,45 @@ private def openaiCreate(
       prompt_cache_key = cacheKey
       extra_body = body
 
-//[ Build an OpenAI or OpenAI-compatible model
+//[ Build an OpenAI Responses model
   !
-  ! Responses API is the default. Set `compatible` for a server implementing the
-  ! portable Chat Completions API. `reasoningEffort` configures Responses API
-  ! reasoning and is ignored in compatibility mode. `extraBody` carries optional
-  ! provider-specific fields for either API.
+  ! The options that select request behavior are:
+  !
+  ! - `reasoningEffort`: configure Responses API reasoning.
+  ! - `store`: continue Responses through server-side `previous_response_id`
+  !   state when `true`; retain and replay raw output items when `false`.
+  ! - `extraBody`: pass other provider-specific request fields.
+  !
+  ! For a portable Chat Completions server, use `openai.compatible` instead.
 //]
 def openai(
     apiKey: String,
     model: String,
     baseUrl: String = "https://api.openai.com/v1",
-    compatible: Bool = false,
     reasoningEffort: String = "medium",
     timeoutSeconds: Int = 120,
-    extraBody: py.Dict = py.none)
+    extraBody: py.Dict = py.none,
+    store: Bool = true)
 : Model =
   val body = if py.isNone(extraBody) then py.dict() else extraBody
-  if compatible then
+  // Explicit request timeout. Internal SDK retries disabled — the turn engine
+  // owns the retry/backoff policy, and hidden SDK retries would multiply it.
+  val client = py.module("openai").OpenAI:
+    api_key = apiKey
+    base_url = baseUrl
+    timeout = timeoutSeconds
+    max_retries = 0
+  new OpenAIResponsesModel(client, model, reasoningEffort, store, body)
+
+section openai
+  //[ Build a model for a portable OpenAI-compatible Chat Completions server. //]
+  def compatible(
+      apiKey: String,
+      model: String,
+      baseUrl: String,
+      timeoutSeconds: Int = 120,
+      extraBody: py.Dict = py.none)
+  : Model =
+    val body = if py.isNone(extraBody) then py.dict() else extraBody
     openaiCompatible(apiKey, model, baseUrl, timeoutSeconds, body)
-  else
-    // Explicit request timeout. Internal SDK retries disabled — the turn engine
-    // owns the retry/backoff policy, and hidden SDK retries would multiply it.
-    val client = py.module("openai").OpenAI:
-      api_key = apiKey
-      base_url = baseUrl
-      timeout = timeoutSeconds
-      max_retries = 0
-    new OpenAIResponsesModel(client, model, reasoningEffort, body)
+end
