@@ -35,9 +35,8 @@ class WindowedContext(baseSystem: String, initial: List[Message])
   def append(message: Message): Unit =
     transcript = transcript + message
 
-  //[ Pure — `interact` is unused. //]
-  def render(interact: Interact): Rendered =
-    new Rendered(baseSystem, truncate(transcript, maxTranscriptChars()))
+  def compact(interact: Interact): Context.Result =
+    new Context.Result(new Rendered(baseSystem, truncate(transcript, maxTranscriptChars())), false)
 
   // Sizes on a fixed char window, so reported usage is not needed.
   def observe(usage: Usage): Unit = pass
@@ -48,4 +47,3 @@ class WindowedContext(baseSystem: String, initial: List[Message])
   def rollback(): Unit =
     transcript = marked
 end
-

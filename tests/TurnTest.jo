@@ -16,6 +16,7 @@ import jo.IO.stdout
 import harpe.*
 import harpe.turns.*
 import harpe.context.WindowedContext
+import harpe.context.SummarizingContext
 import harpe.transcript.Journal
 import harpe.models.echo
 import harpe.Model.*
@@ -33,6 +34,10 @@ private def textReply(s: String): ReplyResult =
 private def toolReply(name: String): ReplyResult =
   val call = ToolCall: "id", name, ToolInput(py.dict())
   Reply(Assistant("", [call]), new Usage(0, 0))
+
+private def toolReplyWithUsage(name: String, inputTokens: Int): ReplyResult =
+  val call = ToolCall: "id", name, ToolInput(py.dict())
+  Reply(Assistant("", [call]), new Usage(inputTokens, 0))
 
 private def eventTag(e: TurnEvent): String =
   match e
@@ -200,6 +205,40 @@ def run(): Unit receives stdout, logger =
     scenario: tools, 50, 4, askB, live
     expected = "Answered(done) | start,end,tool+echo,tool-echo,start,end"
 
+  // Crossing the threshold after a completed tool round replaces the provider
+  // session while preserving the tool effect and the logical turn.
+  val callsB2 = py.list(0)
+  val startsB2 = py.list(0)
+  val toolB2 = new TestTool:
+    "count"
+    () =>
+      callsB2.set(0, callsB2.get(0).asInt + 1)
+      new RunOutcome("counted", "count · ran", [])
+  val contextB2 = new SummarizingContext:
+    "BASE"
+    [UserInput("old", []), Assistant("old answer", [])]
+    30
+    1
+    rendered => Some("COMPACTED")
+  val brainB2: Model = (base, maxOut) =>
+    startsB2.set(0, startsB2.get(0).asInt + 1)
+    if base.system.contains("COMPACTED") then
+      (results, offered) => textReply("continued")
+    else
+      (results, offered) => toolReplyWithUsage("count", 40)
+  val channelB2 = new TestInteract(live)
+  val resultB2 =
+    Agent.ask:
+      "work"
+      brain = brainB2
+      tools = toolsetOf([toolB2])
+      context = contextB2
+      interact = channelB2
+  check:
+    "B2 compact-restarts-session"
+    "\{resultTag(resultB2)} | starts=\{startsB2.get(0).asInt} | calls=\{callsB2.get(0).asInt} | \{joinPy(channelB2.log)}"
+    "Answered(continued) | starts=2 | calls=1 | start,end,tool+count,tool-count,compact,start,end"
+
   // Tool budget: once spent (maxToolRounds=1) the model is re-asked with no
   // tools and must answer with text. The scripted model returns text only when
   // offered no tools.
@@ -234,7 +273,7 @@ def run(): Unit receives stdout, logger =
       tools = toolsetOf(tools)
       interact = failedChannel
       context = failedContext
-  val failedMessages = failedContext.render(failedChannel).messages
+  val failedMessages = failedContext.compact(failedChannel).rendered.messages
   check:
     "D failed user retained"
     "\{resultTag(failedResult)} | \{failedMessages.size} | \{msgTag(failedMessages.get(0))}"

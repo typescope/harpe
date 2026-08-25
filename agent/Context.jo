@@ -2,10 +2,10 @@
   !
   ! `Context` — the pluggable context-engineering surface. A per-session value
   ! that owns the transcript and composes what the model sees for each request:
-  ! the engine (`Agent.ask`) appends transcript events to it and calls
-  ! `render` once per user turn (at its start). Implementing this interface is
-  ! the whole customization surface for context management — there is
-  ! deliberately no secondary hook.
+  ! the engine (`Agent.ask`) appends transcript events to it and calls `compact`
+  ! at model-call boundaries. Implementing this interface is the whole
+  ! customization surface for context management — there is deliberately no
+  ! secondary rendering hook.
   !
   ! Two strategies are provided, named by their transcript policy:
   ! `WindowedContext` (the default) drops turns that fall out of its window.
@@ -34,20 +34,14 @@ interface Context
   //[ Record a transcript event: user text, an assistant reply, or tool results. //]
   def append(message: Message): Unit
 
-  //[ Compose what the model sees for a turn
+  //[ Compact if needed and return the current model-input snapshot
     !
-    ! A `Rendered` bundling the system prompt and the transcript window.
-    !
-    ! Called once per user turn, at its start — the `Model` seeds a `Session`
-    ! from it and owns the intra-turn tail thereafter, so the base is NOT
-    ! recomposed per tool round. (A token-budget strategy therefore compacts at
-    ! a turn boundary, on the previous turn's reported usage, not mid-tool-loop
-    ! — which is correct: the growing tail is load-bearing and cannot be pruned
-    ! here.) May be effectful — an impl can use `interact` to call the model
-    ! first (e.g. summarize old turns, whose token usage it logs) and mutate its
-    ! own state, under the turn's cancellation and event stream.
+    ! May be effectful: an implementation can summarize through `interact` and
+    ! mutate its transcript. The result always carries the exact snapshot after
+    ! maintenance; `compacted` tells the engine whether it must replace the
+    ! provider session.
   //]
-  def render(interact: Interact): Rendered receives logger
+  def compact(interact: Interact): Context.Result receives logger
 
   //[ Observe the token usage the provider reported for the last request
     !
@@ -65,6 +59,9 @@ interface Context
 end
 
 section Context
+  //[ The context snapshot prepared for a model-call boundary. //]
+  class Result(rendered: Rendered, compacted: Bool)
+
   //[ A context that carries nothing in and nothing out
     !
     ! The default for `runTurn`'s `context`. It holds the turn it is given — the

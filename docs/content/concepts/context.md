@@ -100,17 +100,18 @@ A `Context` is five methods:
 ```jo
 interface Context
   def append(message: Message): Unit                  // record a transcript event
-  def render(interact: Interact): Rendered receives logger  // compose what the model sees
+  def compact(interact: Interact): Context.Result    // current snapshot + whether it compacted
   def observe(usage: Usage): Unit                     // the last reply's token counts
   def mark(): Unit                                    // begin a turn (rollback point)
   def rollback(): Unit                                // undo an interrupted/failed turn
 end
 ```
 
-- **`render`** is where your policy lives. It runs once per request and may be
+- **`compact`** is where your policy lives. It runs at model-call boundaries and may be
   effectful: call the model first through `interact` (e.g. to summarize) and
-  mutate your own state. (It carries `receives logger` because a model call it
-  makes logs token usage.)
+  mutate your own state. It returns both the prepared `Rendered` snapshot and a
+  flag telling the engine whether the current provider session must be replaced.
+  (It carries `receives logger` because a model call it makes logs token usage.)
 - **`observe`** hands you the provider's exact token count after each reply, so you
   can size on real usage instead of estimating — how `SummarizingContext` decides
   to compact.

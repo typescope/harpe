@@ -107,11 +107,10 @@ section Agent
     context.append(input)
     transcript.start(input)
 
-    // Compose what the model sees ONCE, at the turn's start. The Session then
-    // owns the intra-turn tail. The engine feeds it tool results and never
-    // re-renders.
-    val rendered = context.render(interact)
-    val session = brain.startTurn(rendered, maxOutputTokens)
+    // Compact at the turn boundary if the previous request crossed the strategy's
+    // threshold, then seed a provider session from one immutable snapshot.
+    val prepared = context.compact(interact)
+    var session = brain.startTurn(prepared.rendered, maxOutputTokens)
 
     // Tool results to hand the model on the next round ([] for the first request).
     var pending: List[ToolResult] = []
@@ -196,6 +195,13 @@ section Agent
             transcript.append(results)
             pending = toolResults
             rounds = rounds + 1
+
+            // A compaction preserves the logical turn and its completed tool
+            // effects, but replaces the provider-specific continuation state.
+            val next = context.compact(interact)
+            if next.compacted then
+                session = brain.startTurn(next.rendered, maxOutputTokens)
+                pending = []
     end // while
 
     // A rolled-back turn contributes nothing to history, and `Journal.records`

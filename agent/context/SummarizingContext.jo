@@ -22,7 +22,7 @@ import harpe.turns.TurnEvent
   ! cached prefix survives most requests. Using the reported count (fed in via
   ! `observe`) is exact and model-agnostic — no tokenizer, no stale context-window
   ! table. It is REACTIVE: the count is known only after a reply, so an oversized
-  ! request may go out once before the next render compacts. The low-water target
+  ! request may go out once before the next boundary compacts. The low-water target
   ! is still measured in characters (`truncate` has no per-turn token counts) — a
   ! rough "how much to keep" against the exact "when to act".
   !
@@ -56,21 +56,13 @@ class SummarizingContext(
   // Size the next compaction decision on the provider's exact token count.
   def observe(usage: Usage): Unit = lastInputTokens = usage.inputTokens
 
-  //[ Compact if over the high-water mark, then compose
-    !
-    ! The base prompt and the distilled summary as `system`, the retained recent
-    ! turns as the messages.
-    ! The summary stays in `system`: a compaction rewrites the message window at
-    ! the same moment, so keeping the summary cached with the base prompt costs
-    ! nothing.
-  //]
-  def render(interact: Interact): Rendered receives logger =
-    if lastInputTokens > highWaterTokens then compact(interact)
+  def compact(interact: Interact): Context.Result receives logger =
+    val changed = lastInputTokens > highWaterTokens && compactTranscript(interact)
 
     var system = baseSystem
     if summary != "" then system = system + "\n\n" + summaryBlock(summary)
 
-    new Rendered(system, transcript)
+    new Context.Result(new Rendered(system, transcript), changed)
 
   def mark(): Unit =
     markedTranscript = transcript
@@ -95,7 +87,7 @@ class SummarizingContext(
     ! fails or is cancelled, or when nothing can be dropped (the window is a
     ! single oversized turn).
   //]
-  private def compact(interact: Interact): Unit receives logger =
+  private def compactTranscript(interact: Interact): Bool receives logger =
     val kept = truncate(transcript, lowWaterChars)
     val dropCount = transcript.size - kept.size
 
@@ -107,6 +99,9 @@ class SummarizingContext(
         summary = text
         transcript = kept
         interact.emit: TurnEvent.ContextCompacted(dropCount)
+        true
+      else false
+    else false
 end
 
 //[ The distilled-history block
