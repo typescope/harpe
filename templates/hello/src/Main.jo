@@ -49,14 +49,14 @@ private def chat(): Unit receives stdout, logger =
     if input == "" then continue
 
     val result =
-      with interact = channel in
-        Agent.ask:
+      Agent.ask:
           input
           brain = brain
           tools = tools
           context = context
           maxToolRounds = 10
           maxRetries = 2
+          interact = channel
 
     match result.result
     case TurnResult.Success => println "\nAgent ▸ \{result.text}"

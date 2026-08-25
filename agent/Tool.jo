@@ -55,10 +55,10 @@ end
   ! directory, its chat id, its API client. That is what lets a handler close
   ! over typed values instead of receiving them through an untyped bag.
   !
-  ! `logger` and `interact` stay ambient, so a driver builds its `Toolset` once
-  ! per session and every turn still sees its own channel and interaction.
+  ! `logger` stays ambient. The turn passes its ordinary `Interact` argument to
+  ! the selected handler, so a driver can still build its `Toolset` once.
 //]
-type Handler = ToolInput => RunOutcome receives logger, interact
+type Handler = (ToolInput, Interact) => RunOutcome receives logger
 
 //[ A tool spec from its three parts
   !
@@ -193,8 +193,8 @@ section Tool
     ! The engine applies it to every route, so a driver's wiring cannot take the
     ! turn down.
   //]
-  def runSafely(name: String, handler: Handler, input: ToolInput): RunOutcome receives logger, interact =
-    match py.try(handler(input))
+  def runSafely(name: String, handler: Handler, input: ToolInput, interact: Interact): RunOutcome receives logger =
+    match py.try(handler(input, interact))
     case Ok(outcome) => outcome
 
     case Err(e) =>

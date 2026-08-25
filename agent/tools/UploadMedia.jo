@@ -20,6 +20,7 @@ import harpe.util.File
 
 import harpe.Tool
 import harpe.Toolset
+import harpe.Interact
 import harpe.Tool.*
 import harpe.Model.Attachment
 import harpe.models.*
@@ -44,7 +45,7 @@ section UploadMediaTool
 
   //[ This tool, showing files from `dataDir`. //]
   def toolset(dataDir: String): Toolset =
-    Toolset.of: spec, (i: ToolInput) => show(i["fileName"], dataDir)
+    Toolset.of: spec, (i: ToolInput, _: Interact) => show(i["fileName"], dataDir)
 
   //[ Attach the data-directory file `fileName` for the model to look at. //]
   def show(fileName: String, dir: String): RunOutcome =

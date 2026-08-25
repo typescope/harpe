@@ -11,8 +11,9 @@ need Cloudflare credentials.
 Set the version once and paste the commands as written:
 
 ```sh
-VERSION=0.5.0
-MINOR=${VERSION%.*}          # the MAJOR.MINOR constraint drivers pin
+VERSION=0.7.0
+MINOR=${VERSION%.*}          # the MAJOR.MINOR constraint consumers pin
+PREV_MINOR=0.6               # the constraint being replaced
 ```
 
 ## Publication comes before the green build
@@ -42,20 +43,31 @@ Create a branch from the latest `origin/main`. In the pull request:
 - [ ] Confirm `harpe` has the intended `harpe-caps` dependency constraint.
 - [ ] Add the release notes to `CHANGELOG.md`.
 - [ ] Update the version and link in the release badge in `README.md`.
-- [ ] Update the `harpe` package version in `cli/jo.toml`, `web/jo.toml`,
-      `telegram/jo.toml`, and `templates/hello/jo.toml` — including any
-      secondary module in those files, such as `[module.view]`.
-- [ ] Update the `harpe` and `harpe-caps` versions in each driver's
-      `sandbox/jo.toml`.
+- [ ] Retarget every consuming `harpe` and `harpe-caps` constraint, with the
+      command below.
 
-Jo package constraints use `MAJOR.MINOR`, so `0.5.0` is referenced as `0.5`. A
-minor bump rewrites every constraint above; a patch bump rewrites none of them.
-Where a file needs no textual edit, confirm that explicitly during review rather
-than assuming it. Afterwards grep for the constraint being *replaced* — it
-should now match nothing:
+Consumers are every `jo.toml` except the repo root's and `ci/`'s: the
+applications, the templates, the examples, each of their `sandbox/` manifests,
+and any secondary module such as `[module.view]`. Nothing here names them
+individually, so adding a template or an example does not change this checklist.
 
 ```sh
-grep -rn '"0.4"' --include='jo.toml' . | grep -v '^./ci'
+grep -rl "version = \"$PREV_MINOR\"" --include='jo.toml' . | grep -v '^\./ci/' \
+  | xargs -r sed -i "s/version = \"$PREV_MINOR\"/version = \"$MINOR\"/g"
+```
+
+Jo package constraints use `MAJOR.MINOR`, so `0.7.0` is referenced as `0.7`. The
+pattern the command rewrites is the constraint alone — a package's own
+`version = "MAJOR.MINOR.PATCH"` in the root `jo.toml` is a different string, so
+the rewrite cannot reach it. A minor bump retargets every consumer. A patch bump
+retargets none, and the command is a harmless no-op.
+
+Confirm the constraint being replaced now matches nothing, and that the new one
+reached every consumer:
+
+```sh
+grep -rn "version = \"$PREV_MINOR\"" --include='jo.toml' . | grep -v '^\./ci/'
+grep -rln "version = \"$MINOR\"" --include='jo.toml' . | grep -v '^\./ci/'
 ```
 
 **The gate before publishing is the local-source half of CI**: every

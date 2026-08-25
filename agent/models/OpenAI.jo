@@ -150,8 +150,8 @@ private class OpenAIResponsesModel(
     client: py.Dynamic, model: String, effort: String, extraBody: py.Dict)
   view Model
 
-  def startTurn(base: Rendered): Session =
-    new OpenAIResponsesSession(client, model, effort, extraBody, base)
+  def startTurn(base: Rendered, maxOutputTokens: Int): Session =
+    new OpenAIResponsesSession(client, model, effort, maxOutputTokens, extraBody, base)
 end
 
 //[ A reasoning-preserving turn on the Responses API.
@@ -172,7 +172,7 @@ end
 //]
 private class OpenAIResponsesSession(
     client: py.Dynamic, model: String, effort: String,
-    extraBody: py.Dict, base: Rendered)
+    maxOutputTokens: Int, extraBody: py.Dict, base: Rendered)
   view Session
 
   // "" until the first successful reply, then the id to chain the next request
@@ -220,6 +220,7 @@ private class OpenAIResponsesSession(
       toolSpecs
       prevId
       cacheKey
+      maxOutputTokens
       extraBody
 
     match attempt
@@ -244,66 +245,42 @@ end
 
 //[ One `responses.create` call.
   !
-  ! `reasoning` is sent unless the effort is "none" — omitting it keeps a
-  ! non-reasoning model (e.g. gpt-4o) working on this endpoint, since those reject
-  ! a `reasoning` parameter. `previous_response_id` is sent only for a continuation
-  ! (`prevId != ""`). `prompt_cache_key` rides on every request — see the session's
-  ! note on why caching itself needs no other field.
+  ! There is a single call here, not one per combination of optional fields.
+  ! `reasoning` and `previous_response_id` must be ABSENT rather than null when
+  ! they do not apply: a non-reasoning model (e.g. gpt-4o) rejects `reasoning`,
+  ! and a first request has no response to continue from. `extra_body` is how
+  ! the SDK carries a field that is only sometimes present, and it produces the
+  ! same request JSON the typed keyword would.
+  !
+  ! `prompt_cache_key` rides on every request — see the session's note on why
+  ! caching itself needs no other field.
+  !
+  ! The caller's `extraBody` is COPIED, never mutated. A model holds one dict for
+  ! its whole life, so mutating it would leave the last round's
+  ! `previous_response_id` on every later request, including a first one.
 //]
 private def openaiCreate(
     client: py.Dynamic, model: String, effort: String,
     system: String, input: py.List, toolSpecs: py.List, prevId: String,
-    cacheKey: String, extraBody: py.Dict)
+    cacheKey: String, maxOutputTokens: Int, extraBody: py.Dict)
 : Result[py.Dynamic, py.Error] =
-  if effort == "none" then
-    if prevId == "" then
-      py.try:
-        client.responses.create:
-          model = model
-          instructions = system
-          input = input
-          tools = toolSpecs
-          max_output_tokens = 8096
-          prompt_cache_key = cacheKey
-          extra_body = extraBody
+  val body = builtins.dictOf(extraBody)
 
-    else
-      py.try:
-        client.responses.create:
-          model = model
-          instructions = system
-          input = input
-          tools = toolSpecs
-          max_output_tokens = 8096
-          previous_response_id = prevId
-          prompt_cache_key = cacheKey
-          extra_body = extraBody
+  if effort != "none" then
+    body.set("reasoning", py.dict("effort" ~ effort))
 
-  else
-    if prevId == "" then
-      py.try:
-        client.responses.create:
-          model = model
-          instructions = system
-          input = input
-          tools = toolSpecs
-          reasoning = py.dict("effort" ~ effort)
-          max_output_tokens = 8096
-          prompt_cache_key = cacheKey
-          extra_body = extraBody
+  if prevId != "" then
+    body.set("previous_response_id", prevId)
 
-    else
-      py.try:
-        client.responses.create:
-          model = model
-          instructions = system
-          input = input
-          tools = toolSpecs
-          reasoning = py.dict("effort" ~ effort)
-          max_output_tokens = 8096
-          previous_response_id = prevId
-          prompt_cache_key = cacheKey
-          extra_body = extraBody
+  py.try:
+    client.responses.create:
+      model = model
+      instructions = system
+      input = input
+      tools = toolSpecs
+      max_output_tokens = maxOutputTokens
+      prompt_cache_key = cacheKey
+      extra_body = body
 
 //[ Build an OpenAI or OpenAI-compatible model
   !

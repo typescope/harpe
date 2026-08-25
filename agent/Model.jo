@@ -42,7 +42,18 @@ import harpe.ffi.sys
   ! never learn reasoning exists.
 //]
 interface Model
-  def startTurn(base: Rendered): Session
+  //[ Begin one user turn
+    !
+    ! `maxOutputTokens` bounds what the model may PRODUCE in a single reply, and
+    ! is fixed for the turn — every round of the tool loop is sent with the same
+    ! bound, so a turn cannot be talked into a larger reply as it goes. An
+    ! implementation renders it as whatever its provider calls the limit
+    ! (`max_tokens`, `max_output_tokens`, …). One with no such notion ignores it.
+    !
+    ! A provider that truncates at the limit says so in the reply text rather
+    ! than failing, so the model can be asked to continue.
+  //]
+  def startTurn(base: Rendered, maxOutputTokens: Int): Session
 end
 
 section Model

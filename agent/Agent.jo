@@ -4,8 +4,9 @@
   ! component but the way a model, its tools, and its context are coordinated
   ! for a turn, so there is nothing here to instantiate. `ask` takes each of
   ! those as an ordinary parameter with a default, which is what lets the
-  ! plainest agent be `Agent.ask("hello")` while a driver writes the same
-  ! call with its own components supplied. Drawing a boundary around any subset
+  ! plainest agent be `Agent.ask("hello")` inside an explicit logging scope,
+  ! while a driver writes the same call with its own components supplied.
+  ! Drawing a boundary around any subset
   ! of them and calling *that* the agent would be a choice the code cannot
   ! justify.
   !
@@ -38,7 +39,8 @@ section Agent
     ! Every input is a parameter with a default, so a turn is whatever the
     ! caller says it is and no subset of these is privileged as "the agent":
     !
-    !     Agent.ask("hello")
+    !     with logger = Logging.discard in
+    !       Agent.ask("hello")
     !
     ! answers with a bare model and nothing else, while a driver passes its own
     ! brain, tools, and context.
@@ -66,6 +68,12 @@ section Agent
     ! is asked once more with no tools, forcing a final answer. `maxRetries` is
     ! transport policy — how often a transient model error is retried.
     !
+    ! `maxOutputTokens` bounds each individual reply, and is the one budget here
+    ! the engine cannot enforce itself: it is handed to the `Model` at
+    ! `startTurn` and honoured by the provider. It sits with the other two
+    ! because all three answer "how much may this turn spend", and a caller
+    ! should not have to build a second `Model` to change one of them.
+    !
     ! `tools` is both halves at once: the specs the model is offered and the
     ! code that answers each call, wired together by name. A handler closes over
     ! whatever typed context the driver built it with — in practice one toolset
@@ -79,11 +87,13 @@ section Agent
       attachments: List[String] = NoAttachments,
       brain: Model = Model.default,
       tools: Toolset = Toolset.empty,
+      interact: Interact = Interact.unattended,
       context: Context = Context.noHistory,
       transcript: Transcript = Transcript.NoTranscript,
       maxToolRounds: Int = 50,
-      maxRetries: Int = 4)
-  : TurnData receives logger, interact =
+      maxRetries: Int = 4,
+      maxOutputTokens: Int = 8192)
+  : TurnData receives logger =
 
     val input = UserInput(message, filesAt(attachments))
     var rounds = 0
@@ -101,7 +111,7 @@ section Agent
     // owns the intra-turn tail. The engine feeds it tool results and never
     // re-renders.
     val rendered = context.render(interact)
-    val session = brain.startTurn(rendered)
+    val session = brain.startTurn(rendered, maxOutputTokens)
 
     // Tool results to hand the model on the next round ([] for the first request).
     var pending: List[ToolResult] = []
@@ -163,7 +173,7 @@ section Agent
 
             val outcome =
               if tools.contains(toolName) then
-                runSafely(toolName, tools.handler(toolName), call.input)
+                runSafely(toolName, tools.handler(toolName), call.input, interact)
               else
                 RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}", attachments = [])
 

@@ -25,7 +25,6 @@ import harpe.Toolset
 import harpe.Tool
 import harpe.Tool.ToolInput
 import harpe.Context
-import harpe.interact
 import harpe.Transcript
 import harpe.transcript.Journal
 import harpe.TurnData
@@ -225,8 +224,14 @@ class Session(
     val emit: Sink = obj => this.broadcast(obj)
     val channel = new WebInteract(emit, this.stop, (id, request) => requestApproval(id, request))
 
-    val turn = with logger = log, interact = channel in
-      Agent.ask(prompt, brain = brain, tools = tools, context = context, transcript = transcript)
+    val turn = with logger = log in
+      Agent.ask:
+        prompt
+        brain = brain
+        tools = tools
+        interact = channel
+        context = context
+        transcript = transcript
 
     // The driver's reading of the finished turn: how it ended, and which files
     // the agent delivered. `sendFile` is the agent's channel for putting a file

@@ -50,10 +50,8 @@ private def tag(o: RunOutcome): String =
 private def execWith(
     tool: RunCodeTool, code: String, guestEnv: Map[String, String], channel: Interact)
 : RunOutcome =
-  with
-    logger = Logging.discard,
-    interact = channel
-  in tool.run(code, guestEnv)
+  with logger = Logging.discard in
+    tool.run(code, guestEnv, channel)
 
 private def exec(tool: RunCodeTool, code: String): RunOutcome =
   execWith(tool, code, Map.empty[String, String], Interact.unattended)

@@ -16,7 +16,7 @@ The agent runs the turn. Conversation history across turns remains in its
 
 ```jo
 interface Model
-  def startTurn(base: Rendered): Model.Session
+  def startTurn(base: Rendered, maxOutputTokens: Int): Model.Session
 
 section Model
   interface Session
@@ -31,9 +31,9 @@ agent's final answer, including any tool calls. `Model.Session` is the model
 adapter's state during that exchange, not an application or conversation
 session. It may make several model API calls while the agent uses tools.
 
-`startTurn` is called once with the system prompt, conversation history, and
-transient context. The agent calls `reply` again whenever it has tool results to
-return to the model. Each call receives those results and the tools available
+`startTurn` is called once with the system prompt, conversation history,
+transient context, and the turn's output budget. The agent calls `reply` again
+whenever it has tool results to return to the model. Each call receives those results and the tools available
 for the next response.
 
 A `Model.Session` may keep provider-specific continuation state such as reasoning
@@ -188,6 +188,28 @@ val brain = echo()
 Model constructors use a 120-second HTTP request timeout by default. Applications
 can set `timeoutSeconds` explicitly when they need a different limit.
 
+How much a reply may contain is a property of the turn, not of the model. It is
+`Agent.ask`'s `maxOutputTokens`, 8192 by default, alongside the other two
+budgets a turn is given:
+
+```jo
+val turn = Agent.ask:
+  question
+  brain = brain
+  maxToolRounds = 50
+  maxOutputTokens = 32000
+```
+
+The engine passes it to `Model.startTurn`, and it is fixed for the turn — every
+round of the tool loop is sent with the same bound, so a turn cannot be talked
+into a larger reply as it goes. A reply that reaches the limit comes back with a
+note saying it was truncated rather than as an error, so the model can be asked
+to continue.
+
+The same agent can therefore answer briefly on one turn and write a long report
+on the next without holding two models. A custom `Model` renders the bound as
+whatever its provider calls the limit, and one with no such notion ignores it.
+
 A model can be shared across sessions. Each call to `startTurn` creates the
 state isolated to one user turn.
 
@@ -201,8 +223,8 @@ without keeping additional provider state:
 class MyModel(client: Client)
   view Model
 
-  def startTurn(base: Rendered): Model.Session =
-    new SimpleSession(base, (rendered, tools) => send(client, rendered, tools))
+  def startTurn(base: Rendered, maxOutputTokens: Int): Model.Session =
+    new SimpleSession(base, (rendered, tools) => send(client, rendered, tools, maxOutputTokens))
 end
 ```
 

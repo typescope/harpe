@@ -14,7 +14,6 @@ import harpe.ffi.os
 import harpe.Agent
 import harpe.Context
 import harpe.Toolset
-import harpe.interact
 import harpe.Model
 import harpe.Model.Message
 import harpe.TurnData
@@ -63,8 +62,14 @@ private class Session(id: String, log: Logger, brain: Model, tools: Toolset, con
   : Value =
     val channel = new TelegramInteract(client, this.id, approvalHandler)
 
-    val result = with logger = log, interact = channel in
-      Agent.ask(incoming.text, brain = brain, tools = tools, context = context, transcript = transcript)
+    val result = with logger = log in
+      Agent.ask:
+        incoming.text
+        brain = brain
+        tools = tools
+        interact = channel
+        context = context
+        transcript = transcript
 
     var delivered = false
 

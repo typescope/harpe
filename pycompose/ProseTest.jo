@@ -28,15 +28,24 @@ private def room: Constraints = Constraints.upTo(400.0, 400.0)
 def run(): Unit receives stdout =
   val dir = "out/test"
 
-  with graphics = new CairoGraphics(dir) in
-    precedence()
-    restyling()
-    blocks()
-    tweaks()
+  Style.withDefaults: () =>
+    Typesetting.withDefaults: () =>
+      with graphics = new CairoGraphics(dir), styles = StyleSheet.default in
+        precedence()
+        restyling()
+        blocks()
+        tweaks()
 
 // --- the rule that is easy to get backwards ----------------------------
 
-private def precedence(): Unit receives stdout, graphics =
+private def precedence(): Unit receives
+    stdout,
+    graphics,
+    styles,
+    Style.textPaint,
+    Typesetting.align,
+    Typesetting.leading
+=
   val plain = Prose.body("hello").measure(room)
 
   // an ambient font around the call must NOT leak into a styled constructor
@@ -56,7 +65,7 @@ private def precedence(): Unit receives stdout, graphics =
 
 // --- restyling ----------------------------------------------------------
 
-private def restyling(): Unit receives stdout, graphics =
+private def restyling(): Unit receives stdout, graphics, styles =
   val small = Prose.body("hello").measure(room)
 
   val big =
@@ -90,7 +99,7 @@ private def enlarged(): StyleSheet =
 
 // --- blocks -------------------------------------------------------------
 
-private def blocks(): Unit receives stdout, graphics =
+private def blocks(): Unit receives stdout, graphics, styles =
   val one = Prose.body("one").measure(room)
 
   val stacked =
@@ -118,7 +127,7 @@ private def blocks(): Unit receives stdout, graphics =
 
 // --- TextStyle tweaks ---------------------------------------------------
 
-private def tweaks(): Unit receives stdout, graphics =
+private def tweaks(): Unit receives stdout, graphics, styles =
   val base = StyleSheet.default.body
 
   check("sized changes only the size",

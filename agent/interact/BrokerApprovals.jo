@@ -12,8 +12,13 @@ import harpe.ffi.json
 import harpe.ffi.os
 import harpe.ffi.threading
 
-//[ One persistent approval connection for the lifetime of a sandbox program. //]
-class BrokerApprovals(client: Broker.Client)
+//[ One persistent approval connection for the lifetime of a sandbox program.
+  !
+  ! Takes the socket path rather than a live client — the broker is private to
+  ! Harpe, so it must not appear in a signature a sandbox runtime can see.
+//]
+class BrokerApprovals(path: String)
+  private val client = Broker.connect(path)
   private val lock = threading.Lock()
 
   view Approvals
@@ -41,7 +46,7 @@ section BrokerApprovals
   def connect(): Approvals =
     val path = os.getenv("HARPE_BROKER_SOCKET", "")
     if path == "" then new UnavailableApprovals
-    else new BrokerApprovals(Broker.connect(path))
+    else new BrokerApprovals(path)
 end
 
 private class UnavailableApprovals

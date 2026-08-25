@@ -229,7 +229,7 @@ class RunCodeTool(
     ! it, so a driver never repeats it.
   //]
   def toolset(guestEnv: Map[String, String] = noGuestEnv): Toolset =
-    Toolset.of: this, (i: ToolInput) => run(i["code"], guestEnv)
+    Toolset.of: this, (i: ToolInput, interact: Interact) => run(i["code"], guestEnv, interact)
 
   //[ One bounded, isolated run of `code`
     !
@@ -243,8 +243,9 @@ class RunCodeTool(
     ! agree on, an application protocol rather than the framework's. It arrives
     ! from the driver's route, so the values are whatever that turn should see.
   //]
-  def run(code: String, guestEnv: Map[String, String] = noGuestEnv)
-  : RunOutcome receives logger, interact =
+  def run(code: String, guestEnv: Map[String, String] = noGuestEnv,
+          interact: Interact = Interact.unattended)
+  : RunOutcome receives logger =
     match findDoneFile
     case None =>
       new RunOutcome:
@@ -255,7 +256,7 @@ class RunCodeTool(
     case Some(donePath) =>
       gate.acquire()
       val runDir = tempfileMod.mkdtemp(prefix = "run-").asString
-      val outcome = py.try(buildAndRun(code, donePath, runDir, guestEnv))
+      val outcome = py.try(buildAndRun(code, donePath, runDir, guestEnv, interact))
       val _ = py.try(shutilMod.rmtree(runDir, ignore_errors = true))
       gate.release()
 
@@ -279,8 +280,9 @@ class RunCodeTool(
     ! By replaying the recorded invocation from `donePath`, logging the outcome.
   //]
   private def buildAndRun(
-      code: String, donePath: String, runDir: String, guestEnv: Map[String, String])
-  : RunOutcome receives logger, interact =
+      code: String, donePath: String, runDir: String, guestEnv: Map[String, String],
+      interact: Interact)
+  : RunOutcome receives logger =
     // Each run emits one `harpe.tools.runCode` log entry — the program under test
     // plus the fields specific to how it ended — to the injected channel. What
     // becomes of the entry (format, destination) is the Logger backend's policy.

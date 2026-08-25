@@ -1,7 +1,7 @@
 # Harpe
 
 [![CI](https://github.com/typescope/harpe/actions/workflows/ci.yml/badge.svg)](https://github.com/typescope/harpe/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/release-v0.6.0-blue.svg)](https://github.com/typescope/harpe/releases/tag/v0.6.0)
+[![Release](https://img.shields.io/badge/release-v0.7.0-blue.svg)](https://github.com/typescope/harpe/releases/tag/v0.7.0)
 [![Docs](https://img.shields.io/badge/docs-harpe.typescope.ai-teal.svg)](https://harpe.typescope.ai)
 
 Harpe is an agent framework for [Jo](https://jo-lang.org/).
@@ -38,7 +38,7 @@ The `hello` application is intentionally small. Its terminal interaction has no
 spinner, cancellation, sessions, or media handling. You can read the complete
 agent loop in `src/Main.jo`.
 
-Follow [Build Your First Agent](docs/content/tutorial/build-your-first-agent.md)
+Follow [Build Your First Agent](https://harpe.typescope.ai/tutorial/build-your-first-agent/)
 to inspect each part.
 
 ## Start from an application
@@ -48,9 +48,9 @@ into your project so you can inspect and customize it.
 
 | Template | Includes | Guide |
 |---|---|---|
-| `cli` | terminal history, progress, cancellation, resumable sessions, memory, and logs | [Create a CLI Agent](docs/content/tutorial/create-cli-agent.md) |
-| `web` | browser sessions, streaming, uploads, and downloadable files | [Create a Web Agent](docs/content/tutorial/create-web-agent.md) |
-| `telegram` | bot sessions, sender authorization, attachments, and Telegram rendering | [Create a Telegram Agent](docs/content/tutorial/create-telegram-agent.md) |
+| `cli` | terminal history, progress, cancellation, resumable sessions, and logs | [Create a CLI Agent](https://harpe.typescope.ai/tutorial/create-cli-agent/) |
+| `web` | browser sessions, streaming, uploads, and downloadable files | [Create a Web Agent](https://harpe.typescope.ai/tutorial/create-web-agent/) |
+| `telegram` | bot sessions, sender authorization, attachments, and Telegram rendering | [Create a Telegram Agent](https://harpe.typescope.ai/tutorial/create-telegram-agent/) |
 
 ```sh
 jo new my-agent --template typescope/harpe:cli
@@ -67,25 +67,16 @@ cp .env.example .env
 jo start
 ```
 
-The web application listens on `http://127.0.0.1:8765` by default.
-
-The Telegram application also needs `TELEGRAM_BOT_TOKEN` and a comma-separated
-`TELEGRAM_ALLOWED_SENDERS` list. It uses long polling, so it does not need a
-public HTTP endpoint.
+Each template's `.env.example` documents the variables it needs.
 
 ## Documentation
 
-- [Agent concepts](docs/content/concepts/agent.md)
-- [Sandbox architecture](docs/content/concepts/sandbox.md)
-- [Create a custom capability](docs/content/tutorial/create-custom-capabilities.md)
-- [Add defense in depth](docs/content/tutorial/defense-in-depth.md)
-- [Tools](docs/content/concepts/tools.md)
-- [Human approval](docs/content/concepts/approvals.md)
-- [Context](docs/content/concepts/context.md)
-- [Memory](docs/content/concepts/memory.md)
-- [Skills](docs/content/concepts/skills.md)
-- [Media](docs/content/concepts/media.md)
-- [Logging](docs/content/concepts/logging.md)
+The documentation is at [harpe.typescope.ai](https://harpe.typescope.ai).
+
+- [Why Harpe?](https://harpe.typescope.ai/overview/why-harpe/)
+- [Compile-time sandboxing](https://harpe.typescope.ai/overview/compile-time-sandboxing/)
+- [Create a custom capability](https://harpe.typescope.ai/tutorial/create-custom-capabilities/)
+- [Deployment checklist](https://harpe.typescope.ai/guides/production/)
 
 ## Development
 
@@ -96,4 +87,9 @@ pip install -r requirements.txt
 jo run test
 ```
 
-Harpe requires Jo 0.12 or newer.
+Harpe requires Jo 0.12 or newer. See [CONTRIBUTING.md](CONTRIBUTING.md) to
+contribute and [SECURITY.md](SECURITY.md) to report a vulnerability.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

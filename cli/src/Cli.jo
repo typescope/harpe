@@ -94,13 +94,14 @@ private def runChat(): Unit receives stdout, appHome =
 
     val userMsg = UserInput(userInput, [])
     val runTurn = (turnInteract: Interact) =>
-      with logger = sessionLog, interact = turnInteract in
+      with logger = sessionLog in
         Agent.ask:
           userInput
           brain = brain
           tools = tools
           context = context
           transcript = journal
+          interact = turnInteract
 
     // Open the turn's transcript bracket. The console is this driver's live UI,
     // so nothing reads these records back today — but they are what makes a CLI

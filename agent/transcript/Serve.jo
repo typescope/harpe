@@ -46,7 +46,7 @@ import jo.resource.*
 import jo.py.resource.*
 
 //[ The `harpe` module's own bundled resources. //]
-param resources: Resources = new py.resource.ResourceBundle("harpe")
+param resources: Resources
 
 //[ Serve the journal named on the command line. //]
 def serve(): Unit receives stdout =
@@ -64,7 +64,9 @@ def serve(): Unit receives stdout =
   val port = Int.parse(os.getenv("PORT", "8760")) rescue None => 8760
 
   val name = os.path.basename(path)
-  val httpd = Http.server: host, port, () => route(path, name)
+  val httpd =
+    with resources = new py.resource.ResourceBundle("harpe") in
+      Http.server: host, port, () => route(path, name)
 
   println "  \{name}"
   println "  Live at http://\{host}:\{port}"

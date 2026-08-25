@@ -17,6 +17,7 @@ import harpe.ffi.builtins
 
 import harpe.Tool
 import harpe.Toolset
+import harpe.Interact
 import harpe.Tool.*
 import harpe.logging.logger
 
@@ -75,9 +76,9 @@ section SkillTools
   //[ Every tool in this group, reading under `skillsDir`. //]
   def toolset(skillsDir: String): Toolset =
     Toolset.empty
-      .add: listSpec, (i: ToolInput) => list(skillsDir)
-      .add: readSpec, (i: ToolInput) => read(skillsDir, i["name"])
-      .add: searchSpec, (i: ToolInput) => search(skillsDir, i["query"])
+      .add: listSpec, (i: ToolInput, _: Interact) => list(skillsDir)
+      .add: readSpec, (i: ToolInput, _: Interact) => read(skillsDir, i["name"])
+      .add: searchSpec, (i: ToolInput, _: Interact) => search(skillsDir, i["query"])
 
   def listSpec: Tool =
     Tool:

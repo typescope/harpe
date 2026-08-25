@@ -29,7 +29,7 @@ import harpe.turns.TurnEvent
   ! The distillation is one call to `distill` — a `Rendered => Option[String]`
   ! summarizer supplied at construction, not the whole `Model` interface. It is
   ! typically a thin wrapper over the agent's brain, or a cheaper model reserved
-  ! for summarization (`rendered => model.startTurn(rendered).reply([], [])`,
+  ! for summarization (`rendered => model.startTurn(rendered, 1024).reply([], [])`,
   ! taking the reply text). `None` — a failed or cancelled call — skips compaction
   ! and retries on the next request. Decoupling from `Model` keeps the strategy
   ! agnostic to how a summary is produced (an LLM, a heuristic, a stub).

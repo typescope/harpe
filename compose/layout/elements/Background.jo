@@ -31,7 +31,9 @@ class Background(child: Element, paint: Paint, radius: Float)
   =
     val b = node.bounds
 
-    with Style.fillPaint = paint in
+    // A rounded rect never self-intersects, so the fill rule cannot change what
+    // is covered — `nonZero` is bound here only because `fill` requires one.
+    with Style.fillPaint = paint, Style.fillRule = FillRule.nonZero in
       cv.fill(Region.roundRect(b.x, b.y, b.width, b.height, radius))
 
     Element.paintChildren(cv, node)

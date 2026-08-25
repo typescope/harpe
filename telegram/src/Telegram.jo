@@ -28,6 +28,7 @@ import harpe.ffi.time
 import jo.IO.stdout
 import harpe.Agent
 import harpe.Approvals
+import harpe.Interact
 import harpe.Model
 import harpe.Tool
 import harpe.tools.*
@@ -120,7 +121,7 @@ private def serve(): Unit receives stdout, appHome =
 private class SendFileTool(client: TelegramClient)
   //[ This tool, sending files from `dir` to `chatId`. //]
   def toolset(chatId: String, dir: String): Toolset =
-    Toolset.of: spec, (i: Tool.ToolInput) => send(chatId, i["fileName"], dir)
+    Toolset.of: spec, (i: Tool.ToolInput, _: Interact) => send(chatId, i["fileName"], dir)
 
   //[ The spec the model is offered. //]
   private def spec: Tool =

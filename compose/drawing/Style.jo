@@ -40,14 +40,14 @@ section FillRule
 end
 
 section Style
-  param fillPaint: Paint = new Solid(Color.black)
-  param strokePaint: Paint = new Solid(Color.black)
-  param textPaint: Paint = new Solid(Color.black)
-  param stroke: Stroke = Stroke.of(1.0)
-  param fillRule: FillRule = FillRule.nonZero
-  param alpha: Float = 1.0
-  param font: Font = new Font("sans", "", 16.0)
-  param transform: Matrix = Matrix.identity
+  param fillPaint: Paint
+  param strokePaint: Paint
+  param textPaint: Paint
+  param stroke: Stroke
+  param fillRule: FillRule
+  param alpha: Float
+  param font: Font
+  param transform: Matrix
 
   //[ Clip regions, outermost first
     !
@@ -55,5 +55,28 @@ section Style
     ! replaces — a clipped panel inside a clipped card behaves the way it reads.
     ! Append to nest. `[]` clips nothing.
   //]
-  param clip: List[Region] = []
+  param clip: List[Region]
+
+  //[ Run `work` with the conventional drawing state bound
+    !
+    ! No parameter here carries a default, so a piece states the state it draws
+    ! under rather than inheriting one silently. This is that statement for the
+    ! ordinary case — black ink, a hairline stroke, 16pt sans, no transform and
+    ! no clip — and what an entry point binds before it draws anything. Any
+    ! block rebinds whichever of them it means to change.
+  //]
+  def withDefaults[T](work: () => T receives
+      fillPaint, strokePaint, textPaint, stroke, fillRule,
+      alpha, font, transform, clip): T =
+    with fillPaint = new Solid(Color.black),
+        strokePaint = new Solid(Color.black),
+        textPaint = new Solid(Color.black),
+        stroke = Stroke.of(1.0),
+        fillRule = FillRule.nonZero,
+        alpha = 1.0,
+        font = new Font("sans", "", 16.0),
+        transform = Matrix.identity,
+        clip = []
+    in
+      work()
 end
