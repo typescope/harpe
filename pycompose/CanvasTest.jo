@@ -71,11 +71,13 @@ def run(): Unit receives stdout =
 
   matrixMath()
 
-  with graphics = new CairoGraphics(dir) in
-    antialiasing(dir)
-    groupVersusAlpha(dir)
-    clipAndScale(dir)
-    shapedText(dir)
+  Style.withDefaults: () =>
+    Typesetting.withDefaults: () =>
+      with graphics = new CairoGraphics(dir) in
+        antialiasing(dir)
+        groupVersusAlpha(dir)
+        clipAndScale(dir)
+        shapedText(dir)
 
 // --- pure geometry, no rendering ---------------------------------------
 
@@ -106,7 +108,14 @@ private def matrixMath(): Unit receives stdout =
 
 // --- the headline: cairo anti-aliases, Pillow did not ------------------
 
-private def antialiasing(dir: String): Unit receives stdout, graphics =
+private def antialiasing(dir: String): Unit receives
+    stdout,
+    graphics,
+    Style.alpha,
+    Style.clip,
+    Style.fillRule,
+    Style.transform
+=
   val cv = graphics.create(120.0, 120.0, 1.0, Some(Color.white))
 
   with Style.fillPaint = Paint.of(Color.rgb255(40, 60, 160)) in
@@ -123,7 +132,14 @@ private def antialiasing(dir: String): Unit receives stdout, graphics =
 
 // --- group composites the subtree. Alpha composites each op ------------
 
-private def groupVersusAlpha(dir: String): Unit receives stdout, graphics =
+private def groupVersusAlpha(dir: String): Unit receives
+    stdout,
+    graphics,
+    Style.alpha,
+    Style.clip,
+    Style.fillRule,
+    Style.transform
+=
   val red = Paint.of(Color.rgb255(220, 60, 50))
   val blue = Paint.of(Color.rgb255(50, 90, 210))
 
@@ -171,7 +187,13 @@ private def groupVersusAlpha(dir: String): Unit receives stdout, graphics =
 
 // --- clip bounds drawing. Scale changes pixels, not geometry -----------
 
-private def clipAndScale(dir: String): Unit receives stdout, graphics =
+private def clipAndScale(dir: String): Unit receives
+    stdout,
+    graphics,
+    Style.alpha,
+    Style.fillRule,
+    Style.transform
+=
   val cv = graphics.create(100.0, 100.0, 2.0, Some(Color.white))
 
   with
@@ -190,7 +212,15 @@ private def clipAndScale(dir: String): Unit receives stdout, graphics =
 
 // --- shaped text -------------------------------------------------------
 
-private def shapedText(dir: String): Unit receives stdout, graphics =
+private def shapedText(dir: String): Unit receives
+    stdout,
+    graphics,
+    Style.alpha,
+    Style.clip,
+    Style.transform,
+    Typesetting.align,
+    Typesetting.leading
+=
   with Style.font = Font.sans(20.0) in
     val wide = graphics.stringWidth("AV Wave fi")
     val narrow = graphics.stringWidth("AV")

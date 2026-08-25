@@ -16,16 +16,18 @@ import compose.prose.*
 
 section Gallery
   def renderAll(dir: String, backend: CairoGraphics): Unit receives stdout =
-    with graphics = backend in
-      shapes(dir)
-      gradients(dir)
-      groups(dir)
-      clipping(dir)
-      transforms(dir)
-      justify(dir)
-      card(dir)
-      poster(dir, backend)
-      booklet(dir, backend)
+    Style.withDefaults: () =>
+      Typesetting.withDefaults: () =>
+        with graphics = backend in
+          shapes(dir)
+          gradients(dir)
+          groups(dir)
+          clipping(dir)
+          transforms(dir)
+          justify(dir)
+          card(dir)
+          poster(dir, backend)
+          booklet(dir, backend)
 
   //[ Save `cv` to `dir/name.png` and report. //]
   private def emit(dir: String, name: String, cv: Canvas): Unit receives stdout =
@@ -38,7 +40,14 @@ section Gallery
 
   // --- 1. shapes: fills, strokes, caps/joins, dashes, even-odd hole -----
 
-  private def shapes(dir: String): Unit receives graphics, stdout =
+  private def shapes(dir: String): Unit receives
+      graphics,
+      stdout,
+      Style.alpha,
+      Style.clip,
+      Style.fillRule,
+      Style.transform
+  =
     val cv = graphics.create(420.0, 300.0, 2.0, Some(white))
 
     with Style.fillPaint = Paint.of(Color.rgb255(70, 100, 210)) in
@@ -77,7 +86,14 @@ section Gallery
 
   // --- 2. gradients: linear and radial ---------------------------------
 
-  private def gradients(dir: String): Unit receives graphics, stdout =
+  private def gradients(dir: String): Unit receives
+      graphics,
+      stdout,
+      Style.alpha,
+      Style.clip,
+      Style.fillRule,
+      Style.transform
+  =
     val cv = graphics.create(420.0, 220.0, 2.0, Some(white))
 
     with
@@ -98,7 +114,14 @@ section Gallery
 
   // --- 3. groups: screen-blended discs (the "light" motif) --------------
 
-  private def groups(dir: String): Unit receives graphics, stdout =
+  private def groups(dir: String): Unit receives
+      graphics,
+      stdout,
+      Style.alpha,
+      Style.clip,
+      Style.fillRule,
+      Style.transform
+  =
     val cv = graphics.create(360.0, 300.0, 2.0, Some(Color.rgb255(12, 14, 34)))
 
     disc(cv, 140.0, 120.0, Color.rgb255(240, 60, 130))
@@ -114,7 +137,13 @@ section Gallery
 
   // --- 4. clipping: content confined to a rounded panel -----------------
 
-  private def clipping(dir: String): Unit receives graphics, stdout =
+  private def clipping(dir: String): Unit receives
+      graphics,
+      stdout,
+      Style.alpha,
+      Style.clip,
+      Style.transform
+  =
     val cv = graphics.create(360.0, 240.0, 2.0, Some(white))
     val panel = Region.roundRect(30.0, 30.0, 300.0, 180.0, 20.0)
 
@@ -138,7 +167,13 @@ section Gallery
 
   // --- 5. transforms: rotation, including rotated text ------------------
 
-  private def transforms(dir: String): Unit receives graphics, stdout =
+  private def transforms(dir: String): Unit receives
+      graphics,
+      stdout,
+      Style.alpha,
+      Style.clip,
+      Style.fillRule
+  =
     val cv = graphics.create(360.0, 300.0, 2.0, Some(white))
     var i = 0
 
@@ -164,7 +199,14 @@ section Gallery
 
   // --- 6. justify: left vs justified columns ----------------------------
 
-  private def justify(dir: String): Unit receives graphics, stdout =
+  private def justify(dir: String): Unit receives
+      graphics,
+      stdout,
+      Style.alpha,
+      Style.clip,
+      Style.transform,
+      Typesetting.leading
+  =
     val cv = graphics.create(520.0, 220.0, 2.0, Some(white))
     val prose =
       """
@@ -185,7 +227,13 @@ section Gallery
 
   // --- 7. card: the layout engine + prose -------------------------------
 
-  private def card(dir: String): Unit receives graphics, stdout =
+  private def card(dir: String): Unit receives
+      graphics,
+      stdout,
+      Style.alpha,
+      Style.clip,
+      Style.transform
+  =
     val cv = graphics.create(480.0, 260.0, 3.0, Some(Color.rgb255(246, 247, 251)))
 
     val content =
@@ -220,7 +268,14 @@ section Gallery
 
   // --- 8. poster: the full piece, to PNG and PDF ------------------------
 
-  private def poster(dir: String, backend: CairoGraphics): Unit receives graphics, stdout =
+  private def poster(dir: String, backend: CairoGraphics): Unit receives
+      graphics,
+      stdout,
+      Style.alpha,
+      Style.clip,
+      Style.fillRule,
+      Style.transform
+  =
     val png = graphics.create(360.0, 480.0, 3.0, None)
     drawPoster(png)
     emit(dir, "poster", png)
@@ -233,7 +288,13 @@ section Gallery
     case Ok(_)  => println "  wrote poster.pdf"
     case Err(e) => println "  poster.pdf failed: \{e}"
 
-  private def drawPoster(cv: Canvas): Unit receives graphics =
+  private def drawPoster(cv: Canvas): Unit receives
+      graphics,
+      Style.alpha,
+      Style.clip,
+      Style.fillRule,
+      Style.transform
+  =
     val paper = Color.rgb255(245, 246, 255)
     val muted = Color.rgb255(150, 158, 205)
 
@@ -293,7 +354,13 @@ section Gallery
   private def pageW: Float = 420.0
   private def pageH: Float = 560.0
 
-  private def booklet(dir: String, backend: CairoGraphics): Unit receives graphics, stdout =
+  private def booklet(dir: String, backend: CairoGraphics): Unit receives
+      graphics,
+      stdout,
+      Style.alpha,
+      Style.clip,
+      Style.transform
+  =
     val pdf = backend.createPdf(pageW, pageH)
     val pages =
       with styles = StyleSheet.default in
@@ -313,7 +380,10 @@ section Gallery
     case Err(e) => println "  booklet.pdf failed: \{e}"
 
   //[ A white page: `body` padded, with a hairline footer carrying `n / total`. //]
-  private def page(n: Int, total: Int, body: Element): Element receives graphics, styles =
+  private def page(n: Int, total: Int, body: Element): Element receives
+      graphics,
+      styles
+  =
     val chrome =
       Element.column:
         body

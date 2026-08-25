@@ -28,15 +28,24 @@ private def room: Constraints = Constraints.upTo(400.0, 400.0)
 def run(): Unit receives stdout =
   val dir = "out/test"
 
-  with graphics = new CairoGraphics(dir), styles = StyleSheet.default in
-    precedence()
-    restyling()
-    blocks()
-    tweaks()
+  Style.withDefaults: () =>
+    Typesetting.withDefaults: () =>
+      with graphics = new CairoGraphics(dir), styles = StyleSheet.default in
+        precedence()
+        restyling()
+        blocks()
+        tweaks()
 
 // --- the rule that is easy to get backwards ----------------------------
 
-private def precedence(): Unit receives stdout, graphics, styles =
+private def precedence(): Unit receives
+    stdout,
+    graphics,
+    styles,
+    Style.textPaint,
+    Typesetting.align,
+    Typesetting.leading
+=
   val plain = Prose.body("hello").measure(room)
 
   // an ambient font around the call must NOT leak into a styled constructor

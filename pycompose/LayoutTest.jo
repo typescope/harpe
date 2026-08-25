@@ -34,14 +34,16 @@ private def frame(w: Float, h: Float): Rect = new Rect(0.0, 0.0, w, h)
 def run(): Unit receives stdout =
   val dir = "out/test"
 
-  with graphics = new CairoGraphics(dir) in
-    columns()
-    rows()
-    flexing()
-    wrappers()
-    textFlow()
-    justify(dir)
-    nestedClips(dir)
+  Style.withDefaults: () =>
+    Typesetting.withDefaults: () =>
+      with graphics = new CairoGraphics(dir) in
+        columns()
+        rows()
+        flexing()
+        wrappers()
+        textFlow()
+        justify(dir)
+        nestedClips(dir)
 
 // --- column ------------------------------------------------------------
 
@@ -80,7 +82,13 @@ private def columns(): Unit receives stdout, graphics =
 
 // --- row and the baseline rule -----------------------------------------
 
-private def rows(): Unit receives stdout, graphics =
+private def rows(): Unit receives
+    stdout,
+    graphics,
+    Style.textPaint,
+    Typesetting.align,
+    Typesetting.leading
+=
   val small = with Style.font = Font.sans(10.0) in Element.text("x")
   val big = with Style.font = Font.sans(30.0) in Element.text("X")
   val laid = Element.place(new Row([small, big], 6.0, Cross.baseline), frame(400.0, 100.0))
@@ -175,7 +183,13 @@ private def wrappers(): Unit receives stdout, graphics =
 
 // --- text --------------------------------------------------------------
 
-private def textFlow(): Unit receives stdout, graphics =
+private def textFlow(): Unit receives
+    stdout,
+    graphics,
+    Style.textPaint,
+    Typesetting.align,
+    Typesetting.leading
+=
   val words = "one two three four five six seven eight nine ten eleven twelve"
 
   with Style.font = Font.sans(12.0) in
@@ -207,7 +221,14 @@ private def textFlow(): Unit receives stdout, graphics =
 
 // --- justify: the gaps stretch, but not on the last line ---------------
 
-private def justify(dir: String): Unit receives stdout, graphics =
+private def justify(dir: String): Unit receives
+    stdout,
+    graphics,
+    Style.alpha,
+    Style.clip,
+    Style.transform,
+    Typesetting.leading
+=
   val cv = graphics.create(240.0, 160.0, 1.0, Some(Color.white))
   val box = new Rect(10.0, 10.0, 220.0, 140.0)
   val prose = "one two three four five six seven eight nine ten eleven twelve"
@@ -286,12 +307,20 @@ private def fillAll(canvas: Canvas): Unit receives
     graphics,
     Style.transform,
     Style.clip,
-    Style.alpha
+    Style.alpha,
+    Style.fillRule
 =
   with Style.fillPaint = Paint.of(Color.rgb255(20, 160, 90)) in
     canvas.fill(Region.rect(0.0, 0.0, 200.0, 200.0))
 
-private def nestedClips(dir: String): Unit receives stdout, graphics =
+private def nestedClips(dir: String): Unit receives
+    stdout,
+    graphics,
+    Style.alpha,
+    Style.clip,
+    Style.fillRule,
+    Style.transform
+=
   val cv = graphics.create(200.0, 200.0, 1.0, Some(Color.white))
 
   val paintAll = Element.graphic(200.0, 200.0, canvas => fillAll(canvas))
