@@ -126,12 +126,13 @@ end
 private class CompatibleModel(client: py.Dynamic, model: String, extraBody: py.Dict)
   view Model
 
-  def startTurn(base: Rendered): Session =
-    new CompatibleSession(client, model, extraBody, base)
+  def startTurn(base: Rendered, maxOutputTokens: Int): Session =
+    new CompatibleSession(client, model, maxOutputTokens, extraBody, base)
 end
 
 private class CompatibleSession(
-    client: py.Dynamic, model: String, extraBody: py.Dict, base: Rendered)
+    client: py.Dynamic, model: String, maxOutputTokens: Int,
+    extraBody: py.Dict, base: Rendered)
   view Session
 
   //[ Complete Chat Completions messages accepted so far
@@ -156,7 +157,7 @@ private class CompatibleSession(
     val specs = py.list()
     for t in tools do specs.append(CompatibleChat.toolSpec(t))
 
-    match compatibleCreate(client, model, messages, specs, extraBody)
+    match compatibleCreate(client, model, messages, specs, maxOutputTokens, extraBody)
     case Ok(response) =>
       val usage = response.usage
       val inTok = if usage.isNone then 0 else usage.prompt_tokens.asInt
@@ -184,14 +185,14 @@ end
 
 private def compatibleCreate(
     client: py.Dynamic, model: String, messages: py.List,
-    tools: py.List, extraBody: py.Dict)
+    tools: py.List, maxOutputTokens: Int, extraBody: py.Dict)
 : Result[py.Dynamic, py.Error] =
   if tools.size == 0 then
     py.try:
       client.chat.completions.create:
         model = model
         messages = messages
-        max_tokens = 8096
+        max_tokens = maxOutputTokens
         extra_body = extraBody
   else
     py.try:
@@ -199,7 +200,7 @@ private def compatibleCreate(
         model = model
         messages = messages
         tools = tools
-        max_tokens = 8096
+        max_tokens = maxOutputTokens
         extra_body = extraBody
 
 //[ Build a model using the portable OpenAI Chat Completions API. //]

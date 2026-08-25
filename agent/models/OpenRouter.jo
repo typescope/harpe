@@ -117,13 +117,13 @@ private class OpenRouterModel(
     client: py.Dynamic, model: String, effort: String, extraBody: py.Dict)
   view Model
 
-  def startTurn(base: Rendered): Session =
-    new OpenRouterSession(client, model, effort, extraBody, base)
+  def startTurn(base: Rendered, maxOutputTokens: Int): Session =
+    new OpenRouterSession(client, model, effort, maxOutputTokens, extraBody, base)
 end
 
 private class OpenRouterSession(
     client: py.Dynamic, model: String, effort: String,
-    extraBody: py.Dict, base: Rendered)
+    maxOutputTokens: Int, extraBody: py.Dict, base: Rendered)
   view Session
 
   //[ The complete Responses `input` accepted so far.
@@ -164,7 +164,8 @@ private class OpenRouterSession(
     val specs = py.list()
     for t in tools do specs.append(OpenRouterResponses.toolSpec(t))
 
-    match openRouterCreate(client, model, effort, base.system, input, specs, extraBody)
+    match openRouterCreate(
+      client, model, effort, base.system, input, specs, maxOutputTokens, extraBody)
     case Ok(response) =>
       // Preserve every raw output item, including reasoning, messages, and
       // function calls. OpenRouter requires these items unchanged and in order
@@ -188,31 +189,35 @@ private class OpenRouterSession(
     case Err(err) => classifyError(err)
 end
 
+//[ One `responses.create` call against OpenRouter.
+  !
+  ! `reasoning` must be ABSENT rather than null for a model that does not
+  ! support it, so it rides in `extra_body`, which carries a field only when it
+  ! applies. The caller's dict is copied rather than mutated — a model holds one
+  ! for its whole life.
+  !
+  ! `store = false`: OpenRouter keeps no server-side response, so the session
+  ! replays every raw output item instead of chaining a response id.
+//]
 private def openRouterCreate(
     client: py.Dynamic, model: String, effort: String,
-    system: String, input: py.List, tools: py.List, extraBody: py.Dict)
+    system: String, input: py.List, tools: py.List,
+    maxOutputTokens: Int, extraBody: py.Dict)
 : Result[py.Dynamic, py.Error] =
-  if effort == "none" then
-    py.try:
-      client.responses.create:
-        model = model
-        instructions = system
-        input = input
-        tools = tools
-        max_output_tokens = 8096
-        store = false
-        extra_body = extraBody
-  else
-    py.try:
-      client.responses.create:
-        model = model
-        instructions = system
-        input = input
-        tools = tools
-        reasoning = py.dict("effort" ~ effort)
-        max_output_tokens = 8096
-        store = false
-        extra_body = extraBody
+  val body = builtins.dictOf(extraBody)
+
+  if effort != "none" then
+    body.set("reasoning", py.dict("effort" ~ effort))
+
+  py.try:
+    client.responses.create:
+      model = model
+      instructions = system
+      input = input
+      tools = tools
+      max_output_tokens = maxOutputTokens
+      store = false
+      extra_body = body
 
 //[ Build an OpenRouter model
   !

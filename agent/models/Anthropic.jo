@@ -184,8 +184,8 @@ private class AnthropicModel(
     client: py.Dynamic, model: String, cache: Anthropic.Cache, extraBody: py.Dict)
   view Model
 
-  def startTurn(base: Rendered): Session =
-    new AnthropicSession(client, model, cache, extraBody, base)
+  def startTurn(base: Rendered, maxOutputTokens: Int): Session =
+    new AnthropicSession(client, model, cache, maxOutputTokens, extraBody, base)
 end
 
 //[ A reasoning-preserving turn on the Messages API.
@@ -199,7 +199,7 @@ end
 //]
 private class AnthropicSession(
     client: py.Dynamic, model: String, cache: Anthropic.Cache,
-    extraBody: py.Dict, base: Rendered)
+    maxOutputTokens: Int, extraBody: py.Dict, base: Rendered)
   view Session
 
   // The wire messages, accumulated across the turn. They are seeded on the
@@ -235,6 +235,7 @@ private class AnthropicSession(
       base.system
       outgoing
       toolSpecs
+      maxOutputTokens
       extraBody
 
     match attempt
@@ -295,13 +296,14 @@ private def toolResultMessage(results: List[ToolResult]): py.Dict =
 //]
 private def anthropicCreate(
     client: py.Dynamic, model: String, cache: Anthropic.Cache,
-    system: String, messages: py.List, toolSpecs: py.List, extraBody: py.Dict)
+    system: String, messages: py.List, toolSpecs: py.List,
+    maxOutputTokens: Int, extraBody: py.Dict)
 : Result[py.Dynamic, py.Error] =
   if cache is Anthropic.NoCache then
     py.try:
       client.messages.create:
         model = model
-        max_tokens = 8096
+        max_tokens = maxOutputTokens
         thinking = py.dict("type" ~ "adaptive")
         system = system
         messages = messages
@@ -311,7 +313,7 @@ private def anthropicCreate(
     py.try:
       client.messages.create:
         model = model
-        max_tokens = 8096
+        max_tokens = maxOutputTokens
         thinking = py.dict("type" ~ "adaptive")
         system = py.list(py.dict("type" ~ "text", "text" ~ system, "cache_control" ~ cache.toDict))
         messages = messages
