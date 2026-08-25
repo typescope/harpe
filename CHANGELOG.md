@@ -1,5 +1,98 @@
 # Changelog
 
+## 0.7.0 — 2026-08-25
+
+Seventh developer-preview release. It is a context-parameter pass: the two
+values the framework used to pass ambiently — the interaction channel and the
+logger — become ordinary arguments, so what a turn and a tool handler receive is
+visible in their signatures. A driver written against 0.6.0 needs the changes
+listed below, all of which are mechanical.
+
+The turn engine, the context strategies, the transcript, and the sandbox behave
+exactly as in 0.6.0. The one behavioural change is that a reply's token budget is
+now the caller's to set.
+
+### harpe-caps 0.7.0
+
+No changes. The capability interfaces are identical to 0.6.0 — the version moves
+with `harpe` so a driver pins one constraint for both.
+
+### harpe 0.7.0
+
+Breaking changes:
+
+- `interact` is an ordinary parameter of `Agent.ask` rather than an ambient
+  context parameter, and `param interact` is gone from `harpe.Interact`. A
+  driver that opened a turn with
+
+  ```jo
+  with interact = channel in
+    Agent.ask:
+      prompt
+      brain = brain
+  ```
+
+  now passes the channel by name:
+
+  ```jo
+  Agent.ask:
+    prompt
+    brain = brain
+    interact = channel
+  ```
+
+  `Interact.unattended` remains the default, so a turn with nobody watching is
+  still `Agent.ask("hello")`.
+
+- `Tool.Handler` is `(ToolInput, Interact) => RunOutcome receives logger`. The
+  turn hands the selected handler its own channel, which is what lets a driver
+  keep building one `Toolset` per session. A handler that ignores it names the
+  parameter `_`:
+
+  ```jo
+  Toolset.of: spec, (i: ToolInput, _: Interact) => run(i["fileName"])
+  ```
+
+  `Tool.runSafely` takes the channel as a fourth argument for the same reason.
+
+- `param logger: Logger` has no default. Every entry point binds one, and work
+  that intentionally records nothing binds `Logging.discard` explicitly rather
+  than relying on it being the fallback. `param resources: Resources`, which the
+  transcript viewer reads, loses its default on the same grounds.
+
+- `Model.startTurn` is `startTurn(base: Rendered, maxOutputTokens: Int)`. An
+  implementation renders the bound as whatever its provider calls the limit, and
+  one with no such notion ignores it. The shipped models stop hardcoding it.
+
+- `RunCodeTool.run` takes `interact: Interact = Interact.unattended` after
+  `guestEnv`. `RunCodeTool.toolset(...)` is unchanged — it wires the handler for
+  you.
+
+- `Journal.turn(data, work)` is removed. Open and close the bracket with
+  `request` and `response` directly, which is what a driver whose two halves ran
+  on different threads already did:
+
+  ```jo
+  journal.request(Journal.payload("text" ~ userInput))
+  val turn = Agent.ask(...)
+  journal.response(Journal.payload("delivered" ~ delivered))
+  ```
+
+  An unclosed bracket is still a fragment, and `records` yields nothing for it.
+
+- `Broker`, `Broker.Client`, and `Frame` are `private[harpe]`. They are the
+  host/guest wire protocol, not a surface to build on. `BrokerApprovals` takes
+  the socket path rather than a live client, so the private type does not appear
+  in a signature the sandbox runtime can see.
+
+New:
+
+- `Agent.ask` takes `maxOutputTokens: Int = 8192`, bounding what the model may
+  produce in a single reply. It is fixed for the turn — every round of the tool
+  loop is sent with the same bound — and joins `maxToolRounds` and `maxRetries`
+  as a budget the caller sets without building a second `Model`. It replaces the
+  8096 the OpenAI and OpenRouter backends hardcoded.
+
 ## 0.6.0 — 2026-08-23
 
 Sixth developer-preview release. It is a naming and layering pass: the framework
