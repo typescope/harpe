@@ -6,23 +6,28 @@ jo = "0.12"
 kind = "lib"
 platform = "python"
 src = ["API.jo"]
+depth = 1
 
-modules = [{ id = "caps", path = "../../.." }]
+packages = [{ name = "harpe-caps", version = "0.6" }]
 
 [module.runtime]
 kind = "lib"
 platform = "python"
 enable-ffi = true
 src = ["Runtime.jo", "GithubClient.jo"]
+depth = 2
 
-modules = ["api", { id = "harpe", path = "../../.." }]
+modules = ["api"]
+packages = [{ name = "harpe", version = "0.6" }]
 
 [module.guest]
 kind = "app"
 platform = "python"
 src = ["Task.jo"]
+depth = 2
 
-modules = ["api", { id = "caps", path = "../../.." }, { id = "runtime", link = true }]
+modules = ["api", { id = "runtime", link = true }]
+packages = [{ name = "harpe-caps", version = "0.6" }]
 
 links = [
   { from = "jo.main", to = "sandbox.runtime.main" },

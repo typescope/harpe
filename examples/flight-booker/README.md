@@ -45,9 +45,11 @@ Start the bot without adding yourself to `TELEGRAM_ALLOWED_SENDERS`. DM the bot 
 TELEGRAM_ALLOWED_SENDERS=123456789
 ```
 
-**5. Install dependencies**
+**5. Create the project and install dependencies**
 
 ```sh
+jo new my-booker --template typescope/harpe:flight-booker
+cd my-booker
 pip install -r requirements.txt
 ```
 
@@ -56,3 +58,6 @@ pip install -r requirements.txt
 ```sh
 jo start
 ```
+
+See [Create a Flight Booking Agent](https://harpe.typescope.ai/tutorial/create-flight-booking-agent/)
+for how the approval boundary works.

@@ -1,0 +1,48 @@
+jo = "0.12"
+
+# The PR review example, built against this branch's own caps/ and agent/
+# sources. The example's own jo.toml resolves harpe from the registry instead,
+# so this spec is what catches a framework change that breaks it on the same
+# commit that makes it.
+
+[module.pr-review]
+kind = "app"
+platform = "python"
+enable-ffi = true
+src = ["../examples/pr-review/src/"]
+modules = [{ id = "harpe", path = ".." }]
+
+links = [
+  { from = "jo.main", to = "harpe.examples.prreview.main" },
+]
+
+[module.sandbox-api]
+kind = "lib"
+platform = "python"
+src = ["../examples/pr-review/sandbox/API.jo"]
+modules = [{ id = "caps", path = ".." }]
+
+[module.sandbox-runtime]
+kind = "lib"
+platform = "python"
+enable-ffi = true
+src = [
+  "../examples/pr-review/sandbox/Runtime.jo",
+  "../examples/pr-review/sandbox/GithubClient.jo",
+]
+modules = ["sandbox-api", { id = "harpe", path = ".." }]
+
+[module.sandbox-guest]
+kind = "app"
+platform = "python"
+src = ["../examples/pr-review/sandbox/Task.jo"]
+modules = [
+  "sandbox-api",
+  { id = "caps", path = ".." },
+  { id = "sandbox-runtime", link = true },
+]
+
+links = [
+  { from = "jo.main", to = "sandbox.runtime.main" },
+  { from = "sandbox.api.runTask", to = "sandbox.guest.runTask" },
+]
