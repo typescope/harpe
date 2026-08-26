@@ -103,8 +103,7 @@ section Agent
     // finished turn is a value the caller can render without re-reading the journal.
     var produced: List[Message] = []
 
-    context.mark()
-    context.append(input)
+    context.beginTurn(input)
     transcript.start(input)
 
     // Compact at the turn boundary if the previous request crossed the strategy's
@@ -118,8 +117,7 @@ section Agent
     while true do
       if interact.cancelled then
         result = TurnResult.Interrupted
-        context.rollback()
-        context.append(input)
+        context.abortTurn()
         transcript.interrupted()
         break
 
@@ -133,15 +131,13 @@ section Agent
       match fetchReply(session, pending, offer, maxRetries, interact)
         case Stopped =>
           result = TurnResult.Interrupted
-          context.rollback()
-          context.append(input)
+          context.abortTurn()
           transcript.interrupted()
           break
 
         case GaveUp(detail) =>
           result = TurnResult.Failed(detail)
-          context.rollback()
-          context.append(input)
+          context.abortTurn()
           transcript.failed(detail)
           break
 
@@ -153,6 +149,7 @@ section Agent
 
           if reply.calls.isEmpty then
             result = TurnResult.Success
+            context.commitTurn()
             transcript.commit()
             break
 
@@ -182,8 +179,7 @@ section Agent
           end
 
           if cancelled || interact.cancelled then
-            context.rollback()
-            context.append(input)
+            context.abortTurn()
             result = TurnResult.Interrupted
             transcript.interrupted()
             break

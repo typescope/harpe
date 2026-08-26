@@ -45,10 +45,18 @@ class SummarizingContext(
   private var markedTranscript: List[Message] = initial
   private var markedSummary: String = ""
   private var markedInputTokens: Int = 0
+  private var turnInput: List[Message] = []
 
   // The provider's reported input-token count for the last request (0 until the
   // first reply). Drives the compaction trigger. Updated by `observe`.
   private var lastInputTokens: Int = 0
+
+  def beginTurn(input: UserInput): Unit =
+    markedTranscript = transcript
+    markedSummary = summary
+    markedInputTokens = lastInputTokens
+    turnInput = [input]
+    transcript = transcript + input
 
   def append(message: Message): Unit =
     transcript = transcript + message
@@ -64,10 +72,8 @@ class SummarizingContext(
 
     new Context.Result(new Rendered(system, transcript), changed)
 
-  def mark(): Unit =
-    markedTranscript = transcript
-    markedSummary = summary
-    markedInputTokens = lastInputTokens
+  def commitTurn(): Unit =
+    turnInput = []
 
   //[ Restores the summary and the token count too
     !
@@ -75,10 +81,11 @@ class SummarizingContext(
     ! resurrect turns already folded into the summary — or leave a stale high
     ! token count that re-triggers it.
   //]
-  def rollback(): Unit =
-    transcript = markedTranscript
+  def abortTurn(): Unit =
+    transcript = markedTranscript ++ turnInput
     summary = markedSummary
     lastInputTokens = markedInputTokens
+    turnInput = []
 
   //[ Fold the oldest whole turns into the rolling summary
     !

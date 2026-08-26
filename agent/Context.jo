@@ -3,15 +3,18 @@
   ! `Context` — the pluggable context-engineering surface. A per-session value
   ! that owns the transcript and composes what the model sees for each request:
   ! the engine (`Agent.ask`) appends transcript events to it and calls `compact`
-  ! at model-call boundaries. Implementing this interface is the whole
-  ! customization surface for context management — there is deliberately no
-  ! secondary rendering hook.
+  ! at model-call boundaries.
   !
-  ! Two strategies are provided, named by their transcript policy:
-  ! `WindowedContext` (the default) drops turns that fall out of its window.
-  ! `SummarizingContext` distills them into a rolling summary via the model.
-  ! Both render the base system prompt they were given as the stable `system`
-  ! and the transcript as `messages`, and nothing else.
+  ! Four strategies are provided, named by their retention policy:
+  !
+  ! - `FullContext` keeps every completed turn.
+  ! - `WindowedContext` keeps a bounded window of recent turns.
+  ! - `SummarizingContext` distills older turns into a rolling model-generated
+  !   summary.
+  ! - `TurnContext` keeps only the active turn.
+  !
+  ! Each renders its base system prompt as `system` and its working semantic
+  ! history as `messages`.
   !
   ! VOLATILE CONTENT IS NOT A FRAMEWORK CONCERN. There is no slot for working
   ! notes or retrieved documents, because there never needed to be one: a
@@ -26,11 +29,15 @@ import harpe.Interact
 import harpe.Model.Message
 import harpe.Model.Rendered
 import harpe.Model.Usage
+import harpe.Model.UserInput
 import harpe.logging.logger
 import harpe.context.FullContext
 
 //[ A context-management strategy: owns the transcript, composes each request. //]
 interface Context
+  //[ Start a logical turn and add its user input to the working context. //]
+  def beginTurn(input: UserInput): Unit
+
   //[ Record a transcript event: user text, an assistant reply, or tool results. //]
   def append(message: Message): Unit
 
@@ -38,7 +45,7 @@ interface Context
     !
     ! May be effectful: an implementation can summarize through `interact` and
     ! mutate its transcript. The result always carries the exact snapshot after
-    ! maintenance; `compacted` tells the engine whether it must replace the
+    ! maintenance. `compacted` tells the engine whether it must replace the
     ! provider session.
   //]
   def compact(interact: Interact): Context.Result receives logger
@@ -51,22 +58,22 @@ interface Context
   //]
   def observe(usage: Usage): Unit
 
-  //[ Mark the start of a user turn, so a cancelled/failed turn can roll back. //]
-  def mark(): Unit
+  //[ Finish a successful turn, retaining whatever this strategy keeps. //]
+  def commitTurn(): Unit
 
-  //[ Drop transcript events recorded since `mark`.   //]
-  def rollback(): Unit
+  //[ Finish an unsuccessful turn and discard its provisional assistant/tool tail. //]
+  def abortTurn(): Unit
 end
 
 section Context
   //[ The context snapshot prepared for a model-call boundary. //]
   class Result(rendered: Rendered, compacted: Bool)
 
-  //[ A context that carries nothing in and nothing out
+  //[ A context that carries nothing across turns
     !
-    ! The default for `runTurn`'s `context`. It holds the turn it is given — the
-    ! model still sees the user's input and each tool result — but starts empty
-    ! and is discarded when the turn ends, so nothing survives into the next call.
+    ! The default for `runTurn`'s `context`. It holds the active turn — the model
+    ! still sees the user's input and each tool result — and clears it when the
+    ! turn ends, so nothing survives into the next call.
     ! Because a default expression is evaluated per call, every defaulted turn
     ! gets its own, and two such turns never see each other's transcript.
     !

@@ -1,0 +1,34 @@
+//[ TurnContext.jo
+  !
+  ! A context whose working history lasts for exactly one logical turn. Past
+  ! conversation remains the `Transcript`'s concern and can be exposed to the
+  ! model selectively through application tools.
+//]
+
+namespace harpe.context
+
+import harpe.*
+import harpe.Model.*
+
+class TurnContext(baseSystem: String)
+  view Context
+
+  private var messages: List[Message] = []
+
+  def beginTurn(input: UserInput): Unit =
+    messages = [input]
+
+  def append(message: Message): Unit =
+    messages = messages + message
+
+  def compact(interact: Interact): Context.Result =
+    new Context.Result(new Rendered(baseSystem, messages), false)
+
+  def observe(usage: Usage): Unit = pass
+
+  def commitTurn(): Unit =
+    messages = []
+
+  def abortTurn(): Unit =
+    messages = []
+end

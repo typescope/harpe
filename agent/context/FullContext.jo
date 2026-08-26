@@ -22,6 +22,12 @@ class FullContext(baseSystem: String, initial: List[Message])
 
   private var transcript: List[Message] = initial
   private var marked: List[Message] = initial
+  private var turnInput: List[Message] = []
+
+  def beginTurn(input: UserInput): Unit =
+    marked = transcript
+    turnInput = [input]
+    transcript = transcript + input
 
   def append(message: Message): Unit =
     transcript = transcript + message
@@ -31,9 +37,10 @@ class FullContext(baseSystem: String, initial: List[Message])
 
   def observe(usage: Usage): Unit = pass
 
-  def mark(): Unit =
-    marked = transcript
+  def commitTurn(): Unit =
+    turnInput = []
 
-  def rollback(): Unit =
-    transcript = marked
+  def abortTurn(): Unit =
+    transcript = marked ++ turnInput
+    turnInput = []
 end

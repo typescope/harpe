@@ -59,7 +59,7 @@ driver's reading of what came of it — the files delivered, the message sent, t
 rejection shown.
 
 Neither is on the `Transcript` interface, and that is the point. `Agent.ask`
-never writes a bracket; only a driver does. Leaving it out keeps the interface
+never writes a bracket. Only a driver does. Leaving it out keeps the interface
 free of any payload type, so an application's transcript brackets its **own
 types**:
 
@@ -105,14 +105,14 @@ transcript.turn: Journal.payload("text" ~ text, "files" ~ names(attachments)), (
   Journal.payload("sent" ~ delivered(turn))
 ```
 
-`Journal.payload` builds the `Value`; without it the map needs an explicit
+`Journal.payload` builds the `Value`. Without it the map needs an explicit
 `Map[String, Value](...)`, since a bare map of strings infers `Map[String,
 String]`. A payload that is not a map — a bare marker string, a list — passes
 straight through.
 
 Where the two halves cannot share a call — one thread queues the request,
 another runs it — the driver writes `request` and `response` directly. Those are
-the same two records; `turn` is only the form that cannot be half-written.
+the same two records. `turn` is only the form that cannot be half-written.
 
 ### What to put in each
 
@@ -180,9 +180,11 @@ Both see every message of a turn, and they are deliberately not merged:
 
 A `Context` is not a view of the transcript. It composes the whole request: the
 base system prompt, and whatever slice of the conversation its strategy keeps.
-`WindowedContext` drops the oldest turns past a character budget;
+`WindowedContext` drops the oldest turns past a character budget.
 `SummarizingContext` distills them into a rolling summary carried in `system`
-instead; an application writes its own for anything else. The system prompt has
+instead. `TurnContext` keeps only the active turn. Tools can retrieve
+older transcript records selectively. An application writes its own for
+anything else. The system prompt has
 nothing to do with what was said, which is why one type cannot honestly be the
 other.
 

@@ -2,7 +2,7 @@
   !
   ! Unit tests for the context surface (`harpe.context.Context`): `WindowedContext`'s
   ! default composition (memory rendered as the transient tail, transcript windowed),
-  ! its `mark`/`rollback` turn bracketing, and `truncate`'s turn-boundary
+  ! its explicit turn lifecycle, and `truncate`'s turn-boundary
   ! windowing (pairing-safe, keeps the most recent turns).
 //]
 
@@ -13,6 +13,7 @@ import harpe.*
 import harpe.turns.TurnEvent
 import harpe.util.truncate
 import harpe.context.FullContext
+import harpe.context.TurnContext
 import harpe.context.WindowedContext
 import harpe.context.SummarizingContext
 import harpe.models.echo
@@ -96,12 +97,12 @@ def run(): Unit receives stdout, logger =
   fullctx.observe(new Usage(999, 0))
   check("full: transcript unchanged after observe", fullctx.compact(nix).rendered.messages.size == 4)
 
-  // mark/rollback
-  fullctx.mark()
-  fullctx.append(user("oops"))
-  check("full: message appended after mark is visible", fullctx.compact(nix).rendered.messages.size == 5)
-  fullctx.rollback()
-  check("full: rollback restores the marked transcript", fullctx.compact(nix).rendered.messages.size == 4)
+  // begin/abort retains the request but drops provisional model traffic.
+  fullctx.beginTurn(UserInput("oops", []))
+  check("full: turn input is visible after begin", fullctx.compact(nix).rendered.messages.size == 5)
+  fullctx.append(asst("provisional"))
+  fullctx.abortTurn()
+  check("full: abort retains only the turn input", fullctx.compact(nix).rendered.messages.size == 5)
 
   // initial messages are part of the transcript
   val init = [user("seed")]
@@ -119,14 +120,13 @@ def run(): Unit receives stdout, logger =
   check("render leaves system as the base prompt", plain.system == "BASE")
   check("render passes the transcript through", plain.messages.size == 2)
 
-  // --- mark/rollback: the window restores ---
-  ctx.mark()
-  ctx.append(user("oops"))
+  // --- begin/abort: the window drops provisional traffic, retaining the input ---
+  ctx.beginTurn(UserInput("oops", []))
   ctx.append(asst("half-done"))
   check("appended messages are in the window", ctx.compact(nix).rendered.messages.size == 4)
 
-  ctx.rollback()
-  check("rollback restores the pre-turn window", ctx.compact(nix).rendered.messages.size == 2)
+  ctx.abortTurn()
+  check("abort restores the window plus its user input", ctx.compact(nix).rendered.messages.size == 3)
 
   // --- truncate: small transcript is unchanged ---
   val a = [user("AAAA"), asst("aaaa")]   // 8 chars
@@ -232,7 +232,7 @@ def run(): Unit receives stdout, logger =
   check("summarizing: failed distillation produces no summary", !unshrunk.system.contains("Conversation summary"))
   check("summarizing: failed distillation emits no compaction", failing.compactions == 0)
 
-  // mark/rollback restores both the window and the summary.
+  // Aborting restores both the window and the summary while retaining input.
   val interact2 = new CompactInteract
   val rctx =
     val model = new RecordingDistiller(Some("DISTILLED"))
@@ -241,17 +241,29 @@ def run(): Unit receives stdout, logger =
   for m in turn8("AAAA", "aaaa") ++ turn8("BBBB", "bbbb") ++ turn8("CCCC", "cccc") do
     rctx.append(m)
 
-  rctx.mark()
-
-  for m in turn8("DDDD", "dddd") ++ turn8("EEEE", "eeee") do
-    rctx.append(m)
+  rctx.beginTurn(UserInput("DDDD", []))
+  rctx.append(asst("dddd"))
+  for m in turn8("EEEE", "eeee") do rctx.append(m)
 
   rctx.observe(new Usage(40, 0))
   val beforeRollback = rctx.compact(interact2)
-  check("summarizing: compaction succeeds before rollback", beforeRollback.compacted)
-  check("summarizing: compaction happened before rollback", beforeRollback.rendered.messages.size == 4)
+  check("summarizing: compaction succeeds before abort", beforeRollback.compacted)
+  check("summarizing: compaction happened before abort", beforeRollback.rendered.messages.size == 4)
 
-  rctx.rollback()
+  rctx.abortTurn()
   val restored = rctx.compact(interact2).rendered
-  check("summarizing: rollback restores the pre-turn window", restored.messages.size == 6)
-  check("summarizing: rollback restores the pre-turn summary", !restored.system.contains("Conversation summary"))
+  check("summarizing: abort restores history plus the turn input", restored.messages.size == 7)
+  check("summarizing: abort restores the pre-turn summary", !restored.system.contains("Conversation summary"))
+
+  // --- TurnContext: working history never crosses a turn boundary. ---
+  val turnctx = new TurnContext("BASE")
+  turnctx.beginTurn(UserInput("first", []))
+  turnctx.append(asst("answer"))
+  check("turn-local: active traffic is visible", turnctx.compact(nix).rendered.messages.size == 2)
+  turnctx.commitTurn()
+  turnctx.beginTurn(UserInput("second", []))
+  val secondTurn = turnctx.compact(nix).rendered
+  check("turn-local: committed history is cleared", secondTurn.messages.size == 1)
+  check("turn-local: only the new input remains", secondTurn.messages.get(0) is UserInput("second", _))
+  turnctx.abortTurn()
+  check("turn-local: aborted history is cleared", turnctx.compact(nix).rendered.messages.isEmpty)
