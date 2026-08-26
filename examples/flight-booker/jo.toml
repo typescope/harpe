@@ -13,5 +13,20 @@ links = [
   { from = "jo.main", to = "harpe.examples.flightbooker.main" },
 ]
 
+# Web UI: a minimal chat server for the flight-booker, with booking approval.
+[module.web]
+kind = "app"
+platform = "python"
+enable-ffi = true
+src = ["src/"]
+depth = 2
+
+packages = [{ name = "harpe", version = "0.7" }]
+
+links = [
+  { from = "jo.main", to = "harpe.examples.flightbooker.webMain" },
+]
+
 [commands]
 start = "jo build --spec sandbox/jo.toml guest && jo run"
+web = "jo build --spec sandbox/jo.toml guest && jo run web"

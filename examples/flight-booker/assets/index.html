@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sky · Flight Booker</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 15px;
+      background: #f5f5f7;
+      color: #1d1d1f;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ─────────────────────────────────── */
+    header {
+      background: #fff;
+      border-bottom: 1px solid #e5e5ea;
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    header .logo { font-size: 22px; }
+    header h1 { font-size: 17px; font-weight: 600; }
+    header .sub { font-size: 12px; color: #86868b; margin-left: auto; }
+
+    /* ── Messages ────────────────────────────────── */
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .bubble {
+      max-width: 75%;
+      padding: 10px 14px;
+      border-radius: 18px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .bubble.user {
+      align-self: flex-end;
+      background: #0071e3;
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+    .bubble.assistant {
+      align-self: flex-start;
+      background: #fff;
+      border: 1px solid #e5e5ea;
+      border-bottom-left-radius: 4px;
+    }
+
+    /* ── Status bar ──────────────────────────────── */
+    #status {
+      font-size: 13px;
+      color: #86868b;
+      padding: 0 20px 6px;
+      min-height: 22px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    #status .dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: #86868b;
+      animation: pulse 1s ease-in-out infinite alternate;
+    }
+    @keyframes pulse { to { opacity: 0.2; } }
+    #status:empty::before { content: ""; }
+
+    /* ── Input bar ───────────────────────────────── */
+    #input-bar {
+      background: #fff;
+      border-top: 1px solid #e5e5ea;
+      padding: 12px 16px;
+      display: flex;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    #input-bar textarea {
+      flex: 1;
+      border: 1px solid #d2d2d7;
+      border-radius: 10px;
+      padding: 8px 12px;
+      font: inherit;
+      font-size: 15px;
+      resize: none;
+      min-height: 40px;
+      max-height: 160px;
+      outline: none;
+      transition: border-color .15s;
+    }
+    #input-bar textarea:focus { border-color: #0071e3; }
+    #input-bar button {
+      padding: 0 18px;
+      background: #0071e3;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font: inherit;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background .15s;
+      align-self: flex-end;
+      height: 40px;
+    }
+    #input-bar button:disabled { background: #c7c7cc; cursor: default; }
+    #input-bar button:not(:disabled):hover { background: #0077ed; }
+
+    /* ── Approval modal ──────────────────────────── */
+    #modal-backdrop {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.4);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    #modal-backdrop.open { display: flex; }
+
+    #modal {
+      background: #fff;
+      border-radius: 18px;
+      padding: 28px 28px 22px;
+      max-width: 420px;
+      width: calc(100% - 40px);
+      box-shadow: 0 20px 60px rgba(0,0,0,.25);
+    }
+    #modal h2 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+    #modal .detail {
+      font-size: 14px;
+      color: #3a3a3c;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      margin-bottom: 22px;
+    }
+    #modal .actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+    #modal .actions button {
+      padding: 9px 22px;
+      border-radius: 10px;
+      font: inherit;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      transition: opacity .15s;
+    }
+    #modal .actions button:hover { opacity: .85; }
+    #btn-reject { background: #f2f2f7; color: #1d1d1f; }
+    #btn-approve { background: #34c759; color: #fff; }
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="logo">✈</span>
+  <h1>Sky</h1>
+  <span class="sub">Flight Booker</span>
+</header>
+
+<div id="messages">
+  <div class="bubble assistant">Hi! I'm Sky, your flight booking assistant. Where would you like to fly?</div>
+</div>
+
+<div id="status"></div>
+
+<div id="input-bar">
+  <textarea id="input" placeholder="Message Sky…" rows="1"></textarea>
+  <button id="send-btn">Send</button>
+</div>
+
+<div id="modal-backdrop">
+  <div id="modal">
+    <h2 id="modal-title"></h2>
+    <div id="modal-detail" class="detail"></div>
+    <div class="actions">
+      <button id="btn-reject">Reject</button>
+      <button id="btn-approve">Approve</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const messagesEl  = document.getElementById('messages');
+  const inputEl     = document.getElementById('input');
+  const sendBtn     = document.getElementById('send-btn');
+  const statusEl    = document.getElementById('status');
+  const backdrop    = document.getElementById('modal-backdrop');
+  const modalTitle  = document.getElementById('modal-title');
+  const modalDetail = document.getElementById('modal-detail');
+  const btnApprove  = document.getElementById('btn-approve');
+  const btnReject   = document.getElementById('btn-reject');
+
+  let sessionId = localStorage.getItem('skySessionId') || null;
+  let pendingApprovalId = null;
+  let busy = false;
+
+  // ── Textarea auto-resize ──────────────────────────
+  inputEl.addEventListener('input', () => {
+    inputEl.style.height = 'auto';
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 160) + 'px';
+  });
+  inputEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+  sendBtn.addEventListener('click', send);
+
+  // ── Send a message ────────────────────────────────
+  async function send() {
+    const text = inputEl.value.trim();
+    if (!text || busy) return;
+
+    setBusy(true);
+    appendBubble('user', text);
+    inputEl.value = '';
+    inputEl.style.height = 'auto';
+
+    let assistantBubble = null;
+
+    try {
+      const body = { text };
+      if (sessionId) body.session = sessionId;
+
+      const res = await fetch('/api/message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (line.trim()) handleEvent(JSON.parse(line));
+        }
+      }
+    } catch (err) {
+      setStatus('');
+      appendBubble('assistant', 'Connection error. Please try again.');
+    }
+
+    setStatus('');
+    setBusy(false);
+
+    function handleEvent(ev) {
+      switch (ev.type) {
+        case 'session':
+          // Always update: first message mints the id; subsequent messages
+          // confirm it (or learn a replacement id after a server restart).
+          if (sessionId !== ev.id) {
+            sessionId = ev.id;
+            localStorage.setItem('skySessionId', sessionId);
+          }
+          break;
+
+        case 'status':
+          setStatus(ev.label);
+          break;
+
+        case 'tool':
+          setStatus(ev.summary || ev.name);
+          break;
+
+        case 'assistant-message':
+          if (!assistantBubble) {
+            assistantBubble = appendBubble('assistant', ev.text);
+          } else {
+            assistantBubble.textContent += '\n' + ev.text;
+          }
+          setStatus('');
+          break;
+
+        case 'approval':
+          pendingApprovalId = ev.id;
+          showApproval(ev.title, ev.detail);
+          break;
+
+        case 'approval-ended':
+          pendingApprovalId = null;
+          hideApproval();
+          break;
+
+        case 'done':
+          if (ev.result === 'interrupted') setStatus('Stopped.');
+          if (ev.result === 'failed') {
+            appendBubble('assistant', 'Sorry, something went wrong. Please try again.');
+          }
+          break;
+
+        case 'error':
+          appendBubble('assistant', 'Error: ' + (ev.detail || 'unknown'));
+          break;
+      }
+    }
+  }
+
+  // ── Approval modal ────────────────────────────────
+  function showApproval(title, detail) {
+    modalTitle.textContent = title;
+    modalDetail.textContent = detail;
+    backdrop.classList.add('open');
+  }
+  function hideApproval() {
+    backdrop.classList.remove('open');
+    modalTitle.textContent = '';
+    modalDetail.textContent = '';
+  }
+
+  async function decide(decision) {
+    if (!pendingApprovalId || !sessionId) return;
+    await fetch('/api/approval', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session: sessionId, id: pendingApprovalId, decision }),
+    });
+  }
+
+  btnApprove.addEventListener('click', () => decide('approved'));
+  btnReject.addEventListener('click',  () => decide('rejected'));
+
+  // ── Helpers ───────────────────────────────────────
+  function appendBubble(role, text) {
+    const el = document.createElement('div');
+    el.className = 'bubble ' + role;
+    el.textContent = text;
+    messagesEl.appendChild(el);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return el;
+  }
+
+  function setStatus(label) {
+    if (!label) { statusEl.innerHTML = ''; return; }
+    statusEl.innerHTML = '<span class="dot"></span>' + label;
+  }
+
+  function setBusy(on) {
+    busy = on;
+    sendBtn.disabled = on;
+    inputEl.disabled = on;
+  }
+</script>
+</body>
+</html>
