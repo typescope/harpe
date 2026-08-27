@@ -1,13 +1,9 @@
-//[ Main.jo
+//[ WebMain.jo
   !
-  ! The flight-booker Telegram agent loop and its entry point. `jo run` starts
-  ! an outbound long-poll against the Bot API: each incoming text message is one
-  ! turn of the shared engine, which can search for flights, collect passenger
-  ! details, and place bookings via the Duffel API (test mode).
+  ! The flight-booker web entry point. `jo run web` starts a local HTTP server.
   !
-  ! Architecture mirrors the carmen telegram driver: one worker thread per chat,
-  ! a single poll thread dispatching to per-chat FIFO queues. File attachments
-  ! from users are not handled — this agent is text-only.
+  ! Env: DUFFEL_API_KEY (required), ANTHROPIC_API_KEY (or OPENAI_API_KEY),
+  !       HOST (default 127.0.0.1), PORT (default 8765).
 //]
 
 namespace harpe.examples.flightbooker
@@ -16,51 +12,40 @@ import harpe.ffi.os
 import harpe.util.Process
 import harpe.util.File
 import harpe.ffi.sys
-import harpe.ffi.signal
 
 import jo.IO.stdout
 import harpe.Model
+import harpe.Http
+import harpe.Toolset
+import harpe.Tool
 
 param appHome: String
-
 
 //[ The entry point //]
 def main(): Unit receives stdout =
   Process.loadDotenv(".env")
-  with appHome = os.path.abspath(".") in serve()
+  with appHome = os.path.abspath(".") in webServe()
 
-private def serve(): Unit receives stdout, appHome =
-  val token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-  if token == "" then
-    println "Error: TELEGRAM_BOT_TOKEN is not set (get one from @BotFather, put it in .env)."
-    sys.exit(1)
-
+private def webServe(): Unit receives stdout, appHome =
   val duffelKey = os.getenv("DUFFEL_API_KEY", "")
   if duffelKey == "" then
     println "Error: DUFFEL_API_KEY is not set (get a test key from duffel.com, put it in .env)."
     sys.exit(1)
 
-  val brain = Model.default()
-  val rawAllowed = os.getenv("TELEGRAM_ALLOWED_SENDERS", "")
-  var allowed: List[String] = []
-
-  if rawAllowed.trim != "" then
-    for partDyn in py.dynamic(rawAllowed).split(",").cast[py.List] do
-      val part = partDyn.asString.trim
-      if part != "" then allowed = allowed + part
-
-  val client = new TelegramClient(token)
-
-  val me = client.getMe()
-  if !me.get("ok", false).asBool then
-    println "Error: Telegram getMe failed — check TELEGRAM_BOT_TOKEN."
-    println "  \{client.detail(me)}"
+  if !File.exists(os.path.join(appHome, "assets/index.html")) then
+    println "Error: assets/index.html not found in \{appHome}/assets/"
     sys.exit(1)
 
-  val result = me.get("result").cast[py.Dict]
-  val username = result.get("username").asString
-  val botId = result.get("id").asInt
-  val bot = new TelegramBot(brain, client, allowed, username, botId)
+  val brain = Model.default()
+  val sandboxEnv = Map("DUFFEL_API_KEY" ~ duffelKey)
+  val bonus = getTodayToolset()
+
+  val server = new FlightServer(brain, appHome, sandboxEnv, bonus)
+
+  val host = os.getenv("HOST", "127.0.0.1")
+  val port = Int.parse(os.getenv("PORT", "8765")) rescue None => 8765
+
+  val httpd = Http.server: host, port, () => server.route()
 
   println """
 
@@ -69,16 +54,25 @@ private def serve(): Unit receives stdout, appHome =
       ───────────●──────
           S K Y
 
-      Harpe · Flight Booker
+      Harpe · Flight Booker · Web
 
   """
 
-  println "  Live as @\{username}"
+  println "  Live at http://\{host}:\{port}"
   println "  Ctrl-C to stop"
-
-  if allowed.isEmpty then
-    println "  ⚠ TELEGRAM_ALLOWED_SENDERS is empty — all messages are rejected until you add sender ids."
 
   Process.shutdownOnSigint("\n  ✈ Sky stopped.")
 
-  bot.run()
+  httpd.serve_forever()
+
+def getTodayToolset(): Toolset =
+  val spec = Tool:
+    "getToday"
+    "Get today's date and day of the week. Call this whenever the user mentions a relative date such as \"this Friday\", \"next Monday\", or \"tomorrow\", then compute the target date from the result."
+    []
+  Toolset.of: spec, (input, channel) =>
+    val dt = py.module("datetime")
+    val today = dt.date.today()
+    val iso = today.isoformat().asString
+    val weekday = today.strftime("%A").asString
+    new Tool.RunOutcome("Today is " + weekday + ", " + iso + ".", "getToday · " + iso, attachments = [])
