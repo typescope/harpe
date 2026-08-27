@@ -144,10 +144,21 @@ def run(): Unit receives stdout =
 
   // An unbuilt sandbox reports clearly instead of building or running anything.
   val unbuilt = tempfile.mkdtemp()
-  check("not-built", exec(RunCodeTool(unbuilt, 5.0), guest("  println 1\n")).summary, "sandbox not built")
+  check:
+    "not-built"
+    exec(RunCodeTool(unbuilt, approvalDeadline = 5), guest("  println 1\n")).summary
+    "sandbox not built"
 
-  val fast  = RunCodeTool(sandboxDir, 5.0, 120.0, 5.0)   // 5s run backstop
-  val quick = RunCodeTool(sandboxDir, 5.0, 120.0, 2.0)   // 2s run backstop
+  val fast = RunCodeTool:
+    sandboxDir
+    approvalDeadline = 5
+    buildTimeout = 120
+    runTimeout = 5
+  val quick = RunCodeTool:
+    sandboxDir
+    approvalDeadline = 5
+    buildTimeout = 120
+    runTimeout = 2
 
   // A well-formed program runs and produces output.
   check("normal", tag(exec(fast, guest("  println 42\n"))), "ran")
@@ -180,7 +191,11 @@ def run(): Unit receives stdout =
 
   // An application-supplied approval deadline stops a run even if its trusted
   // interaction handler never returns.
-  val approvalWatchdog = RunCodeTool(sandboxDir, 0.2, 120.0, 5.0)
+  val approvalWatchdog = RunCodeTool:
+    sandboxDir
+    approvalDeadline = 1
+    buildTimeout = 120
+    runTimeout = 5
   val stuckApproval = execWith(
     approvalWatchdog,
     guest("  println 7\n"),
@@ -197,7 +212,13 @@ def run(): Unit receives stdout =
 
   // Concurrent runs are isolated: 4 parallel programs, 2 building at a time,
   // each must get back its own output (no shared Task.jo / .build clobbering).
-  concurrentCheck(RunCodeTool(sandboxDir, 5.0, 120.0, 5.0, 2), 4)
+  val concurrent = RunCodeTool:
+    sandboxDir
+    approvalDeadline = 5
+    buildTimeout = 120
+    runTimeout = 5
+    maxConcurrent = 2
+  concurrentCheck(concurrent, 4)
 
   // A program that does not type-check is caught at the compile checkpoint.
   val badCompile = exec(fast, guest("  println undefinedThing\n"))

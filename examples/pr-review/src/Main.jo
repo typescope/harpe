@@ -36,7 +36,7 @@ def main(): Unit receives args, stdout =
 
 private def review(pr: String): Unit receives stdout, appHome, logger =
   val basePrompt = File.read(os.path.join(appHome, "AGENT.md"))
-  val runCode = RunCodeTool(os.path.join(appHome, "sandbox"), 610.0)
+  val runCode = RunCodeTool(os.path.join(appHome, "sandbox"), approvalDeadline = 610)
   val skillsDir = os.path.join(appHome, "skills")
 
   val context = new FullContext(basePrompt, [])

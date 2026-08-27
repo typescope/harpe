@@ -177,7 +177,8 @@ private class TelegramBot(
 
   // The tools every chat shares. `runTool` holds the build semaphore, so one
   // instance bounds concurrent sandbox runs across every chat.
-  private val runTool: RunCodeTool = RunCodeTool(os.path.join(appHome, "sandbox"), 610.0)
+  private val runTool: RunCodeTool =
+    RunCodeTool(os.path.join(appHome, "sandbox"), approvalDeadline = 610)
   private val sendFile: SendFileTool = new SendFileTool(client)
 
   private val approvalLock = threading.Lock()

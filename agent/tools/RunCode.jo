@@ -198,9 +198,9 @@ private def replayAudit(path: String): Unit receives logger =
 //]
 class RunCodeTool(
     sandboxDir: String,
-    approvalDeadline: Float,
-    buildTimeout: Float = 120.0,
-    runTimeout: Float = 30.0,
+    approvalDeadline: Int,
+    buildTimeout: Int = 120,
+    runTimeout: Int = 30,
     maxConcurrent: Int = 4,
     maxResultChars: Int = 4000)
   view Tool
@@ -296,7 +296,7 @@ class RunCodeTool(
 
     // 1. Compile — the security checkpoint — timed, bounded, and error-captured.
     val t0 = Clock.now()
-    val build = Process.runCapped(args, buildTimeout)
+    val build = Process.runCapped(args, buildTimeout.toFloat)
     val compileSeconds = builtins.round(Clock.now() - t0, 2)
 
     if build.timedOut then
@@ -377,9 +377,9 @@ class RunCodeTool(
     val attemptedRun = py.try:
       Process.runCappedWithPauses:
         runCmd
-        runTimeout
+        runTimeout.toFloat
         approvalActive
-        approvalDeadline
+        approvalDeadline.toFloat
         env = runEnv
         cwd = runDir
     broker.stop()
