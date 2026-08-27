@@ -1,48 +1,38 @@
 +++
 title = "Tools"
 +++
-A tool is the agent's way to *act*. The model, mid-turn, chooses to call a tool by
-name with arguments. Your handler runs host-side and returns text the model reads
-on the next step. Every agent ships with `runCode` (write a Jo program, compile it
-against the sandbox, run it) — you extend the toolset by writing your own tools and
-adding them where the driver constructs its `Agent`.
+A tool is a function the model can choose to call during a turn. Harpe runs the
+tool in your application and returns its result to the model. The model can use
+that result to answer the user or decide what to do next.
 
-## Tools and capabilities
+Agents do not receive tools automatically. Your application builds a `Toolset`
+containing only the tools that agent should use. Harpe provides optional tools
+for code mode, media, and skills. You can also add your own.
 
-Tools and capabilities sit on opposite sides of the generated-program boundary:
+## Adding tools to an agent
 
-![The chat model calls runCode, a model-facing tool. runCode compiles a generated Jo program inside the guest boundary, where it can use only the typed capabilities granted by the application.](/img/tools-capabilities.svg)
+Each provided tool exposes a `toolset` that you can combine with others:
 
-A tool is offered directly to the chat model. Its handler runs host-side and
-returns a result to the model. `runCode` is the tool that compiles and executes a
-generated Jo program.
+```jo
+val runCode = RunCodeTool(sandboxDir, approvalDeadline = 610)
 
-A [capability](/capabilities/overview/) is offered to that program through
-`SandboxAPI.jo`. It is not a model tool and does not appear in the provider's
-tool schema. The compiler checks its use before the program runs.
+val tools =
+    ++ runCode.toolset()
+    ++ SkillTools.toolset(skillsDir)
+
+val turn = Agent.ask:
+  message
+  brain = brain
+  tools = tools
+```
+
+The model sees the name, description, and parameters of every tool in this set.
+When it calls one, the matching handler runs.
 
 ## What a tool is
 
-A tool is two things, and Harpe keeps them apart because they live in different
-time.
-
-A **spec** is timeless. *`weather` takes a city and returns its weather* is true
-on the first turn and the thousandth, in every session, for every user. It does
-not depend on who is asking, what was said before, or where this user's files
-are. It is also what each provider re-renders into wire format on every single
-request.
-
-An **executor** is contextual. It runs *now*: for this turn, in this session,
-against this user's data directory, through this interaction channel, with this
-request's credentials. Almost nothing about it is stable.
-
-Bundle the two and one of them has to give. Either the timeless half is rebuilt
-whenever the context changes — a fresh toolset per session, per turn — or the
-contextual values must reach the object some other way, because an object built
-at startup cannot know where this turn's files live.
-
-Harpe keeps the two halves distinct without letting either travel alone. The
-spec is what the model is offered:
+A tool has a **spec** for the model and a **handler** that runs in your
+application. The spec is what the model sees:
 
 ```jo
 interface Tool
@@ -58,16 +48,15 @@ end
 - **`params`** — the typed inputs it accepts (below). Read every time a request is
   rendered, so a tool may derive its schema from live state.
 
-The **handler** is the executor — what actually runs:
+The handler is what runs when the model calls the tool:
 
 ```jo
-type Handler = (ToolInput, Interact) => RunOutcome receives logger
+type Handler = (ToolInput, Interact) => ToolOutcome receives logger
 ```
 
-A **`Toolset`** wires each spec to its handler, and that is what `Agent.ask` takes.
-Because you build it, a handler closes over whatever the turn needs — a session's
-data directory, an API token, your own typed context — with nothing passed
-through the framework to get there.
+A **`Toolset`** pairs each spec with its handler. Because your application builds
+it, the handler can capture what it needs, such as an API token, session data
+directory, or application service.
 
 Pairing them at the point of wiring is what makes the two halves safe to
 separate. A spec with no handler would be a tool the model can call and nobody
@@ -91,203 +80,34 @@ agent's final answer.
 The framework provides the tools, and your driver wires them:
 
 - **`RunCodeTool(sandboxDir, approvalDeadline)`** — `runCode`, which compiles and
-  runs a Jo program in the sandbox. This is the agent's main way to act.
+  runs a Jo program in the sandbox.
 - **`UploadMediaTool`** — `uploadMedia`, which shows an image or PDF from the
   data directory directly to the chat model.
 - **`SkillTools`** — `skillsList` / `skillsRead` / `skillsSearch`, read-only
   access to the agent's `skills/`.
 
-Each offers a `toolset(...)` that wires its specs to its handlers, and one typed
-method per verb if you would rather wire them yourself. Only `RunCodeTool` is a class: it is the one tool that
-owns something with a lifetime — the semaphore bounding concurrent sandbox runs
-— while the others own nothing, so they are sections and their per-session
-values arrive as arguments.
+Each offers a `toolset(...)` that wires its specs to its handlers.
 
 There is deliberately no default toolset: a driver names what its agent can do,
 so the whole surface is readable in one place.
 
-## Writing a tool
+## Tools and capabilities
 
-Declare the spec, then route its name to code that returns a `RunOutcome`:
+Tools and capabilities sit on opposite sides of the generated-program boundary:
 
-```jo
-import harpe.Tool
-import harpe.Tool.*
+![The chat model calls runCode, a model-facing tool. runCode compiles a generated Jo program inside the guest boundary, where it can use only the typed capabilities granted by the application.](/img/tools-capabilities.svg)
 
-val weather: Tool =
-  Tool:
-    name = "weather"
-    description = "Look up the current weather in a city"
-    params = [strParam("city", "the city to look up")]
+A tool is offered directly to the chat model. Its handler runs in the
+application and returns a result to the model. `runCode` is a tool that compiles
+and executes a generated Jo program.
 
-// In the driver's handler map. `logger` is in scope inside a route.
-weather.name ~ (i => lookUp(i["city"]))
+A [capability](/capabilities/overview/) is offered to that generated program. It
+is not a model tool and does not appear in the provider's tool schema. The
+compiler checks its use before the program runs. See
+[Code and Sandboxing](/concepts/sandbox/) for the complete model.
 
-// The route stays one line; the work lives in a function.
-// Once a tool grows past that, give it a class instead — see below.
-private def lookUp(city: String): RunOutcome =
-  new RunOutcome("Sunny in \{city}, 22°C", "weather · \{city}", [])
-```
+## Create your own tool
 
-## Parameters
-
-Each parameter has a name, a type, and a description the model reads. Four
-constructors cover the schema types, all producing a **required** parameter:
-
-```jo
-strParam(name, description)    // string
-intParam(name, description)    // integer
-boolParam(name, description)   // boolean
-numParam(name, description)    // number (float)
-```
-
-Read them from the call's `input` with typed accessors — a missing key yields a
-zero value, or use the `…Or` variant for an explicit fallback:
-
-```jo
-input.string("city")           // "" if absent
-input.int("count")             // 0 if absent
-input.bool("verbose")          // false if absent
-input.num("threshold")         // 0.0 if absent
-input.intOr("count", 10)       // 10 if absent
-input["city"]                  // the indexing form of `string`
-```
-
-## Returning a result
-
-```jo
-class RunOutcome(result, summary, attachments, success = true)
-```
-
-- **`result`** is the text fed back to the model — what it sees as the tool's
-  output.
-- **`summary`** is a one-line status for the console and logs (e.g. `"weather · Paris"`).
-- **`attachments`** is a list of files to show directly to the model. Use `[]`
-  for an ordinary text result.
-- **`success`** is whether the call did what it was asked to. It defaults to
-  `true`, so an ordinary result says nothing about it.
-
-**`success` is for code, `result` is for the model.** A handler that refuses a
-call — a file name that resolves to nothing, an argument out of range — explains
-itself in `result` and sets `success = false`, and the two must agree. The model
-reads the prose and can correct itself. Nothing is sent to the provider for the
-flag: it rides into the `ToolResult` and the transcript, so a driver reading its
-own output back off the finished turn does not mistake a refusal for work done
-(see [Structured output](/concepts/structured-output/)), and a turn reloaded
-from the journal knows which of its calls were refused, exactly as the live one
-did.
-
-```jo
-new RunOutcome:
-  "No such file: '\{fileName}'. Write it to your data directory first, then send it."
-  "sendFile · no such file"
-  attachments = []
-  success = false
-```
-
-**Bound large output.** Context is finite, so don't feed the model a megabyte.
-`elide(text, maxChars)` trims to a head-plus-tail excerpt with the middle marked.
-The rule is **reference, don't inline**: return a bounded excerpt to the model and
-log the full artifact, so nothing is lost (this is what `runCode` does — the elided
-result to the model and the whole output to the session's structured log. See
-[logging.md](/concepts/logging/)).
-
-```jo
-new RunOutcome(elide(output, 4000), "ran · 3.1s", [])
-```
-
-## Tools that own their logic
-
-Most of an agent's logic ends up inside its tools, and a tool grows: helper
-functions, a resource it holds open, state it keeps between calls. Implement
-`Tool` directly and all of that lives in one class — the spec it offers, the
-config it holds, and the typed methods its routes call.
-
-```jo
-class WeatherTool(apiKey: String)
-  view Tool
-
-  private var lookups: Int = 0
-
-  def name: String = "weather"
-  def description: String = "Look up the current weather in a city"
-  def params: List[ToolParam] = [strParam("city", "the city to look up")]
-
-  //[ What the route calls. Per-turn values arrive as arguments. //]
-  def lookUp(city: String, units: String): RunOutcome =
-    lookups = lookups + 1
-    report(city, units)
-
-  private def report(city: String, units: String): RunOutcome =
-    new RunOutcome("Sunny in \{city}, 22°\{units}", "weather · \{city}", [])
-end
-```
-
-Its own `toolset` wires the spec — the object itself — to the code, and says how
-the call's arguments reach its method:
-
-```jo
-  def toolset(units: String): Toolset =
-    Toolset.of: this, (i: ToolInput) => lookUp(i["city"], units)
-```
-
-Three things to know:
-
-- **A class only if the tool owns something.** An API key, a connection, a
-  semaphore — something with a lifetime. Everything contextual is an argument
-  its wiring supplies, which is what lets one object serve every session at once:
-  a single `runCode` bounds sandbox concurrency across the whole process, while
-  each session's toolset hands it that session's settings. A tool that owns
-  nothing is a `section` instead, with its spec as a constant and every value it
-  needs passed in — that is what `SkillTools` is.
-- A class parameter does not implement an interface member, so name the
-  parameters apart from `name` / `description` / `params` and let the members
-  read them.
-- Because `description` and `params` are methods, a tool written this way can
-  compute its schema from live state rather than freezing it at construction.
-
-## Errors are safe
-
-You don't have to catch everything. The engine runs every tool through a backstop
-(`runSafely`), so if your handler throws — or `abort`s — the exception becomes an
-*error* `RunOutcome` (`success = false`) fed back to the model. The turn continues
-and the driver never crashes. Return a clear message for expected failures. Let
-unexpected ones raise.
-
-## Adding your tool
-
-Wiring happens in one place. Every tool contributes its own, so the driver never
-repeats a tool's name or a parameter name — that knowledge stays with the spec
-that declares it:
-
-```jo
-val tools =
-    ++ SkillTools.toolset(skillsDir)
-    ++ runCode.toolset()
-    ++ weather.toolset(preferredUnits)
-
-Agent.ask(text, brain = brain, tools = tools, context = context)
-```
-
-`.add: spec, handler` is there for a one-off, but a tool worth naming is worth
-giving a `toolset(...)` of its own.
-
-That is the whole wiring: the model now sees `weather` in its toolset, and the
-same entry says exactly what happens when it calls it. The toolset is also where per-turn and
-per-session values enter — the CLI passes its data directory to `uploadMedia`
-this way, and the `pr-review` example passes a PR URL and a GitHub token into
-`runCode`'s guest environment.
-
-## Logging from a tool
-
-Inside a handler `logger` is in scope, so a tool can record what it did under its
-own category:
-
-```jo
-private def lookUp(city: String): RunOutcome receives logger =
-  logger.info("myagent.tools.weather", "looked up weather", "city" ~ city)
-  new RunOutcome("Sunny in \{city}, 22°C", "weather · \{city}", [])
-```
-
-The event is stamped with the session automatically — ready for auditing or usage
-reports. See [logging.md](/concepts/logging/).
+The [Create a Tool tutorial](/tutorial/create-a-tool/) walks through declaring
+parameters, returning results, handling errors, adding the tool to an agent, and
+organizing a tool that owns state or resources.

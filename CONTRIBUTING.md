@@ -80,7 +80,7 @@ Match the surrounding code. Four conventions are worth stating:
   ```jo
   interact.emit: TurnEvent.ToolCallStarted(toolName)
 
-  new RunOutcome:
+  new ToolOutcome:
     "The tool '\{name}' failed: \{e.message}"
     "error · \{name}"
     attachments = []
