@@ -111,7 +111,8 @@ private def runChat(): Unit receives stdout, appHome =
 
     match res.result
     case TurnResult.Success =>
-      console.agentResponse(res.finalText)
+      if console.replyWasStreamed then println ""
+      else console.agentResponse(res.finalText)
 
     case TurnResult.Interrupted =>
       println("  " + Style.warning("⎋ interrupted"))

@@ -83,7 +83,7 @@ user's input and every tool result — and is discarded at the end. Two defaulte
 turns never see each other's transcript. Remembering across turns is what a
 driver's own `context` is for, and keeping one alive is the whole of it.
 
-`logger` is a required context parameter; a caller that intentionally records
+`logger` is a required context parameter. A caller that intentionally records
 nothing binds `Logging.discard`. `interact` is an ordinary argument defaulting
 to `Interact.unattended`. Drivers with an active user pass their live channel as
 `interact = channel`.
@@ -97,17 +97,6 @@ to `Interact.unattended`. Drivers with an active user pass their live channel as
 None of these owns user identity, session storage, locking, or UI state. Those
 stay in the driver.
 
-## Turn execution
-
-The core runs an iterative model-tool loop:
-
-![A turn gathers context, asks the model for either a program or a final result, compiles and runs each program, and returns its output to the model until the turn is complete.](/img/how-a-turn-works.svg)
-
-Context provides the information relevant to the turn. The model either answers
-or calls tools. Tool results return to the model, and the loop continues until
-the model produces an answer or the turn stops. The driver receives the outcome
-and decides how to present and persist it.
-
 ## Drivers
 
 A driver connects the core to its application environment. It accepts input,
@@ -117,6 +106,9 @@ owns lifecycle concerns such as concurrency, persistence, and logging.
 “Driver” describes an architectural role, not a required class or interface.
 The CLI, Web, and Telegram applications implement that role differently while
 using the same core components.
+
+The [Turn](/concepts/turn/) concept describes the model-tool loop and the events
+through which a driver observes work in progress.
 
 ## Custom execution
 

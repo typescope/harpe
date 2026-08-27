@@ -7,6 +7,8 @@
 //]
 
 namespace harpe.models
+import harpe.Interact
+import harpe.turns.TurnEvent
 import harpe.ffi.builtins
 
 
@@ -40,7 +42,7 @@ section Anthropic
 end
 
 //[ One tool's Anthropic spec, derived from the Jo `Tool` model. //]
-private def toolSpec(t: Tool): py.Dict =
+private def anthropicToolSpec(t: Tool): py.Dict =
   val properties = py.dict()
   val required = py.list()
   for p in t.params do
@@ -101,7 +103,7 @@ private def anthropicMediaBlocks(attachments: List[Attachment]): py.List =
   ! once a later turn rebuilds this same history from scratch. `dataDir` is the
   ! session's data directory (`""` if none), resolved once by the caller.
 //]
-private def toMessages(history: List[Message], cache: Anthropic.Cache): py.List =
+private def anthropicToMessages(history: List[Message], cache: Anthropic.Cache): py.List =
   val msgs = py.list()
   val lastIdx = history.size - 1
   var i = 0
@@ -161,7 +163,7 @@ private def toMessages(history: List[Message], cache: Anthropic.Cache): py.List 
   ! its text plus a visible marker and DROPS any tool calls rather than running
   ! a tool on partial arguments.
 //]
-private def parseReply(response: py.Dynamic): Assistant =
+private def anthropicParseReply(response: py.Dynamic): Assistant =
   val content: py.List = response.content.cast[py.List]
   var text = ""
   var calls: List[ToolCall] = []
@@ -194,7 +196,7 @@ end
   ! (thinking blocks with their signatures, plus tool_use blocks) and re-sends it
   ! verbatim on every request. That is mandatory once `thinking` is enabled: a
   ! tool_result whose preceding assistant turn is missing its thinking block is
-  ! rejected. `parseReply` still extracts only text + tool calls for the engine —
+  ! rejected. `anthropicParseReply` still extracts only text + tool calls for the engine —
   ! the reasoning rides in the wire history, never in the semantic `Message`.
 //]
 private class AnthropicSession(
@@ -207,13 +209,13 @@ private class AnthropicSession(
   private var messages: py.List = py.list()
   private var initialized: Bool = false
 
-  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
+  def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult receives logger =
     if !initialized then
-      messages = toMessages(base.messages, cache)
+      messages = anthropicToMessages(base.messages, cache)
       initialized = true
 
     val toolSpecs = py.list()
-    for t in tools do toolSpecs.append(toolSpec(t))
+    for t in tools do toolSpecs.append(anthropicToolSpec(t))
 
     // The committed history this round would become on success: prior messages
     // plus the new tool results (as a user turn). Built without mutating `messages`.
@@ -221,7 +223,7 @@ private class AnthropicSession(
     for m in messages do committed.append(m)
 
     if !results.isEmpty then
-      committed.append(toolResultMessage(results))
+      committed.append(anthropicToolResultMessage(results))
 
     // request-only, never committed.
     val outgoing = py.list()
@@ -237,6 +239,7 @@ private class AnthropicSession(
       toolSpecs
       maxOutputTokens
       extraBody
+      interact
 
     match attempt
     case Ok(response) =>
@@ -255,7 +258,7 @@ private class AnthropicSession(
       val inTok = usageInt(u, "input_tokens") + cacheRead + cacheWrite
       val outTok = u.output_tokens.asInt
       logUsage("anthropic", model, inTok, outTok, cacheRead, cacheWrite)
-      Reply(parseReply(response), new Usage(inTok, outTok))
+      Reply(anthropicParseReply(response), new Usage(inTok, outTok))
 
     case Err(err) => classifyError(err)
 end
@@ -263,12 +266,12 @@ end
 //[ A user turn carrying tool_result blocks for `results`.
   !
   ! `r.attachments` inlines unconditionally here — unlike a `UserInput`'s attachments,
-  ! a tool result exists only for the round it was produced in: `toMessages`
+  ! a tool result exists only for the round it was produced in: `anthropicToMessages`
   ! (rendering a PAST, already-committed turn) never re-derives a `tool_result`
   ! block from a `ToolResults` message's `attachments`, so a past tool-delivered image
   ! is never resent once this turn ends — no positional guard needed here.
 //]
-private def toolResultMessage(results: List[ToolResult]): py.Dict =
+private def anthropicToolResultMessage(results: List[ToolResult]): py.Dict =
   val content = py.list()
 
   for r in results do
@@ -297,11 +300,11 @@ private def toolResultMessage(results: List[ToolResult]): py.Dict =
 private def anthropicCreate(
     client: py.Dynamic, model: String, cache: Anthropic.Cache,
     system: String, messages: py.List, toolSpecs: py.List,
-    maxOutputTokens: Int, extraBody: py.Dict)
+    maxOutputTokens: Int, extraBody: py.Dict, interact: Interact)
 : Result[py.Dynamic, py.Error] =
-  if cache is Anthropic.NoCache then
-    py.try:
-      client.messages.create:
+  val opened =
+    if cache is Anthropic.NoCache then py.try:
+      client.messages.stream:
         model = model
         max_tokens = maxOutputTokens
         thinking = py.dict("type" ~ "adaptive")
@@ -309,9 +312,8 @@ private def anthropicCreate(
         messages = messages
         tools = toolSpecs
         extra_body = extraBody
-  else
-    py.try:
-      client.messages.create:
+    else py.try:
+      client.messages.stream:
         model = model
         max_tokens = maxOutputTokens
         thinking = py.dict("type" ~ "adaptive")
@@ -319,6 +321,30 @@ private def anthropicCreate(
         messages = messages
         tools = toolSpecs
         extra_body = extraBody
+
+  match opened
+  case Err(err) => Err(err)
+  case Ok(manager) =>
+    match py.try(manager.__enter__())
+    case Err(err) => Err(err)
+    case Ok(stream) =>
+      val consumed = py.try(consumeAnthropicStream(stream, interact))
+      val _ = py.try(manager.__exit__(py.none, py.none, py.none))
+      consumed
+
+private def consumeAnthropicStream(stream: py.Dynamic, interact: Interact): py.Dynamic =
+  val events = builtins.iter(stream)
+  while true do
+    val event = builtins.next(events, py.none)
+    if event.isNone then break
+    if interact.cancelled then
+      stream.close()
+      abort "model request cancelled"
+
+    if builtins.getattrOr(event, "type", "").asString == "text" then
+      interact.emit: TurnEvent.AssistantChunk(event.text.asString)
+
+  stream.get_final_message()
 
 
 //[ Build an Anthropic-backed model from an API key, model id, and cache policy.

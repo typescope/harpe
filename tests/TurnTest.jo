@@ -44,6 +44,8 @@ private def eventTag(e: TurnEvent): String =
   case TurnEvent.ModelRequestStarted(_, _) => "start"
   case TurnEvent.ModelRequestEnded         => "end"
   case TurnEvent.TransientError(_, _)      => "transient"
+  case TurnEvent.AssistantChunk(text)      => "chunk:\{text}"
+  case TurnEvent.AssistantStreamReset      => "reset"
   case TurnEvent.AssistantMessage(text)    => "assistant:\{text}"
   case TurnEvent.ToolBudgetReached(_)      => "budget"
   case TurnEvent.ToolCallStarted(n)        => "tool+\{n}"
@@ -190,7 +192,7 @@ def run(): Unit receives stdout, logger =
       tools
       maxToolRounds = 50
       maxRetries = 4
-      model = (base, maxOut) => (results, tools) => textReply("hi")
+      model = (base, maxOut) => (results, tools, interact) => textReply("hi")
       state = live
     expected = "Answered(hi) | start,end"
 
@@ -198,7 +200,7 @@ def run(): Unit receives stdout, logger =
   // counter lives in `startTurn`, so it is fresh for each turn.
   val askB: Model = (base, maxOut) =>
     val stepB = py.list(0)
-    (results, tools) =>
+    (results, tools, interact) =>
       val n = stepB.get(0).asInt
       stepB.set(0, n + 1)
       if n == 0 then toolReply("echo") else textReply("done")
@@ -226,9 +228,9 @@ def run(): Unit receives stdout, logger =
   val brainB2: Model = (base, maxOut) =>
     startsB2.set(0, startsB2.get(0).asInt + 1)
     if base.system.contains("COMPACTED") then
-      (results, offered) => textReply("continued")
+      (results, offered, interact) => textReply("continued")
     else
-      (results, offered) => toolReplyWithUsage("count", 40)
+      (results, offered, interact) => toolReplyWithUsage("count", 40)
   val channelB2 = new TestInteract(live)
   val resultB2 =
     Agent.ask:
@@ -245,7 +247,7 @@ def run(): Unit receives stdout, logger =
   // Tool budget: once spent (maxToolRounds=1) the model is re-asked with no
   // tools and must answer with text. The scripted model returns text only when
   // offered no tools.
-  val askC: Model = (base, maxOut) => (results, tools) =>
+  val askC: Model = (base, maxOut) => (results, tools, interact) =>
     if tools.isEmpty then textReply("final") else toolReply("echo")
 
   check:
@@ -260,14 +262,14 @@ def run(): Unit receives stdout, logger =
       tools
       maxToolRounds = 50
       maxRetries = 4
-      model = (base, maxOut) => (results, tools) => Fatal("bad key")
+      model = (base, maxOut) => (results, tools, interact) => Fatal("bad key")
       state = live
     expected = "Failed(bad key) | start,end"
 
   // A failed turn retains its user message in the live context. Only the
   // provisional assistant/tool tail is rolled back.
   val failedContext = new WindowedContext("", [])
-  val failedBrain: Model = (base, maxOut) => (results, tools) => Fatal("bad key")
+  val failedBrain: Model = (base, maxOut) => (results, tools, interact) => Fatal("bad key")
   val failedChannel = new TestInteract(live)
   val failedResult =
     Agent.ask:
@@ -290,15 +292,15 @@ def run(): Unit receives stdout, logger =
       tools
       maxToolRounds = 50
       maxRetries = 0
-      model = (base, maxOut) => (results, tools) => Transient("rate limited")
+      model = (base, maxOut) => (results, tools, interact) => Transient("rate limited")
       state = live
-    expected = "Failed(rate limited) | start,end"
+    expected = "Failed(rate limited) | start,end,reset"
 
   // Transient once, then success: exercises the backoff + retry path. With a
   // fake Interrupt, `pause` returns instantly — no real 1s wait.
   val askG: Model = (base, maxOut) =>
     val stepG = py.list(0)
-    (results, tools) =>
+    (results, tools, interact) =>
       val n = stepG.get(0).asInt
       stepG.set(0, n + 1)
       if n == 0 then new Transient("blip") else textReply("recovered")
@@ -306,26 +308,36 @@ def run(): Unit receives stdout, logger =
   check:
     "G transient-then-success"
     scenario: tools, 50, 2, askG, live
-    "Answered(recovered) | start,end,transient,start,end"
+    "Answered(recovered) | start,end,reset,transient,start,end"
+
+  val streamingModel: Model = (base, maxOut) =>
+    (results, offered, interact) =>
+      interact.emit: TurnEvent.AssistantChunk("rec")
+      interact.emit: TurnEvent.AssistantChunk("overed")
+      textReply("recovered")
+  check:
+    "G1 streamed chunks"
+    scenario: tools, 50, 2, streamingModel, live
+    "Answered(recovered) | start,chunk:rec,chunk:overed,end"
 
   // A provider Retry-After hint overrides exponential backoff and is not
   // capped at the ordinary 30-second ceiling.
   val retryAfterState = State(cancelled = false, pause = true)
   val retryAfterModel: Model =
-    (base, maxOut) => (results, offered) => RetryAfter("rate limited", 75.0)
+    (base, maxOut) => (results, offered, interact) => RetryAfter("rate limited", 75.0)
   scenario: tools, 50, 2, retryAfterModel, retryAfterState
   check: "G2 Retry-After delay", retryAfterState.pausedFor.toString, "75.0"
 
   // Cancellation already requested → the turn bails before asking the model.
   check:
     "H cancelled-before-request"
-    scenario: tools, 50, 4, (base, maxOut) => (results, tools) => toolReply("echo"), State(cancelled = true, pause = true)
+    scenario: tools, 50, 4, (base, maxOut) => (results, tools, interact) => toolReply("echo"), State(cancelled = true, pause = true)
     "Interrupted | "
 
   // Cancellation while a blocking model call is in flight discards the reply,
   // even if it is a complete text answer.
   val stateH2 = State(cancelled = false, pause = false)
-  val askH2: Model = (base, maxOut) => (results, tools) =>
+  val askH2: Model = (base, maxOut) => (results, tools, interact) =>
     stateH2.cancelledNow = true
     textReply("too late")
 
@@ -337,14 +349,14 @@ def run(): Unit receives stdout, logger =
   // Cancellation fires during the backoff pause → the retry is abandoned.
   check:
     "I cancelled-during-backoff"
-    scenario: tools, 50, 4, (base, maxOut) => (results, tools) => new Transient("blip"), State(cancelled = false, pause = true)
-    "Interrupted | start,end,transient"
+    scenario: tools, 50, 4, (base, maxOut) => (results, tools, interact) => new Transient("blip"), State(cancelled = false, pause = true)
+    "Interrupted | start,end,reset,transient"
 
   // A tool that raises does NOT crash the turn: `runSafely` turns the exception
   // into an error result the model sees, and the next (text) reply ends the turn.
   val askJ: Model = (base, maxOut) =>
     val stepJ = py.list(0)
-    (results, tools) =>
+    (results, tools, interact) =>
       val n = stepJ.get(0).asInt
       stepJ.set(0, n + 1)
       if n == 0 then toolReply("boom") else textReply("recovered")
@@ -359,7 +371,7 @@ def run(): Unit receives stdout, logger =
   // order observable without relying on wall-clock time.
   val askK: Model = (base, maxOut) =>
     val step = py.list(0)
-    (results, tools) =>
+    (results, tools, interact) =>
       val n = step.get(0).asInt
       step.set(0, n + 1)
       if n == 0 then toolReply("logged") else textReply("done")
@@ -402,7 +414,7 @@ def run(): Unit receives stdout, logger =
   // before the tool starts.
   val askM: Model = (base, maxOut) =>
     val step = py.list(0)
-    (results, tools) =>
+    (results, tools, interact) =>
       val n = step.get(0).asInt
       step.set(0, n + 1)
       if n == 0 then
@@ -424,7 +436,7 @@ def run(): Unit receives stdout, logger =
   val askN: Model = (base, maxOut) =>
     val prev = sizes.get(0).asString
     sizes.set(0, if prev == "" then "\{base.messages.size}" else prev + ",\{base.messages.size}")
-    (results, tools) => textReply("ok")
+    (results, tools, interact) => textReply("ok")
 
   val n1 = Agent.ask("first", brain = askN)
   val n2 = Agent.ask("second", brain = askN)

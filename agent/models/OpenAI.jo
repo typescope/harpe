@@ -11,6 +11,8 @@
 //]
 
 namespace harpe.models
+import harpe.Interact
+import harpe.turns.TurnEvent
 import harpe.ffi.json
 import harpe.ffi.builtins
 import harpe.util.Digest
@@ -184,7 +186,7 @@ private class OpenAIResponsesSession(
   // Stable for the turn, and across every turn built on the same system prompt.
   private val cacheKey: String = "harpe:" + Digest.sha256Hex(base.system).substring(0, 16)
 
-  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
+  def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult receives logger =
     val toolSpecs = py.list()
     for t in tools do toolSpecs.append(OpenAIResponses.toolSpec(t))
 
@@ -225,6 +227,7 @@ private class OpenAIResponsesSession(
       cacheKey
       maxOutputTokens
       extraBody
+      interact
 
     match attempt
     case Ok(response) =>
@@ -271,7 +274,8 @@ end
 private def openaiCreate(
     client: py.Dynamic, model: String, effort: String,
     system: String, input: py.List, toolSpecs: py.List, prevId: String,
-    store: Bool, cacheKey: String, maxOutputTokens: Int, extraBody: py.Dict)
+    store: Bool, cacheKey: String, maxOutputTokens: Int, extraBody: py.Dict,
+    interact: Interact)
 : Result[py.Dynamic, py.Error] =
   val body = builtins.dictOf(extraBody)
 
@@ -299,7 +303,7 @@ private def openaiCreate(
   if prevId != "" then
     body.set("previous_response_id", prevId)
 
-  py.try:
+  val opened = py.try:
     client.responses.create:
       model = model
       instructions = system
@@ -308,6 +312,30 @@ private def openaiCreate(
       max_output_tokens = maxOutputTokens
       prompt_cache_key = cacheKey
       extra_body = body
+      stream = true
+
+  match opened
+  case Err(err) => Err(err)
+  case Ok(stream) => py.try(consumeOpenAIStream(stream, interact))
+
+private def consumeOpenAIStream(stream: py.Dynamic, interact: Interact): py.Dynamic =
+  var response: py.Dynamic = py.none
+  val events = builtins.iter(stream)
+  while true do
+    val event = builtins.next(events, py.none)
+    if event.isNone then break
+    if interact.cancelled then
+      stream.close()
+      abort "model request cancelled"
+
+    val kind = builtins.getattrOr(event, "type", "").asString
+    if kind == "response.output_text.delta" then
+      interact.emit: TurnEvent.AssistantChunk(event.delta.asString)
+    else if kind == "response.completed" then
+      response = event.response
+
+  if response.isNone then abort "provider stream ended without a completed response"
+  response
 
 //[ Build an OpenAI Responses model
   !

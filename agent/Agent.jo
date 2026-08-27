@@ -274,7 +274,7 @@ section Agent
 
       // `reply` is idempotent — the Session commits `results` only on success, so
       // every attempt (including retries) passes the same `results`.
-      val res = session.reply(results, tools)
+      val res = session.reply(results, tools, interact)
 
       interact.emit: TurnEvent.ModelRequestEnded
 
@@ -293,6 +293,7 @@ section Agent
           break
 
         case Transient(detail) =>
+          interact.emit: TurnEvent.AssistantStreamReset
           attempt = attempt + 1
           if attempt > maxRetries then
             logger.error("harpe.model.request", detail, "retries" ~ maxRetries)
@@ -309,6 +310,7 @@ section Agent
               break
 
         case RetryAfter(detail, retryAfterSeconds) =>
+          interact.emit: TurnEvent.AssistantStreamReset
           attempt = attempt + 1
           if attempt > maxRetries then
             logger.error("harpe.model.request", detail, "retries" ~ maxRetries)

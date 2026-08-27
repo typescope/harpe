@@ -6,6 +6,8 @@
 //]
 
 namespace harpe.models
+import harpe.Interact
+import harpe.turns.TurnEvent
 import harpe.ffi.json
 import harpe.ffi.builtins
 
@@ -143,7 +145,7 @@ private class OpenRouterSession(
   //]
   private var committedInput: Option[py.List] = None
 
-  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
+  def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult receives logger =
     val input = py.list()
 
     match committedInput
@@ -165,7 +167,7 @@ private class OpenRouterSession(
     for t in tools do specs.append(OpenRouterResponses.toolSpec(t))
 
     match openRouterCreate(
-      client, model, effort, base.system, input, specs, maxOutputTokens, extraBody)
+      client, model, effort, base.system, input, specs, maxOutputTokens, extraBody, interact)
     case Ok(response) =>
       // Preserve every raw output item, including reasoning, messages, and
       // function calls. OpenRouter requires these items unchanged and in order
@@ -202,14 +204,14 @@ end
 private def openRouterCreate(
     client: py.Dynamic, model: String, effort: String,
     system: String, input: py.List, tools: py.List,
-    maxOutputTokens: Int, extraBody: py.Dict)
+    maxOutputTokens: Int, extraBody: py.Dict, interact: Interact)
 : Result[py.Dynamic, py.Error] =
   val body = builtins.dictOf(extraBody)
 
   if effort != "none" then
     body.set("reasoning", py.dict("effort" ~ effort))
 
-  py.try:
+  val opened = py.try:
     client.responses.create:
       model = model
       instructions = system
@@ -218,6 +220,30 @@ private def openRouterCreate(
       max_output_tokens = maxOutputTokens
       store = false
       extra_body = body
+      stream = true
+
+  match opened
+  case Err(err) => Err(err)
+  case Ok(stream) => py.try(consumeOpenRouterStream(stream, interact))
+
+private def consumeOpenRouterStream(stream: py.Dynamic, interact: Interact): py.Dynamic =
+  var response: py.Dynamic = py.none
+  val events = builtins.iter(stream)
+  while true do
+    val event = builtins.next(events, py.none)
+    if event.isNone then break
+    if interact.cancelled then
+      stream.close()
+      abort "model request cancelled"
+
+    val kind = builtins.getattrOr(event, "type", "").asString
+    if kind == "response.output_text.delta" then
+      interact.emit: TurnEvent.AssistantChunk(event.delta.asString)
+    else if kind == "response.completed" then
+      response = event.response
+
+  if response.isNone then abort "provider stream ended without a completed response"
+  response
 
 //[ Build an OpenRouter model
   !

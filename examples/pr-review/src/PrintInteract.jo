@@ -21,6 +21,9 @@ private class PrintInteract(out: String => Unit)
     case TurnEvent.TransientError(detail, delaySeconds) =>
       println "  · transient error (\{detail}); retrying in \{delaySeconds}s"
 
+    case TurnEvent.AssistantChunk(text) => print(text)
+    case TurnEvent.AssistantStreamReset => pass
+
     case TurnEvent.ToolBudgetReached(budget) =>
       println "  · tool budget reached (\{budget}); requesting final answer"
 

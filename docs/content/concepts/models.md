@@ -20,11 +20,16 @@ interface Model
 
 section Model
   interface Session
-    def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult
+    def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult
         receives logger
   end
 end
 ```
+
+`interact` carries streamed text and cancellation through the same channel used
+by the rest of the turn. Provider adapters emit `AssistantChunk` events while
+reading their synchronous SDK streams, then return one complete `ReplyResult`.
+See [Turn](/concepts/turn/) for the event contract and retry reset semantics.
 
 Here, a **user turn** means the complete exchange from one user message to the
 agent's final answer, including any tool calls. `Model.Session` is the model
@@ -183,7 +188,7 @@ val brain = echo()
 ```
 
 The OpenAI Responses adapter uses stored server-side continuation by default.
-Pass `store = false` to keep the active turn stateless; Harpe then replays the
+Pass `store = false` to keep the active turn stateless. Harpe then replays the
 raw response items required by later tool rounds instead of sending a
 `previous_response_id`.
 

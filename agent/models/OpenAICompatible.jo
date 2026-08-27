@@ -7,6 +7,8 @@
 //]
 
 namespace harpe.models
+import harpe.Interact
+import harpe.turns.TurnEvent
 import harpe.ffi.json
 import harpe.ffi.builtins
 
@@ -143,7 +145,7 @@ private class CompatibleSession(
   //]
   private var committed: Option[py.List] = None
 
-  def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
+  def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult receives logger =
     val messages = py.list()
 
     match committed
@@ -157,7 +159,7 @@ private class CompatibleSession(
     val specs = py.list()
     for t in tools do specs.append(CompatibleChat.toolSpec(t))
 
-    match compatibleCreate(client, model, messages, specs, maxOutputTokens, extraBody)
+    match compatibleCreate(client, model, messages, specs, maxOutputTokens, extraBody, interact)
     case Ok(response) =>
       val usage = response.usage
       val inTok = if usage.isNone then 0 else usage.prompt_tokens.asInt
@@ -185,23 +187,44 @@ end
 
 private def compatibleCreate(
     client: py.Dynamic, model: String, messages: py.List,
-    tools: py.List, maxOutputTokens: Int, extraBody: py.Dict)
+    tools: py.List, maxOutputTokens: Int, extraBody: py.Dict,
+    interact: Interact)
 : Result[py.Dynamic, py.Error] =
-  if tools.size == 0 then
-    py.try:
-      client.chat.completions.create:
+  val managerResult =
+    if tools.size == 0 then py.try:
+      client.chat.completions.stream:
         model = model
         messages = messages
         max_tokens = maxOutputTokens
         extra_body = extraBody
-  else
-    py.try:
-      client.chat.completions.create:
+    else py.try:
+      client.chat.completions.stream:
         model = model
         messages = messages
         tools = tools
         max_tokens = maxOutputTokens
         extra_body = extraBody
+
+  match managerResult
+  case Err(err) => Err(err)
+  case Ok(manager) =>
+    match py.try(manager.__enter__())
+    case Err(err) => Err(err)
+    case Ok(stream) =>
+      val consumed = py.try(consumeCompatibleStream(stream, interact))
+
+      val _ = py.try(manager.__exit__(py.none, py.none, py.none))
+      consumed
+
+private def consumeCompatibleStream(stream: py.Dynamic, interact: Interact): py.Dynamic =
+  val events = builtins.iter(stream)
+  while true do
+    val event = builtins.next(events, py.none)
+    if event.isNone then break
+    if interact.cancelled then abort "model request cancelled"
+    if builtins.getattrOr(event, "type", "").asString == "content.delta" then
+      interact.emit: TurnEvent.AssistantChunk(event.delta.asString)
+  stream.get_final_completion()
 
 //[ Build a model using the portable OpenAI Chat Completions API. //]
 private[harpe] def openaiCompatible(
