@@ -1,65 +1,131 @@
 +++
 title = "Skills"
 +++
-Skills are the agent's **reference material** — files it reads on demand while
-working. Drop a Markdown file (or any file) into your agent's `skills/` directory,
-and the agent can list, search, and read it through three built-in tools. Skills
-are how the agent *knows* things. Tools are how it *acts*. It reads its skills
-freely, but still acts only through `runCode`.
+Skills are optional instructions and reference material that an agent can read
+when a task needs them. A skill might explain how to write Jo, document a payment
+API, or describe your organization's review process.
 
-## Why skills instead of the prompt
+Harpe stores skills as text files in a directory chosen by the application. The
+application adds read-only skill tools to the agent, which can then discover,
+search, and read those files during a turn.
 
-Everything in `AGENT.md` is in the model's context on *every* request — so a large
-reference there is paid for each turn and crowds out the conversation. Skills invert
-that: the reference lives on disk, and the agent pulls in only the pieces a task
-needs (progressive disclosure). Keep `AGENT.md` to the agent's role and a pointer to
-its skills. Keep the detail — cheat sheets, API docs, examples, house style — in
-`skills/`.
+## Where skills fit
 
-Three ways an agent carries knowledge, for contrast:
+An agent receives guidance and authority from different places:
 
-- **`AGENT.md`** — always-on instructions, in context every turn.
-- **skills** — on-demand reference *you* author (this page).
+| Component | What it provides | When it is available |
+| --- | --- | --- |
+| `AGENT.md` | The agent's role and always-on instructions | In context from the start |
+| Skills | Optional instructions and reference material | When the model chooses to read them |
+| Tools | Operations implemented by the host application | When added to the turn's `Toolset` |
+| Capabilities | Operations available to generated code | When granted by the sandbox API |
 
-## Adding a skill
+A skill can teach the model how or when to use an operation. It cannot grant that
+operation. The application still decides which tools and capabilities the agent
+may use.
 
-No code, no registration — a skill is just a file:
+## Progressive disclosure
 
-```
+Putting every reference in `AGENT.md` makes the model receive all of it on every
+turn, whether it is relevant or not. Skills let the model load information in
+stages:
+
+1. The model knows that skill tools are available.
+2. It lists or searches the available files when it needs more information.
+3. It reads the relevant file.
+4. The file content enters the conversation as a tool result and can guide the
+   rest of the turn.
+
+This is progressive disclosure. The agent begins with a small set of general
+instructions and pulls in detailed guidance only when a task calls for it.
+
+Reading a skill still uses model context. The benefit is that unrelated skills
+stay out of the conversation. Keep individual files focused so the agent can
+load one useful topic without loading a large manual.
+
+## Organizing skills
+
+A skill needs no manifest or registration. It is a UTF-8 text file under the
+skills directory:
+
+```text
 skills/
   jo-cheat-sheet.md
+  reviews/
+    pull-requests.md
   api/
     payments.md
 ```
 
-Any file type works (names carry their extension), and subdirectories are fine —
-the agent sees relative names like `api/payments.md`. Markdown is the usual choice.
+Subdirectories help group related material. The agent sees paths relative to the
+skills directory, such as `api/payments.md`. Markdown is usually the clearest
+format, but other text-file extensions work as well.
 
-## The tools
+Useful skill content includes:
 
-`SkillTools` offers three read-only tools over `skills/`:
+- task-specific procedures
+- API and data-format documentation
+- examples and templates
+- terminology and domain rules
+- review checklists
 
-- **`skillsList`** — the names of all skill files (with extensions).
-- **`skillsRead`** — the contents of one file, by name.
-- **`skillsSearch`** — a case-insensitive substring search across every file,
-  returning matching lines as `name:line: text`.
+Keep the agent's identity and rules that must always apply in `AGENT.md`. Put
+details needed only for particular tasks in skills.
 
-A typical flow: the agent `skillsSearch`es for a term, then `skillsRead`s the file
-that matched.
+## Adding skills to an agent
 
-## Pointing the agent at them
+Choose the directory and add `SkillTools` to the tools the agent already has:
 
-The tools exist, but the model won't reach for them unless told to. Describe the
-skills in `AGENT.md` — what's there and when to consult it:
+```jo
+val skillsDir = os.path.join(appHome, "skills")
 
-> Your reference docs are in your skills. Before writing Jo, consult
-> `jo-cheat-sheet.md`. For payment flows, read `api/payments.md`.
+val tools =
+  SkillTools.toolset(skillsDir)
+    ++ runCode.toolset()
 
-## Guarantees
+val turn =
+  Agent.ask:
+    message
+    brain = brain
+    tools = tools
+    context = context
+```
 
-- **Read-only.** The tools only read. The agent cannot modify `skills/` through them.
-- **Confined.** Reads are locked to the skills directory — a `..` or absolute path
-  is denied, so the agent can't reach outside its knowledge folder.
-- **Robust.** Reads are best-effort UTF-8: a binary or undecodable file yields empty
-  text instead of crashing a search, and results are capped so one query can't flood
-  the context.
+There is no default skills directory. Passing the path explicitly makes it clear
+which references are available to this agent or session.
+
+`SkillTools` contributes three model-facing tools:
+
+- `skillsList` lists the available file names.
+- `skillsSearch` searches for matching lines across the files.
+- `skillsRead` returns the complete contents of one file.
+
+A common flow is to search for a topic and then read the file containing the
+relevant match. Search returns a bounded number of matching lines. Reading
+returns the complete file, which is another reason to keep files focused.
+
+## Telling the agent when to use skills
+
+Adding the tools makes skills available, but the model still needs to understand
+when they matter. Give it a short pointer in `AGENT.md`:
+
+> Reference material is available through the skill tools. Before writing Jo,
+> read `jo-cheat-sheet.md`. For payment tasks, consult `api/payments.md`.
+
+Name important skills when the choice is predictable. When the collection is
+larger or changes often, tell the agent to list or search it before beginning a
+specialized task.
+
+## Trust and boundaries
+
+Skill content becomes input to the model. Treat it like other instructions and
+reference material:
+
+- Use content you trust to guide the agent.
+- Do not store credentials or secrets in skill files.
+- Remember that a skill cannot override the tools and capabilities selected by
+  the application.
+
+The provided skill tools are read-only. They confine paths to the configured
+skills directory and reject attempts to escape it with an absolute path or
+`..`. They do not let the agent create, modify, or delete skill files.
