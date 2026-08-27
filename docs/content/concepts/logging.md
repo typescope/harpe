@@ -89,9 +89,9 @@ val weather: Tool =
     params = [Tool.strParam("city", "the city")]
 
 // The route's work goes in a small function. It may use `logger` freely.
-private def lookUp(city: String): RunOutcome receives logger =
+private def lookUp(city: String): ToolOutcome receives logger =
   logger.info("myagent.tools.weather", "looked up weather", "city" ~ city)
-  new RunOutcome("Sunny in \{city}", "weather · \{city}", [])
+  new ToolOutcome("Sunny in \{city}", "weather · \{city}")
 ```
 
 Add the spec to the agent and the route to the turn:

@@ -49,7 +49,7 @@ my-agent/
 Open `src/Main.jo`. It names the pieces a turn will be run with:
 
 ```jo
-val runCode = RunCodeTool(os.path.abspath("sandbox"), approvalDeadline = 610.0)
+val runCode = RunCodeTool(os.path.abspath("sandbox"), approvalDeadline = 610)
 
 val brain = Model.default()
 

@@ -1,5 +1,5 @@
 +++
-title = "Code Mode and Sandboxing"
+title = "Code and Sandboxing"
 +++
 Harpe provides a `runCode` tool that you can add to an agent. It lets the model
 write and run a small Jo program for a task. The compile-time sandbox applies to
