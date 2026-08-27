@@ -5,64 +5,29 @@ The model is the agent's brain. It interprets context, chooses tools, and
 produces answers. Harpe exposes models through a provider-independent interface,
 so the rest of the agent does not depend on a provider's wire protocol.
 
-Harpe separates a reusable `Model` from the model-side state of an active user
-turn. `startTurn` creates that state from rendered context and returns it as a
-`Model.Session`. The object exists only to continue model requests across tool
-calls. It does not run the turn, own the conversation, or persist its history.
-The agent runs the turn. Conversation history across turns remains in its
-[Context](/concepts/context/).
+## Choosing a model
 
-## Model and per-turn state
+Most applications can start with `Model.default()`. It selects OpenAI,
+OpenRouter, or Anthropic from the API key present in the environment:
 
 ```jo
-interface Model
-  def startTurn(base: Rendered, maxOutputTokens: Int): Model.Session
-
-section Model
-  interface Session
-    def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult
-        receives logger
-  end
-end
+val brain = Model.default()
 ```
 
-`interact` carries streamed text and cancellation through the same channel used
-by the rest of the turn. Provider adapters emit `AssistantChunk` events while
-reading their synchronous SDK streams, then return one complete `ReplyResult`.
-See [Turn](/concepts/turn/) for the event contract and retry reset semantics.
-
-Here, a **user turn** means the complete exchange from one user message to the
-agent's final answer, including any tool calls. `Model.Session` is the model
-adapter's state during that exchange, not an application or conversation
-session. It may make several model API calls while the agent uses tools.
-
-`startTurn` is called once with the system prompt, conversation history,
-transient context, and the turn's output budget. The agent calls `reply` again
-whenever it has tool results to return to the model. Each call receives those results and the tools available
-for the next response.
-
-A `Model.Session` may keep provider-specific continuation state such as reasoning
-handles or a server-side response ID. That state lasts only for the current
-user turn and does not leak into the provider-independent transcript.
-
-The result of each `reply` call is explicit:
+Construct a provider explicitly when you need to choose its model or options:
 
 ```jo
-union ReplyResult =
-    Reply(message: Assistant, usage: Usage)
-  | Transient(detail: String)
-  | Fatal(detail: String)
+val brain = anthropic(apiKey, "claude-opus-4-6", Anthropic.FiveMinutes)
+val brain = openai(apiKey, "gpt-5.6", reasoningEffort = "high")
+val brain = openrouter(apiKey, "provider/model-name")
+val brain = openai.compatible("", "org/model-name", "http://localhost:8000/v1")
+val brain = echo() // keyless model for tests
 ```
 
-The model classifies failures. The core decides whether and when to retry them.
-`reply` is idempotent, so a failed attempt does not commit tool results or mutate
-the turn.
+Pass the selected model to `Agent.ask` as `brain`. A `Model` can be shared by
+many conversations. Harpe creates isolated state for each active turn.
 
-Each successful reply includes provider-reported input and output token counts.
-Harpe emits them through the [Logger](/concepts/logging/) and makes the usage
-available to context strategies.
-
-## Built-in models
+## Providers and deployment
 
 Harpe includes Anthropic, OpenAI, OpenRouter, OpenAI-compatible servers, and a
 keyless `echo` model for testing. `Model.default()` selects and constructs a
@@ -168,24 +133,7 @@ val brain = openai.compatible:
     )
 ```
 
-## Selecting a model in code
-
-The shipped applications construct the model at startup:
-
-```jo
-val brain = Model.default()
-```
-
-You can instead construct a provider explicitly or use `echo()` without an API
-key:
-
-```jo
-val brain = anthropic(apiKey, "claude-opus-4-6", Anthropic.FiveMinutes)
-val brain = openai(apiKey, "gpt-5.6", reasoningEffort = "high")
-val brain = openrouter(apiKey, "provider/model-name", reasoningEffort = "high")
-val brain = openai.compatible("", "org/model-name", "http://localhost:8000/v1")
-val brain = echo()
-```
+## Request and turn options
 
 The OpenAI Responses adapter uses stored server-side continuation by default.
 Pass `store = false` to keep the active turn stateless. Harpe then replays the
@@ -217,8 +165,47 @@ The same agent can therefore answer briefly on one turn and write a long report
 on the next without holding two models. A custom `Model` renders the bound as
 whatever its provider calls the limit, and one with no such notion ignores it.
 
-A model can be shared across sessions. Each call to `startTurn` creates the
-state isolated to one user turn.
+A model can be shared across sessions. Harpe creates isolated state for each
+active turn.
+
+## How Harpe represents a model
+
+The rest of this page matters when you implement a provider adapter. Harpe
+separates a reusable `Model` from the model-side state of an active user turn:
+
+```jo
+interface Model
+  def startTurn(base: Rendered, maxOutputTokens: Int): Model.Session
+
+section Model
+  interface Session
+    def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult
+        receives logger
+  end
+end
+```
+
+`startTurn` creates a `Model.Session` from the prepared context. The session
+continues model requests across tool calls. It may keep provider-specific state
+such as reasoning handles or a server-side response ID. That state lasts only
+for the current turn.
+
+`interact` carries streamed text and cancellation. See [Turn](/concepts/turn/)
+for the event contract and streaming behavior.
+
+The result of each `reply` call is explicit:
+
+```jo
+union ReplyResult =
+    Reply(message: Assistant, usage: Usage)
+  | Transient(detail: String)
+  | RetryAfter(detail: String, retryAfterSeconds: Float)
+  | Fatal(detail: String)
+```
+
+The adapter classifies failures and reports token usage. The turn engine owns
+retry policy. A failed request does not commit pending tool results or mutate
+the accepted turn state.
 
 ## Custom models
 
@@ -231,7 +218,10 @@ class MyModel(client: Client)
   view Model
 
   def startTurn(base: Rendered, maxOutputTokens: Int): Model.Session =
-    new SimpleSession(base, (rendered, tools) => send(client, rendered, tools, maxOutputTokens))
+    new SimpleSession:
+      base
+      (rendered, tools, interact) =>
+        send(client, rendered, tools, interact, maxOutputTokens)
 end
 ```
 
