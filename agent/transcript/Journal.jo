@@ -221,8 +221,8 @@ section Journal
     !
     ! `None` when the span holds no turn at all — the process died while the
     ! request was still queued, before `runTurn` was ever reached. A turn that
-    ! started and never finished instead yields a `TurnData` whose own `result`
-    ! is `None`, so a crash mid-turn stays distinguishable from a crash before it.
+    ! started but has no terminator instead yields an interrupted `TurnData`, so
+    ! a crash mid-turn stays distinguishable from a crash before it.
   //]
   private def turnOf(entries: List[Entry]): TurnData | None =
     var data: TurnData | None = None
@@ -254,7 +254,7 @@ section Journal
     case t: TurnData => t
     case _ =>
       match user
-      case Some(message) => TurnData(message, pending, None)
+      case Some(message) => TurnData(message, pending, TurnResult.Interrupted)
       case None          => None
 
   private def isTerminator(category: String): Bool =

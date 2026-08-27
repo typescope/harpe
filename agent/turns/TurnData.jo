@@ -16,10 +16,10 @@ import harpe.turns.*
 //[ One user turn
   !
   ! `messages` is the turn's own traffic in order — each assistant reply and each
-  ! batch of tool results — excluding `user`, which starts it. `result` is `None`
-  ! for a turn still in flight (a journal whose last turn was never completed).
+  ! batch of tool results — excluding `user`, which starts it. An unterminated
+  ! journal turn is reconstructed as `TurnResult.Interrupted`.
 //]
-class TurnData(user: Message, messages: List[Message], result: TurnResult | None)
+class TurnData(user: Message, messages: List[Message], result: TurnResult)
   //[ Everything the turn said, joined.
     !
     ! A turn may speak several times — before and between tool calls — so this is
