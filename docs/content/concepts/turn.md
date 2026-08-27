@@ -44,7 +44,7 @@ interface Interact
   def cancelled: Bool
   def pause(seconds: Float): Bool
   def emit(event: TurnEvent): Unit
-  def approve(id: String, request: Approvals.Request): Approvals.Decision
+  def approve(request: Approvals.Request): Approvals.Decision
 end
 ```
 
@@ -52,8 +52,7 @@ end
 - `pause` waits before retrying a temporary failure. It returns `true` if the
   user cancels while waiting.
 - `emit` reports progress through the events listed below.
-- `approve` asks the active user to allow or reject a protected action. The
-  request id prevents a stale decision from approving a later action.
+- `approve` asks the active user to allow or reject a protected action.
 
 Your application implements this interface for its transport and user
 interface.
@@ -108,7 +107,7 @@ private class LiveInteract(render: String => Unit)
 
     case _ => pass
 
-  def approve(id: String, request: Approvals.Request): Approvals.Decision =
+  def approve(request: Approvals.Request): Approvals.Decision =
     Approvals.Cancelled
 end
 ```

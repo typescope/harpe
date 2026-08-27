@@ -123,11 +123,10 @@ private def handleBroker(
     else if title.size > 200 then Frame.error("approval title exceeds 200 characters")
     else if detail.size > 10000 then Frame.error("approval detail exceeds 10000 characters")
     else
-      val id = py.module("uuid").uuid4().toString
       approvalActive.set()
       val attempted = py.try:
         if interact.cancelled then Approvals.Cancelled
-        else interact.approve(id, Approvals.Request(title, detail))
+        else interact.approve(Approvals.Request(title, detail))
       approvalActive.clear()
       val decision =
         match attempted
@@ -138,7 +137,6 @@ private def handleBroker(
         json.dumps:
           py.dict:
             "ok"       ~ true
-            "id"       ~ id
             "decision" ~ Approvals.wire(decision)
 
 //[ Replay the sandbox's audit log through the ambient (contextual) `logger`.

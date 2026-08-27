@@ -68,7 +68,7 @@ private class ApprovalInteract(decision: Approvals.Decision)
   def pause(seconds: Float): Bool = false
   def emit(event: turns.TurnEvent): Unit = pass
 
-  def approve(id: String, request: Approvals.Request): Approvals.Decision =
+  def approve(request: Approvals.Request): Approvals.Decision =
     seenTitle = request.title
     seenDetail = request.detail
     approvalCount = approvalCount + 1
@@ -83,7 +83,7 @@ private class StuckApprovalInteract
   def pause(seconds: Float): Bool = false
   def emit(event: turns.TurnEvent): Unit = pass
 
-  def approve(id: String, request: Approvals.Request): Approvals.Decision =
+  def approve(request: Approvals.Request): Approvals.Decision =
     py.module("time").sleep(py.dynamic(1.0))
     Approvals.Approved
 end

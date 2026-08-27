@@ -34,7 +34,8 @@ private class TelegramInteract(
     py.module("time").sleep(seconds)
     false
 
-  def approve(id: String, request: Approvals.Request): Approvals.Decision =
+  def approve(request: Approvals.Request): Approvals.Decision =
+    val id = py.module("uuid").uuid4().toString
     approvalHandler(id, request)
 
   //[ Reflect engine progress as a "typing" indicator

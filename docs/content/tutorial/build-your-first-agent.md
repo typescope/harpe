@@ -89,7 +89,7 @@ private class SimpleInteract
     py.module("time").sleep(py.dynamic(seconds))
     false
 
-  def approve(id: String, request: Approvals.Request): Approvals.Decision =
+  def approve(request: Approvals.Request): Approvals.Decision =
     Approvals.Cancelled
 
   def emit(event: harpe.turns.TurnEvent): Unit = pass

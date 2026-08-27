@@ -34,13 +34,12 @@ private def runBash(command: String, interact: Interact): Tool.ToolOutcome recei
   if command.trim == "" then
     return new Tool.ToolOutcome("The command is empty.", "empty command", attachments = [])
 
-  val id = py.module("uuid").uuid4().toString
   val request = Approvals.Request(
     "Run a Bash command?",
     "```bash\n\{command}\n```"
   )
 
-  match interact.approve(id, request)
+  match interact.approve(request)
   case Approvals.Rejected =>
     new Tool.ToolOutcome("The user rejected the command.", "command rejected", attachments = [])
 

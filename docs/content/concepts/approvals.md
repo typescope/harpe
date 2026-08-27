@@ -36,7 +36,7 @@ def transfer(input: Transfer, interact: Interact): ToolOutcome =
     "Transfer funds"
     "Transfer **CHF \{input.amount}** to **\{input.recipient}**."
 
-  match interact.approve(nextRequestId(), request)
+  match interact.approve(request)
   case Approvals.Approved =>
     executeTransfer(input)
 
@@ -57,10 +57,6 @@ def toolset(): Toolset =
   Toolset.of: this, (input: ToolInput, interact: Interact) =>
     transfer(parseTransfer(input), interact)
 ```
-
-`nextRequestId()` represents the application's unique ID generator. Each request
-must have a unique ID within the active run. The interaction uses it to prevent
-a delayed response to an earlier request from approving a later operation.
 
 The tool should return a failed `ToolOutcome` for rejection, timeout, or
 cancellation. That result tells the model why the operation did not happen and
@@ -110,7 +106,7 @@ Tools and code-mode capabilities enter the flow through different interfaces:
 
 ```jo
 interface Interact
-  def approve(id: String, request: Approvals.Request): Approvals.Decision
+  def approve(request: Approvals.Request): Approvals.Decision
 end
 
 interface Approvals
@@ -119,9 +115,10 @@ end
 ```
 
 `Interact.approve` belongs to the active turn. The application implements it to
-show a request to the user and wait for a decision. `Approvals.request` belongs
-to the sandbox runtime. Its broker adapts a capability request to the active
-interaction.
+show a request to the user and wait for a decision. An interaction that needs a
+correlation ID for its user interface creates that ID internally.
+`Approvals.request` belongs to the sandbox runtime. Its broker adapts a
+capability request to the active interaction.
 
 Approval remains outside the model conversation in both paths. It does not
 consume model context or appear in the transcript when a conversation is
