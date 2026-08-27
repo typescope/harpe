@@ -64,7 +64,7 @@ keyless `echo` model for testing. `Model.default()` selects and constructs a
 hosted provider from environment variables. OpenAI takes precedence, followed
 by OpenRouter and Anthropic.
 
-> **Local models:** Call `openai(...)` with `compatible = true` for servers such
+> **Local models:** Call `openai.compatible(...)` for servers such
 > as vLLM, SGLang, llama.cpp, and Ollama.
 
 | Variable | Purpose |
@@ -129,11 +129,10 @@ Completions API. Pass the server's base URL. The adapter keeps accepted messages
 and tool results in `Model.Session`:
 
 ```jo
-val brain = openai:
+val brain = openai.compatible:
   ""
   "org/model-name"
   baseUrl = "http://localhost:8000/v1"
-  compatible = true
 ```
 
 The first argument is an API key. Pass an empty string when the server does not
@@ -144,18 +143,16 @@ usage. Within a turn it preserves the provider's complete raw assistant messages
 so extension fields such as `reasoning`, `reasoning_content`, and
 `reasoning_details` survive tool calls without entering Harpe's transcript.
 
-The `openai`, `openrouter`, and `anthropic` constructors accept `extraBody` for
-provider-specific request fields. Each adapter forwards it through its native
-SDK on every request path. For `openai`, this works in both Responses and
-compatible Chat Completions modes. For example, NVIDIA Nemotron reasoning can
-be configured with:
+The `openai`, `openai.compatible`, `openrouter`, and `anthropic` constructors
+accept `extraBody` for provider-specific request fields. Each adapter forwards
+it through its native SDK on every request path. For example, NVIDIA Nemotron
+reasoning can be configured with:
 
 ```jo
-val brain = openai:
+val brain = openai.compatible:
   nvidiaApiKey
   "nvidia/nemotron-3-ultra-550b-a55b"
   baseUrl = "https://integrate.api.nvidia.com/v1"
-  compatible = true
   timeoutSeconds = 120
   extraBody = py.dict:
     "reasoning_effort" ~ "high"
@@ -181,9 +178,14 @@ key:
 val brain = anthropic(apiKey, "claude-opus-4-6", Anthropic.FiveMinutes)
 val brain = openai(apiKey, "gpt-5.6", reasoningEffort = "high")
 val brain = openrouter(apiKey, "provider/model-name", reasoningEffort = "high")
-val brain = openai("", "org/model-name", "http://localhost:8000/v1", compatible = true)
+val brain = openai.compatible("", "org/model-name", "http://localhost:8000/v1")
 val brain = echo()
 ```
+
+The OpenAI Responses adapter uses stored server-side continuation by default.
+Pass `store = false` to keep the active turn stateless; Harpe then replays the
+raw response items required by later tool rounds instead of sending a
+`previous_response_id`.
 
 Model constructors use a 120-second HTTP request timeout by default. Applications
 can set `timeoutSeconds` explicitly when they need a different limit.

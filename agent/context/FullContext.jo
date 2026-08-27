@@ -13,7 +13,7 @@ import harpe.Model.*
 //[ A context that never drops or compresses any turn.
   !
   ! Every message appended since the session started is included in every
-  ! `render` call. No budget is enforced. The caller is responsible for staying
+  ! prepared snapshot. No budget is enforced. The caller is responsible for staying
   ! within the model's context window. `observe` is a no-op: there is nothing to
   ! size or trigger.
 //]
@@ -22,18 +22,25 @@ class FullContext(baseSystem: String, initial: List[Message])
 
   private var transcript: List[Message] = initial
   private var marked: List[Message] = initial
+  private var turnInput: List[Message] = []
+
+  def beginTurn(input: UserInput): Unit =
+    marked = transcript
+    turnInput = [input]
+    transcript = transcript + input
 
   def append(message: Message): Unit =
     transcript = transcript + message
 
-  def render(interact: Interact): Rendered =
-    new Rendered(baseSystem, transcript)
+  def compact(interact: Interact): Context.Result =
+    new Context.Result(new Rendered(baseSystem, transcript), false)
 
   def observe(usage: Usage): Unit = pass
 
-  def mark(): Unit =
-    marked = transcript
+  def commitTurn(): Unit =
+    turnInput = []
 
-  def rollback(): Unit =
-    transcript = marked
+  def abortTurn(): Unit =
+    transcript = marked ++ turnInput
+    turnInput = []
 end

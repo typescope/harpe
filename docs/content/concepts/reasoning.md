@@ -45,6 +45,21 @@ val brain = openai(apiKey, "gpt-5.6", reasoningEffort = "high")
 val brain = openrouter(apiKey, "provider/model", reasoningEffort = "low")
 ```
 
+OpenAI Responses stores response state by default and continues tool rounds with
+`previous_response_id`. For stateless operation, set `store = false`:
+
+```jo
+val brain = openai:
+  apiKey
+  "gpt-5.6"
+  reasoningEffort = "high"
+  store = false
+```
+
+Harpe then retains and replays OpenAI's raw output items inside the active
+`Session`, including encrypted reasoning state. That wire-level tail remains
+ephemeral and does not enter the provider-independent transcript.
+
 OpenAI and OpenRouter accept these common values:
 
 | Value | Meaning |
@@ -63,15 +78,15 @@ thinking, so constructing it explicitly does not require an effort value:
 val brain = anthropic(apiKey, "claude-opus-4-6", Anthropic.FiveMinutes)
 ```
 
-The `openai`, `openrouter`, and `anthropic` constructors accept `extraBody` for
-provider-specific controls that are not part of Harpe's small common interface:
+The `openai`, `openai.compatible`, `openrouter`, and `anthropic` constructors
+accept `extraBody` for provider-specific controls that are not part of Harpe's
+small common interface:
 
 ```jo
-val brain = openai:
+val brain = openai.compatible:
   apiKey
   "provider/model"
   baseUrl = "https://provider.example/v1"
-  compatible = true
   extraBody = py.dict(
     "reasoning_effort" ~ "high",
     "reasoning_budget" ~ 16384

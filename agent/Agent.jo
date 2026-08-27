@@ -103,15 +103,13 @@ section Agent
     // finished turn is a value the caller can render without re-reading the journal.
     var produced: List[Message] = []
 
-    context.mark()
-    context.append(input)
+    context.beginTurn(input)
     transcript.start(input)
 
-    // Compose what the model sees ONCE, at the turn's start. The Session then
-    // owns the intra-turn tail. The engine feeds it tool results and never
-    // re-renders.
-    val rendered = context.render(interact)
-    val session = brain.startTurn(rendered, maxOutputTokens)
+    // Compact at the turn boundary if the previous request crossed the strategy's
+    // threshold, then seed a provider session from one immutable snapshot.
+    val prepared = context.compact(interact)
+    var session = brain.startTurn(prepared.rendered, maxOutputTokens)
 
     // Tool results to hand the model on the next round ([] for the first request).
     var pending: List[ToolResult] = []
@@ -119,8 +117,7 @@ section Agent
     while true do
       if interact.cancelled then
         result = TurnResult.Interrupted
-        context.rollback()
-        context.append(input)
+        context.abortTurn()
         transcript.interrupted()
         break
 
@@ -134,15 +131,13 @@ section Agent
       match fetchReply(session, pending, offer, maxRetries, interact)
         case Stopped =>
           result = TurnResult.Interrupted
-          context.rollback()
-          context.append(input)
+          context.abortTurn()
           transcript.interrupted()
           break
 
         case GaveUp(detail) =>
           result = TurnResult.Failed(detail)
-          context.rollback()
-          context.append(input)
+          context.abortTurn()
           transcript.failed(detail)
           break
 
@@ -154,6 +149,7 @@ section Agent
 
           if reply.calls.isEmpty then
             result = TurnResult.Success
+            context.commitTurn()
             transcript.commit()
             break
 
@@ -183,8 +179,7 @@ section Agent
           end
 
           if cancelled || interact.cancelled then
-            context.rollback()
-            context.append(input)
+            context.abortTurn()
             result = TurnResult.Interrupted
             transcript.interrupted()
             break
@@ -196,6 +191,13 @@ section Agent
             transcript.append(results)
             pending = toolResults
             rounds = rounds + 1
+
+            // A compaction preserves the logical turn and its completed tool
+            // effects, but replaces the provider-specific continuation state.
+            val next = context.compact(interact)
+            if next.compacted then
+              session = brain.startTurn(next.rendered, maxOutputTokens)
+              pending = []
     end // while
 
     // A rolled-back turn contributes nothing to history, and `Journal.records`
