@@ -11,7 +11,7 @@ A turn begins when your application passes a user message to `Agent.ask`. Harpe
 asks the model what to do next. The model can answer the user or request one or
 more tools.
 
-![A turn gathers context, asks the model for either a tool call or a final answer, executes each requested tool, and returns its result to the model until the turn is complete.](/img/how-a-turn-works.svg)
+![A user message goes to the model. A final answer completes the turn. A tool call runs the requested tool and sends its result back to the model.](/img/how-a-turn-works.svg)
 
 When the model requests a tool, Harpe runs it and sends the result back to the
 model. The model can then request another tool or produce a final answer. This
