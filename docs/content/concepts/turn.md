@@ -1,10 +1,9 @@
 +++
 title = "Turn"
 +++
-A turn is the complete exchange from one user message to a final answer,
-including every model request, tool call, retry, and context update along the
-way. `Agent.ask` coordinates it. The driver supplies an `Interact` channel to
-observe progress and handle cancellation and approvals.
+A turn is everything Harpe does in response to one user message. It begins with
+the message and ends with an answer, a failure, or a cancellation. Along the
+way, the model may call tools and use their results before it answers.
 
 ## Turn execution
 
@@ -29,12 +28,16 @@ val turn = Agent.ask:
   context = context
 ```
 
-`TurnData` contains the final outcome and the messages produced during the
-turn. While the call is running, `Interact` reports progress such as streamed
-text, tool execution, and retries. Your driver decides how to display those
-updates and what to do with the completed turn.
+The returned `TurnData` tells your application how the turn ended and contains
+the messages it produced. While the turn is running, `Interact` reports live
+progress such as streamed text, tool execution, and retries. Your application
+decides which updates to show and how to store or present the completed turn.
 
 ## Interaction contract
+
+`Interact` connects an active turn to your application's user interface. Harpe
+uses it to report progress, check for cancellation, wait between retries, and
+request approval for protected actions.
 
 ```jo
 interface Interact
@@ -45,50 +48,43 @@ interface Interact
 end
 ```
 
-- `cancelled` lets the turn engine, model streams, and tool loop stop
-  cooperatively.
-- `pause` waits during retry backoff. It returns `true` when cancellation ends
-  the wait early.
-- `emit` reports non-terminal progress through the events listed below.
+- `cancelled` tells Harpe that the user wants to stop the turn.
+- `pause` waits before retrying a temporary failure. It returns `true` if the
+  user cancels while waiting.
+- `emit` reports progress through the events listed below.
 - `approve` asks the active user to allow or reject a protected action. The
   request id prevents a stale decision from approving a later action.
 
-Drivers implement this interface for their transport and user interface.
+Your application implements this interface for its transport and user
+interface.
 `Interact.unattended` provides a channel that ignores events, never cancels,
 and treats approval as cancelled.
 
-Passing the channel to the model session lets a streaming adapter stop reading
-promptly when the turn is cancelled. It also leaves room for future
-provider-derived progress events. Lifecycle and tool events remain owned by the
-turn engine. Provider adapters emit only information obtained while reading the
-provider stream.
-
 ## Turn events
 
-`Interact.emit` receives non-terminal `TurnEvent` values. Completion,
-interruption, and failure are represented by the turn's `TurnResult`, not by an
-event.
+`Interact.emit` receives `TurnEvent` values while work is in progress. The
+completed `TurnData` carries the final success, interruption, or failure.
 
 | Event | Meaning |
 | --- | --- |
-| `ModelRequestStarted(attempt, maxAttempts)` | A model request is about to block. Attempt zero is the initial request. |
-| `ModelRequestEnded` | The current model request returned. |
-| `TransientError(detail, delaySeconds)` | A retryable request failed and the turn is about to wait. |
-| `AssistantChunk(text)` | Provisional visible text arrived from the active provider request. |
-| `AssistantStreamReset` | Discard provisional chunks because their request failed and will not be committed. |
-| `AssistantMessage(text)` | A complete assistant message preceding tool calls is available. |
-| `ToolBudgetReached(budget)` | No more tools are being offered. The model must produce a final answer. |
-| `ToolCallStarted(name)` | Execution of a requested tool has begun. |
-| `ToolCallEnded(name, summary)` | Tool execution ended with a driver-facing summary. |
-| `ContextCompacted(droppedMessages)` | Context compacted older messages before a model request. |
+| `ModelRequestStarted(attempt, maxAttempts)` | Harpe started a model request. Attempt zero is the first request. |
+| `ModelRequestEnded` | Harpe finished receiving the model response. |
+| `TransientError(detail, delaySeconds)` | A temporary model error occurred. Harpe will wait and retry. |
+| `AssistantChunk(text)` | A new piece of the assistant's answer is ready to display. |
+| `AssistantStreamReset` | Clear text from a failed streaming attempt before its retry begins. |
+| `AssistantMessage(text)` | The assistant produced visible text before requesting tools. |
+| `ToolBudgetReached(budget)` | The turn used its tool-call budget. Harpe now asks for a final answer. |
+| `ToolCallStarted(name)` | Harpe started running a tool. |
+| `ToolCallEnded(name, summary)` | The tool finished and produced a displayable summary. |
+| `ContextCompacted(droppedMessages)` | Older conversation messages were compacted to keep the context manageable. |
 
 ## Chunk streaming
 
-The built-in model adapters read their provider streams synchronously. They
-emit `AssistantChunk` as text arrives and still return one complete
-`ReplyResult`.
+Harpe can display an answer while the model is still generating it. The
+built-in model providers emit `AssistantChunk` events as text arrives. The
+completed turn still contains the full answer.
 
-A driver can display the provisional text with a small `Interact`
+An application can display the provisional text with a small `Interact`
 implementation:
 
 ```jo
@@ -128,9 +124,7 @@ val turn = Agent.ask:
   interact = channel
 ```
 
-Chunks are presentation data, not transcript messages. A driver may append them
-to a provisional answer, ignore them, or translate them for its transport. When
-`AssistantStreamReset` arrives, it must remove that provisional attempt. The
-event prevents text from a failed request being concatenated with its retry. The
-complete `TurnData` remains the authoritative result for persistence and final
-rendering.
+Chunks are live display updates, not separate conversation messages. Your
+application can show them or ignore them. When `AssistantStreamReset` arrives,
+clear the text from that attempt so it is not joined with the retry. Use the
+complete `TurnData` for persistence and final rendering.
