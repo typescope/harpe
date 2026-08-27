@@ -141,6 +141,14 @@ section Journal
   def requestCategory: String  = "harpe.turn.request"
   def responseCategory: String = "harpe.turn.response"
 
+  //[ Load resumable model history from an existing JSONL journal.
+    !
+    ! Missing-file policy belongs to the application. `Entry.readJsonl` raises
+    ! when `path` does not exist.
+  //]
+  def load(path: String): List[Message] =
+    fromEntries(Entry.readJsonl(path))
+
   //[ Build a bracket payload — the `Value` that `request` and `response` carry
     !
     ! Sugar for the common case, so a driver writes its payload the way it writes

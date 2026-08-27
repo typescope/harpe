@@ -28,6 +28,7 @@ import harpe.Transcript
 import harpe.transcript.Journal
 import harpe.logging.Logger
 import harpe.logging.logger
+import harpe.util.File
 import harpe.logging.Value
 import harpe.turns.TurnResult
 
@@ -167,7 +168,16 @@ section Session
   def sessionPath(id: String): String receives appHome =
     os.path.join(appHome, "logs/sessions", id + ".jsonl")
 
-  //[ An append-only log for this session (file created lazily). //]
-  def forSession(id: String): Logger receives appHome =
-    new harpe.logging.JsonlLogger(sessionPath(id))
+  //[ An append log for this chat's session (file created lazily). //]
+  def forSession(chatId: String): Logger receives appHome =
+    new harpe.logging.JsonlLogger(sessionPath(chatId))
+
+  //[ Reconstruct this chat's conversation from disk.
+    !
+    ! Returns `[]` if the chat has no prior transcript.
+  //]
+  def load(chatId: String): List[Message] receives appHome =
+    val path = sessionPath(chatId)
+    if !File.exists(path) then []
+    else Journal.load(path)
 end

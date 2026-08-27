@@ -25,7 +25,6 @@ import jo.IO.stdout
 import harpe.*
 import harpe.logging.JsonlLogger
 import harpe.transcript.Journal
-import harpe.logging.Entry
 import harpe.logging.logger
 import harpe.Model.UserInput
 import harpe.Model.Message
@@ -153,7 +152,7 @@ section Session
   //[ A session's transcript, or `[]` for a log this run is about to create. //]
   def load(path: String): List[Message] =
     if !File.exists(path) then []
-    else Journal.fromEntries(Entry.readJsonl(path))
+    else Journal.load(path)
 
   //[ Up to `limit` CLI session logs, newest first. //]
   def recentFiles(limit: Int): List[String] receives appHome =

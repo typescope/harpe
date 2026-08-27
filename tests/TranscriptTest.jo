@@ -157,6 +157,9 @@ def run(): Unit receives stdout =
   check("context keeps an answered turn's reply", loaded.get(2) is Assistant("done", _))
   check("context keeps its tool results", loaded.get(3) is ToolResults(_))
 
+  val loadedFromFile = Journal.load(path)
+  check("load existing journal", loadedFromFile.size == loaded.size)
+
   sessionLog.close()
   os.unlink(path)
 
