@@ -131,21 +131,21 @@ private class SendFileTool(client: TelegramClient)
       [Tool.strParam("fileName", "The name of the file in your data directory to send to the user")]
 
   //[ Send `fileName` from the chat's data directory `dir` as a document. //]
-  def send(chatId: String, fileName: String, dir: String): Tool.RunOutcome =
+  def send(chatId: String, fileName: String, dir: String): Tool.ToolOutcome =
     val baseName = os.path.basename(fileName.replace("\\", "/"))
 
     if dir == "" then
-      new Tool.RunOutcome("No data directory is available to send from.", "sendFile · no data dir", attachments = [])
+      new Tool.ToolOutcome("No data directory is available to send from.", "sendFile · no data dir", attachments = [])
 
     else if baseName == "" || baseName == "." || baseName == ".." || !os.path.isfile(os.path.join(dir, baseName)) then
-      new Tool.RunOutcome:
+      new Tool.ToolOutcome:
         "No such file: '\{fileName}'. Write it to your data directory first, then send it."
         "sendFile · no such file"
         attachments = []
 
     else
       client.sendDocument(chatId, os.path.join(dir, baseName), "")
-      new Tool.RunOutcome("Sent '\{baseName}' to the user.", "sendFile · \{baseName}", attachments = [])
+      new Tool.ToolOutcome("Sent '\{baseName}' to the user.", "sendFile · \{baseName}", attachments = [])
 end
 
 //[ The bot

@@ -87,10 +87,10 @@ section SkillTools
       []
 
   //[ The names of every skill file under `skillsDir`. //]
-  def list(skillsDir: String): RunOutcome =
+  def list(skillsDir: String): ToolOutcome =
     val names = collectSkills(skillsDir).map(pair => pair.fst)
     val body = if names.isEmpty then "(no skills found)" else names.join("\n")
-    new RunOutcome(body, "listed skills", attachments = [])
+    new ToolOutcome(body, "listed skills", attachments = [])
 
   def readSpec: Tool =
     Tool:
@@ -99,7 +99,7 @@ section SkillTools
       [strParam("name", "The full skill file name including extension, as returned by skillsList (e.g. \"jo-cheat-sheet.md\")")]
 
   //[ One skill file's contents, confined to `skillsDir`. //]
-  def read(skillsDir: String, skill: String): RunOutcome receives logger =
+  def read(skillsDir: String, skill: String): ToolOutcome receives logger =
     logger.log:
       skillsCategory
       "action" ~ "read"
@@ -108,14 +108,14 @@ section SkillTools
     val absPath = os.path.abspath(os.path.normpath(os.path.join(skillsDir, skill)))
 
     if !confined(skillsDir, absPath) then
-      return new RunOutcome("Access denied: path outside skills directory", "denied · \{skill}", attachments = [])
+      return new ToolOutcome("Access denied: path outside skills directory", "denied · \{skill}", attachments = [])
 
     if os.path.isfile(absPath) then
       match py.try(py.open(absPath, "r").read())
-        case Ok(c)  => new RunOutcome(c.asString, "read · \{skill}", attachments = [])
-        case Err(_) => new RunOutcome("Skill \{skill} could not be read as text.", "unreadable · \{skill}", attachments = [])
+        case Ok(c)  => new ToolOutcome(c.asString, "read · \{skill}", attachments = [])
+        case Err(_) => new ToolOutcome("Skill \{skill} could not be read as text.", "unreadable · \{skill}", attachments = [])
     else
-      new RunOutcome("Skill not found: \{skill}", "not found · \{skill}", attachments = [])
+      new ToolOutcome("Skill not found: \{skill}", "not found · \{skill}", attachments = [])
 
   def searchSpec: Tool =
     Tool:
@@ -124,13 +124,13 @@ section SkillTools
       [strParam("query", "Substring to search for (case-insensitive)")]
 
   //[ Matching lines across every skill file under `skillsDir`, capped at `maxHits`. //]
-  def search(skillsDir: String, query: String): RunOutcome receives logger =
+  def search(skillsDir: String, query: String): ToolOutcome receives logger =
     logger.log:
       skillsCategory
       "action" ~ "search"
       "query"  ~ query
 
-    new RunOutcome(matches(skillsDir, query), "searched · \{query}", attachments = [])
+    new ToolOutcome(matches(skillsDir, query), "searched · \{query}", attachments = [])
 
   //[ At most this many matching lines come back, however many files matched. //]
   private def maxHits: Int = 30

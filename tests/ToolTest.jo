@@ -2,7 +2,7 @@
   !
   ! Unit tests for the tool layer (`harpe.tools`): the typed `ToolInput`
   ! accessors and their fallbacks, the parameter constructors, and `runSafely` —
-  ! the backstop that turns a throwing tool into an error `RunOutcome` instead of
+  ! the backstop that turns a throwing tool into an error `ToolOutcome` instead of
   ! letting it crash a turn.
 //]
 
@@ -64,18 +64,18 @@ def run(): Unit receives stdout, logger =
   check("constructed params are required", sp.required && ip.required && bp.required && np.required)
 
   // --- runSafely: a normal handler's outcome passes through unchanged ---
-  val okOut = runSafely("ok", (input, channel) => new RunOutcome("done", "ran", attachments = []), empty, Interact.unattended)
+  val okOut = runSafely("ok", (input, channel) => new ToolOutcome("done", "ran"), empty, Interact.unattended)
   check("runSafely passes success through", okOut.result == "done" && okOut.summary == "ran")
   check("an outcome is a success unless it says otherwise", okOut.success)
 
-  // --- runSafely: a throwing handler becomes an error RunOutcome, not a crash ---
+  // --- runSafely: a throwing handler becomes an error ToolOutcome, not a crash ---
   val badOut = runSafely("boom", (input, channel) => abort "kaboom", empty, Interact.unattended)
   check("runSafely summary names the tool", badOut.summary == "error · boom")
   check("runSafely result carries the message", badOut.result.contains("kaboom"))
   check("a handler that raises did not succeed", !badOut.success)
 
   // --- Toolset: tools accumulate, and wiring one name twice is caught as it is built ---
-  val noop: Handler = (i: ToolInput, channel: Interact) => new RunOutcome("x", "x", attachments = [])
+  val noop: Handler = (i: ToolInput, channel: Interact) => new ToolOutcome("x", "x", attachments = [])
   val spec = (n: String) => Tool(n, "a test tool", [])
   val two = Toolset.of(spec("alpha"), noop).add(spec("beta"), noop)
   check("tools accumulate", two.contains("alpha") && two.contains("beta"))

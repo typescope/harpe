@@ -78,25 +78,25 @@ section SendFileTool
       [Tool.strParam("fileName", "The name of the file in your data directory to send to the user")]
 
   //[ Record the intent to deliver `fileName` from the session directory `dir`. //]
-  def send(fileName: String, dir: String): Tool.RunOutcome =
+  def send(fileName: String, dir: String): Tool.ToolOutcome =
     val baseName = os.path.basename(fileName.replace("\\", "/"))
 
     if dir == "" then
-      new Tool.RunOutcome:
+      new Tool.ToolOutcome:
         "No data directory is available to send from."
         "sendFile · no data dir"
         attachments = []
         success = false
 
     else if baseName == "" || baseName == "." || baseName == ".." || !os.path.isfile(os.path.join(dir, baseName)) then
-      new Tool.RunOutcome:
+      new Tool.ToolOutcome:
         "No such file: '\{fileName}'. Write it to your data directory first, then send it."
         "sendFile · no such file"
         attachments = []
         success = false
 
     else
-      new Tool.RunOutcome:
+      new Tool.ToolOutcome:
         "Sent '\{baseName}' to the user."
         "sendFile · \{baseName}"
         attachments = []

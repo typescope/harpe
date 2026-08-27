@@ -71,13 +71,13 @@ private def joinPy(xs: py.List): String =
   s
 
 // A test tool: the spec the model is offered, plus what its route runs.
-private class TestTool(toolName: String, act: () => RunOutcome receives logger)
+private class TestTool(toolName: String, act: () => ToolOutcome receives logger)
   view Tool
 
   def name: String = toolName
   def description: String = "test tool"
   def params: List[ToolParam] = []
-  def run(): RunOutcome receives logger = act()
+  def run(): ToolOutcome receives logger = act()
 end
 
 // A set of test tools, wired as the engine wants them.
@@ -88,7 +88,7 @@ private def toolsetOf(tools: List[TestTool]): Toolset =
 
 // A trivial tool that always succeeds, for exercising the tool-call path.
 private def echoTool(): TestTool =
-  new TestTool("echo", () => new RunOutcome("echoed", "echo · ran", []))
+  new TestTool("echo", () => new ToolOutcome("echoed", "echo · ran", []))
 
 // A tool that raises instead of returning — the engine must contain it via
 // `runSafely` and keep the turn going.
@@ -121,7 +121,7 @@ private def loggingTool(): TestTool =
     "logged"
     () =>
       logger.log("tool-invoked")
-      new RunOutcome("done", "logged · ran", attachments = [])
+      new ToolOutcome("done", "logged · ran", attachments = [])
 
 private def failingLoggingTool(): TestTool =
   new TestTool:
@@ -218,7 +218,7 @@ def run(): Unit receives stdout, logger =
     "count"
     () =>
       callsB2.set(0, callsB2.get(0).asInt + 1)
-      new RunOutcome("counted", "count · ran", [])
+      new ToolOutcome("counted", "count · ran", [])
   val contextB2 = new SummarizingContext:
     "BASE"
     [UserInput("old", []), Assistant("old answer", [])]

@@ -26,13 +26,13 @@ class RunBashTool
   def toolset(): Toolset =
     Toolset.of: this, (i: Tool.ToolInput, interact: Interact) => run(i["command"], interact)
 
-  def run(command: String, interact: Interact): Tool.RunOutcome receives appHome =
+  def run(command: String, interact: Interact): Tool.ToolOutcome receives appHome =
     runBash(command, interact)
 end
 
-private def runBash(command: String, interact: Interact): Tool.RunOutcome receives appHome =
+private def runBash(command: String, interact: Interact): Tool.ToolOutcome receives appHome =
   if command.trim == "" then
-    return new Tool.RunOutcome("The command is empty.", "empty command", attachments = [])
+    return new Tool.ToolOutcome("The command is empty.", "empty command", attachments = [])
 
   val id = py.module("uuid").uuid4().toString
   val request = Approvals.Request(
@@ -42,13 +42,13 @@ private def runBash(command: String, interact: Interact): Tool.RunOutcome receiv
 
   match interact.approve(id, request)
   case Approvals.Rejected =>
-    new Tool.RunOutcome("The user rejected the command.", "command rejected", attachments = [])
+    new Tool.ToolOutcome("The user rejected the command.", "command rejected", attachments = [])
 
   case Approvals.TimedOut =>
-    new Tool.RunOutcome("Approval timed out. The command was not run.", "approval timed out", attachments = [])
+    new Tool.ToolOutcome("Approval timed out. The command was not run.", "approval timed out", attachments = [])
 
   case Approvals.Cancelled =>
-    new Tool.RunOutcome("Approval was cancelled. The command was not run.", "approval cancelled", attachments = [])
+    new Tool.ToolOutcome("Approval was cancelled. The command was not run.", "approval cancelled", attachments = [])
 
   case Approvals.Approved =>
     val result = Process.runCapped(
@@ -58,7 +58,7 @@ private def runBash(command: String, interact: Interact): Tool.RunOutcome receiv
     )
 
     if result.timedOut then
-      new Tool.RunOutcome:
+      new Tool.ToolOutcome:
         "The command ran longer than 30 seconds and was stopped."
         "command timed out"
         attachments = []
@@ -73,9 +73,9 @@ private def runBash(command: String, interact: Interact): Tool.RunOutcome receiv
       val content = if combined == "" then "(the command produced no output)" else combined
 
       if result.returnCode == 0 then
-        new Tool.RunOutcome(Tool.elide(content, 4000), "command completed", attachments = [])
+        new Tool.ToolOutcome(Tool.elide(content, 4000), "command completed", attachments = [])
       else
-        new Tool.RunOutcome:
+        new Tool.ToolOutcome:
           Tool.elide("The command exited with status \{result.returnCode}:\n\{content}", 4000)
           "command failed · exit \{result.returnCode}"
           attachments = []

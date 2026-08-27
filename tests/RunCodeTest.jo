@@ -38,7 +38,7 @@ private def fixtureSandboxDir(): String =
   os.path.abspath(found)
 
 // Map an outcome to a stable tag (raw summaries carry nondeterministic timings).
-private def tag(o: RunOutcome): String =
+private def tag(o: ToolOutcome): String =
   if o.summary.contains("timed out") then "timeout"
   else if o.summary.contains("did not compile") then "compile-error"
   else if o.summary.contains("crashed") then "crash"
@@ -49,11 +49,11 @@ private def tag(o: RunOutcome): String =
 // (context params don't cross threads). These tests assert on outcomes, not logs.
 private def execWith(
     tool: RunCodeTool, code: String, guestEnv: Map[String, String], channel: Interact)
-: RunOutcome =
+: ToolOutcome =
   with logger = Logging.discard in
     tool.run(code, guestEnv, channel)
 
-private def exec(tool: RunCodeTool, code: String): RunOutcome =
+private def exec(tool: RunCodeTool, code: String): ToolOutcome =
   execWith(tool, code, Map.empty[String, String], Interact.unattended)
 
 private class ApprovalInteract(decision: Approvals.Decision)
