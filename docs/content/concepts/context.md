@@ -1,150 +1,196 @@
 +++
-title = "Context management"
+title = "Context"
 +++
-A model's input is bounded, but a session can run indefinitely. So on every
-request *something* must decide what the model sees — the instructions, how much
-of the conversation. That decision is the
-**Context**: a per-session strategy you configure or replace.
+A model can see only the input sent with its current request. Context determines
+which instructions and conversation messages Harpe sends on each request.
 
-## What the model sees each request
+During a turn, Harpe adds the user's message, model replies, tool calls, and tool
+results to the context. If the model calls several tools before answering, each
+new model request sees the relevant work from earlier in that turn.
 
-For each model call, the Context composes a `Rendered` — two parts:
+Across turns, the context strategy determines what the model remembers.
+
+## Context belongs to a session
+
+Create one context for a conversation and pass the same object to every
+`Agent.ask` call in that session:
+
+```jo
+val context = new WindowedContext:
+  baseSystem = File.read(os.path.join(appHome, "AGENT.md"))
+  initial = []
+
+val first = Agent.ask:
+  "My project is called Atlas"
+  brain = brain
+  context = context
+
+val second = Agent.ask:
+  "What is my project called?"
+  brain = brain
+  context = context
+```
+
+The second turn can see the first because both use the same context.
+
+If `context` is omitted, `Agent.ask` creates a fresh no-history context for that
+call. The model still sees the complete active turn, including tool results, but
+nothing is carried into a later `Agent.ask` call.
+
+## Context is not the transcript
+
+Context and transcript receive the same conversation events, but they serve
+different purposes:
+
+| | Context | Transcript |
+| --- | --- | --- |
+| Purpose | Prepare the model's next input | Record what happened |
+| Retention | May omit or summarize older turns | Append-only history |
+| Lifetime | Usually held in memory for a session | May be persisted by the application |
+| Used by the model | Yes | Only when the application exposes or replays it |
+
+Removing an old turn from model context does not need to delete it from the
+transcript. A journal can preserve the complete conversation while the model
+works with only a recent window.
+
+Context itself does not persist a session. When reopening a session, the
+application loads the relevant messages from its journal or other store and uses
+them as the new context's `initial` history.
+
+## What the model receives
+
+At each model-call boundary, a context produces:
 
 ```jo
 class Rendered(system: String, messages: List[Message])
 ```
 
-- **`system`** — the stable instructions: your base prompt, used verbatim (plus a
-  distilled summary, if the strategy keeps one).
-- **`messages`** — the recent transcript, as much as the strategy's window holds.
+- `system` contains the base instructions, usually loaded from `AGENT.md`. A
+  summarizing strategy may add its rolling summary here.
+- `messages` contains the conversation history selected by the strategy,
+  including the active turn.
 
-## The built-in strategies
+The model provider receives this snapshot. It does not read the context object,
+session journal, or application files directly.
 
-All render the base prompt as `system`. They differ in how much semantic history
-they retain and how they reduce it.
+## Built-in strategies
 
-**`FullContext`.** Keeps the complete semantic history. It is the simplest
-choice for the common case where conversations are short enough to fit without
-context management. `Context.noHistory`, the default for a plain `Agent.ask`,
-uses a fresh `FullContext` for that one call.
+Harpe provides four retention strategies:
 
-**`TurnContext`.** Keeps only the active logical turn. On commit or abort its
-working messages are cleared, so past conversation never enters later model
-calls implicitly. Applications can pair it with transcript-query tools when the
-model should retrieve old turns selectively. It is an explicit policy for
-retrieval-oriented agents, not the general default.
+| Strategy | What later turns can see | Extra model calls | Suitable for |
+| --- | --- | --- | --- |
+| `FullContext` | Every retained turn verbatim | None | Short conversations known to fit the model window |
+| `WindowedContext` | A recent character-bounded window | None | General sessions where recent context is sufficient |
+| `SummarizingContext` | Recent turns plus a summary of older turns | One call when compacting | Long conversations that must retain their thread |
+| `TurnContext` | Only the active turn | None | Agents that retrieve prior history explicitly through tools |
 
-**`WindowedContext` (the default).** A sliding window: once the transcript passes
-a fixed character budget, the oldest whole turns are dropped from what's sent (the
-driver's on-disk session archive still keeps them). Cheap and simple — no extra
-model calls — but dropped detail is gone unless the agent wrote it down.
+### Full context
 
-**`SummarizingContext`.** Instead of dropping old turns, it distills them into a
-rolling summary — one extra call to a "distiller" model — carried in `system`. A
-long session keeps its thread at the cost of an occasional summarization call.
-Compaction triggers when the provider's reported input-token count crosses a
-high-water mark, then folds the oldest turns until the window fits a low-water
-target.
+`FullContext` sends every retained message on every request. It is predictable
+and preserves all detail, but it does not enforce a size limit. A long session
+can eventually exceed the model's context window.
 
-| | old turns become | extra model calls | best for |
-|---|---|---|---|
-| `FullContext` | retained verbatim | none | ordinary short conversations |
-| `TurnContext` | unavailable unless retrieved through a tool | none | bounded working context with explicit transcript retrieval |
-| `WindowedContext` | dropped | none | short sessions, or agents that keep their own notes |
-| `SummarizingContext` | a rolling summary | one per compaction | long sessions that must recall early detail |
+Use it for short conversations, one-off tasks, and applications that enforce
+their own limits.
 
-## Choosing and configuring
+### Windowed context
 
-The strategy is per-session, constructed where the driver builds its `Agent`:
+`WindowedContext` sends only the most recent whole turns that fit its fixed
+character budget. It requires no additional model call and bounds accumulated
+cross-turn history. It always keeps the newest turn intact, even when that turn
+alone exceeds the target. Once an older turn falls outside the window, the model
+cannot use it unless the application exposes that information through another
+mechanism.
+
+Harpe's shipped conversational applications use this strategy, but
+`Agent.ask` does not select it automatically. The application must construct and
+reuse it.
+
+### Summarizing context
+
+`SummarizingContext` keeps recent turns verbatim and distills older turns into a
+rolling summary. The summary helps preserve goals, decisions, and important
+facts without sending the complete conversation.
+
+Summaries trade exact detail for continuity. They also require an additional
+model call when compaction occurs. The application supplies the distillation
+function, so it can use the agent's model, a cheaper model, or another
+summarization implementation.
+
+Compaction is reactive. Harpe learns the exact input-token count from the
+provider after a reply. If that count crosses the configured high-water mark,
+the context compacts before a later model request. One oversized request can
+therefore occur before compaction.
+
+### Turn context
+
+`TurnContext` retains the user's message and all model and tool activity within
+the active turn. It clears that working history when the turn ends.
+
+Use it when prior conversation should be retrieved deliberately through an
+application tool instead of being included automatically. The transcript can
+remain complete even though the model context is turn-local.
+
+## Choosing a strategy
+
+Start from the information the next turn needs:
+
+- Use `FullContext` when sessions are predictably short.
+- Use `WindowedContext` when recent conversation is enough and simplicity
+  matters.
+- Use `SummarizingContext` when long-running conversations need continuity.
+- Use `TurnContext` when the agent has an explicit history-retrieval mechanism
+  or should treat every turn independently.
+
+Construct the chosen context once per session:
 
 ```jo
-// Short conversations: retain the complete semantic history.
-new FullContext:
-  baseSystem = "You are a helpful assistant."
+val full = new FullContext:
+  baseSystem = basePrompt
   initial = history
 
-// Current turn only, for an agent that retrieves older history explicitly.
-new TurnContext("You are a helpful assistant.")
-
-// cross-turn history: a sliding window (fixed size, no knobs)
-new WindowedContext:
-  baseSystem = "You are a helpful assistant."
+val windowed = new WindowedContext:
+  baseSystem = basePrompt
   initial = history
 
-// or: summarize instead of dropping
-new SummarizingContext:
-  baseSystem = "You are a helpful assistant."
+val turnLocal = new TurnContext(basePrompt)
+
+val summarized = new SummarizingContext:
+  baseSystem = basePrompt
   initial = history
   highWaterTokens = 120000
   lowWaterChars = 160000
-  distill = distiller
+  distill = rendered => summarize(rendered)
 ```
 
-- `baseSystem` is the system prompt — a string, however you produce it. The
-  shipped applications read theirs from `AGENT.md`. `history` seeds the window
-  (a resumed session's transcript, or `[]` for a fresh one).
-- `distiller` is any `Model` — the agent's brain, or a cheaper model reserved for
-  summaries.
-- `highWaterTokens` is the budget you compact at. It's a **policy, not the model's
-  limit**: set it *below* the context window, leaving room for the reply and
-  holding down cost/latency. It's measured against the provider's exact reported
-  count, so it's model-accurate.
-- `lowWaterChars` is how much recent transcript to keep (in characters — the
-  truncation unit. About four characters per token is why this figure isn't directly
-  comparable to the token high-water). Keep it well below the high-water mark so
-  compactions stay rare and the cached prefix survives.
+`history` is a `List[Message]`. Use `[]` for a new session or replay messages
+from the session transcript when resuming one.
 
-One behavior to know: `SummarizingContext` is **reactive** — it learns the token
-count only *after* a reply, so a single oversized request can go out before the
-next one compacts.
+For `SummarizingContext`, the high-water mark decides when to compact using the
+provider's reported input-token count. The low-water target decides how much
+recent history to keep using characters. Leave enough space below the model's
+context limit for tool results and the next reply.
 
-## Carrying facts past the window
+## Durable memory
 
-Nothing the agent knows survives the window except what it writes down. The
-framework offers no store for that, deliberately: the agent already has a
-filesystem through `fs`, so a notes file it maintains itself is one mechanism
-instead of two, and its format is the agent's own rather than a schema the
-framework imposed.
+Context is working conversation memory, not a general knowledge store. Anything
+outside the retained window is unavailable to the model unless it is summarized
+or retrieved again.
 
-A driver that wants those notes in front of the model on every request writes a
-`Context` that reads the file and appends it to `messages` — see below.
+An application that needs durable facts can provide a tool for notes, records,
+or transcript search. The agent can then retrieve only the information relevant
+to the current task. Harpe does not require a particular storage format or grant
+filesystem access automatically.
 
-Another policy is to keep model context turn-local and let application tools
-query durable conversation history. The transcript remains the complete record.
-`TurnContext` becomes bounded working memory. The model retrieves only the past
-information relevant to its current task. Transcript querying belongs in tools
-or an application-owned read API, not in the `Context` interface itself.
+## Custom strategies
 
-## Writing your own strategy
+Implement `Context` when the built-in retention policies do not match the
+application. A custom strategy might retrieve semantically related turns,
+enforce a hard budget, add application-owned notes, or prune particular tool
+results.
 
-A `Context` has an explicit turn lifecycle:
-
-```jo
-interface Context
-  def beginTurn(input: UserInput): Unit               // open a turn and add its input
-  def append(message: Message): Unit                  // record a transcript event
-  def compact(interact: Interact): Context.Result    // current snapshot + whether it compacted
-  def observe(usage: Usage): Unit                     // the last reply's token counts
-  def commitTurn(): Unit                              // finish a successful turn
-  def abortTurn(): Unit                               // discard its provisional model/tool tail
-end
-```
-
-- **`compact`** is where your policy lives. It runs at model-call boundaries and may be
-  effectful: call the model first through `interact` (e.g. to summarize) and
-  mutate your own state. It returns both the prepared `Rendered` snapshot and a
-  flag telling the engine whether the current provider session must be replaced.
-  (It carries `receives logger` because a model call it makes logs token usage.)
-- **`observe`** hands you the provider's exact token count after each reply, so you
-  can size on real usage instead of estimating — how `SummarizingContext` decides
-  to compact.
-- **`beginTurn` / `commitTurn` / `abortTurn`** make retention policy explicit.
-  The built-in cross-turn contexts retain a successful turn. On abort they
-  restore the pre-turn state while retaining the user's request, matching the
-  durable transcript. `TurnContext` clears all working messages in either case.
-
-`FullContext`, `TurnContext`, `WindowedContext`, and `SummarizingContext` are
-four points in this space. A
-different need — semantic retrieval, a hard token cap, per-tool pruning — is a new
-`Context` you use when constructing the agent. Their sources (`agent/context/`)
-are the reference to copy from.
+Every context follows the same turn lifecycle. It receives the user input and
+subsequent messages, prepares a `Rendered` snapshot at model-call boundaries,
+observes provider usage, and either commits or aborts the turn. The built-in
+implementations in `agent/context/` are practical references for custom
+strategies.
