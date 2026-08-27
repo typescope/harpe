@@ -139,7 +139,9 @@ private class TestInteract(state: State)
 
   def cancelled: Bool = state.cancelledNow
 
-  def pause(seconds: Float): Bool = state.pauseNow
+  def pause(seconds: Float): Bool =
+    state.pausedFor = seconds
+    state.pauseNow
 
   def approve(id: String, request: Approvals.Request): Approvals.Decision = Approvals.Cancelled
 end
@@ -147,6 +149,7 @@ end
 private class State(cancelled: Bool, pause: Bool)
   var cancelledNow: Bool = cancelled
   var pauseNow: Bool = pause
+  var pausedFor: Float = -1.0
 end
 
 // Drive one turn and summarize it as "<result> | <events>". The agent's brain is
@@ -304,6 +307,14 @@ def run(): Unit receives stdout, logger =
     "G transient-then-success"
     scenario: tools, 50, 2, askG, live
     "Answered(recovered) | start,end,transient,start,end"
+
+  // A provider Retry-After hint overrides exponential backoff and is not
+  // capped at the ordinary 30-second ceiling.
+  val retryAfterState = State(cancelled = false, pause = true)
+  val retryAfterModel: Model =
+    (base, maxOut) => (results, offered) => RetryAfter("rate limited", 75.0)
+  scenario: tools, 50, 2, retryAfterModel, retryAfterState
+  check: "G2 Retry-After delay", retryAfterState.pausedFor.toString, "75.0"
 
   // Cancellation already requested → the turn bails before asking the model.
   check:
