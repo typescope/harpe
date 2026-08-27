@@ -100,7 +100,7 @@ class FlightServer(brain: Model, home: String, sandboxEnv: Map[String, String], 
     val id = body.get("session", "").asString
 
     registryLock.acquire()
-    if registry.contains(id) then registry.get(id).cast[WebSession].requestStop()
+    if registry.contains(id) then registry.get(id).cast[Session].requestStop()
     registryLock.release()
 
     Http.respondJson(py.dict("ok" ~ true))
@@ -113,8 +113,8 @@ class FlightServer(brain: Model, home: String, sandboxEnv: Map[String, String], 
     val decision = body.get("decision", "").asString
 
     registryLock.acquire()
-    val found: Option[WebSession] =
-      if registry.contains(sessionId) then Some(registry.get(sessionId).cast[WebSession])
+    val found: Option[Session] =
+      if registry.contains(sessionId) then Some(registry.get(sessionId).cast[Session])
       else None
     registryLock.release()
 
@@ -131,7 +131,7 @@ class FlightServer(brain: Model, home: String, sandboxEnv: Map[String, String], 
       ++ bonusTools
 
   //[ Mint a fresh session under a new time-sortable id. //]
-  private def createSession(): WebSession receives appHome =
+  private def createSession(): Session receives appHome =
     val id = time.strftime("%Y%m%dT%H%M%S") + "-" + secrets.token_hex(2)
     buildSession(id)
 
@@ -142,10 +142,10 @@ class FlightServer(brain: Model, home: String, sandboxEnv: Map[String, String], 
     ! lost in that case — we have no disk replay — but the id stays consistent
     ! so the browser does not get stuck in an endless create-new-session loop.
   //]
-  private def resumeSession(id: String): WebSession receives appHome =
+  private def resumeSession(id: String): Session receives appHome =
     registryLock.acquire()
-    val found: Option[WebSession] =
-      if registry.contains(id) then Some(registry.get(id).cast[WebSession])
+    val found: Option[Session] =
+      if registry.contains(id) then Some(registry.get(id).cast[Session])
       else None
     registryLock.release()
 
@@ -154,7 +154,7 @@ class FlightServer(brain: Model, home: String, sandboxEnv: Map[String, String], 
     case None          => buildSession(id)
 
   //[ Build and register a session under the given id. //]
-  private def buildSession(id: String): WebSession receives appHome =
+  private def buildSession(id: String): Session receives appHome =
     // Ensure the log directory exists so JsonlLogger can write the file.
     File.ensureDir(os.path.join(appHome, "logs/sessions"))
 
@@ -162,9 +162,9 @@ class FlightServer(brain: Model, home: String, sandboxEnv: Map[String, String], 
       baseSystem = File.read(os.path.join(appHome, "AGENT.md"))
       initial = []
 
-    val session = new WebSession:
+    val session = new Session:
       id
-      WebSession.forSession(id)
+      Session.forSession(id)
       brain
       sessionTools()
       context
@@ -182,7 +182,7 @@ class FlightServer(brain: Model, home: String, sandboxEnv: Map[String, String], 
     registryLock.acquire()
     val stale = py.list()
     for k in py.iter(registry.keys()) do
-      if registry.get(k).cast[WebSession].lastActive < cutoff then stale.append(k)
+      if registry.get(k).cast[Session].lastActive < cutoff then stale.append(k)
     for k in py.iter(stale) do
       val _ = registry.pop(k)
     registryLock.release()

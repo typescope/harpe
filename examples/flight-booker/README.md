@@ -1,6 +1,6 @@
 # flight-booker
 
-A Harpe agent named **Sky** that searches for flights and places bookings via the [Duffel API](https://duffel.com/docs) (test mode). Runs as a **Telegram bot** or a **local web app** — same agent, two interfaces.
+A Harpe agent named **Sky** that searches for flights and places bookings via the [Duffel API](https://duffel.com/docs) (test mode). Runs as a local web app.
 
 ## What it does
 
@@ -39,9 +39,7 @@ cd my-booker
 pip install -r requirements.txt
 ```
 
-## Running the web interface
-
-The web interface is the easiest way to try Sky — no Telegram account or bot token needed.
+## Running
 
 **Start**
 
@@ -58,32 +56,6 @@ When Sky is ready to book a flight it shows a confirmation card in the chat — 
 ```
 HOST=127.0.0.1   # default
 PORT=8765        # default
-```
-
-## Running the Telegram bot
-
-**1. Get a Telegram bot token**
-
-Talk to [@BotFather](https://t.me/BotFather) on Telegram, send `/newbot`, and copy the token.
-
-**2. Add to `.env`**
-
-```
-TELEGRAM_BOT_TOKEN=<your bot token>
-```
-
-**3. Find your Telegram user id**
-
-Start the bot without adding yourself to `TELEGRAM_ALLOWED_SENDERS`. DM the bot — it will reply with your user id. Add it to `.env`:
-
-```
-TELEGRAM_ALLOWED_SENDERS=123456789
-```
-
-**4. Start**
-
-```sh
-jo start
 ```
 
 See [Create a Flight Booking Agent](https://harpe.typescope.ai/tutorial/create-flight-booking-agent/) for how the approval boundary works.

@@ -1,17 +1,24 @@
-//[ Session.jo
+//[ WebSession.jo
   !
-  ! The flight-booker's live conversation object (`Session`) and its storage
-  ! layout: one session per Telegram chat, keyed by `chat.id`, persisted as
-  ! `logs/sessions/<chatId>.jsonl` under the workspace.
+  ! One live browser conversation. Text-only — no file uploads or deliveries,
+  ! no interactive code editor. The approval flow is fully supported: when the
+  ! agent calls `createOrder`, the sandbox emits an approval request that blocks
+  ! until the user confirms or rejects the booking via the browser card.
   !
-  ! Text-only: no file attachments, no data directory. The booking flow is
-  ! entirely conversational.
+  ! Turns are serialized by a lock. Cancellation (POST /api/stop) is signalled
+  ! by a threading event the engine polls between calls. Approval (POST
+  ! /api/approval) resolves a pending decision via a per-request event.
 //]
 
 namespace harpe.examples.flightbooker
+
+import harpe.ffi.threading
+import harpe.util.Clock
+import harpe.ffi.json
 import harpe.ffi.os
 
 import harpe.Agent
+import harpe.Approvals
 import harpe.Context
 import harpe.Toolset
 import harpe.Model
@@ -19,95 +26,148 @@ import harpe.Model.Message
 import harpe.TurnData
 import harpe.Transcript
 import harpe.transcript.Journal
-import harpe.logging.JsonlLogger
 import harpe.logging.Logger
 import harpe.logging.logger
-import harpe.logging.Entry
-import harpe.util.File
 import harpe.logging.Value
 import harpe.turns.TurnResult
 
 
-//[ One queued message for a chat's worker //]
-class Incoming(id: String, text: String, senderId: String)
+private class PendingApproval(id: String, request: Approvals.Request)
+  val ready = threading.Event()
+  var decision = ""
+end
 
 
 //[ One live conversation
   !
-  ! Each session has a FIFO `queue` drained by its own dedicated worker thread,
-  ! so turns for different chats run concurrently while turns within one chat
-  ! stay ordered and serialized.
+  ! The session holds the pieces each turn is run with. A lock serializes turns
+  ! so concurrent requests from the same tab cannot interleave. `idle` is set
+  ! when no turn is running, so `POST /api/stop` has a sensible no-op path.
 //]
-private class Session(id: String, log: Logger, brain: Model, tools: Toolset, context: Context)
-  val queue = py.module("queue").Queue()
+class Session(id: String, log: Logger, brain: Model, tools: Toolset, context: Context)
   val transcript = new Journal(log)
+  val lock = threading.Lock()
+  val stop = threading.Event()
+  val idle = threading.Event()
+  var lastActive: Float = Clock.now()
 
-  //[ Run one user turn: open the journal bracket, run the agent, send the reply //]
-  def runTurn(
-      incoming: Incoming,
-      client: TelegramClient,
-      approvalHandler: TelegramApprovalHandler)
-  : Unit =
-    val request = Journal.payload:
-      "text" ~ incoming.text
-      "messageId" ~ incoming.id
+  private val approvalLock = threading.Lock()
+  private var pendingApproval: Option[PendingApproval] = None
 
+  //[ Run one user turn, streaming its events to `sink`.
+    !
+    ! Opens the transcript bracket, acquires the session lock, runs the engine,
+    ! then closes the bracket and releases the lock. The sink receives:
+    !
+    !   • `status` — thinking indicator, tool names while they run
+    !   • `assistant-message` — intermediate text (before tool calls) and the
+    !     closing reply sent explicitly after `Agent.ask` returns, because
+    !     `AssistantMessage` events only fire for text paired with tool calls
+    !   • `approval` / `approval-ended` — booking confirmation flow
+    !   • `done` — turn complete (result: success | interrupted | failed)
+  //]
+  def runTurn(request: Value, text: String, sink: Sink): Unit =
     transcript.request(request)
-    transcript.response(run(incoming, client, approvalHandler))
+    lastActive = Clock.now()
 
-  private def run(
-      incoming: Incoming,
-      client: TelegramClient,
-      approvalHandler: TelegramApprovalHandler)
-  : Value =
-    val channel = new TelegramInteract(client, this.id, approvalHandler)
+    lock.acquire()
+    idle.clear()
+    stop.clear()
 
-    val result = with logger = log in
+    val channel = new WebInteract(sink, stop, (aid, req) => requestApproval(aid, req, sink))
+
+    val turn = with logger = log in
       Agent.ask:
-        incoming.text
+        text
         brain = brain
         tools = tools
         interact = channel
         context = context
         transcript = transcript
 
-    var delivered = false
+    // `AssistantMessage` events only fire for text paired with tool calls.
+    // The turn's closing reply (after the last tool call, or when there were
+    // no tool calls at all) is never emitted as an event — send it explicitly.
+    val final = turn.finalText
+    if final.trim != "" then
+      sink(py.dict("type" ~ "assistant-message", "text" ~ final))
 
-    match result.result
+    match turn.result
     case TurnResult.Success =>
-      val answer = result.finalText
-      if answer.trim != "" then
-        client.sendMessage(this.id, answer)
-        delivered = true
+      sink(py.dict("type" ~ "done", "result" ~ "success"))
 
-    case TurnResult.Interrupted => pass
+    case TurnResult.Interrupted =>
+      sink(py.dict("type" ~ "done", "result" ~ "interrupted"))
 
     case TurnResult.Failed(detail) =>
-      val message =
-        if detail == "" then "Request failed. Please try again."
-        else "Request failed: \{detail}"
-      client.sendMessage(this.id, message)
-      delivered = true
+      sink(py.dict("type" ~ "done", "result" ~ "failed", "detail" ~ detail))
 
-    Journal.payload("delivered" ~ delivered)
+    idle.set()
+    lock.release()
+
+    val resultLabel = match turn.result
+      case TurnResult.Success     => "success"
+      case TurnResult.Interrupted => "interrupted"
+      case TurnResult.Failed(_)   => "failed"
+    transcript.response(Journal.payload("result" ~ resultLabel))
+
+  //[ Request cancellation of the running turn (idempotent). //]
+  def requestStop(): Unit = stop.set()
+
+  //[ Resolve the pending approval. Returns false if the id is stale or no approval is pending. //]
+  def decideApproval(id: String, decision: String): Bool =
+    approvalLock.acquire()
+    val accepted =
+      match pendingApproval
+      case Some(item) =>
+        if item.id == id && (decision == "approved" || decision == "rejected") then
+          item.decision = decision
+          item.ready.set()
+          true
+        else false
+      case None => false
+    approvalLock.release()
+    accepted
+
+  //[ Block the engine until the user approves or rejects (10-minute timeout). //]
+  private def requestApproval(id: String, request: Approvals.Request, sink: Sink): Approvals.Decision =
+    val item = new PendingApproval(id, request)
+
+    approvalLock.acquire()
+    pendingApproval = Some(item)
+    approvalLock.release()
+
+    sink(py.dict("type" ~ "approval", "id" ~ id, "title" ~ request.title, "detail" ~ request.detail))
+
+    val deadline = Clock.now() + 600.0
+    var decision: Approvals.Decision = Approvals.TimedOut
+    var waiting = true
+
+    while waiting do
+      if stop.is_set().asBool then
+        decision = Approvals.Cancelled
+        waiting = false
+      else if Clock.now() >= deadline then
+        waiting = false
+      else if item.ready.wait(0.1).asBool then
+        decision = Approvals.fromWire(item.decision)
+        waiting = false
+
+    approvalLock.acquire()
+    if pendingApproval is Some(current) && current.id == id then pendingApproval = None
+    approvalLock.release()
+
+    sink(py.dict("type" ~ "approval-ended", "id" ~ id, "decision" ~ Approvals.wire(decision)))
+    decision
 end
 
 
 section Session
-  //[ The JSONL file backing this chat's session. //]
-  def sessionPath(chatId: String): String receives appHome =
-    os.path.join(appHome, "logs/sessions", chatId + ".jsonl")
+  //[ The JSONL file for this session's audit log. //]
+  def sessionPath(id: String): String receives appHome =
+    os.path.join(appHome, "logs/sessions", id + ".jsonl")
 
-  //[ An append log for this chat's session (file created lazily). //]
-  def forSession(chatId: String): Logger receives appHome =
-    new JsonlLogger(sessionPath(chatId))
-
-  //[ Reconstruct this chat's conversation from disk.
-    !
-    ! Returns `[]` if the chat has no prior transcript.
-  //]
-  def load(chatId: String): List[Message] receives appHome =
-    val path = sessionPath(chatId)
-    if !File.exists(path) then []
-    else Journal.fromEntries(Entry.readJsonl(path))
+  //[ An append-only log for this session (file created lazily). //]
+  def forSession(id: String): Logger receives appHome =
+    new harpe.logging.JsonlLogger(sessionPath(id))
 end

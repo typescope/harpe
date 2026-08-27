@@ -27,8 +27,7 @@ Ask for anything missing before searching:
 ### 2. Search and present options
 
 Call `runCode` to search, then present the top **3–5 cheapest offers** as a
-numbered list. **Do not use markdown tables** — Telegram does not render them.
-Use this format for each option:
+numbered list. Use this format for each option:
 
 ```
 1. British Airways BA117 — direct
@@ -60,8 +59,8 @@ Call `runCode` with `duffel.createOrder(...)`. Use the passenger IDs from the
 offer's `passengerIds` list — one per passenger.
 
 `createOrder` automatically shows the user an inline **Approve / Reject** card
-in Telegram before placing the order. The card is built from the offer details
-and passenger names — you do not need to do anything extra.
+before placing the order. The card is built from the offer details and passenger
+names — you do not need to do anything extra.
 
 If the user rejects or the approval times out, `confirmation.error` will be set
 to `"Booking rejected"` / `"Booking timed_out"` / `"Booking cancelled"`. In
