@@ -1,62 +1,75 @@
 +++
 title = "Create a Tool"
 +++
-A custom tool lets the model call application code during a turn. This tutorial
-builds a weather tool, defines its input, and returns a result the model can use.
+A tool lets the model call code in your application during a turn. In this
+tutorial, you will create a `weather` tool, add it to an agent, and return a
+result the model can use in its answer.
 
-For the relationship between tool specs, handlers, and toolsets, first read the
-[Tools concept page](/concepts/tools/).
+This tutorial assumes you already have an agent that calls `Agent.ask`. If you
+do not, start with [Build Your First Agent](/tutorial/build-your-first-agent/).
+For the ideas behind tool specs, handlers, and toolsets, see
+[Tools](/concepts/tools/).
 
-## Declare and handle a tool
+## Define what the model can call
 
-Declare the spec, then route its name to code that returns a `ToolOutcome`:
+A tool tells the model its name, what it does, and which parameters it accepts.
+Create `WeatherTool.jo` in your application's source directory. Use the same
+namespace as your driver:
 
 ```jo
+namespace my.agent
+
+import harpe.Interact
 import harpe.Tool
 import harpe.Tool.*
+import harpe.Toolset
 
-val weather: Tool =
-  Tool:
-    name = "weather"
-    description = "Look up the current weather in a city"
-    params = [strParam("city", "the city to look up")]
+class WeatherTool
+  view Tool
 
-// In the driver's handler map. `logger` is in scope inside a route.
-weather.name ~ (i => lookUp(i["city"]))
+  def name: String = "weather"
 
-// The route stays one line. The work lives in a function.
-// Once a tool grows past that, give it a class instead.
-private def lookUp(city: String): ToolOutcome =
-  new ToolOutcome("Sunny in \{city}, 22°C", "weather · \{city}")
+  def description: String =
+    "Look up the current weather in a city"
+
+  def params: List[ToolParam] =
+    [strParam("city", "the city to look up")]
+end
 ```
 
-## Parameters
+Replace `my.agent` with the namespace used by your application.
 
-Each parameter has a name, a type, and a description the model reads. Four
-constructors cover the schema types. All of them produce a required parameter:
+The model reads `description` to decide when to call the tool. It uses `params`
+to construct the call. Parameter names therefore become part of the contract
+between the model and your handler.
+
+Harpe provides four parameter constructors:
 
 ```jo
 strParam(name, description)    // string
 intParam(name, description)    // integer
 boolParam(name, description)   // boolean
-numParam(name, description)    // number (float)
+numParam(name, description)    // number
 ```
 
-Read them from the call's `input` with typed accessors. A missing key yields a
-zero value. Use the `…Or` variant for an explicit fallback:
+These constructors create required parameters.
+
+## Implement the operation
+
+Add a typed method to `WeatherTool` for the work the tool performs:
 
 ```jo
-input.string("city")           // "" if absent
-input.int("count")             // 0 if absent
-input.bool("verbose")          // false if absent
-input.num("threshold")         // 0.0 if absent
-input.intOr("count", 10)       // 10 if absent
-input["city"]                  // the indexing form of `string`
+def lookUp(city: String, units: String): ToolOutcome =
+  new ToolOutcome:
+    "Sunny in \{city}, 22°\{units}"
+    "weather · \{city}"
 ```
 
-## Return a result
+This tutorial returns sample weather so the example has no external dependency.
+In an application, this method can call your weather client, database, or other
+service.
 
-A handler returns a `ToolOutcome`:
+A `ToolOutcome` has four fields:
 
 ```jo
 class ToolOutcome(
@@ -67,111 +80,148 @@ class ToolOutcome(
 ```
 
 - **`result`** is the text returned to the model.
-- **`summary`** is a one-line status for the console and logs.
-- **`attachments`** contains files to show directly to the model. It defaults
+- **`summary`** is a short status shown by the driver.
+- **`attachments`** contains files to send directly to the model. It defaults
   to an empty list.
-- **`success`** reports whether the call completed its task. It defaults to
+- **`success`** reports whether the tool completed its task. It defaults to
   `true`.
 
-For an expected refusal, explain the problem in `result` and set
-`success = false`. The model can then correct its request:
+Most text-only tools only need `result` and `summary`, as the weather example
+does.
+
+## Connect the model call to the operation
+
+The tool spec tells the model what it may call. A `Toolset` pairs that spec with
+the handler Harpe should run. Add this method inside `WeatherTool`:
 
 ```jo
-new ToolOutcome:
-  "No such file: '\{fileName}'. Write it to your data directory first, then send it."
-  "sendFile · no such file"
-  success = false
+def toolset(units: String): Toolset =
+  Toolset.of: this, (input: ToolInput, _: Interact) =>
+    lookUp(input["city"], units)
 ```
 
-Keep large results out of the model context. `elide(text, maxChars)` returns a
-head-and-tail excerpt with the omitted middle marked:
+The model supplies `city` through `ToolInput`. Your application supplies
+`units` when it builds the toolset. This distinction lets the same tool use
+application or session settings without exposing them as model-controlled
+parameters.
+
+`input["city"]` is the short form of `input.string("city")`. Typed accessors
+are available for every parameter type:
 
 ```jo
-new ToolOutcome(elide(output, 4000), "ran · 3.1s")
+input.string("city")
+input.int("count")
+input.bool("verbose")
+input.num("threshold")
 ```
 
-Log or store the complete artifact when the model may need to refer to it later.
-See [Logging](/concepts/logging/).
+If a key is absent, these accessors return the type's zero value. Accessors such
+as `input.intOr("count", 10)` let you choose an explicit fallback.
+
+Every handler receives an `Interact` as its second argument. This weather tool
+does not need it, so the handler names it `_`. A tool can use it when it needs to
+report interaction events or request approval.
 
 ## Put it together
 
-Use a class when the tool owns a resource or state with a lifetime, such as an
-API key, connection, or concurrency limit. The class keeps its spec, routing,
-and implementation together:
+The complete `WeatherTool.jo` is:
 
 ```jo
-class WeatherTool(apiKey: String)
+namespace my.agent
+
+import harpe.Interact
+import harpe.Tool
+import harpe.Tool.*
+import harpe.Toolset
+
+class WeatherTool
   view Tool
 
-  private var lookups: Int = 0
-
   def name: String = "weather"
-  def description: String = "Look up the current weather in a city"
-  def params: List[ToolParam] = [strParam("city", "the city to look up")]
+
+  def description: String =
+    "Look up the current weather in a city"
+
+  def params: List[ToolParam] =
+    [strParam("city", "the city to look up")]
 
   def lookUp(city: String, units: String): ToolOutcome =
-    lookups = lookups + 1
-    report(city, units)
+    new ToolOutcome:
+      "Sunny in \{city}, 22°\{units}"
+      "weather · \{city}"
 
   def toolset(units: String): Toolset =
-    Toolset.of: this, (i: ToolInput) => lookUp(i["city"], units)
-
-  private def report(city: String, units: String): ToolOutcome =
-    new ToolOutcome("Sunny in \{city}, 22°\{units}", "weather · \{city}")
+    Toolset.of: this, (input: ToolInput, _: Interact) =>
+      lookUp(input["city"], units)
 end
 ```
 
-The `toolset` method pairs the object with its handler. It also supplies
-contextual values such as the preferred units for this session.
-
-A tool that owns nothing can remain a `section` or a simple value. Pass
-per-session and per-turn values through its `toolset` method rather than storing
-them globally.
-
-A class parameter does not implement an interface member. Give constructor
-parameters names distinct from `name`, `description`, and `params`, then expose
-those interface members explicitly.
-
-## Handle errors
-
-You do not need to catch unexpected failures inside every handler. Harpe runs
-tools through `runSafely`. If a handler throws or calls `abort`, Harpe converts
-the exception to a failed `ToolOutcome` and returns it to the model. The turn can
-then continue.
-
-Return a clear failed outcome for an expected problem. Let unexpected failures
-raise so the backstop can report them.
+The class keeps the model-facing spec, the handler wiring, and the operation in
+one place. If a real weather tool owns an API client or connection, pass it to
+the class constructor and use it from `lookUp`.
 
 ## Add the tool to your agent
 
-Combine the weather toolset with the other tools when the driver starts a turn:
+Construct the tool alongside the other long-lived objects in your driver:
+
+```jo
+val weather = new WeatherTool
+```
+
+Then include its toolset when starting the turn:
 
 ```jo
 val tools =
-    ++ SkillTools.toolset(skillsDir)
+  SkillTools.toolset(skillsDir)
     ++ runCode.toolset()
-    ++ weather.toolset(preferredUnits)
+    ++ weather.toolset("C")
 
-Agent.ask(text, brain = brain, tools = tools, context = context)
+val turn =
+  Agent.ask:
+    message
+    brain = brain
+    tools = tools
+    context = context
 ```
 
-The model now sees `weather` and its parameters. The same toolset entry tells
-Harpe which handler to run when the model calls it.
+The model can now call `weather` with a `city`. Harpe finds the matching handler,
+runs `lookUp`, and returns its `ToolOutcome.result` to the model. The model can
+then use that weather in its final answer.
 
-The toolset is also where per-turn and per-session values enter. In this example,
-the driver supplies `preferredUnits`. A one-off tool can use `.add: spec, handler`
-directly, but a named tool is usually clearer when it provides its own `toolset`
-method.
+You do not need the other toolsets in this example. Keep only the tools your
+agent should be able to call.
+
+## Report expected failures
+
+When the request is valid but the operation cannot complete, return a helpful
+result and set `success = false`:
+
+```jo
+new ToolOutcome:
+  "Weather is not available for '\{city}'. Ask for another city."
+  "weather unavailable · \{city}"
+  success = false
+```
+
+The model reads the result and can correct its request. Application code can use
+`success` to distinguish completed calls from refusals.
+
+You do not need to catch every unexpected exception. Harpe runs handlers through
+`runSafely`. If a handler throws or calls `abort`, Harpe converts the exception
+to a failed `ToolOutcome` and lets the turn continue.
 
 ## Log from the tool
 
-Inside a handler, `logger` is in scope. Use it to record what the tool did:
+Import `harpe.logging.logger`, then add `receives logger` when the operation
+should write structured logs:
 
 ```jo
-private def lookUp(city: String): ToolOutcome receives logger =
+def lookUp(city: String, units: String): ToolOutcome receives logger =
   logger.info("myagent.tools.weather", "looked up weather", "city" ~ city)
-  new ToolOutcome("Sunny in \{city}, 22°C", "weather · \{city}")
+  new ToolOutcome:
+    "Sunny in \{city}, 22°\{units}"
+    "weather · \{city}"
 ```
 
-Harpe adds the session to the event automatically. See
+Harpe associates the event with the current session. See
 [Logging](/concepts/logging/) for categories, structured fields, and reports.
