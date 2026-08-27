@@ -1,23 +1,23 @@
 +++
 title = "Logging"
 +++
-Your agent keeps a **structured log**: one typed event per thing that happens —
-every `runCode` execution and every model call out of the box, plus anything you
-log from the tools you write. Each event is a record with typed fields rather than
-free text, which makes it the raw material for usage reports, billing, and stats.
+Harpe can write a **structured log** for selected operations, including every
+`runCode` execution and model call, plus anything you log from your own tools.
+Each event is a record with named, JSON-shaped fields rather than free text. This
+makes logs useful for usage reports, billing, and statistics.
 
 *Where* those events go is not fixed. A `Logger` — the thing you install once —
 decides the format and the destination. The framework ships one that appends JSON
 lines to a file, but you can point the same events at a database or a metrics
 service instead (see [Sending logs somewhere else](#sending-logs-somewhere-else)).
-The examples below assume that default JSON file where they show concrete output.
-swap in your own `Logger` and the events are identical, only their storage changes.
+The examples below use that JSON backend where they show concrete output. Swap
+in your own `Logger` and the events remain the same. Only their storage changes.
 
 ## Three properties
 
 The logging mechanism is built around three properties:
 
-- **Structural.** Every event is a typed record — a `category` and named fields,
+- **Structural.** Every event is a structured record — a `category` and named fields,
   not a formatted string. Fields may contain scalars, arrays, or nested records.
   You *query and aggregate* it (per session, per category,
   summing tokens) rather than grepping text.
@@ -30,9 +30,40 @@ The logging mechanism is built around three properties:
   ambient context such as the session or chat that produced them. Applications
   storing one file per session already carry that identity in the file path.
 
+## What a structured log entry is
+
+Every logged event becomes an `Entry`:
+
+```jo
+class Entry(time: Float, category: String, fields: Map[String, Value])
+
+type Value =
+  (String | Float | Value.IntVal | Value.BoolVal | List[Value] | Map[String, Value])
+    :- [Value.IntVal, Value.BoolVal]
+
+section Value
+  class IntVal(value: Int)
+  class BoolVal(value: Bool)
+end
+```
+
+- `time` records when the event occurred as epoch seconds. A JSONL logger writes
+  it as an RFC 3339 UTC timestamp.
+- `category` is a stable dotted name for the kind of event, such as
+  `harpe.model` or `myagent.tools.weather`.
+- `fields` contains the facts specific to that event.
+
+`IntVal` and `BoolVal` are implementation adapters. At the call site, integers
+and booleans are passed directly, just like strings and floats. A field can also
+contain a list or nested map of `Value` values.
+
+Entries with the same category should use the same field names and meanings, so
+the category acts as the event's schema tag. The `Logger` decides how this entry
+is encoded and stored.
+
 ## Where your events go
 
-The bundled drivers use `JsonlLogger` to append turn events to each session's log.
+The bundled drivers use `JsonlLogger` to append session events to each session's log.
 The application owns the file layout. These examples use
 `logs/sessions/<session>.jsonl` as a representative path:
 
@@ -55,7 +86,7 @@ and the event's own fields. Shared destinations may additionally attach context.
 JSONL encodes `time` as an RFC 3339 UTC string. The backend-independent
 `Entry.time` remains epoch seconds, so database loggers can choose their native
 timestamp representation and indexes.
-The two categories logged for you:
+The main framework categories are:
 
 - **`harpe.tools.runCode`** — one per program the agent runs: `code`, `compiled`,
   `compileSeconds`, and — depending on the outcome — `runSeconds`, `exitCode`,
@@ -71,6 +102,11 @@ The two categories logged for you:
   them and the base rate to the remainder. Both read 0 when a provider reports no
   cache detail, which is indistinguishable here from a provider that cached
   nothing. See [Prompt Caching](/guides/prompt-caching/).
+- **`harpe.model.request`** — warnings and errors from model request retries.
+- **`harpe.tools.skills`** — reads and searches performed through the skill
+  tools.
+- **`harpe.turn.*`** — conversation records written when the application uses a
+  [Journal transcript](/concepts/transcript/).
 
 ## Logging from your own tool
 
@@ -79,8 +115,10 @@ call it. Import the channel and pick a category named after your agent:
 
 ```jo
 import harpe.logging.logger
+import harpe.Interact
 import harpe.Tool
 import harpe.Tool.*
+import harpe.Toolset
 
 val weather: Tool =
   Tool:
@@ -91,18 +129,24 @@ val weather: Tool =
 // The route's work goes in a small function. It may use `logger` freely.
 private def lookUp(city: String): ToolOutcome receives logger =
   logger.info("myagent.tools.weather", "looked up weather", "city" ~ city)
-  new ToolOutcome("Sunny in \{city}", "weather · \{city}")
+  new ToolOutcome:
+    "Sunny in \{city}"
+    "weather · \{city}"
 ```
 
 Add the spec to the agent and the route to the turn:
 
 ```jo
-tools = [runCode, weather]
-tools = runCode.toolset() ++ weather.toolset()
+val weatherTools =
+  Toolset.of: weather, (input: ToolInput, _: Interact) =>
+    lookUp(input["city"])
+
+val tools = runCode.toolset() ++ weatherTools
 ```
 
-Now every call to your tool writes a `myagent.tools.weather` record, already
-stamped with the session it ran in.
+Now every call to your tool writes a `myagent.tools.weather` record. A
+per-session destination identifies the session through its path. A shared
+destination can attach session fields with `Logging.withContext`.
 
 ### What to log
 
@@ -177,7 +221,7 @@ how to turn `entry.fields` (including nested maps) into JSON. You can also **wra
 
 ## Building usage, billing, and stats
 
-The log is a stream of typed events keyed by category. A shared log can additionally
+The log is a stream of structured events keyed by category. A shared log can additionally
 carry session context. Build reporting on it in one of two places.
 
 **Offline, over the stored events.** For dashboards, invoices, or audits, process
@@ -203,8 +247,10 @@ end
 Logging.withLogger(new UsageMeter(new JsonlLogger(path), meter), () => serve())
 ```
 
-Every entry the meter sees carries its `context` (whose session it is) and a stable
-`category` (so it can trust the fields), which is all a per-session counter needs.
+Every entry the meter sees carries a stable `category`. When the application uses
+`Logging.withContext`, the configured context appears as a nested field in
+`entry.fields`. Together, these identify the event shape and the session a
+shared destination should attribute it to.
 For billing, the `harpe.model` events give you `inputTokens`/`outputTokens` per
 call already — apply your price table to turn them into cost.
 
@@ -223,7 +269,9 @@ is just a new category, and the wiring (one installed `Logger`) stays put.
 ```jo
 // emit (logger is in scope inside a tool handler)
 logger.log(category, "k" ~ v, ...)                 // a data event
-logger.info  / warn / error(category, message, ...) // a message at a severity
+logger.info(category, message, ...)                 // an informational message
+logger.warn(category, message, ...)                 // a warning
+logger.error(category, message, ...)                // an error
 
 // install a Logger — where events go (in the driver's entry point)
 Logging.withLogger(myLogger, () => run())           // myLogger: any Logger
@@ -246,11 +294,12 @@ Per-session destinations do not need that redundant field.
 
 ## Turn history and transcript loading
 
-Turn execution uses this same channel. There is no second session-journal API.
+The provided `Journal` transcript writes through this same channel.
 The framework emits stable `harpe.turn.started`, `harpe.turn.message`, and
 terminal `harpe.turn.answered` / `interrupted` / `failed` categories.
 
 Applications decide how session events are stored and correlated. Producers emit
-through `logger` without depending on that policy. `Transcript.turns` projects an
-ordered event stream into structured turns and outcomes. `Transcript.fromEntries`
-derives the model's conversation history from that projection.
+through `logger` without depending on that policy. `Journal.records` projects an
+ordered event stream into structured turns and outcomes. `Journal.load` derives
+the model's conversation history from an existing JSONL journal. See
+[Transcript](/concepts/transcript/) for the complete recording and replay model.
