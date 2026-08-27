@@ -62,6 +62,14 @@
       border-bottom-left-radius: 4px;
     }
 
+    .bubble.assistant code {
+      font-family: ui-monospace, "SF Mono", monospace;
+      font-size: 13px;
+      background: #f2f2f7;
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+
     /* ── Status bar ──────────────────────────────── */
     #status {
       font-size: 13px;
@@ -294,7 +302,7 @@
           if (!assistantBubble) {
             assistantBubble = appendBubble('assistant', ev.text);
           } else {
-            assistantBubble.textContent += '\n' + ev.text;
+            assistantBubble.innerHTML += '\n' + mdToHtml(ev.text);
           }
           setStatus('');
           break;
@@ -348,10 +356,22 @@
   btnReject.addEventListener('click',  () => decide('rejected'));
 
   // ── Helpers ───────────────────────────────────────
+  function mdToHtml(text) {
+    return text
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>');
+  }
+
   function appendBubble(role, text) {
     const el = document.createElement('div');
     el.className = 'bubble ' + role;
-    el.textContent = text;
+    if (role === 'assistant') {
+      el.innerHTML = mdToHtml(text);
+    } else {
+      el.textContent = text;
+    }
     messagesEl.appendChild(el);
     messagesEl.scrollTop = messagesEl.scrollHeight;
     return el;

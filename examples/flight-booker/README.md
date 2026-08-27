@@ -59,3 +59,12 @@ PORT=8765        # default
 ```
 
 See [Create a Flight Booking Agent](https://harpe.typescope.ai/tutorial/create-flight-booking-agent/) for how the approval boundary works.
+
+
+## Agent App snapshot
+
+![start-book](assets/start-book.png)
+
+![confirm](assets/confirm-dialog.png)
+
+![book-success](assets/book-success.png)
