@@ -1,10 +1,17 @@
-//[ FailureTest.jo — OpenAI Responses HTTP and stream failures. //]
+//[ FailureTest.jo
+  !
+  ! OpenAI HTTP and stream failures. The same wire failures are classified twice
+  ! — once through the Responses API, once through the Chat Completions path —
+  ! so the two halves register into their own suites rather than one flat list.
+//]
 
 namespace harpe.test.providers.openai.FailureTest
 
-import jo.IO.stdout
 import harpe.models.openai
 import harpe.logging.logger
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
 import harpe.test.providers.ProviderFixture
 import harpe.test.providers.TurnAssertions
 
@@ -16,46 +23,54 @@ private def error(status: String, message: String): ProviderFixture.Response =
       {"error":{"message":"\{message}","type":"test_error","code":"test"}}
       """
 
-private def model(server: ProviderFixture.Server) =
+private def rateLimited(): ProviderFixture.Response = new ProviderFixture.Response:
+  "429 Too Many Requests"
+  py.list:
+    py.tuple("Content-Type", "application/json")
+    py.tuple("Retry-After", "7")
+  [
+    """
+    {"error":{"message":"slow down","type":"rate_limit_error","code":"rate_limit"}}
+    """
+  ]
+
+private def responses(server: ProviderFixture.Server) =
   openai("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
 
-def run(): Unit receives stdout, logger =
-  val rateLimited = new ProviderFixture.Response:
-    "429 Too Many Requests"
-    py.list:
-      py.tuple("Content-Type", "application/json")
-      py.tuple("Retry-After", "7")
-    [
-      """
-      {"error":{"message":"slow down","type":"rate_limit_error","code":"rate_limit"}}
-      """
-    ]
+private def chat(server: ProviderFixture.Server) =
+  openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 2)
 
-  ProviderFixture.withResponses: [rateLimited], server =>
-    TurnAssertions.checkRetryAfter(label = "openai 429", model = model(server), seconds = 7.0)
-    TurnAssertions.check("openai 429 one request", server.requestCount == 1)
+def responsesFailureSuite(): Unit receives testing, logger = suite: "failure", () =>
+  test: "429 reports the Retry-After delay", () =>
+    ProviderFixture.withResponses: [rateLimited()], server =>
+      TurnAssertions.checkRetryAfter(model = responses(server), seconds = 7.0)
+      TurnAssertions.check("one request", server.requestCount == 1)
 
-  ProviderFixture.withResponses: [error("503 Service Unavailable", "unavailable")], server =>
-    TurnAssertions.checkTransient(label = "openai 503", model = model(server))
+  test: "503 is transient", () =>
+    ProviderFixture.withResponses: [error("503 Service Unavailable", "unavailable")], server =>
+      TurnAssertions.checkTransient(model = responses(server))
 
-  ProviderFixture.withResponses: [error("401 Unauthorized", "bad key")], server =>
-    TurnAssertions.checkFatal(label = "openai 401", model = model(server))
+  test: "401 is fatal", () =>
+    ProviderFixture.withResponses: [error("401 Unauthorized", "bad key")], server =>
+      TurnAssertions.checkFatal(model = responses(server))
 
-  ProviderFixture.withResponses: [error("400 Bad Request", "invalid request")], server =>
-    val compatible = openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 2)
-    TurnAssertions.checkFatal(label = "compatible 400", model = compatible)
+  test: "a malformed stream is fatal", () =>
+    ProviderFixture.withResponses: [ProviderFixture.sse("data: {not-json}")], server =>
+      TurnAssertions.checkFatal(model = responses(server))
 
-  ProviderFixture.withResponses: [rateLimited], server =>
-    val compatible = openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 2)
-    TurnAssertions.checkRetryAfter(label = "compatible 429", model = compatible, seconds = 7.0)
+def chatFailureSuite(): Unit receives testing, logger = suite: "failure", () =>
+  test: "429 reports the Retry-After delay", () =>
+    ProviderFixture.withResponses: [rateLimited()], server =>
+      TurnAssertions.checkRetryAfter(model = chat(server), seconds = 7.0)
 
-  ProviderFixture.withResponses: [error("503 Service Unavailable", "unavailable")], server =>
-    val compatible = openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 2)
-    TurnAssertions.checkTransient(label = "compatible 503", model = compatible)
+  test: "503 is transient", () =>
+    ProviderFixture.withResponses: [error("503 Service Unavailable", "unavailable")], server =>
+      TurnAssertions.checkTransient(model = chat(server))
 
-  ProviderFixture.withResponses: [ProviderFixture.sse("data: {not-json}")], server =>
-    TurnAssertions.checkFatal(label = "openai malformed stream", model = model(server))
+  test: "400 is fatal", () =>
+    ProviderFixture.withResponses: [error("400 Bad Request", "invalid request")], server =>
+      TurnAssertions.checkFatal(model = chat(server))
 
-  ProviderFixture.withResponses: [ProviderFixture.sse("data: {not-json}")], server =>
-    val compatible = openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 2)
-    TurnAssertions.checkFatal(label = "compatible malformed stream", model = compatible)
+  test: "a malformed stream is fatal", () =>
+    ProviderFixture.withResponses: [ProviderFixture.sse("data: {not-json}")], server =>
+      TurnAssertions.checkFatal(model = chat(server))

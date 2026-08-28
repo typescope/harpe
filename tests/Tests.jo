@@ -4,6 +4,11 @@
   ! single app, so all suites are aggregated here: fast unit tests first
   ! (`TurnTest`), then the slower integration tests that shell out
   ! (`RunCodeTest`).
+  !
+  ! The provider suites have moved to the declared tree in `harpe.test.framework`
+  ! — they are collected first and then walked by `Runner`, which reports each
+  ! test rather than aborting the process on the first failure. The remaining
+  ! suites still follow the older `run()` convention.
 //]
 
 namespace harpe.test
@@ -12,6 +17,8 @@ import jo.IO.stdout
 import harpe.logging.Logging
 import harpe.logging.logger
 import harpe.Interact
+import harpe.test.framework.Testing
+import harpe.test.framework.Runner
 
 // Suites that drive tools/turns need `logger` in scope. Install a no-op one for
 // the whole harness (RunCodeTest self-provides on its worker threads, since
@@ -20,6 +27,31 @@ def main(): Unit receives stdout =
   with logger = Logging.discard in suites()
 
 private def suites(): Unit receives stdout, logger =
+  val filter = Runner.filterFromArgs()
+
+  // A filter names a path inside the declared tree, so it selects nothing among
+  // the suites below. Passing one skips them rather than running every last one.
+  if filter == "" then unitSuites()
+
+  // `define` runs the declaration bodies, and each test body captures the scope
+  // it is declared in — so this call has to sit inside `with logger`, not around
+  // the `Runner.run` below it.
+  val declared = Testing.define: "harpe", () =>
+    providers.ProviderTests.providerSuite()
+  val passed = Runner.run(declared, filter)
+
+  if filter == "" then
+    println ""
+    println "runCode tool (integration):"
+    RunCodeTest.run()
+
+  // The runner has already printed what failed and where, so exit on that rather
+  // than aborting and burying the report under a host traceback.
+  if !passed then py.module("sys").exit(1)
+  println ""
+  println "all harpe tests passed"
+
+private def unitSuites(): Unit receives stdout, logger =
   println "unix socket (unit):"
   SocketTest.run()
 
@@ -38,9 +70,6 @@ private def suites(): Unit receives stdout, logger =
   println "turn engine (unit):"
   TurnTest.run()
 
-  println "model providers (local SSE integration):"
-  providers.ProviderTests.run()
-
   println "tool layer (unit):"
   ToolTest.run()
 
@@ -58,8 +87,4 @@ private def suites(): Unit receives stdout, logger =
 
   println "logging (unit):"
   LoggingTest.run()
-
-  println "runCode tool (integration):"
-  RunCodeTest.run()
-
-  println "all harpe tests passed"
+  println ""

@@ -2,10 +2,12 @@
 
 namespace harpe.test.providers.anthropic.ContractTest
 
-import jo.IO.stdout
 import harpe.models.anthropic
 import harpe.models.Anthropic
 import harpe.logging.logger
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
 import harpe.test.providers.ProviderFixture
 import harpe.test.providers.TurnAssertions
 
@@ -74,29 +76,38 @@ private def textResponse(text: String): ProviderFixture.Response = ProviderFixtu
   data: {"type":"message_stop"}
   """
 
-def run(): Unit receives stdout, logger =
-  ProviderFixture.withResponses: [toolResponse(), textResponse("done")], server =>
-    TurnAssertions.checkToolRoundTrip(label = "anthropic messages", model = model(server))
-    TurnAssertions.check("anthropic messages two requests", server.requestCount == 2)
-    val first = server.recorded(0).jsonBody
-    val second = server.recorded(1).jsonBody
-    TurnAssertions.check("anthropic sends tool schema", first.get("tools").cast[py.List].size == 1)
-    val messages = second.get("messages").cast[py.List]
-    TurnAssertions.check("anthropic retains tool use", messages.size == 3 &&
-      messages.get(1).cast[py.Dict].get("role").asString == "assistant")
-    val resultContent = messages.get(2).cast[py.Dict].get("content").cast[py.List]
-    TurnAssertions.check("anthropic sends tool result once", resultContent.size == 1 &&
-      resultContent.get(0).cast[py.Dict].get("tool_use_id").asString == "call_1")
-
-  val unavailable = ProviderFixture.response:
-    "529 Overloaded"
-    "application/json"
+private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
+  "529 Overloaded"
+  "application/json"
+  """
+    {"type":"error","error":{"type":"overloaded_error","message":"busy"}}
     """
-      {"type":"error","error":{"type":"overloaded_error","message":"busy"}}
-      """
-  ProviderFixture.withResponses: [unavailable, textResponse("hello")], server =>
-    TurnAssertions.checkRetryThenText(label = "anthropic retry", model = model(server))
-    val firstMessages = server.recorded(0).jsonBody.get("messages")
-    val retryMessages = server.recorded(1).jsonBody.get("messages")
-    TurnAssertions.check("anthropic retry keeps semantic messages",
-      py.module("json").dumps(firstMessages, sort_keys = true).asString == py.module("json").dumps(retryMessages, sort_keys = true).asString)
+
+def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
+  test: "carries a tool call and its result across two requests", () =>
+    ProviderFixture.withResponses: [toolResponse(), textResponse("done")], server =>
+      TurnAssertions.checkToolRoundTrip(model = model(server))
+      TurnAssertions.check("two requests", server.requestCount == 2)
+      val first = server.recorded(0).jsonBody
+      val second = server.recorded(1).jsonBody
+      TurnAssertions.check("sends tool schema", first.get("tools").cast[py.List].size == 1)
+      val messages = second.get("messages").cast[py.List]
+      TurnAssertions.check:
+        "retains tool use"
+        messages.size == 3 &&
+          messages.get(1).cast[py.Dict].get("role").asString == "assistant"
+      val resultContent = messages.get(2).cast[py.Dict].get("content").cast[py.List]
+      TurnAssertions.check:
+        "sends tool result once"
+        resultContent.size == 1 &&
+          resultContent.get(0).cast[py.Dict].get("tool_use_id").asString == "call_1"
+
+  test: "retry after 529 re-sends the same messages", () =>
+    ProviderFixture.withResponses: [unavailable(), textResponse("hello")], server =>
+      TurnAssertions.checkRetryThenText(model = model(server))
+      val firstMessages = server.recorded(0).jsonBody.get("messages")
+      val retryMessages = server.recorded(1).jsonBody.get("messages")
+      TurnAssertions.check:
+        "retry keeps semantic messages"
+        py.module("json").dumps(firstMessages, sort_keys = true).asString ==
+          py.module("json").dumps(retryMessages, sort_keys = true).asString

@@ -2,71 +2,76 @@
 
 namespace harpe.test.providers.ProviderFixtureTest
 
-import jo.IO.stdout
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
 import harpe.test.providers.ProviderFixture
 import harpe.test.providers.TurnAssertions
 
-def run(): Unit receives stdout =
-  val first = new ProviderFixture.Response:
-    "429 Too Many Requests"
-    py.list:
-      py.tuple("Content-Type", "application/json")
-      py.tuple("Retry-After", "3")
-    [
-      """
-      {"error":
-      """,
-      """
-      "slow down"}
-      """
-    ]
-  val second = ProviderFixture.response("201 Created", "text/plain", "accepted")
-
-  ProviderFixture.withResponses: [first, second], server =>
-    val http = py.module("http.client").HTTPConnection("127.0.0.1", server.port, timeout = 2)
-
-    http.request:
-      "POST"
-      "/first?mode=test"
-      """
-        {"value":7}
+def fixtureSuite(): Unit receives testing = suite: "fixture", () =>
+  test: "serves a scripted sequence and records every request", () =>
+    val first = new ProviderFixture.Response:
+      "429 Too Many Requests"
+      py.list:
+        py.tuple("Content-Type", "application/json")
+        py.tuple("Retry-After", "3")
+      [
         """
-      py.dict("X-Test" ~ "fixture")
-    val one = http.getresponse()
-    TurnAssertions.check("fixture first status", one.status.asInt == 429)
-    TurnAssertions.check("fixture response header", one.getheader("Retry-After").asString == "3")
-    TurnAssertions.check:
-      "fixture chunked body"
-      one.read().decode().asString == """
-        {"error":"slow down"}
+        {"error":
+        """,
         """
+        "slow down"}
+        """
+      ]
+    val second = ProviderFixture.response("201 Created", "text/plain", "accepted")
 
-    http.request("GET", "/second")
-    val two = http.getresponse()
-    TurnAssertions.check("fixture second status", two.status.asInt == 201)
-    TurnAssertions.check("fixture second body", two.read().decode().asString == "accepted")
-    http.close()
+    ProviderFixture.withResponses: [first, second], server =>
+      val http = py.module("http.client").HTTPConnection("127.0.0.1", server.port, timeout = 2)
 
-    TurnAssertions.check("fixture records both requests", server.requestCount == 2)
-    val asked = server.recorded(0)
-    TurnAssertions.check("fixture records method", asked.method == "POST")
-    TurnAssertions.check("fixture records path", asked.path == "/first")
-    TurnAssertions.check("fixture records query", asked.query == "mode=test")
-    TurnAssertions.check("fixture records header", asked.header("X-Test") == "fixture")
-    TurnAssertions.check("fixture records JSON body", asked.jsonBody.get("value").asInt == 7)
+      http.request:
+        "POST"
+        "/first?mode=test"
+        """
+          {"value":7}
+          """
+        py.dict("X-Test" ~ "fixture")
+      val one = http.getresponse()
+      TurnAssertions.check("first status", one.status.asInt == 429)
+      TurnAssertions.check("response header", one.getheader("Retry-After").asString == "3")
+      TurnAssertions.check:
+        "chunked body"
+        one.read().decode().asString == """
+          {"error":"slow down"}
+          """
 
-  val readableSSE = ProviderFixture.sse:
-    """
-    data: {
-      "type": "test",
-      "nested": {"ok":true}
-    }
-    """
-  ProviderFixture.withResponses: [readableSSE], server =>
-    val http = py.module("http.client").HTTPConnection("127.0.0.1", server.port, timeout = 2)
-    http.request("GET", "/events")
-    val response = http.getresponse()
-    val body = response.read().decode().asString
-    http.close()
-    TurnAssertions.check("fixture prefixes SSE JSON continuations",
-      body.contains("data:   \"type\": \"test\"") && body.contains("data: }"))
+      http.request("GET", "/second")
+      val two = http.getresponse()
+      TurnAssertions.check("second status", two.status.asInt == 201)
+      TurnAssertions.check("second body", two.read().decode().asString == "accepted")
+      http.close()
+
+      TurnAssertions.check("records both requests", server.requestCount == 2)
+      val asked = server.recorded(0)
+      TurnAssertions.check("records method", asked.method == "POST")
+      TurnAssertions.check("records path", asked.path == "/first")
+      TurnAssertions.check("records query", asked.query == "mode=test")
+      TurnAssertions.check("records header", asked.header("X-Test") == "fixture")
+      TurnAssertions.check("records JSON body", asked.jsonBody.get("value").asInt == 7)
+
+  test: "prefixes SSE JSON continuation lines", () =>
+    val readableSSE = ProviderFixture.sse:
+      """
+      data: {
+        "type": "test",
+        "nested": {"ok":true}
+      }
+      """
+    ProviderFixture.withResponses: [readableSSE], server =>
+      val http = py.module("http.client").HTTPConnection("127.0.0.1", server.port, timeout = 2)
+      http.request("GET", "/events")
+      val response = http.getresponse()
+      val body = response.read().decode().asString
+      http.close()
+      TurnAssertions.check:
+        "continuations carry their own data prefix"
+        body.contains("data:   \"type\": \"test\"") && body.contains("data: }")

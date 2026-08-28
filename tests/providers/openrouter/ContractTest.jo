@@ -2,9 +2,11 @@
 
 namespace harpe.test.providers.openrouter.ContractTest
 
-import jo.IO.stdout
 import harpe.models.openrouter
 import harpe.logging.logger
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
 import harpe.test.providers.ProviderFixture
 import harpe.test.providers.TurnAssertions
 
@@ -67,29 +69,35 @@ private def textResponse(text: String): ProviderFixture.Response = ProviderFixtu
   data: [DONE]
   """
 
-def run(): Unit receives stdout, logger =
-  ProviderFixture.withResponses: [toolResponse(), textResponse("done")], server =>
-    TurnAssertions.checkToolRoundTrip(label = "openrouter responses", model = model(server))
-    TurnAssertions.check("openrouter responses two requests", server.requestCount == 2)
-    val first = server.recorded(0).jsonBody
-    val second = server.recorded(1).jsonBody
-    TurnAssertions.check("openrouter forces stateless mode", !first.get("store").asBool)
-    TurnAssertions.check("openrouter sends tool schema", first.get("tools").cast[py.List].size == 1)
-    val input = second.get("input").cast[py.List]
-    TurnAssertions.check("openrouter replays call and result",
-      input.size == 3 && input.get(1).cast[py.Dict].get("type").asString == "function_call" &&
-      input.get(2).cast[py.Dict].get("type").asString == "function_call_output")
-    TurnAssertions.check("openrouter has no stored continuation", !second.contains("previous_response_id"))
-
-  val unavailable = ProviderFixture.response:
-    "503 Service Unavailable"
-    "application/json"
+private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
+  "503 Service Unavailable"
+  "application/json"
+  """
+    {"error":{"message":"unavailable","type":"server_error","code":"server_error"}}
     """
-      {"error":{"message":"unavailable","type":"server_error","code":"server_error"}}
-      """
-  ProviderFixture.withResponses: [unavailable, textResponse("hello")], server =>
-    TurnAssertions.checkRetryThenText(label = "openrouter retry", model = model(server))
-    val firstInput = server.recorded(0).jsonBody.get("input")
-    val retryInput = server.recorded(1).jsonBody.get("input")
-    TurnAssertions.check("openrouter retry keeps semantic input",
-      py.module("json").dumps(firstInput, sort_keys = true).asString == py.module("json").dumps(retryInput, sort_keys = true).asString)
+
+def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
+  test: "replays the call and result instead of chaining state", () =>
+    ProviderFixture.withResponses: [toolResponse(), textResponse("done")], server =>
+      TurnAssertions.checkToolRoundTrip(model = model(server))
+      TurnAssertions.check("two requests", server.requestCount == 2)
+      val first = server.recorded(0).jsonBody
+      val second = server.recorded(1).jsonBody
+      TurnAssertions.check("forces stateless mode", !first.get("store").asBool)
+      TurnAssertions.check("sends tool schema", first.get("tools").cast[py.List].size == 1)
+      val input = second.get("input").cast[py.List]
+      TurnAssertions.check:
+        "replays call and result"
+        input.size == 3 && input.get(1).cast[py.Dict].get("type").asString == "function_call" &&
+          input.get(2).cast[py.Dict].get("type").asString == "function_call_output"
+      TurnAssertions.check("has no stored continuation", !second.contains("previous_response_id"))
+
+  test: "retry after 503 re-sends the same input", () =>
+    ProviderFixture.withResponses: [unavailable(), textResponse("hello")], server =>
+      TurnAssertions.checkRetryThenText(model = model(server))
+      val firstInput = server.recorded(0).jsonBody.get("input")
+      val retryInput = server.recorded(1).jsonBody.get("input")
+      TurnAssertions.check:
+        "retry keeps semantic input"
+        py.module("json").dumps(firstInput, sort_keys = true).asString ==
+          py.module("json").dumps(retryInput, sort_keys = true).asString

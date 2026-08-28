@@ -1,12 +1,23 @@
-//[ ProviderTests.jo — aggregate the independent provider scenarios. //]
+//[ ProviderTests.jo — the provider test tree. //]
 
 namespace harpe.test.providers.ProviderTests
 
-import jo.IO.stdout
 import harpe.logging.logger
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.providers.ProviderFixtureTest
+import harpe.test.providers.anthropic
+import harpe.test.providers.openai
+import harpe.test.providers.openrouter
 
-def run(): Unit receives stdout, logger =
-  harpe.test.providers.ProviderFixtureTest.run()
-  harpe.test.providers.openai.Tests.run()
-  harpe.test.providers.openrouter.Tests.run()
-  harpe.test.providers.anthropic.Tests.run()
+//[ Compose the provider suites
+  !
+  ! Each suite names itself, so this file only decides what belongs under
+  ! `providers` and in what order. A path here is what a filter matches:
+  ! `jo run test -- providers/openai/chat` runs one protocol.
+//]
+def providerSuite(): Unit receives testing, logger = suite: "providers", () =>
+  ProviderFixtureTest.fixtureSuite()
+  anthropic.Tests.anthropicSuite()
+  openai.Tests.openaiSuite()
+  openrouter.Tests.openrouterSuite()

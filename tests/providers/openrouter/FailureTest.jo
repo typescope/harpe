@@ -2,9 +2,11 @@
 
 namespace harpe.test.providers.openrouter.FailureTest
 
-import jo.IO.stdout
 import harpe.models.openrouter
 import harpe.logging.logger
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
 import harpe.test.providers.ProviderFixture
 import harpe.test.providers.TurnAssertions
 
@@ -19,27 +21,30 @@ private def error(status: String, message: String): ProviderFixture.Response =
       {"error":{"message":"\{message}","type":"test_error","code":"test"}}
       """
 
-def run(): Unit receives stdout, logger =
-  val limited = new ProviderFixture.Response:
-    "429 Too Many Requests"
-    py.list:
-      py.tuple("Content-Type", "application/json")
-      py.tuple("Retry-After", "4")
-    [
-      """
-      {"error":{"message":"rate limited","type":"rate_limit_error","code":"rate_limit"}}
-      """
-    ]
+def failureSuite(): Unit receives testing, logger = suite: "failure", () =>
+  test: "429 reports the Retry-After delay", () =>
+    val limited = new ProviderFixture.Response:
+      "429 Too Many Requests"
+      py.list:
+        py.tuple("Content-Type", "application/json")
+        py.tuple("Retry-After", "4")
+      [
+        """
+        {"error":{"message":"rate limited","type":"rate_limit_error","code":"rate_limit"}}
+        """
+      ]
+    ProviderFixture.withResponses: [limited], server =>
+      TurnAssertions.checkRetryAfter(model = model(server), seconds = 4.0)
+      TurnAssertions.check("one request", server.requestCount == 1)
 
-  ProviderFixture.withResponses: [limited], server =>
-    TurnAssertions.checkRetryAfter(label = "openrouter 429", model = model(server), seconds = 4.0)
-    TurnAssertions.check("openrouter 429 one request", server.requestCount == 1)
+  test: "503 is transient", () =>
+    ProviderFixture.withResponses: [error("503 Service Unavailable", "unavailable")], server =>
+      TurnAssertions.checkTransient(model = model(server))
 
-  ProviderFixture.withResponses: [error("503 Service Unavailable", "unavailable")], server =>
-    TurnAssertions.checkTransient(label = "openrouter 503", model = model(server))
+  test: "401 is fatal", () =>
+    ProviderFixture.withResponses: [error("401 Unauthorized", "bad key")], server =>
+      TurnAssertions.checkFatal(model = model(server))
 
-  ProviderFixture.withResponses: [error("401 Unauthorized", "bad key")], server =>
-    TurnAssertions.checkFatal(label = "openrouter 401", model = model(server))
-
-  ProviderFixture.withResponses: [ProviderFixture.sse("data: {not-json}")], server =>
-    TurnAssertions.checkFatal(label = "openrouter malformed stream", model = model(server))
+  test: "a malformed stream is fatal", () =>
+    ProviderFixture.withResponses: [ProviderFixture.sse("data: {not-json}")], server =>
+      TurnAssertions.checkFatal(model = model(server))

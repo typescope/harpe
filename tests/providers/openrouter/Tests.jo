@@ -2,10 +2,14 @@
 
 namespace harpe.test.providers.openrouter.Tests
 
-import jo.IO.stdout
 import harpe.logging.logger
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.providers.openrouter.SmokeTest
+import harpe.test.providers.openrouter.ContractTest
+import harpe.test.providers.openrouter.FailureTest
 
-def run(): Unit receives stdout, logger =
-  harpe.test.providers.openrouter.SmokeTest.run()
-  harpe.test.providers.openrouter.ContractTest.run()
-  harpe.test.providers.openrouter.FailureTest.run()
+def openrouterSuite(): Unit receives testing, logger = suite: "openrouter", () =>
+  SmokeTest.smokeSuite()
+  ContractTest.contractSuite()
+  FailureTest.failureSuite()

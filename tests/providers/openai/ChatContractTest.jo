@@ -2,9 +2,11 @@
 
 namespace harpe.test.providers.openai.ChatContractTest
 
-import jo.IO.stdout
 import harpe.models.openai
 import harpe.logging.logger
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
 import harpe.test.providers.ProviderFixture
 import harpe.test.providers.TurnAssertions
 
@@ -64,27 +66,35 @@ private def textResponse(text: String): ProviderFixture.Response = ProviderFixtu
   data: [DONE]
   """
 
-def run(): Unit receives stdout, logger =
-  ProviderFixture.withResponses: [toolResponse(), textResponse("done")], server =>
-    TurnAssertions.checkToolRoundTrip(label = "compatible chat", model = model(server))
-    TurnAssertions.check("compatible chat two requests", server.requestCount == 2)
-    val first = server.recorded(0).jsonBody
-    val second = server.recorded(1).jsonBody
-    TurnAssertions.check("compatible chat sends tool schema", first.get("tools").cast[py.List].size == 1)
-    val messages = second.get("messages").cast[py.List]
-    TurnAssertions.check("compatible chat retains assistant call", messages.size == 4 && messages.get(2).cast[py.Dict].contains("tool_calls"))
-    TurnAssertions.check("compatible chat sends tool result once",
-      messages.get(3).cast[py.Dict].get("tool_call_id").asString == "call_1")
-
-  val unavailable = ProviderFixture.response:
-    "503 Service Unavailable"
-    "application/json"
+private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
+  "503 Service Unavailable"
+  "application/json"
+  """
+    {"error":{"message":"unavailable","type":"server_error","code":"server_error"}}
     """
-      {"error":{"message":"unavailable","type":"server_error","code":"server_error"}}
-      """
-  ProviderFixture.withResponses: [unavailable, textResponse("hello")], server =>
-    TurnAssertions.checkRetryThenText(label = "compatible chat retry", model = model(server))
-    val firstMessages = server.recorded(0).jsonBody.get("messages")
-    val retryMessages = server.recorded(1).jsonBody.get("messages")
-    TurnAssertions.check("compatible chat retry keeps semantic request",
-      py.module("json").dumps(firstMessages, sort_keys = true).asString == py.module("json").dumps(retryMessages, sort_keys = true).asString)
+
+def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
+  test: "replays the assistant call and its result in messages", () =>
+    ProviderFixture.withResponses: [toolResponse(), textResponse("done")], server =>
+      TurnAssertions.checkToolRoundTrip(model = model(server))
+      TurnAssertions.check("two requests", server.requestCount == 2)
+      val first = server.recorded(0).jsonBody
+      val second = server.recorded(1).jsonBody
+      TurnAssertions.check("sends tool schema", first.get("tools").cast[py.List].size == 1)
+      val messages = second.get("messages").cast[py.List]
+      TurnAssertions.check:
+        "retains assistant call"
+        messages.size == 4 && messages.get(2).cast[py.Dict].contains("tool_calls")
+      TurnAssertions.check:
+        "sends tool result once"
+        messages.get(3).cast[py.Dict].get("tool_call_id").asString == "call_1"
+
+  test: "retry after 503 re-sends the same messages", () =>
+    ProviderFixture.withResponses: [unavailable(), textResponse("hello")], server =>
+      TurnAssertions.checkRetryThenText(model = model(server))
+      val firstMessages = server.recorded(0).jsonBody.get("messages")
+      val retryMessages = server.recorded(1).jsonBody.get("messages")
+      TurnAssertions.check:
+        "retry keeps semantic request"
+        py.module("json").dumps(firstMessages, sort_keys = true).asString ==
+          py.module("json").dumps(retryMessages, sort_keys = true).asString
