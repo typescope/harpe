@@ -44,7 +44,9 @@ end
   ! so concurrent requests from the same tab cannot interleave. `idle` is set
   ! when no turn is running, so `POST /api/stop` has a sensible no-op path.
 //]
-class Session(id: String, log: Logger, brain: Model, tools: Toolset, context: Context)
+class Session(id: String, brain: Model, tools: Toolset, context: Context)
+  val path = os.path.join(appHome, "logs/sessions", id + ".jsonl")
+  val log =  new harpe.logging.JsonlLogger(path)
   val transcript = new Journal(log)
   val lock = threading.Lock()
   val stop = threading.Event()
@@ -159,15 +161,4 @@ class Session(id: String, log: Logger, brain: Model, tools: Toolset, context: Co
 
     sink(py.dict("type" ~ "approval-ended", "id" ~ id, "decision" ~ Approvals.wire(decision)))
     decision
-end
-
-
-section Session
-  //[ The JSONL file for this session's audit log. //]
-  def sessionPath(id: String): String receives appHome =
-    os.path.join(appHome, "logs/sessions", id + ".jsonl")
-
-  //[ An append log for this chat's session (file created lazily). //]
-  def forSession(id: String): Logger receives appHome =
-    new harpe.logging.JsonlLogger(sessionPath(id))
 end
