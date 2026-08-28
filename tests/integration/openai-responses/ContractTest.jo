@@ -21,6 +21,10 @@ import harpe.test.integration.ModelDriver
 private def model(server: ProviderFixture.Server) =
   openai("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
 
+//[ The same adapter with server-side storage off. //]
+private def stateless(server: ProviderFixture.Server) =
+  openai("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2, store = false)
+
 private def toolResponse(): ProviderFixture.Response = ProviderFixture.sse:
   """
   data: {
@@ -192,6 +196,45 @@ private def callsAgain(): ProviderFixture.Response = ProviderFixture.sse:
   data: [DONE]
   """
 
+//[ A reply whose `output` carries a reasoning item before the call
+  !
+  ! Stored mode leaves this on the server. Stateless mode has to replay it, so
+  ! it is the same wire shape read two different ways.
+//]
+private def reasonsThenCalls(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {
+    "type": "response.completed", "sequence_number": 1,
+    "response": {
+      "id": "resp_stateless", "object": "response", "created_at": 0,
+      "status": "completed", "error": null, "incomplete_details": null,
+      "instructions": null, "max_output_tokens": 32, "model": "test-model",
+      "output": [
+        {
+          "id": "rs_1", "type": "reasoning",
+          "summary": [{"type":"summary_text","text":"Zurich is in Switzerland."}],
+          "encrypted_content": "enc-abc"
+        },
+        {
+          "id": "fc_1", "type": "function_call", "status": "completed",
+          "arguments": "{\"city\":\"Zurich\"}", "call_id": "call_1", "name": "lookup"
+        }
+      ],
+      "parallel_tool_calls": true, "previous_response_id": null,
+      "reasoning": {"effort":"medium","summary":null}, "store": false,
+      "temperature": 1.0, "text": {"format":{"type":"text"}},
+      "tool_choice": "auto", "tools": [], "top_p": 1.0, "truncation": "disabled",
+      "usage": {
+        "input_tokens": 6, "input_tokens_details": {"cached_tokens":0},
+        "output_tokens": 3, "output_tokens_details": {"reasoning_tokens":2}, "total_tokens": 9
+      },
+      "metadata": {}
+    }
+  }
+
+  data: [DONE]
+  """
+
 def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
   test: "chains a tool call onto the stored response", () =>
     ProviderFixture.withResponses: [toolResponse(), textResponse()], server =>
@@ -304,3 +347,50 @@ def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
         "and it is the newest call's"
         input.get(0).cast[py.Dict].get("call_id").asString
         expected = "call_2"
+
+  // The same adapter, with storage off: no server-side state to point at, so
+  // the turn tail travels in full on every request. Its sibling above pins the
+  // stored half, and the two must not drift into each other.
+  test: "replays raw output when storage is off, and asks for the reasoning to replay", () =>
+    ProviderFixture.withResponses: [reasonsThenCalls(), textResponse()], server =>
+      val tool = Tool("lookup", "Look up weather", [Tool.strParam("city", "City to look up")])
+      val turn = ModelDriver.start(stateless(server), prompt = "What is the weather in Zurich?")
+
+      val requested = turn.expectReply(tools = [tool])
+      check("one tool call", requested.calls.size == 1)
+
+      val _ = turn.expectReply(results = [ToolResult("call_1", "sunny", [])], tools = [tool])
+
+      val first = server.recorded(0).jsonBody
+      check("storage stays off", !first.get("store").asBool)
+
+      // Without this the provider returns no encrypted reasoning, and the next
+      // round has nothing to replay — the failure would surface as a rejected
+      // request one round later, nowhere near its cause.
+      var asksForReasoning = false
+      for item in first.get("include").cast[py.List] do
+        if item.asString == "reasoning.encrypted_content" then asksForReasoning = true
+      check("asks the provider to return its reasoning", asksForReasoning)
+
+      val second = server.recorded(1).jsonBody
+      check("never chains a stored response", !second.contains("previous_response_id"))
+
+      var reasoning: py.Dict = py.dict()
+      var reasoningAt = -1
+      var callAt = -1
+      var resultAt = -1
+      var i = 0
+      for item in second.get("input").cast[py.List] do
+        val entry = item.cast[py.Dict]
+        val kind = entry.get("type", "").asString
+        if kind == "reasoning" then
+          reasoning = entry
+          reasoningAt = i
+        if kind == "function_call" then callAt = i
+        if kind == "function_call_output" then resultAt = i
+        i = i + 1
+
+      check("replays the reasoning item", reasoningAt >= 0)
+      checkEquals("keeping its id", reasoning.get("id").asString, "rs_1")
+      checkEquals("and its opaque payload", reasoning.get("encrypted_content").asString, "enc-abc")
+      check("in the order the provider produced them", reasoningAt < callAt && callAt < resultAt)
