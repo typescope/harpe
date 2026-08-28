@@ -462,13 +462,15 @@ private class TelegramBot(
       // Each chat is its own session, rooted at its own data directory:
       // downloaded files land there, and files the agent writes and sends back
       // surface there too. This toolset is where that directory reaches the
-      // tools.
+      // tools — including `runCode`, whose guest gets it as HARPE_DATA_DIR. The
+      // sandbox runtime roots every capability it binds at that variable, so the
+      // grant is what lets a program read this chat's files and no other's.
       val dataDir = os.path.abspath(Session.dataDir(chatId))
       val tools =
         SkillTools.toolset(os.path.join(appHome, "skills"))
           ++ UploadMediaTool.toolset(dataDir)
           ++ sendFile.toolset(chatId, dataDir)
-          ++ runTool.toolset()
+          ++ runTool.toolset(Map("HARPE_DATA_DIR" ~ dataDir))
 
       val session = new Session(chatId, log, brain, tools, context, dataDir)
       registryLock.acquire()
