@@ -1,0 +1,57 @@
+//[ ProviderFixture.jo
+  !
+  ! A one-request localhost HTTP server for provider contract tests. The real
+  ! Python SDK sends its request here and consumes the inline SSE transcript the
+  ! scenario supplies. Nothing reaches the network outside this process.
+//]
+
+namespace harpe.test.providers
+
+import harpe.Http
+import harpe.Http.request
+import harpe.ffi.json
+import harpe.util.Process
+
+section ProviderFixture
+  class Server(origin: String, requests: py.List)
+    def baseUrl: String = origin + "/v1"
+    def path: String = requests.get(0).cast[py.Dict].get("path").asString
+    def requestJson: py.Dict = json.loads(requests.get(0).cast[py.Dict].get("body").asString).cast[py.Dict]
+  end
+
+  private def frames(body: String): py.List =
+    val encoded = py.list()
+    for frame in body.trim.split("\n\n") do
+      encoded.append(py.dynamic(frame + "\n\n").encode("utf-8"))
+    encoded
+
+  private def serve(body: String, requests: py.List): py.List receives request =
+    requests.append:
+      py.dict:
+        "path" ~ request.path
+        "body" ~ Http.readBody()
+    val _ = Http.beginStream("text/event-stream")
+    frames(body)
+
+  //[ Run `test` against a local server that answers its first request with `body`.
+    !
+    ! The server binds port zero so parallel or interrupted test runs cannot
+    ! collide. `handle_request` serves exactly one exchange and then its daemon
+    ! thread exits.
+  //]
+  def withSse(body: String, test: Server => Unit): Unit =
+    val requests = py.list()
+    val httpd = Http.server("127.0.0.1", 0, () => serve(body, requests))
+    val port = httpd.server_port.asInt
+    val server = new Server("http://127.0.0.1:\{port}", requests)
+    val thread = Process.daemon: () => httpd.handle_request()
+    thread.start()
+
+    val result = py.try: test(server)
+    val _ = py.try: httpd.server_close()
+    val _ = py.try: thread.join(1.0)
+
+    match result
+    case Ok(_) => pass
+    case Err(err) => abort err.message
+end

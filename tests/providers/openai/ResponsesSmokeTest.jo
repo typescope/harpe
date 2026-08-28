@@ -1,0 +1,29 @@
+//[ ResponsesSmokeTest.jo — OpenAI Responses text streaming. //]
+
+namespace harpe.test.providers.openai.ResponsesSmokeTest
+
+import jo.IO.stdout
+import harpe.models.openai
+import harpe.logging.logger
+import harpe.test.providers.ProviderFixture
+import harpe.test.providers.ProviderTest
+
+def run(): Unit receives stdout, logger =
+  val response = """
+    data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_test","output_index":0,"content_index":0,"delta":"hel","logprobs":[]}
+
+    data: {"type":"response.output_text.delta","sequence_number":2,"item_id":"msg_test","output_index":0,"content_index":0,"delta":"lo","logprobs":[]}
+
+    data: {"type":"response.completed","sequence_number":3,"response":{"id":"resp_test","object":"response","created_at":0,"status":"completed","error":null,"incomplete_details":null,"instructions":"You are concise.","max_output_tokens":32,"model":"test-model","output":[{"id":"msg_test","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"hello","annotations":[],"logprobs":[]}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":"medium","summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":3,"input_tokens_details":{"cached_tokens":0},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":5},"metadata":{}}}
+
+    data: [DONE]
+    """
+
+  ProviderFixture.withSse: response, server =>
+    val interact = new ProviderTest.RecordingInteract
+    val result = ProviderTest.runModel(
+      openai("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2),
+      interact)
+    ProviderTest.check("openai path", server.path == "/v1/responses")
+    ProviderTest.check("openai requests streaming", server.requestJson.get("stream").asBool)
+    ProviderTest.checkTextReply("openai", result, interact, 3, 2)

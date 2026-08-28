@@ -1,0 +1,31 @@
+//[ ChatSmokeTest.jo — OpenAI-compatible Chat Completions text streaming. //]
+
+namespace harpe.test.providers.openai.ChatSmokeTest
+
+import jo.IO.stdout
+import harpe.models.openai
+import harpe.logging.logger
+import harpe.test.providers.ProviderFixture
+import harpe.test.providers.ProviderTest
+
+def run(): Unit receives stdout, logger =
+  val response = """
+    data: {"id":"chatcmpl_test","object":"chat.completion.chunk","created":0,"model":"test-model","choices":[{"index":0,"delta":{"role":"assistant","content":"hel"},"finish_reason":null}],"usage":null}
+
+    data: {"id":"chatcmpl_test","object":"chat.completion.chunk","created":0,"model":"test-model","choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":null}],"usage":null}
+
+    data: {"id":"chatcmpl_test","object":"chat.completion.chunk","created":0,"model":"test-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null}
+
+    data: {"id":"chatcmpl_test","object":"chat.completion.chunk","created":0,"model":"test-model","choices":[],"usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6,"prompt_tokens_details":{"cached_tokens":0}}}
+
+    data: [DONE]
+    """
+
+  ProviderFixture.withSse: response, server =>
+    val interact = new ProviderTest.RecordingInteract
+    val result = ProviderTest.runModel(
+      openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 2),
+      interact)
+    ProviderTest.check("compatible path", server.path == "/v1/chat/completions")
+    ProviderTest.check("compatible requests streaming", server.requestJson.get("stream").asBool)
+    ProviderTest.checkTextReply("compatible", result, interact, 4, 2)

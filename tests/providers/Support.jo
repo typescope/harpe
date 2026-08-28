@@ -1,0 +1,53 @@
+//[ Support.jo
+  !
+  ! Assertions and interaction recording shared by provider scenarios. Wire
+  ! transcripts remain in their individual scenario files.
+//]
+
+namespace harpe.test.providers
+
+import jo.IO.stdout
+import harpe.Interact
+import harpe.Approvals
+import harpe.Model
+import harpe.Model.*
+import harpe.turns.TurnEvent
+import harpe.logging.logger
+
+section ProviderTest
+  def check(label: String, cond: Bool): Unit receives stdout =
+    assert: cond, "\{label} failed"
+    println "  ok \{label}"
+
+  class RecordingInteract
+    view Interact
+
+    var chunks: List[String] = []
+
+    def cancelled: Bool = false
+    def pause(seconds: Float): Bool = false
+    def approve(request: Approvals.Request): Approvals.Decision = Approvals.Cancelled
+
+    def emit(event: TurnEvent): Unit =
+      if event is TurnEvent.AssistantChunk(text) then chunks = chunks + text
+  end
+
+  def runModel(model: Model, interact: RecordingInteract): ReplyResult receives logger =
+    val base = new Rendered("You are concise.", [UserInput("Say hello.", [])])
+    model.startTurn(base, 32).reply([], [], interact)
+
+  def checkTextReply(
+      label: String, result: ReplyResult, interact: RecordingInteract,
+      expectedInput: Int, expectedOutput: Int)
+  : Unit receives stdout =
+    match result
+    case Reply(message, usage) =>
+      check("\{label} chunks", interact.chunks.size == 2 && interact.chunks.join("") == "hello")
+      check("\{label} answer", message.text == "hello")
+      check("\{label} no tool calls", message.calls.isEmpty)
+      check("\{label} input usage", usage.inputTokens == expectedInput)
+      check("\{label} output usage", usage.outputTokens == expectedOutput)
+    case Transient(detail) => abort "\{label} unexpectedly transient: \{detail}"
+    case RetryAfter(detail, _) => abort "\{label} unexpectedly rate limited: \{detail}"
+    case Fatal(detail) => abort "\{label} unexpectedly fatal: \{detail}"
+end
