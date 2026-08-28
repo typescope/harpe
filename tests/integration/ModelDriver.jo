@@ -30,6 +30,7 @@ import harpe.logging.logger
 
 //[ Empty defaults, so a scenario spells out only what it is supplying. //]
 private def noResults: List[ToolResult] = []
+private def noAttachments: List[Attachment] = []
 private def noTools: List[Tool] = []
 
 section ModelDriver
@@ -49,14 +50,18 @@ section ModelDriver
       if event is TurnEvent.AssistantChunk(text) then chunks = chunks + text
   end
 
-  //[ Begin a turn in which the user asked `prompt`
+  //[ Begin a turn in which the user asked `prompt`, having attached `files`
     !
     ! The system prompt is the driver's own, and fixed: these suites test the
     ! wire contract, not the prompt. What the user asked is the scenario's,
     ! because it is what the canned response is answering.
+    !
+    ! Attachments ride the user message, which is where every adapter looks for
+    ! them — and only on the newest one, so a scenario that wants them encoded
+    ! has to hang them here rather than on some earlier turn.
   //]
-  def start(model: Model, prompt: String): Turn =
-    val base = new Rendered("You are concise.", [UserInput(prompt, [])])
+  def start(model: Model, prompt: String, files: List[Attachment] = noAttachments): Turn =
+    val base = new Rendered("You are concise.", [UserInput(prompt, files)])
     new Turn(model.startTurn(base, 32))
 
   //[ A turn in progress, and what the last reply produced

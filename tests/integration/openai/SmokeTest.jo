@@ -52,3 +52,4 @@ def smokeSuite(): Unit receives testing, logger = suite: "smoke", () =>
       check("output usage", turn.usage.outputTokens == 2)
       check("path", server.path == "/v1/chat/completions")
       check("requests streaming", server.requestJson.get("stream").asBool)
+      check("carries the token budget", server.requestJson.get("max_tokens").asInt == 32)

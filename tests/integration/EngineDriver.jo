@@ -51,10 +51,21 @@ section EngineDriver
     var events: List[String] = []
     var waits: List[Float] = []
 
+    //[ How many assistant chunks to let through before asking to stop
+      !
+      ! Negative — the default — never asks. Set it to interrupt a scenario in
+      ! the middle of a reply the provider is still streaming, which is the only
+      ! place several of the adapters' cancellation checks can be reached from.
+    //]
+    var cancelAfterChunks: Int = -1
+
+    //[ How many assistant chunks arrived. //]
+    var streamed: Int = 0
+
     //[ Everything that happened, in order. //]
     def trace: String = events.join(",")
 
-    def cancelled: Bool = false
+    def cancelled: Bool = cancelAfterChunks >= 0 && streamed >= cancelAfterChunks
 
     def pause(seconds: Float): Bool =
       waits = waits + seconds
@@ -62,7 +73,9 @@ section EngineDriver
 
     def approve(request: Approvals.Request): Approvals.Decision = Approvals.Cancelled
 
-    def emit(event: TurnEvent): Unit = events = events + tag(event)
+    def emit(event: TurnEvent): Unit =
+      if event is TurnEvent.AssistantChunk(_) then streamed = streamed + 1
+      events = events + tag(event)
   end
 
   //[ How the turn ended, without its detail — which is the provider's wording. //]

@@ -184,6 +184,33 @@ private def toolResultIds(request: ProviderFixture.RecordedRequest): String =
       ids = ids + entry.get("tool_call_id").asString
   ids.join(",")
 
+//[ A reply that arrives in three pieces, so a scenario can stop after one. //]
+private def saysInPieces(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {
+    "id": "chat_slow", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{"index":0,"delta":{"role":"assistant","content":"one"},"finish_reason":null}]
+  }
+
+  data: {
+    "id": "chat_slow", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{"index":0,"delta":{"content":"two"},"finish_reason":null}]
+  }
+
+  data: {
+    "id": "chat_slow", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{"index":0,"delta":{"content":"three"},"finish_reason":null}]
+  }
+
+  data: {
+    "id": "chat_slow", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{"index":0,"delta":{},"finish_reason":"stop"}],
+    "usage": {"prompt_tokens":4,"completion_tokens":3,"total_tokens":7}
+  }
+
+  data: [DONE]
+  """
+
 def engineSuite(): Unit receives testing, logger = suite: "engine", () =>
   test: "dispatches a streamed tool call and sends its result back", () =>
     ProviderFixture.withResponses: [speaksThenCalls(), says("Sunny in Zurich.")], server =>
@@ -351,3 +378,24 @@ def engineSuite(): Unit receives testing, logger = suite: "engine", () =>
         "backoff ladder"
         recorder.waits.map(w => w.toString).join(",")
         expected = "1.0,2.0"
+
+  test: "abandons the stream the moment cancellation is asked for", () =>
+    ProviderFixture.withResponses: [saysInPieces()], server =>
+      val recorder = new EngineDriver.Recorder
+      // Stop as soon as the first piece of the reply has been seen.
+      recorder.cancelAfterChunks = 1
+
+      val turn = Agent.ask:
+        "Say hello."
+        brain = model(server)
+        interact = recorder
+
+      // The adapter checks between stream events, so the two remaining pieces
+      // never arrive even though the fixture is still willing to send them.
+      checkEquals("turn events", recorder.trace, "start,chunk:one,end")
+      check("stopped inside the stream", recorder.streamed == 1)
+      checkEquals("result", EngineDriver.resultTag(turn), "Interrupted")
+
+      // An interrupted turn is rolled back whole, so it contributes nothing.
+      check("produced nothing", turn.messages.isEmpty)
+      checkEquals("said nothing", turn.text, "")

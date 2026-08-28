@@ -56,3 +56,13 @@ def failureSuite(): Unit receives testing, logger = suite: "failure", () =>
     ProviderFixture.withResponses: [ProviderFixture.sse("event: message_start\ndata: {not-json}")], server =>
       val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectFatal()
       check("classified fatal", detail != "")
+
+  // Every other failure here arrives as an HTTP status. This one never becomes
+  // one: the server holds the request open past the client's own deadline, so
+  // the SDK gives up locally and `Classify` has only the exception type to go
+  // on. Retrying is right — nothing reached the model.
+  test: "a client-side timeout is transient", () =>
+    ProviderFixture.withResponses: [ProviderFixture.stalled(3.0)], server =>
+      val impatient = anthropic("test-key", "test-model", Anthropic.NoCache, timeoutSeconds = 1, baseUrl = server.origin)
+      val detail = ModelDriver.start(impatient, prompt = "Say hello.").expectTransient()
+      check("classified transient", detail != "")

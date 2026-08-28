@@ -14,10 +14,25 @@ import harpe.util.Process
 import harpe.ffi.builtins
 
 section ProviderFixture
-  class Response(status: String, headers: py.List, chunks: List[String])
+  //[ One scripted response
+    !
+    ! `delaySeconds` holds the request open before answering. A client whose own
+    ! timeout is shorter gives up first, which is the only way to reach the
+    ! statusless half of `Classify` — a failure that never became an HTTP
+    ! status, and is classified by exception type instead.
+  //]
+  class Response(status: String, headers: py.List, chunks: List[String], delaySeconds: Float = 0.0)
 
   def response(status: String, contentType: String, body: String): Response =
     new Response(status, py.list(py.tuple("Content-Type", contentType)), [body])
+
+  //[ A response the server sits on for `seconds` before sending anything. //]
+  def stalled(seconds: Float): Response =
+    new Response:
+      "200 OK"
+      py.list(py.tuple("Content-Type", "text/event-stream"))
+      ["data: [DONE]\n\n"]
+      delaySeconds = seconds
 
   def sse(body: String): Response =
     new Response:
@@ -83,6 +98,7 @@ section ProviderFixture
       Http.respond("500 Internal Server Error", "text/plain", "unexpected request")
     else
       val answer = responses.get(index)
+      if answer.delaySeconds > 0.0 then py.module("time").sleep(answer.delaySeconds)
       py.call(request.startResponse, answer.status, answer.headers)
       encode(answer.chunks)
 
