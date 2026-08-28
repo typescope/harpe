@@ -21,7 +21,7 @@ def run(): Unit receives stdout, logger =
     data: [DONE]
     """
 
-  ProviderFixture.withSse: response, server =>
+  ProviderFixture.withSSE: response, server =>
     val model = openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 2)
     TurnAssertions.checkTextReply(label = "compatible", model = model, expectedInput = 4, expectedOutput = 2)
     TurnAssertions.check("compatible path", server.path == "/v1/chat/completions")

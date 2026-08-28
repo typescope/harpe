@@ -19,7 +19,7 @@ def run(): Unit receives stdout, logger =
     data: [DONE]
     """
 
-  ProviderFixture.withSse: response, server =>
+  ProviderFixture.withSSE: response, server =>
     val model = openrouter("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
     TurnAssertions.checkTextReply(label = "openrouter", model = model, expectedInput = 3, expectedOutput = 2)
     TurnAssertions.check("openrouter path", server.path == "/v1/responses")
