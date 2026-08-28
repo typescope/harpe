@@ -23,6 +23,6 @@ def run(): Unit receives stdout, logger =
 
   ProviderFixture.withSse: response, server =>
     val model = openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 2)
-    TurnAssertions.checkTextReply("compatible", model, 4, 2)
+    TurnAssertions.checkTextReply(label = "compatible", model = model, expectedInput = 4, expectedOutput = 2)
     TurnAssertions.check("compatible path", server.path == "/v1/chat/completions")
     TurnAssertions.check("compatible requests streaming", server.requestJson.get("stream").asBool)

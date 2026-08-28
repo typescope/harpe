@@ -21,6 +21,6 @@ def run(): Unit receives stdout, logger =
 
   ProviderFixture.withSse: response, server =>
     val model = openai("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
-    TurnAssertions.checkTextReply("openai", model, 3, 2)
+    TurnAssertions.checkTextReply(label = "openai", model = model, expectedInput = 3, expectedOutput = 2)
     TurnAssertions.check("openai path", server.path == "/v1/responses")
     TurnAssertions.check("openai requests streaming", server.requestJson.get("stream").asBool)

@@ -32,18 +32,18 @@ def run(): Unit receives stdout, logger =
     ]
 
   ProviderFixture.withResponses: [rateLimited], server =>
-    TurnAssertions.checkRetryAfter("openai 429", model(server), 7.0)
+    TurnAssertions.checkRetryAfter(label = "openai 429", model = model(server), seconds = 7.0)
     TurnAssertions.check("openai 429 one request", server.requestCount == 1)
 
   ProviderFixture.withResponses: [error("503 Service Unavailable", "unavailable")], server =>
-    TurnAssertions.checkTransient("openai 503", model(server))
+    TurnAssertions.checkTransient(label = "openai 503", model = model(server))
 
   ProviderFixture.withResponses: [error("401 Unauthorized", "bad key")], server =>
-    TurnAssertions.checkFatal("openai 401", model(server))
+    TurnAssertions.checkFatal(label = "openai 401", model = model(server))
 
   ProviderFixture.withResponses: [error("400 Bad Request", "invalid request")], server =>
     val compatible = openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 2)
-    TurnAssertions.checkFatal("compatible 400", compatible)
+    TurnAssertions.checkFatal(label = "compatible 400", model = compatible)
 
   ProviderFixture.withResponses: [ProviderFixture.sse("data: {not-json}")], server =>
-    TurnAssertions.checkFatal("openai malformed stream", model(server))
+    TurnAssertions.checkFatal(label = "openai malformed stream", model = model(server))

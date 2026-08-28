@@ -22,5 +22,5 @@ def run(): Unit receives stdout, logger =
 
   ProviderFixture.withResponses: [limited], server =>
     val model = openrouter("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
-    TurnAssertions.checkRetryAfter("openrouter 429", model, 4.0)
+    TurnAssertions.checkRetryAfter(label = "openrouter 429", model = model, seconds = 4.0)
     TurnAssertions.check("openrouter 429 one request", server.requestCount == 1)

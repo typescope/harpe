@@ -21,6 +21,6 @@ def run(): Unit receives stdout, logger =
 
   ProviderFixture.withSse: response, server =>
     val model = openrouter("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
-    TurnAssertions.checkTextReply("openrouter", model, 3, 2)
+    TurnAssertions.checkTextReply(label = "openrouter", model = model, expectedInput = 3, expectedOutput = 2)
     TurnAssertions.check("openrouter path", server.path == "/v1/responses")
     TurnAssertions.check("openrouter requests streaming", server.requestJson.get("stream").asBool)
