@@ -211,7 +211,7 @@ private def openRouterCreate(
   if effort != "none" then
     body.set("reasoning", py.dict("effort" ~ effort))
 
-  val opened = py.try:
+  val streamResult = py.try:
     client.responses.create:
       model = model
       instructions = system
@@ -222,9 +222,8 @@ private def openRouterCreate(
       extra_body = body
       stream = true
 
-  match opened
-  case Err(err) => Err(err)
-  case Ok(stream) => py.try(consumeOpenRouterStream(stream, interact))
+  Util.withPyStream: streamResult, stream =>
+    consumeOpenRouterStream(stream, interact)
 
 private def consumeOpenRouterStream(stream: py.Dynamic, interact: Interact): py.Dynamic =
   var response: py.Dynamic = py.none
@@ -232,9 +231,7 @@ private def consumeOpenRouterStream(stream: py.Dynamic, interact: Interact): py.
   while true do
     val event = builtins.next(events, py.none)
     if event.isNone then break
-    if interact.cancelled then
-      stream.close()
-      abort "model request cancelled"
+    if interact.cancelled then abort "model request cancelled"
 
     val kind = builtins.getattrOr(event, "type", "").asString
     if kind == "response.output_text.delta" then

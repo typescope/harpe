@@ -302,7 +302,7 @@ private def anthropicCreate(
     system: String, messages: py.List, toolSpecs: py.List,
     maxOutputTokens: Int, extraBody: py.Dict, interact: Interact)
 : Result[py.Dynamic, py.Error] =
-  val opened =
+  val managerResult =
     if cache is Anthropic.NoCache then py.try:
       client.messages.stream:
         model = model
@@ -322,15 +322,8 @@ private def anthropicCreate(
         tools = toolSpecs
         extra_body = extraBody
 
-  match opened
-  case Err(err) => Err(err)
-  case Ok(manager) =>
-    match py.try(manager.__enter__())
-    case Err(err) => Err(err)
-    case Ok(stream) =>
-      val consumed = py.try(consumeAnthropicStream(stream, interact))
-      val _ = py.try(manager.__exit__(py.none, py.none, py.none))
-      consumed
+  Util.withPyContext: managerResult, stream =>
+    consumeAnthropicStream(stream, interact)
 
 private def consumeAnthropicStream(stream: py.Dynamic, interact: Interact): py.Dynamic =
   val events = builtins.iter(stream)

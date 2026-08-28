@@ -303,7 +303,7 @@ private def openaiCreate(
   if prevId != "" then
     body.set("previous_response_id", prevId)
 
-  val opened = py.try:
+  val streamResult = py.try:
     client.responses.create:
       model = model
       instructions = system
@@ -314,9 +314,8 @@ private def openaiCreate(
       extra_body = body
       stream = true
 
-  match opened
-  case Err(err) => Err(err)
-  case Ok(stream) => py.try(consumeOpenAIStream(stream, interact))
+  Util.withPyStream: streamResult, stream =>
+    consumeOpenAIStream(stream, interact)
 
 private def consumeOpenAIStream(stream: py.Dynamic, interact: Interact): py.Dynamic =
   var response: py.Dynamic = py.none
@@ -324,9 +323,7 @@ private def consumeOpenAIStream(stream: py.Dynamic, interact: Interact): py.Dyna
   while true do
     val event = builtins.next(events, py.none)
     if event.isNone then break
-    if interact.cancelled then
-      stream.close()
-      abort "model request cancelled"
+    if interact.cancelled then abort "model request cancelled"
 
     val kind = builtins.getattrOr(event, "type", "").asString
     if kind == "response.output_text.delta" then

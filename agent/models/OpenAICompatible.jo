@@ -205,16 +205,8 @@ private def compatibleCreate(
         max_tokens = maxOutputTokens
         extra_body = extraBody
 
-  match managerResult
-  case Err(err) => Err(err)
-  case Ok(manager) =>
-    match py.try(manager.__enter__())
-    case Err(err) => Err(err)
-    case Ok(stream) =>
-      val consumed = py.try(consumeCompatibleStream(stream, interact))
-
-      val _ = py.try(manager.__exit__(py.none, py.none, py.none))
-      consumed
+  Util.withPyContext: managerResult, stream =>
+    consumeCompatibleStream(stream, interact)
 
 private def consumeCompatibleStream(stream: py.Dynamic, interact: Interact): py.Dynamic =
   val events = builtins.iter(stream)
