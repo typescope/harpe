@@ -1,0 +1,26 @@
+//[ FailureTest.jo — OpenRouter HTTP failure classification. //]
+
+namespace harpe.test.providers.openrouter.FailureTest
+
+import jo.IO.stdout
+import harpe.models.openrouter
+import harpe.logging.logger
+import harpe.test.providers.ProviderFixture
+import harpe.test.providers.TurnAssertions
+
+def run(): Unit receives stdout, logger =
+  val limited = new ProviderFixture.Response:
+    "429 Too Many Requests"
+    py.list:
+      py.tuple("Content-Type", "application/json")
+      py.tuple("Retry-After", "4")
+    [
+      """
+      {"error":{"message":"rate limited","type":"rate_limit_error","code":"rate_limit"}}
+      """
+    ]
+
+  ProviderFixture.withResponses: [limited], server =>
+    val model = openrouter("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
+    TurnAssertions.checkRetryAfter("openrouter 429", model, 4.0)
+    TurnAssertions.check("openrouter 429 one request", server.requestCount == 1)

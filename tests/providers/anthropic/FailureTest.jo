@@ -1,0 +1,29 @@
+//[ FailureTest.jo — Anthropic HTTP failure classification. //]
+
+namespace harpe.test.providers.anthropic.FailureTest
+
+import jo.IO.stdout
+import harpe.models.anthropic
+import harpe.models.Anthropic
+import harpe.logging.logger
+import harpe.test.providers.ProviderFixture
+import harpe.test.providers.TurnAssertions
+
+private def failure(status: String, kind: String, message: String): ProviderFixture.Response =
+  ProviderFixture.response:
+    status
+    "application/json"
+    """
+      {"type":"error","error":{"type":"\{kind}","message":"\{message}"}}
+      """
+
+private def model(server: ProviderFixture.Server) =
+  anthropic("test-key", "test-model", Anthropic.NoCache, timeoutSeconds = 2, baseUrl = server.origin)
+
+def run(): Unit receives stdout, logger =
+  ProviderFixture.withResponses: [failure("529 Overloaded", "overloaded_error", "busy")], server =>
+    TurnAssertions.checkTransient("anthropic 529", model(server))
+    TurnAssertions.check("anthropic 529 one request", server.requestCount == 1)
+
+  ProviderFixture.withResponses: [failure("401 Unauthorized", "authentication_error", "bad key")], server =>
+    TurnAssertions.checkFatal("anthropic 401", model(server))

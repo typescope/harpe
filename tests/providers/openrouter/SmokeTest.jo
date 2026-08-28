@@ -6,7 +6,7 @@ import jo.IO.stdout
 import harpe.models.openrouter
 import harpe.logging.logger
 import harpe.test.providers.ProviderFixture
-import harpe.test.providers.ProviderTest
+import harpe.test.providers.TurnAssertions
 
 def run(): Unit receives stdout, logger =
   val response = """
@@ -20,10 +20,7 @@ def run(): Unit receives stdout, logger =
     """
 
   ProviderFixture.withSse: response, server =>
-    val interact = new ProviderTest.RecordingInteract
-    val result = ProviderTest.runModel(
-      openrouter("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2),
-      interact)
-    ProviderTest.check("openrouter path", server.path == "/v1/responses")
-    ProviderTest.check("openrouter requests streaming", server.requestJson.get("stream").asBool)
-    ProviderTest.checkTextReply("openrouter", result, interact, 3, 2)
+    val model = openrouter("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
+    TurnAssertions.checkTextReply("openrouter", model, 3, 2)
+    TurnAssertions.check("openrouter path", server.path == "/v1/responses")
+    TurnAssertions.check("openrouter requests streaming", server.requestJson.get("stream").asBool)

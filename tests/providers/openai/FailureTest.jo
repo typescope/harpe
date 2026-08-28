@@ -1,0 +1,49 @@
+//[ FailureTest.jo — OpenAI Responses HTTP and stream failures. //]
+
+namespace harpe.test.providers.openai.FailureTest
+
+import jo.IO.stdout
+import harpe.models.openai
+import harpe.logging.logger
+import harpe.test.providers.ProviderFixture
+import harpe.test.providers.TurnAssertions
+
+private def error(status: String, message: String): ProviderFixture.Response =
+  ProviderFixture.response:
+    status
+    "application/json"
+    """
+      {"error":{"message":"\{message}","type":"test_error","code":"test"}}
+      """
+
+private def model(server: ProviderFixture.Server) =
+  openai("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
+
+def run(): Unit receives stdout, logger =
+  val rateLimited = new ProviderFixture.Response:
+    "429 Too Many Requests"
+    py.list:
+      py.tuple("Content-Type", "application/json")
+      py.tuple("Retry-After", "7")
+    [
+      """
+      {"error":{"message":"slow down","type":"rate_limit_error","code":"rate_limit"}}
+      """
+    ]
+
+  ProviderFixture.withResponses: [rateLimited], server =>
+    TurnAssertions.checkRetryAfter("openai 429", model(server), 7.0)
+    TurnAssertions.check("openai 429 one request", server.requestCount == 1)
+
+  ProviderFixture.withResponses: [error("503 Service Unavailable", "unavailable")], server =>
+    TurnAssertions.checkTransient("openai 503", model(server))
+
+  ProviderFixture.withResponses: [error("401 Unauthorized", "bad key")], server =>
+    TurnAssertions.checkFatal("openai 401", model(server))
+
+  ProviderFixture.withResponses: [error("400 Bad Request", "invalid request")], server =>
+    val compatible = openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 2)
+    TurnAssertions.checkFatal("compatible 400", compatible)
+
+  ProviderFixture.withResponses: [ProviderFixture.sse("data: {not-json}")], server =>
+    TurnAssertions.checkFatal("openai malformed stream", model(server))

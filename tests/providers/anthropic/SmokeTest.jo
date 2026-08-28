@@ -7,7 +7,7 @@ import harpe.models.anthropic
 import harpe.models.Anthropic
 import harpe.logging.logger
 import harpe.test.providers.ProviderFixture
-import harpe.test.providers.ProviderTest
+import harpe.test.providers.TurnAssertions
 
 def run(): Unit receives stdout, logger =
   val response = """
@@ -34,12 +34,12 @@ def run(): Unit receives stdout, logger =
     """
 
   ProviderFixture.withSse: response, server =>
-    val interact = new ProviderTest.RecordingInteract
-    val result = ProviderTest.runModel(
-      anthropic(
-        "test-key", "test-model", Anthropic.NoCache,
-        timeoutSeconds = 2, baseUrl = server.origin),
-      interact)
-    ProviderTest.check("anthropic path", server.path == "/v1/messages")
-    ProviderTest.check("anthropic requests streaming", server.requestJson.get("stream").asBool)
-    ProviderTest.checkTextReply("anthropic", result, interact, 5, 2)
+    val model = anthropic:
+      "test-key"
+      "test-model"
+      Anthropic.NoCache
+      timeoutSeconds = 2
+      baseUrl = server.origin
+    TurnAssertions.checkTextReply("anthropic", model, 5, 2)
+    TurnAssertions.check("anthropic path", server.path == "/v1/messages")
+    TurnAssertions.check("anthropic requests streaming", server.requestJson.get("stream").asBool)
