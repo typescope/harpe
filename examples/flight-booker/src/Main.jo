@@ -38,9 +38,7 @@ private def webServe(): Unit receives stdout, appHome =
 
   val brain = Model.default()
   val sandboxEnv = Map("DUFFEL_API_KEY" ~ duffelKey)
-  val bonus = getTodayToolset()
-
-  val server = new FlightServer(brain, appHome, sandboxEnv, bonus)
+  val server = new Server(brain, appHome, sandboxEnv)
 
   val host = os.getenv("HOST", "127.0.0.1")
   val port = Int.parse(os.getenv("PORT", "8765")) rescue None => 8765
@@ -64,15 +62,3 @@ private def webServe(): Unit receives stdout, appHome =
   Process.shutdownOnSigint("\n  ✈ Sky stopped.")
 
   httpd.serve_forever()
-
-def getTodayToolset(): Toolset =
-  val spec = Tool:
-    "getToday"
-    "Get today's date and day of the week. Call this whenever the user mentions a relative date such as \"this Friday\", \"next Monday\", or \"tomorrow\", then compute the target date from the result."
-    []
-  Toolset.of: spec, (input, channel) =>
-    val dt = py.module("datetime")
-    val today = dt.date.today()
-    val iso = today.isoformat().asString
-    val weekday = today.strftime("%A").asString
-    new Tool.ToolOutcome("Today is " + weekday + ", " + iso + ".", "getToday · " + iso)

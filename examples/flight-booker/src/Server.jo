@@ -32,11 +32,12 @@ import harpe.transcript.Journal
 import harpe.logging.logger
 import harpe.Model
 import harpe.Toolset
+import harpe.Tool
 import harpe.Http
 import harpe.Http.request
 
 
-class FlightServer(brain: Model, home: String, sandboxEnv: Map[String, String], bonusTools: Toolset)
+class Server(brain: Model, home: String, sandboxEnv: Map[String, String])
   private val registry = py.dict()
   private val registryLock = threading.Lock()
   private val runTool: harpe.tools.RunCodeTool =
@@ -128,7 +129,7 @@ class FlightServer(brain: Model, home: String, sandboxEnv: Map[String, String], 
   private def sessionTools(): Toolset =
     harpe.tools.SkillTools.toolset(os.path.join(home, "skills"))
       ++ runTool.toolset(sandboxEnv)
-      ++ bonusTools
+      ++ getToday()
 
   //[ Mint a fresh session under a new time-sortable id. //]
   private def createSession(): Session receives appHome =
@@ -164,7 +165,6 @@ class FlightServer(brain: Model, home: String, sandboxEnv: Map[String, String], 
 
     val session = new Session:
       id
-      Session.forSession(id)
       brain
       sessionTools()
       context
@@ -187,3 +187,15 @@ class FlightServer(brain: Model, home: String, sandboxEnv: Map[String, String], 
       val _ = registry.pop(k)
     registryLock.release()
 end
+
+def getToday(): Toolset =
+  val spec = Tool:
+    "getToday"
+    "Get today's date and day of the week. Call this whenever the user mentions a relative date such as \"this Friday\", \"next Monday\", or \"tomorrow\", then compute the target date from the result."
+    []
+  Toolset.of: spec, (input, channel) =>
+    val dt = py.module("datetime")
+    val today = dt.date.today()
+    val iso = today.isoformat().asString
+    val weekday = today.strftime("%A").asString
+    new Tool.ToolOutcome("Today is " + weekday + ", " + iso + ".", "getToday · " + iso)

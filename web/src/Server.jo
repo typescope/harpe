@@ -102,8 +102,7 @@ section SendFileTool
         attachments = []
 
 class ChatServer(brain: Model, name: String, home: String,
-    sandboxEnv: Map[String, String],
-    bonusTools: Toolset)
+    sandboxEnv: Map[String, String])
   // Resident sessions, id -> Session. Persisted sessions not yet touched this
   // run are loaded from disk on first access. The server is threaded (each
   // request on its own thread), so registry access is guarded by registryLock.
@@ -336,8 +335,6 @@ class ChatServer(brain: Model, name: String, home: String,
     SkillTools.toolset(os.path.join(home, "skills"))
       ++ UploadMediaTool.toolset(dataDir)
       ++ SendFileTool.toolset(dataDir)
-      ++ runTool.toolset(sandboxEnv)
-      ++ bonusTools
 
   //[ The files that arrived with a message, for the turn's opening transcript record
     !
@@ -702,7 +699,7 @@ class ChatServer(brain: Model, name: String, home: String,
       val sessionId = session.id
       val outcome =
         with logger = session.log in
-          runTool.run(code, sandboxEnv, interact = Interact.unattended)
+          runTool.run(code, interact = Interact.unattended)
       Http.respondJson: py.dict("session" ~ sessionId, "result" ~ outcome.result, "summary" ~ outcome.summary)
 
   //[ Save a script into a session's files (overwriting a same-named one), so it can be reopened, edited, and re-run
