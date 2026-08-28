@@ -1,0 +1,234 @@
+//[ EngineTest.jo
+  !
+  ! The turn engine (`Agent.ask`) over the Anthropic Messages wire.
+  !
+  ! `unit/TurnTest.jo` drives the engine against a scripted `Responder`: every
+  ! reply it reacts to was handed to it as a Jo value. This runs the same engine
+  ! over a provider SDK and a real socket, where its decisions have to survive
+  ! the round trip — a `ToolResult` it built has to come back as something this
+  ! protocol accepts, a `Retry-After` header has to reach its backoff, and the
+  ! chunks the SDK emits have to interleave with its own events in order.
+  !
+  ! The expectations are deliberately identical to the other three protocols'.
+  ! That the engine reads the same over every wire is the claim being made, and
+  ! it only reads that way if the assertions are written the same way.
+//]
+
+namespace harpe.test.integration.anthropic.EngineTest
+
+import harpe.*
+import harpe.turns.*
+import harpe.Model.*
+import harpe.Tool.*
+import harpe.models.anthropic
+import harpe.models.Anthropic
+import harpe.logging.logger
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
+import harpe.test.framework.check
+import harpe.test.framework.checkEquals
+import harpe.test.integration.ProviderFixture
+import harpe.test.integration.EngineDriver
+
+private def model(server: ProviderFixture.Server): Model =
+  anthropic("test-key", "test-model", Anthropic.NoCache, timeoutSeconds = 2, baseUrl = server.origin)
+
+//[ Text, then a call to `lookup` — the shape that makes the engine speak
+  ! before it dispatches a tool. Anthropic sends the two as separate content
+  ! blocks, and the call's arguments as one `input_json_delta`.
+//]
+private def speaksThenCalls(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  event: message_start
+  data: {
+    "type": "message_start",
+    "message": {
+      "id": "msg_tool", "type": "message", "role": "assistant", "model": "test-model",
+      "content": [], "stop_reason": null, "stop_sequence": null,
+      "usage": {
+        "input_tokens": 6, "output_tokens": 0,
+        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0
+      }
+    }
+  }
+
+  event: content_block_start
+  data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"","citations":null}}
+
+  event: content_block_delta
+  data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Let me look."}}
+
+  event: content_block_stop
+  data: {"type":"content_block_stop","index":0}
+
+  event: content_block_start
+  data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_1","name":"lookup","input":{}}}
+
+  event: content_block_delta
+  data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"city\":\"Zurich\"}"}}
+
+  event: content_block_stop
+  data: {"type":"content_block_stop","index":1}
+
+  event: message_delta
+  data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":3}}
+
+  event: message_stop
+  data: {"type":"message_stop"}
+  """
+
+private def says(text: String): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  event: message_start
+  data: {
+    "type": "message_start",
+    "message": {
+      "id": "msg_text", "type": "message", "role": "assistant", "model": "test-model",
+      "content": [], "stop_reason": null, "stop_sequence": null,
+      "usage": {
+        "input_tokens": 8, "output_tokens": 0,
+        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0
+      }
+    }
+  }
+
+  event: content_block_start
+  data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"","citations":null}}
+
+  event: content_block_delta
+  data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\{text}"}}
+
+  event: content_block_stop
+  data: {"type":"content_block_stop","index":0}
+
+  event: message_delta
+  data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}
+
+  event: message_stop
+  data: {"type":"message_stop"}
+  """
+
+private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
+  "529 Overloaded"
+  "application/json"
+  """
+    {"type":"error","error":{"type":"overloaded_error","message":"busy"}}
+    """
+
+private def unauthorized(): ProviderFixture.Response = ProviderFixture.response:
+  "401 Unauthorized"
+  "application/json"
+  """
+    {"type":"error","error":{"type":"authentication_error","message":"bad key"}}
+    """
+
+private def rateLimited(): ProviderFixture.Response = new ProviderFixture.Response:
+  "429 Too Many Requests"
+  py.list:
+    py.tuple("Content-Type", "application/json")
+    py.tuple("Retry-After", "7")
+  [
+    """
+    {"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}
+    """
+  ]
+
+
+def engineSuite(): Unit receives testing, logger = suite: "engine", () =>
+  test: "dispatches a streamed tool call and sends its result back", () =>
+    ProviderFixture.withResponses: [speaksThenCalls(), says("Sunny in Zurich.")], server =>
+      val asked = py.list()
+      val weather = Toolset.of:
+        Tool("lookup", "Look up the weather", [Tool.strParam("city", "City to look up")])
+        (input: ToolInput, channel: Interact) =>
+          asked.append(input.string("city"))
+          new ToolOutcome("sunny", "lookup · sunny", attachments = [])
+
+      val recorder = new EngineDriver.Recorder
+      val turn = Agent.ask:
+        "What is the weather in Zurich?"
+        brain = model(server)
+        tools = weather
+        interact = recorder
+
+      // The arguments arrive as stream fragments. Reassembling them is the
+      // SDK's job, so what the handler was called with is what proves it done.
+      check("called the tool once", asked.size == 1)
+      checkEquals("tool argument", asked.get(0).asString, "Zurich")
+
+      checkEquals:
+        "turn events"
+        recorder.trace
+        expected = "start,chunk:Let me look.,end,said:Let me look.,tool+lookup,tool-lookup,start,chunk:Sunny in Zurich.,end"
+
+      checkEquals("result", EngineDriver.resultTag(turn), "Success")
+      checkEquals("everything the turn said", turn.text, "Let me look.\n\nSunny in Zurich.")
+      checkEquals("closing reply", turn.finalText, "Sunny in Zurich.")
+      checkEquals("turn messages", EngineDriver.messageTags(turn), "calls,results,text")
+
+      // Where the result the engine built has to land is this protocol's own
+      // business, so this is the one assertion the four files disagree on.
+      check("two requests", server.requestCount == 2)
+      val messages = server.recorded(1).jsonBody.get("messages").cast[py.List]
+      val last = messages.get(messages.size - 1).cast[py.Dict]
+      val blocks = last.get("content").cast[py.List]
+      val result = blocks.get(0).cast[py.Dict]
+      checkEquals("tool result role", last.get("role").asString, "user")
+      checkEquals("tool result id", result.get("tool_use_id").asString, "call_1")
+      checkEquals("tool result content", result.get("content").asString, "sunny")
+
+
+  test: "retries a transient failure and answers on the second attempt", () =>
+    ProviderFixture.withResponses: [unavailable(), says("hello")], server =>
+      val recorder = new EngineDriver.Recorder
+      val turn = Agent.ask:
+        "Say hello."
+        brain = model(server)
+        interact = recorder
+        maxRetries = 1
+
+      checkEquals:
+        "turn events"
+        recorder.trace
+        expected = "start,end,reset,transient,start,chunk:hello,end"
+
+      checkEquals("result", EngineDriver.resultTag(turn), "Success")
+      checkEquals("answer", turn.finalText, "hello")
+      check("backed off once", recorder.waits.size == 1)
+      checkEquals("first backoff", recorder.waits.get(0).toString, "1.0")
+
+  test: "waits as long as a 429 asked it to, not as long as its own backoff", () =>
+    ProviderFixture.withResponses: [rateLimited(), says("hello")], server =>
+      val recorder = new EngineDriver.Recorder
+      val turn = Agent.ask:
+        "Say hello."
+        brain = model(server)
+        interact = recorder
+        maxRetries = 1
+
+      // 7 is the header the fixture sent, and 1.0 is what the engine's own
+      // backoff would have chosen — so this pins the whole path from the
+      // response header, through the SDK and its classifier, to the wait.
+      checkEquals("result", EngineDriver.resultTag(turn), "Success")
+      check("waited once", recorder.waits.size == 1)
+      checkEquals("honoured Retry-After", recorder.waits.get(0).toString, "7.0")
+
+  test: "loses the turn on a fatal provider error, retrying nothing", () =>
+    ProviderFixture.withResponses: [unauthorized()], server =>
+      val recorder = new EngineDriver.Recorder
+      val turn = Agent.ask:
+        "Say hello."
+        brain = model(server)
+        interact = recorder
+        maxRetries = 4
+
+      checkEquals("turn events", recorder.trace, "start,end")
+      checkEquals("result", EngineDriver.resultTag(turn), "Failed")
+      check("no retries", server.requestCount == 1)
+      check("waited for nothing", recorder.waits.isEmpty)
+
+      // A lost turn contributes no messages, so a live turn and one replayed
+      // from a journal agree on what happened.
+      check("produced nothing", turn.messages.isEmpty)
+      checkEquals("said nothing", turn.text, "")

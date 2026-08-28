@@ -1,6 +1,6 @@
-//[ FailureTest.jo — OpenAI Chat Completions HTTP and stream failures. //]
+//[ FailureTest.jo — OpenAI Responses HTTP and stream failures. //]
 
-namespace harpe.test.integration.openai.FailureTest
+namespace harpe.test.integration.openaiResponses.FailureTest
 
 import harpe.models.openai
 import harpe.logging.logger
@@ -31,7 +31,7 @@ private def rateLimited(): ProviderFixture.Response = new ProviderFixture.Respon
   ]
 
 private def model(server: ProviderFixture.Server) =
-  openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 2)
+  openai("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
 
 def failureSuite(): Unit receives testing, logger = suite: "failure", () =>
   test: "429 reports the Retry-After delay", () =>
@@ -40,14 +40,15 @@ def failureSuite(): Unit receives testing, logger = suite: "failure", () =>
       val detail = turn.expectRetryAfter()
       check("classified rate limited", detail != "")
       check("retry-after", turn.retryAfterSeconds == 7.0)
+      check("one request", server.requestCount == 1)
 
   test: "503 is transient", () =>
     ProviderFixture.withResponses: [error("503 Service Unavailable", "unavailable")], server =>
       val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectTransient()
       check("classified transient", detail != "")
 
-  test: "400 is fatal", () =>
-    ProviderFixture.withResponses: [error("400 Bad Request", "invalid request")], server =>
+  test: "401 is fatal", () =>
+    ProviderFixture.withResponses: [error("401 Unauthorized", "bad key")], server =>
       val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectFatal()
       check("classified fatal", detail != "")
 
