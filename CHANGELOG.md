@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.8.0 — 2026-08-28
+
+Eighth developer-preview release. It makes streaming a first-class part of a
+turn and lets context strategies compact between tool rounds, while preserving
+the logical turn. It also tightens several names and interfaces introduced in
+the previous previews.
+
+### harpe-caps 0.8.0
+
+No changes. The capability interfaces are identical to 0.7.0; the version moves
+with `harpe` so applications can keep one constraint for both packages.
+
+### harpe 0.8.0
+
+Breaking changes:
+
+- `Context` now models the turn lifecycle directly. `mark`, `render`, and
+  `rollback` are replaced by `beginTurn`, `compact`, `commitTurn`, and
+  `abortTurn`. `compact` returns `Context.Result`, containing the rendered
+  snapshot and whether the provider session must be restarted. Custom context
+  strategies need to implement this new interface.
+
+- `Model.Session.reply` takes the active `Interact` as its third argument. A
+  provider uses it to emit streaming events and observe cancellation. The
+  callback accepted by `Model.SimpleSession` gains the same argument.
+
+- `Tool.RunOutcome` is renamed to `Tool.ToolOutcome`. Its `attachments`
+  argument now defaults to an empty list, so ordinary text-only outcomes need
+  only `result` and `summary`.
+
+- `Interact.approve` no longer takes an ID. Correlation belongs to the
+  interaction implementation, so callers pass only the approval request.
+
+- The `compatible` switch is removed from `models.openai`. Portable Chat
+  Completions providers are now constructed explicitly with
+  `models.openai.compatible(...)`.
+
+New:
+
+- OpenAI Responses, OpenAI-compatible Chat Completions, Anthropic, and
+  OpenRouter stream assistant text through `TurnEvent.AssistantChunk`.
+  `AssistantStreamReset` tells a UI to discard provisional chunks when a model
+  request is retried.
+
+- Context strategies may compact at any model-call boundary, including between
+  tool rounds. `TurnContext` is available for sessions that retain only the
+  active turn.
+
+- `models.openai(..., store = false)` supports stateless Responses calls while
+  preserving encrypted reasoning and tool-loop state locally.
+
+- Provider `Retry-After` headers are honored through the new
+  `Model.RetryAfter` result instead of being replaced by the default backoff.
+
 ## 0.7.0 — 2026-08-25
 
 Seventh developer-preview release. It is a context-parameter pass: the two

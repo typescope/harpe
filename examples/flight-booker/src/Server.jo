@@ -40,7 +40,7 @@ class FlightServer(brain: Model, home: String, sandboxEnv: Map[String, String], 
   private val registry = py.dict()
   private val registryLock = threading.Lock()
   private val runTool: harpe.tools.RunCodeTool =
-    harpe.tools.RunCodeTool(os.path.join(home, "sandbox"), 610.0)
+    harpe.tools.RunCodeTool(os.path.join(home, "sandbox"), approvalDeadline = 610)
 
   //[ The WSGI entry point: re-establish `appHome` from the server's field, then route. //]
   def route(): py.List receives request =
