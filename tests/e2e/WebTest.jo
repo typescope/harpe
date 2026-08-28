@@ -110,7 +110,8 @@ def webSuite(): Unit receives testing = suite: "web", () =>
         check("history has both rows", reloaded.size == 2)
         checkEquals("history keeps the question", rowText(reloaded, 0), "What can you do?")
         checkEquals("history keeps the answer", rowText(reloaded, 1), "I can read your files.")
-        check("the session is idle again", !history(agent, session).get("state").cast[py.Dict].get("active").asBool)
+        val state = history(agent, session).get("state").cast[py.Dict]
+        check("the session is idle again", !state.get("active").asBool)
         check("journals the session", File.exists(agent.sessionFile(session)))
 
         // And it is offered in the picker, titled by what was asked.
@@ -191,7 +192,9 @@ def webSuite(): Unit receives testing = suite: "web", () =>
         check("lists the session's file", listed.size == 1)
         checkEquals("by name", listed.get(0).cast[py.Dict].get("name").asString, "notes.txt")
 
-        val download = Rest.get(agent, Rest.url("/api/file", py.dict("session" ~ session, "name" ~ "notes.txt")))
+        val download = Rest.get:
+          agent
+          Rest.url("/api/file", py.dict("session" ~ session, "name" ~ "notes.txt"))
         check("serves the file", download.status == 200)
         checkEquals("with its bytes intact", download.text, "hello e2e")
 
@@ -243,11 +246,9 @@ def webSuite(): Unit receives testing = suite: "web", () =>
         val committed = Events.rows(events)
         val steps = row(committed, 1).get("steps", py.list()).cast[py.List]
         check("records one program", steps.size == 1)
-        check("with the code the model wrote", steps.get(0).cast[py.Dict].get("code").asString.contains("fs.readText"))
-        checkEquals:
-          "and what it printed"
-          steps.get(0).cast[py.Dict].get("output").asString.trim
-          "the quick brown fox"
+        val step = steps.get(0).cast[py.Dict]
+        check("with the code the model wrote", step.get("code").asString.contains("fs.readText"))
+        checkEquals("and what it printed", step.get("output").asString.trim, "the quick brown fox")
         checkEquals("then the agent's answer", rowText(committed, 1), "Your note says: the quick brown fox.")
 
   test: "runs an edited program, and keeps what it wrote", () =>
@@ -279,7 +280,9 @@ def webSuite(): Unit receives testing = suite: "web", () =>
       val listed = files(agent, session).size
       check("the written file joins the session's files", listed == 2)
 
-      val download = Rest.get(agent, Rest.url("/api/file", py.dict("session" ~ session, "name" ~ "report.txt")))
+      val download = Rest.get:
+        agent
+        Rest.url("/api/file", py.dict("session" ~ session, "name" ~ "report.txt"))
       check("serves what the program wrote", download.status == 200)
       checkEquals("with its content", download.text, "one file, written from the editor")
 
@@ -300,7 +303,8 @@ def webSuite(): Unit receives testing = suite: "web", () =>
           if kind == "session" then running.set("session", event.get("id", "").asString)
           if kind == "status" && event.get("label", "").asString == "thinking" then
             val id = running.get("session", "").asString
-            check("accepts the stop", Rest.postJson(agent, "/api/stop", py.dict("session" ~ id)).status == 200)
+            val stopped = Rest.postJson(agent, "/api/stop", py.dict("session" ~ id))
+            check("accepts the stop", stopped.status == 200)
 
         val events = Rest.stream(agent, "/api/message", py.dict("text" ~ "Take your time."), watch)
         val session = Events.session(events)
@@ -431,6 +435,8 @@ def webSuite(): Unit receives testing = suite: "web", () =>
       check("mints a session for a script written in a fresh chat", session != "")
       checkEquals("saves it under its name", saved.field("name"), "script.jo")
 
-      val reopened = Rest.get(agent, Rest.url("/api/file", py.dict("session" ~ session, "name" ~ "script.jo")))
+      val reopened = Rest.get:
+        agent
+        Rest.url("/api/file", py.dict("session" ~ session, "name" ~ "script.jo"))
       checkEquals("reopens what was saved", reopened.text, program)
       check("lists it among the session's files", files(agent, session).size == 1)

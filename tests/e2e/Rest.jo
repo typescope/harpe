@@ -98,7 +98,12 @@ section Rest
     ! page sees `state.active` on its history, and opens this to watch the rest.
   //]
   def subscribe(agent: WebAgent.Agent, session: String): List[py.Dict] =
-    drain(agent, "GET", url("/api/subscribe", py.dict("session" ~ session)), "", (event: py.Dict) => pass)
+    drain:
+      agent
+      "GET"
+      url("/api/subscribe", py.dict("session" ~ session))
+      ""
+      (event: py.Dict) => pass
 
   //[ Read an NDJSON response line by line, as the events are produced. //]
   private def drain(
