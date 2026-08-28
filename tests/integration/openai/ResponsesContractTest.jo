@@ -3,12 +3,15 @@
 namespace harpe.test.integration.openai.ResponsesContractTest
 
 import harpe.models.openai
+import harpe.Tool
+import harpe.Tool.*
 import harpe.logging.logger
 import harpe.test.framework.testing
 import harpe.test.framework.suite
 import harpe.test.framework.test
+import harpe.test.framework.check
 import harpe.test.integration.ProviderFixture
-import harpe.test.integration.TurnAssertions
+import harpe.test.integration.ModelDriver
 
 private def model(server: ProviderFixture.Server) =
   openai("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
@@ -111,23 +114,43 @@ private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
 def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
   test: "chains a tool call onto the stored response", () =>
     ProviderFixture.withResponses: [toolResponse(), textResponse()], server =>
-      TurnAssertions.checkToolRoundTrip(model = model(server))
-      TurnAssertions.check("two requests", server.requestCount == 2)
+      val tool = Tool("lookup", "Look up weather", [Tool.strParam("city", "City to look up")])
+      val turn = ModelDriver.start(model(server), prompt = "What is the weather in Zurich?")
+
+      val requested = turn.expectReply(tools = [tool])
+      check("one tool call", requested.calls.size == 1)
+      val call = requested.calls.get(0)
+      check("tool id", call.id == "call_1")
+      check("tool name", call.name == "lookup")
+      check("tool arguments", call.input.string("city") == "Zurich")
+
+      val answered = turn.expectReply(results = [ToolResult(call.id, "sunny", [])], tools = [tool])
+      check("follow-up streams the answer", turn.streamed == "done")
+      check("follow-up answer", answered.text == "done")
+      check("follow-up has no calls", answered.calls.isEmpty)
+
+      check("two requests", server.requestCount == 2)
       val first = server.recorded(0).jsonBody
       val second = server.recorded(1).jsonBody
-      TurnAssertions.check("sends tool schema", first.get("tools").cast[py.List].size == 1)
-      TurnAssertions.check:
+      check("sends tool schema", first.get("tools").cast[py.List].size == 1)
+      check:
         "chains successful response"
         second.get("previous_response_id").asString == "resp_tool"
       val input = second.get("input").cast[py.List]
-      TurnAssertions.check:
+      check:
         "sends tool result once"
         input.size == 1 && input.get(0).cast[py.Dict].get("call_id").asString == "call_1"
 
   test: "retry after 503 does not chain the failed response", () =>
     ProviderFixture.withResponses: [unavailable(), helloResponse()], server =>
-      TurnAssertions.checkRetryThenText(model = model(server))
-      TurnAssertions.check("made two requests", server.requestCount == 2)
-      TurnAssertions.check:
+      val turn = ModelDriver.start(model(server), prompt = "Say hello.")
+      check("first attempt transient", turn.expectTransient() != "")
+
+      val retried = turn.expectReply()
+      check("retry streams the answer", turn.streamed == "hello")
+      check("retry answer", retried.text == "hello")
+
+      check("made two requests", server.requestCount == 2)
+      check:
         "did not chain failure"
         !server.recorded(1).jsonBody.contains("previous_response_id")

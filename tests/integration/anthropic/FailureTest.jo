@@ -8,8 +8,9 @@ import harpe.logging.logger
 import harpe.test.framework.testing
 import harpe.test.framework.suite
 import harpe.test.framework.test
+import harpe.test.framework.check
 import harpe.test.integration.ProviderFixture
-import harpe.test.integration.TurnAssertions
+import harpe.test.integration.ModelDriver
 
 private def failure(status: String, kind: String, message: String): ProviderFixture.Response =
   ProviderFixture.response:
@@ -35,17 +36,23 @@ def failureSuite(): Unit receives testing, logger = suite: "failure", () =>
         """
       ]
     ProviderFixture.withResponses: [limited], server =>
-      TurnAssertions.checkRetryAfter(model = model(server), seconds = 5.0)
+      val turn = ModelDriver.start(model(server), prompt = "Say hello.")
+      val detail = turn.expectRetryAfter()
+      check("classified rate limited", detail != "")
+      check("retry-after", turn.retryAfterSeconds == 5.0)
 
   test: "529 is transient", () =>
     ProviderFixture.withResponses: [failure("529 Overloaded", "overloaded_error", "busy")], server =>
-      TurnAssertions.checkTransient(model = model(server))
-      TurnAssertions.check("one request", server.requestCount == 1)
+      val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectTransient()
+      check("classified transient", detail != "")
+      check("one request", server.requestCount == 1)
 
   test: "401 is fatal", () =>
     ProviderFixture.withResponses: [failure("401 Unauthorized", "authentication_error", "bad key")], server =>
-      TurnAssertions.checkFatal(model = model(server))
+      val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectFatal()
+      check("classified fatal", detail != "")
 
   test: "a malformed stream is fatal", () =>
     ProviderFixture.withResponses: [ProviderFixture.sse("event: message_start\ndata: {not-json}")], server =>
-      TurnAssertions.checkFatal(model = model(server))
+      val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectFatal()
+      check("classified fatal", detail != "")

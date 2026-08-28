@@ -3,12 +3,15 @@
 namespace harpe.test.integration.openrouter.ContractTest
 
 import harpe.models.openrouter
+import harpe.Tool
+import harpe.Tool.*
 import harpe.logging.logger
 import harpe.test.framework.testing
 import harpe.test.framework.suite
 import harpe.test.framework.test
+import harpe.test.framework.check
 import harpe.test.integration.ProviderFixture
-import harpe.test.integration.TurnAssertions
+import harpe.test.integration.ModelDriver
 
 private def model(server: ProviderFixture.Server) =
   openrouter("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
@@ -79,25 +82,45 @@ private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
 def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
   test: "replays the call and result instead of chaining state", () =>
     ProviderFixture.withResponses: [toolResponse(), textResponse("done")], server =>
-      TurnAssertions.checkToolRoundTrip(model = model(server))
-      TurnAssertions.check("two requests", server.requestCount == 2)
+      val tool = Tool("lookup", "Look up weather", [Tool.strParam("city", "City to look up")])
+      val turn = ModelDriver.start(model(server), prompt = "What is the weather in Zurich?")
+
+      val requested = turn.expectReply(tools = [tool])
+      check("one tool call", requested.calls.size == 1)
+      val call = requested.calls.get(0)
+      check("tool id", call.id == "call_1")
+      check("tool name", call.name == "lookup")
+      check("tool arguments", call.input.string("city") == "Zurich")
+
+      val answered = turn.expectReply(results = [ToolResult(call.id, "sunny", [])], tools = [tool])
+      check("follow-up streams the answer", turn.streamed == "done")
+      check("follow-up answer", answered.text == "done")
+      check("follow-up has no calls", answered.calls.isEmpty)
+
+      check("two requests", server.requestCount == 2)
       val first = server.recorded(0).jsonBody
       val second = server.recorded(1).jsonBody
-      TurnAssertions.check("forces stateless mode", !first.get("store").asBool)
-      TurnAssertions.check("sends tool schema", first.get("tools").cast[py.List].size == 1)
+      check("forces stateless mode", !first.get("store").asBool)
+      check("sends tool schema", first.get("tools").cast[py.List].size == 1)
       val input = second.get("input").cast[py.List]
-      TurnAssertions.check:
+      check:
         "replays call and result"
         input.size == 3 && input.get(1).cast[py.Dict].get("type").asString == "function_call" &&
           input.get(2).cast[py.Dict].get("type").asString == "function_call_output"
-      TurnAssertions.check("has no stored continuation", !second.contains("previous_response_id"))
+      check("has no stored continuation", !second.contains("previous_response_id"))
 
   test: "retry after 503 re-sends the same input", () =>
     ProviderFixture.withResponses: [unavailable(), textResponse("hello")], server =>
-      TurnAssertions.checkRetryThenText(model = model(server))
+      val turn = ModelDriver.start(model(server), prompt = "Say hello.")
+      check("first attempt transient", turn.expectTransient() != "")
+
+      val retried = turn.expectReply()
+      check("retry streams the answer", turn.streamed == "hello")
+      check("retry answer", retried.text == "hello")
+
       val firstInput = server.recorded(0).jsonBody.get("input")
       val retryInput = server.recorded(1).jsonBody.get("input")
-      TurnAssertions.check:
+      check:
         "retry keeps semantic input"
         py.module("json").dumps(firstInput, sort_keys = true).asString ==
           py.module("json").dumps(retryInput, sort_keys = true).asString

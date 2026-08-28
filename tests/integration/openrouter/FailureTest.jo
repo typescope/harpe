@@ -7,8 +7,9 @@ import harpe.logging.logger
 import harpe.test.framework.testing
 import harpe.test.framework.suite
 import harpe.test.framework.test
+import harpe.test.framework.check
 import harpe.test.integration.ProviderFixture
-import harpe.test.integration.TurnAssertions
+import harpe.test.integration.ModelDriver
 
 private def model(server: ProviderFixture.Server) =
   openrouter("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
@@ -34,17 +35,23 @@ def failureSuite(): Unit receives testing, logger = suite: "failure", () =>
         """
       ]
     ProviderFixture.withResponses: [limited], server =>
-      TurnAssertions.checkRetryAfter(model = model(server), seconds = 4.0)
-      TurnAssertions.check("one request", server.requestCount == 1)
+      val turn = ModelDriver.start(model(server), prompt = "Say hello.")
+      val detail = turn.expectRetryAfter()
+      check("classified rate limited", detail != "")
+      check("retry-after", turn.retryAfterSeconds == 4.0)
+      check("one request", server.requestCount == 1)
 
   test: "503 is transient", () =>
     ProviderFixture.withResponses: [error("503 Service Unavailable", "unavailable")], server =>
-      TurnAssertions.checkTransient(model = model(server))
+      val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectTransient()
+      check("classified transient", detail != "")
 
   test: "401 is fatal", () =>
     ProviderFixture.withResponses: [error("401 Unauthorized", "bad key")], server =>
-      TurnAssertions.checkFatal(model = model(server))
+      val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectFatal()
+      check("classified fatal", detail != "")
 
   test: "a malformed stream is fatal", () =>
     ProviderFixture.withResponses: [ProviderFixture.sse("data: {not-json}")], server =>
-      TurnAssertions.checkFatal(model = model(server))
+      val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectFatal()
+      check("classified fatal", detail != "")

@@ -12,8 +12,9 @@ import harpe.logging.logger
 import harpe.test.framework.testing
 import harpe.test.framework.suite
 import harpe.test.framework.test
+import harpe.test.framework.check
 import harpe.test.integration.ProviderFixture
-import harpe.test.integration.TurnAssertions
+import harpe.test.integration.ModelDriver
 
 private def error(status: String, message: String): ProviderFixture.Response =
   ProviderFixture.response:
@@ -43,34 +44,46 @@ private def chat(server: ProviderFixture.Server) =
 def responsesFailureSuite(): Unit receives testing, logger = suite: "failure", () =>
   test: "429 reports the Retry-After delay", () =>
     ProviderFixture.withResponses: [rateLimited()], server =>
-      TurnAssertions.checkRetryAfter(model = responses(server), seconds = 7.0)
-      TurnAssertions.check("one request", server.requestCount == 1)
+      val turn = ModelDriver.start(responses(server), prompt = "Say hello.")
+      val detail = turn.expectRetryAfter()
+      check("classified rate limited", detail != "")
+      check("retry-after", turn.retryAfterSeconds == 7.0)
+      check("one request", server.requestCount == 1)
 
   test: "503 is transient", () =>
     ProviderFixture.withResponses: [error("503 Service Unavailable", "unavailable")], server =>
-      TurnAssertions.checkTransient(model = responses(server))
+      val detail = ModelDriver.start(responses(server), prompt = "Say hello.").expectTransient()
+      check("classified transient", detail != "")
 
   test: "401 is fatal", () =>
     ProviderFixture.withResponses: [error("401 Unauthorized", "bad key")], server =>
-      TurnAssertions.checkFatal(model = responses(server))
+      val detail = ModelDriver.start(responses(server), prompt = "Say hello.").expectFatal()
+      check("classified fatal", detail != "")
 
   test: "a malformed stream is fatal", () =>
     ProviderFixture.withResponses: [ProviderFixture.sse("data: {not-json}")], server =>
-      TurnAssertions.checkFatal(model = responses(server))
+      val detail = ModelDriver.start(responses(server), prompt = "Say hello.").expectFatal()
+      check("classified fatal", detail != "")
 
 def chatFailureSuite(): Unit receives testing, logger = suite: "failure", () =>
   test: "429 reports the Retry-After delay", () =>
     ProviderFixture.withResponses: [rateLimited()], server =>
-      TurnAssertions.checkRetryAfter(model = chat(server), seconds = 7.0)
+      val turn = ModelDriver.start(chat(server), prompt = "Say hello.")
+      val detail = turn.expectRetryAfter()
+      check("classified rate limited", detail != "")
+      check("retry-after", turn.retryAfterSeconds == 7.0)
 
   test: "503 is transient", () =>
     ProviderFixture.withResponses: [error("503 Service Unavailable", "unavailable")], server =>
-      TurnAssertions.checkTransient(model = chat(server))
+      val detail = ModelDriver.start(chat(server), prompt = "Say hello.").expectTransient()
+      check("classified transient", detail != "")
 
   test: "400 is fatal", () =>
     ProviderFixture.withResponses: [error("400 Bad Request", "invalid request")], server =>
-      TurnAssertions.checkFatal(model = chat(server))
+      val detail = ModelDriver.start(chat(server), prompt = "Say hello.").expectFatal()
+      check("classified fatal", detail != "")
 
   test: "a malformed stream is fatal", () =>
     ProviderFixture.withResponses: [ProviderFixture.sse("data: {not-json}")], server =>
-      TurnAssertions.checkFatal(model = chat(server))
+      val detail = ModelDriver.start(chat(server), prompt = "Say hello.").expectFatal()
+      check("classified fatal", detail != "")

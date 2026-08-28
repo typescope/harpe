@@ -7,8 +7,9 @@ import harpe.logging.logger
 import harpe.test.framework.testing
 import harpe.test.framework.suite
 import harpe.test.framework.test
+import harpe.test.framework.check
 import harpe.test.integration.ProviderFixture
-import harpe.test.integration.TurnAssertions
+import harpe.test.integration.ModelDriver
 
 def smokeSuite(): Unit receives testing, logger = suite: "smoke", () =>
   test: "streams a text reply", () =>
@@ -63,6 +64,13 @@ def smokeSuite(): Unit receives testing, logger = suite: "smoke", () =>
 
     ProviderFixture.withSSE: response, server =>
       val model = openrouter("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
-      TurnAssertions.checkTextReply(model = model, expectedInput = 3, expectedOutput = 2)
-      TurnAssertions.check("path", server.path == "/v1/responses")
-      TurnAssertions.check("requests streaming", server.requestJson.get("stream").asBool)
+      val turn = ModelDriver.start(model, prompt = "Say hello.")
+      val message = turn.expectReply()
+      check("streams two chunks", turn.chunks.size == 2)
+      check("streamed text", turn.streamed == "hello")
+      check("answer", message.text == "hello")
+      check("no tool calls", message.calls.isEmpty)
+      check("input usage", turn.usage.inputTokens == 3)
+      check("output usage", turn.usage.outputTokens == 2)
+      check("path", server.path == "/v1/responses")
+      check("requests streaming", server.requestJson.get("stream").asBool)

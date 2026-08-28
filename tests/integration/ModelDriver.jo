@@ -1,0 +1,135 @@
+//[ ModelDriver.jo
+  !
+  ! Drives a `Model` through one turn against the fixture and hands the outcome
+  ! back to the scenario that asked for it.
+  !
+  ! The model layer only: `startTurn` and the `Session.reply` calls under it.
+  ! The turn engine that would normally sit above — `Agent.ask`, its retries and
+  ! its tool dispatch — is absent here, and is unit-tested against a scripted
+  ! `Responder` in `unit/TurnTest.jo`. What these suites hold a provider to is
+  ! the wire contract, so nothing between the scenario and the socket is real.
+  !
+  ! It owns only what every provider scenario repeats: an `Interact` that
+  ! records the streamed chunks, and unwrapping the `ReplyResult` union so a
+  ! wrong outcome fails with a readable message. The values a scenario asserts
+  ! on — what the user asked, the tool it offers, the call id it expects, the
+  ! text it waits for — stay in the scenario file next to the wire transcript
+  ! that produces them, because that is where the coupling is.
+//]
+
+namespace harpe.test.integration
+
+import harpe.Interact
+import harpe.Approvals
+import harpe.Model
+import harpe.Model.*
+import harpe.Tool
+import harpe.Tool.*
+import harpe.turns.TurnEvent
+import harpe.logging.logger
+
+//[ Empty defaults, so a scenario spells out only what it is supplying. //]
+private def noResults: List[ToolResult] = []
+private def noTools: List[Tool] = []
+
+section ModelDriver
+  //[ Collects the assistant chunks a streaming provider emits, and approves
+    ! nothing — no scenario here reaches a tool that would ask.
+  //]
+  private class RecordingInteract
+    view Interact
+
+    var chunks: List[String] = []
+
+    def cancelled: Bool = false
+    def pause(seconds: Float): Bool = false
+    def approve(request: Approvals.Request): Approvals.Decision = Approvals.Cancelled
+
+    def emit(event: TurnEvent): Unit =
+      if event is TurnEvent.AssistantChunk(text) then chunks = chunks + text
+  end
+
+  //[ Begin a turn in which the user asked `prompt`
+    !
+    ! The system prompt is the driver's own, and fixed: these suites test the
+    ! wire contract, not the prompt. What the user asked is the scenario's,
+    ! because it is what the canned response is answering.
+  //]
+  def start(model: Model, prompt: String): Turn =
+    val base = new Rendered("You are concise.", [UserInput(prompt, [])])
+    new Turn(model.startTurn(base, 32))
+
+  //[ A turn in progress, and what the last reply produced
+    !
+    ! Each `expect` sends one request and requires a particular outcome, failing
+    ! the test with what arrived instead. It hands back the part a scenario
+    ! reads most — the assistant message, the failure detail, the delay — and
+    ! parks the rest on the turn, so an assertion is one line at the call site.
+  //]
+  class Turn(session: Session)
+    private var recorder: RecordingInteract = new RecordingInteract
+    private var reported: Usage = new Usage(0, 0)
+    private var delay: Float = 0.0
+
+    //[ The chunks the last reply streamed, in arrival order. //]
+    def chunks: List[String] = recorder.chunks
+
+    //[ Those chunks joined — the text a user would have watched appear. //]
+    def streamed: String = recorder.chunks.join("")
+
+    //[ The usage the last successful reply reported. //]
+    def usage: Usage = reported
+
+    //[ The delay the last `expectRetryAfter` was told to wait. //]
+    def retryAfterSeconds: Float = delay
+
+    //[ Send one request, recording afresh so `streamed` covers this reply only. //]
+    private def ask(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
+      recorder = new RecordingInteract
+      session.reply(results, tools, recorder)
+
+    //[ Require an assistant message, and hand it back. //]
+    def expectReply(results: List[ToolResult] = noResults, tools: List[Tool] = noTools)
+    : Assistant receives logger =
+      match ask(results, tools)
+      case Reply(message, used) =>
+        reported = used
+        message
+      case Transient(detail) => abort "unexpectedly transient: \{detail}"
+      case RetryAfter(detail, _) => abort "unexpectedly rate limited: \{detail}"
+      case Fatal(detail) => abort "unexpectedly fatal: \{detail}"
+
+    //[ Require a retryable failure carrying no delay, and hand back its detail
+      !
+      ! The three failure expectations offer no tools and carry no results: a
+      ! request that dies on the wire never gets far enough for either to
+      ! matter, and no scenario here asks one to.
+    //]
+    def expectTransient(): String receives logger =
+      match ask(noResults, noTools)
+      case Transient(detail) => detail
+      case RetryAfter(detail, _) => abort "unexpectedly supplied retry-after: \{detail}"
+      case Fatal(detail) => abort "unexpectedly fatal: \{detail}"
+      case Reply(_, _) => abort "unexpectedly succeeded"
+
+    //[ Require a retryable failure carrying a delay (read it off
+      ! `retryAfterSeconds`), and hand back its detail.
+    //]
+    def expectRetryAfter(): String receives logger =
+      match ask(noResults, noTools)
+      case RetryAfter(detail, seconds) =>
+        delay = seconds
+        detail
+      case Transient(detail) => abort "omitted retry-after: \{detail}"
+      case Fatal(detail) => abort "unexpectedly fatal: \{detail}"
+      case Reply(_, _) => abort "unexpectedly succeeded"
+
+    //[ Require an unretryable failure, and hand back its detail. //]
+    def expectFatal(): String receives logger =
+      match ask(noResults, noTools)
+      case Fatal(detail) => detail
+      case Transient(detail) => abort "unexpectedly transient: \{detail}"
+      case RetryAfter(detail, _) => abort "unexpectedly rate limited: \{detail}"
+      case Reply(_, _) => abort "unexpectedly succeeded"
+  end
+end

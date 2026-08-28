@@ -4,12 +4,15 @@ namespace harpe.test.integration.anthropic.ContractTest
 
 import harpe.models.anthropic
 import harpe.models.Anthropic
+import harpe.Tool
+import harpe.Tool.*
 import harpe.logging.logger
 import harpe.test.framework.testing
 import harpe.test.framework.suite
 import harpe.test.framework.test
+import harpe.test.framework.check
 import harpe.test.integration.ProviderFixture
-import harpe.test.integration.TurnAssertions
+import harpe.test.integration.ModelDriver
 
 private def model(server: ProviderFixture.Server) =
   anthropic("test-key", "test-model", Anthropic.NoCache, timeoutSeconds = 2, baseUrl = server.origin)
@@ -86,28 +89,48 @@ private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
 def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
   test: "carries a tool call and its result across two requests", () =>
     ProviderFixture.withResponses: [toolResponse(), textResponse("done")], server =>
-      TurnAssertions.checkToolRoundTrip(model = model(server))
-      TurnAssertions.check("two requests", server.requestCount == 2)
+      val tool = Tool("lookup", "Look up weather", [Tool.strParam("city", "City to look up")])
+      val turn = ModelDriver.start(model(server), prompt = "What is the weather in Zurich?")
+
+      val requested = turn.expectReply(tools = [tool])
+      check("one tool call", requested.calls.size == 1)
+      val call = requested.calls.get(0)
+      check("tool id", call.id == "call_1")
+      check("tool name", call.name == "lookup")
+      check("tool arguments", call.input.string("city") == "Zurich")
+
+      val answered = turn.expectReply(results = [ToolResult(call.id, "sunny", [])], tools = [tool])
+      check("follow-up streams the answer", turn.streamed == "done")
+      check("follow-up answer", answered.text == "done")
+      check("follow-up has no calls", answered.calls.isEmpty)
+
+      check("two requests", server.requestCount == 2)
       val first = server.recorded(0).jsonBody
       val second = server.recorded(1).jsonBody
-      TurnAssertions.check("sends tool schema", first.get("tools").cast[py.List].size == 1)
+      check("sends tool schema", first.get("tools").cast[py.List].size == 1)
       val messages = second.get("messages").cast[py.List]
-      TurnAssertions.check:
+      check:
         "retains tool use"
         messages.size == 3 &&
           messages.get(1).cast[py.Dict].get("role").asString == "assistant"
       val resultContent = messages.get(2).cast[py.Dict].get("content").cast[py.List]
-      TurnAssertions.check:
+      check:
         "sends tool result once"
         resultContent.size == 1 &&
           resultContent.get(0).cast[py.Dict].get("tool_use_id").asString == "call_1"
 
   test: "retry after 529 re-sends the same messages", () =>
     ProviderFixture.withResponses: [unavailable(), textResponse("hello")], server =>
-      TurnAssertions.checkRetryThenText(model = model(server))
+      val turn = ModelDriver.start(model(server), prompt = "Say hello.")
+      check("first attempt transient", turn.expectTransient() != "")
+
+      val retried = turn.expectReply()
+      check("retry streams the answer", turn.streamed == "hello")
+      check("retry answer", retried.text == "hello")
+
       val firstMessages = server.recorded(0).jsonBody.get("messages")
       val retryMessages = server.recorded(1).jsonBody.get("messages")
-      TurnAssertions.check:
+      check:
         "retry keeps semantic messages"
         py.module("json").dumps(firstMessages, sort_keys = true).asString ==
           py.module("json").dumps(retryMessages, sort_keys = true).asString

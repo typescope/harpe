@@ -5,8 +5,8 @@ namespace harpe.test.integration.ProviderFixtureTest
 import harpe.test.framework.testing
 import harpe.test.framework.suite
 import harpe.test.framework.test
+import harpe.test.framework.check
 import harpe.test.integration.ProviderFixture
-import harpe.test.integration.TurnAssertions
 
 def fixtureSuite(): Unit receives testing = suite: "fixture", () =>
   test: "serves a scripted sequence and records every request", () =>
@@ -36,9 +36,9 @@ def fixtureSuite(): Unit receives testing = suite: "fixture", () =>
           """
         py.dict("X-Test" ~ "fixture")
       val one = http.getresponse()
-      TurnAssertions.check("first status", one.status.asInt == 429)
-      TurnAssertions.check("response header", one.getheader("Retry-After").asString == "3")
-      TurnAssertions.check:
+      check("first status", one.status.asInt == 429)
+      check("response header", one.getheader("Retry-After").asString == "3")
+      check:
         "chunked body"
         one.read().decode().asString == """
           {"error":"slow down"}
@@ -46,17 +46,17 @@ def fixtureSuite(): Unit receives testing = suite: "fixture", () =>
 
       http.request("GET", "/second")
       val two = http.getresponse()
-      TurnAssertions.check("second status", two.status.asInt == 201)
-      TurnAssertions.check("second body", two.read().decode().asString == "accepted")
+      check("second status", two.status.asInt == 201)
+      check("second body", two.read().decode().asString == "accepted")
       http.close()
 
-      TurnAssertions.check("records both requests", server.requestCount == 2)
+      check("records both requests", server.requestCount == 2)
       val asked = server.recorded(0)
-      TurnAssertions.check("records method", asked.method == "POST")
-      TurnAssertions.check("records path", asked.path == "/first")
-      TurnAssertions.check("records query", asked.query == "mode=test")
-      TurnAssertions.check("records header", asked.header("X-Test") == "fixture")
-      TurnAssertions.check("records JSON body", asked.jsonBody.get("value").asInt == 7)
+      check("records method", asked.method == "POST")
+      check("records path", asked.path == "/first")
+      check("records query", asked.query == "mode=test")
+      check("records header", asked.header("X-Test") == "fixture")
+      check("records JSON body", asked.jsonBody.get("value").asInt == 7)
 
   test: "prefixes SSE JSON continuation lines", () =>
     val readableSSE = ProviderFixture.sse:
@@ -72,6 +72,6 @@ def fixtureSuite(): Unit receives testing = suite: "fixture", () =>
       val response = http.getresponse()
       val body = response.read().decode().asString
       http.close()
-      TurnAssertions.check:
+      check:
         "continuations carry their own data prefix"
         body.contains("data:   \"type\": \"test\"") && body.contains("data: }")
