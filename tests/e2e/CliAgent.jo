@@ -1,0 +1,271 @@
+//[ CliAgent.jo
+  !
+  ! The CLI agent under test: build it, run it on a terminal, and type at it.
+  !
+  ! A PTY, not a pipe. The console this driver ships is a terminal program in
+  ! earnest — it enables `readline`, saves and restores termios attributes, puts
+  ! the terminal in cbreak mode to watch for ESC while a turn runs, and asks
+  ! `isatty` before offering to resume a session. On a pipe it does not merely
+  ! render differently, it fails at `tcgetattr`. So the harness allocates a
+  ! pseudo-terminal and gives the child both ends of a real console, which is
+  ! also what makes what a scenario reads back the actual screen: prompts,
+  ! spinner frames, and the reply, exactly as a user would see them.
+  !
+  ! What is faked is what the web suite fakes, and no more: the model is a
+  ! `ProviderFixture` on localhost, and the home is a temporary directory holding
+  ! copies of the agent's `AGENT.md` and `skills/`. Programs the agent writes are
+  ! compiled by the real toolchain and run as their own processes.
+  !
+  ! Reading is on demand rather than on a thread: `expect` pulls from the pty
+  ! until the text it wants shows up or its deadline passes. Nothing here needs
+  ! to watch the screen while it is not waiting on it, and a scenario that fails
+  ! prints everything read so far, which is the transcript of the session up to
+  ! the point it went wrong.
+//]
+
+namespace harpe.test.e2e
+
+import harpe.ffi.os
+import harpe.ffi.re
+import harpe.ffi.time
+import harpe.ffi.tempfile
+import harpe.util.File
+import harpe.util.Terminal
+
+section CliAgent
+  //[ How long to wait for the console to draw its first prompt. //]
+  private def startupSeconds: Float = 30.0
+
+  //[ The default patience for one `expect` — a turn compiles and runs a program. //]
+  def turnSeconds: Float = 90.0
+
+  //[ A CLI agent running on its own terminal
+    !
+    ! `console` is the master side of the pty: what is written to it arrives as
+    ! keystrokes, and what the agent draws is read back from it.
+  //]
+  //[ The prompt the console draws when it is ready for a line. //]
+  private def prompt: String = "You \u{25b8}"
+
+  //[ How long the console can still be reading the keyboard after a turn ends
+    !
+    ! `Console.turn` sets its stop event and returns, but the ESC watcher it
+    ! started only notices at the top of its next iteration — until then it is
+    ! inside a `select` with a 0.1s timeout and will consume a byte if one
+    ! arrives. The prompt is printed inside that window, so a line typed the
+    ! instant it appears can be swallowed by the watcher rather than read by the
+    ! console, and the harness would then wait forever for a turn nobody started.
+    !
+    ! This is that window, with room to spare for a loaded machine. It is the one
+    ! wait here that is not on an observable condition, because the condition —
+    ! whether a thread in another process has come back around its loop — is not
+    ! observable from this side of the terminal.
+  //]
+  private def watcherSeconds: Float = 0.5
+
+  class Session(console: Int, home: String, proc: py.Dynamic)
+    // What has been read but not yet waited for. `expect` consumes through what
+    // it matched, so the next `expect` looks only at what came after — without
+    // that, waiting for a second prompt would match the first one again.
+    private var pending: String = ""
+
+    // Everything read since the agent started, which is what a failure prints.
+    private var seen: String = ""
+
+    // Decodes across read boundaries. A terminal hands over bytes, not
+    // characters, so the prompt's `▸` — three bytes — is regularly split
+    // between two reads. Decoding each read on its own turns it into rubbish,
+    // and the prompt then never matches.
+    private val decoder: py.Dynamic =
+      py.call(py.module("codecs").getincrementaldecoder("utf-8"), "replace")
+
+    // Decoded text held back because it ends inside an escape sequence whose
+    // rest has not arrived. Stripping that half would leave its tail behind as
+    // literal text.
+    private var held: String = ""
+
+    //[ The session's working directory — what `fs` is rooted at inside the sandbox. //]
+    def dataDir: String = os.path.join(home, "data")
+
+    //[ The newest conversation journal this run wrote (they nest by date). //]
+    def journal: String =
+      Driver.newestMatch(os.path.join(home, "logs/sessions/**/*.jsonl"), "session journal")
+
+    //[ Everything the agent has drawn since it started, as text. //]
+    def transcript: String = seen
+
+    //[ Read whatever the terminal has ready, for up to `seconds`. //]
+    private def pump(seconds: Float): Unit =
+      if Terminal.readable(console, seconds) then
+        match py.try(py.module("os").read(console, 8192))
+        // A closed pty raises rather than returning nothing, so the read is the
+        // liveness check too.
+        case Ok(chunk) =>
+          val text = held + decoder.decode(chunk).asString
+          val cut = wholePrefix(text)
+          held = text.substring(cut, text.size - cut)
+
+          val drawn = plain(text.substring(0, cut))
+          pending = pending + drawn
+          seen = seen + drawn
+
+        case Err(_) => pass
+
+    //[ Wait until `text` is drawn, then consume through it
+      !
+      ! Failing prints the whole transcript. A CLI's output is its contract, and
+      ! when the expected line never came the rest of the screen says why.
+    //]
+    def expect(text: String, seconds: Float = turnSeconds): Unit =
+      val deadline = time.monotonic() + seconds
+      while time.monotonic() < deadline do
+        val at = pending.indexOf(text)
+        if at >= 0 then
+          val from = at + text.size
+          pending = pending.substring(from, pending.size - from)
+          return
+        pump(0.1)
+
+      abort "cli e2e: waited \{seconds}s for [\{text}], screen was:\n\{seen}"
+
+    //[ Wait for the console to ask for input, then type a line
+      !
+      ! Waiting for the prompt is not politeness. A turn runs with the terminal
+      ! in cbreak mode and a watcher thread reading stdin for an ESC, so a line
+      ! typed before the console comes back is read by the watcher and thrown
+      ! away. The prompt is the console saying the watcher has stopped.
+    //]
+    def ask(line: String): Unit =
+      expect(prompt)
+      py.module("time").sleep(watcherSeconds)
+      val _ = py.module("os").write(console, py.dynamic(line + "\n").encode("utf-8"))
+      // Consume the line's own echo — proof that the console read it, and not
+      // the watcher above. Leaving it unread would also leave the prompt it is
+      // drawn beside in the buffer, and the next `ask` would match that stale
+      // prompt and type into a turn that has not finished.
+      expect(line)
+
+    //[ Type `quit` at the next prompt, and hand back the exit status
+      !
+      ! Also the point at which a turn is definitively over: the prompt means the
+      ! console is back, and the exit means everything the agent journals on its
+      ! way out is on disk. A scenario reading files it wrote asserts after this,
+      ! not before, or it races the last record.
+    //]
+    def quit(seconds: Float = 15.0): Int =
+      ask("quit")
+      waitExit(seconds)
+
+    //[ Wait for the agent to exit, and hand back its status. //]
+    def waitExit(seconds: Float): Int =
+      val deadline = time.monotonic() + seconds
+      while time.monotonic() < deadline do
+        if !proc.poll().isNone then return proc.poll().asInt
+        pump(0.1)
+
+      abort "cli e2e: the agent was still running after \{seconds}s, screen was:\n\{seen}"
+  end
+
+  //[ Strip what a terminal draws with, keeping what it says
+    !
+    ! Colour, cursor moves, and line erases — the spinner is made almost entirely
+    ! of these. A carriage return becomes a newline so a redrawn line stays its
+    ! own line rather than running into its neighbour.
+  //]
+  private def plain(raw: String): String =
+    re.sub("\\x1b\\[[0-9;?]*[a-zA-Z]", "", raw.replace("\r", "\n"))
+
+  //[ How much of `text` can be cleaned now: everything, unless it ends mid-escape
+    !
+    ! `plain` removes complete sequences, so an escape character surviving it is
+    ! one whose terminator has not been read yet — hold from there. Only a short
+    ! tail is held: an escape this harness does not recognize would otherwise
+    ! stop it reading the screen at all, which is a worse failure than one stray
+    ! fragment in a transcript.
+  //]
+  private def wholePrefix(text: String): Int =
+    val esc = text.lastIndexOf("\u{1b}")
+    if esc >= 0 && text.size - esc < 16 && plain(text).contains("\u{1b}") then esc else text.size
+
+  //[ A fresh agent home: the prompt it loads, the skills it offers, empty state
+    !
+    ! `AGENT.md` and `skills/` are the agent's real ones, so a scenario reading
+    ! the system prompt or listing skills is reading what ships.
+  //]
+  private def prepareHome(root: String): String =
+    val home = tempfile.mkdtemp()
+    File.write:
+      os.path.join(home, "AGENT.md")
+      File.read(os.path.join(root, "cli/AGENT.md"))
+
+    py.module("shutil").copytree:
+      os.path.join(root, "cli/skills")
+      os.path.join(home, "skills")
+
+    Driver.linkGuest(root, home)
+    File.ensureDir(os.path.join(home, "data"))
+    File.ensureDir(os.path.join(home, "logs"))
+    home
+
+  //[ Start the agent with a pseudo-terminal for a console
+    !
+    ! Both ends of the child's stdio are the pty's follower, so it sees one
+    ! terminal, as it would under a shell. The parent closes its copy of that end
+    ! immediately: while it stays open, a read on the master would block forever
+    ! after the child exits instead of reporting the hangup.
+  //]
+  private def spawn(app: String, home: String, env: py.Dict): Int ~ py.Dynamic =
+    val pair = py.module("pty").openpty()
+    val console = pair[0].asInt
+    val terminal = pair[1]
+
+    val proc = py.module("subprocess").Popen:
+      py.list(py.module("sys").executable.asString, app)
+      stdin = terminal
+      stdout = terminal
+      stderr = terminal
+      env = env
+      cwd = home
+      start_new_session = true
+      close_fds = true
+
+    py.module("os").close(terminal)
+    console ~ proc
+
+  //[ Run `scenario` against a CLI agent talking to the model at `modelBaseUrl`
+    !
+    ! One agent per scenario, on its own terminal and its own home — so a
+    ! scenario's conversation, session journals and data directory are entirely
+    ! its own, and one that leaves the console in a strange state cannot take the
+    ! next one with it.
+  //]
+  def withAgent(modelBaseUrl: String, scenario: Session => Unit): Unit =
+    val root = Driver.repoRoot()
+    Driver.build(root, "cli.toml", "cli")
+    val app = Driver.application(root, "cli")
+    val home = prepareHome(root)
+
+    val console ~ proc = spawn(app, home, Driver.modelEnv(modelBaseUrl))
+    val session = new Session(console, home, proc)
+
+    val result = py.try: run(session, scenario)
+
+    Driver.terminate(proc)
+    val _ = py.try: py.module("os").close(console)
+
+    match result
+    case Ok(_) =>
+      Driver.discardHome(home)
+
+    // The home is left behind on failure, holding the journals the agent wrote.
+    case Err(err) =>
+      abort "\{err.message}\n  agent home: \{home}"
+
+  //[ Wait for the console, then hand it to the scenario — the part that may fail. //]
+  private def run(session: Session, scenario: Session => Unit): Unit =
+    // The banner ends with this, and the prompt follows it. Waiting on the
+    // banner rather than the prompt keeps the wait off the line-editor's own
+    // redrawing.
+    session.expect("Ready.", startupSeconds)
+    scenario(session)
+end
