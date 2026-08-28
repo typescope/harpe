@@ -1,0 +1,265 @@
+//[ TurnEngineTest.jo
+  !
+  ! The turn engine (`Agent.ask`) over a real provider and a real socket.
+  !
+  ! `unit/TurnTest.jo` already drives the engine hard, but against a scripted
+  ! `Responder`: every reply it reacts to was handed to it as a Jo value. That
+  ! leaves one seam untested — the engine's decisions have to survive a round
+  ! trip through a provider SDK and the wire. A `ToolResult` it built has to
+  ! come back to the model as something the provider accepts, a `Retry-After`
+  ! header has to reach its backoff, and the chunks a streaming SDK emits have
+  ! to interleave with its own events in the right order.
+  !
+  ! One provider is enough for that: the engine is provider-independent, and
+  ! what each provider puts on the wire is held down by the contract suites
+  ! next door. Chat Completions is the simplest wire of the three, so it is the
+  ! one used here.
+//]
+
+namespace harpe.test.integration.TurnEngineTest
+
+import harpe.*
+import harpe.turns.*
+import harpe.Model.*
+import harpe.Tool.*
+import harpe.models.openai
+import harpe.logging.logger
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
+import harpe.test.framework.check
+import harpe.test.framework.checkEquals
+import harpe.test.integration.ProviderFixture
+
+private def model(server: ProviderFixture.Server): Model =
+  openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 2)
+
+//[ One tag per event, so a whole turn's progress is one comparable string. //]
+private def tag(event: TurnEvent): String =
+  match event
+  case TurnEvent.ModelRequestStarted(_, _) => "start"
+  case TurnEvent.ModelRequestEnded         => "end"
+  case TurnEvent.TransientError(_, _)      => "transient"
+  case TurnEvent.AssistantChunk(text)      => "chunk:\{text}"
+  case TurnEvent.AssistantStreamReset      => "reset"
+  case TurnEvent.AssistantMessage(text)    => "said:\{text}"
+  case TurnEvent.ToolBudgetReached(_)      => "budget"
+  case TurnEvent.ToolCallStarted(name)     => "tool+\{name}"
+  case TurnEvent.ToolCallEnded(name, _)    => "tool-\{name}"
+  case TurnEvent.ContextCompacted(_)       => "compact"
+
+private def messageTag(message: Message): String =
+  match message
+  case UserInput(_, _)     => "user"
+  case Assistant(_, calls) => if calls.isEmpty then "text" else "calls"
+  case ToolResults(_)      => "results"
+
+private def resultTag(turn: TurnData): String =
+  match turn.result
+  case TurnResult.Success        => "Success"
+  case TurnResult.Interrupted    => "Interrupted"
+  case TurnResult.Failed(detail) => "Failed"
+
+//[ Records the turn's events and the backoffs it asked for, waiting for none
+  ! of them — a test that actually slept would be testing `time.sleep`.
+//]
+private class Recorder
+  view Interact
+
+  var events: List[String] = []
+  var waits: List[Float] = []
+
+  def cancelled: Bool = false
+
+  def pause(seconds: Float): Bool =
+    waits = waits + seconds
+    false
+
+  def approve(request: Approvals.Request): Approvals.Decision = Approvals.Cancelled
+
+  def emit(event: TurnEvent): Unit = events = events + tag(event)
+end
+
+//[ What the tool the model is offered was actually asked for. //]
+private class Asked
+  var city: String = ""
+  var calls: Int = 0
+end
+
+private def weatherTool(asked: Asked): Toolset = Toolset.of:
+  Tool("lookup", "Look up the weather", [Tool.strParam("city", "City to look up")])
+  (input: ToolInput, channel: Interact) =>
+    asked.city = input.string("city")
+    asked.calls = asked.calls + 1
+    new ToolOutcome("sunny", "lookup · \{asked.city}", attachments = [])
+
+//[ Text, then a call to `lookup` — the shape that makes the engine speak
+  ! before it dispatches a tool.
+//]
+private def speaksThenCalls(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {
+    "id": "chat_tool", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{
+      "index": 0, "delta": {"role":"assistant","content":"Let me look."}, "finish_reason": null
+    }]
+  }
+
+  data: {
+    "id": "chat_tool", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{
+      "index": 0,
+      "delta": {
+        "tool_calls": [{
+          "index": 0, "id": "call_1", "type": "function",
+          "function": {"name":"lookup","arguments":"{\"city\":\"Zurich\"}"}
+        }]
+      },
+      "finish_reason": null
+    }]
+  }
+
+  data: {
+    "id": "chat_tool", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{"index":0,"delta":{},"finish_reason":"tool_calls"}],
+    "usage": {"prompt_tokens":6,"completion_tokens":3,"total_tokens":9}
+  }
+
+  data: [DONE]
+  """
+
+private def says(text: String): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {
+    "id": "chat_text", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{
+      "index": 0, "delta": {"role":"assistant","content":"\{text}"}, "finish_reason": null
+    }]
+  }
+
+  data: {
+    "id": "chat_text", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{"index":0,"delta":{},"finish_reason":"stop"}],
+    "usage": {"prompt_tokens":8,"completion_tokens":1,"total_tokens":9}
+  }
+
+  data: [DONE]
+  """
+
+private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
+  "503 Service Unavailable"
+  "application/json"
+  """
+    {"error":{"message":"unavailable","type":"server_error","code":"server_error"}}
+    """
+
+private def unauthorized(): ProviderFixture.Response = ProviderFixture.response:
+  "401 Unauthorized"
+  "application/json"
+  """
+    {"error":{"message":"bad key","type":"invalid_request_error","code":"invalid_api_key"}}
+    """
+
+private def rateLimited(): ProviderFixture.Response = new ProviderFixture.Response:
+  "429 Too Many Requests"
+  py.list:
+    py.tuple("Content-Type", "application/json")
+    py.tuple("Retry-After", "7")
+  [
+    """
+    {"error":{"message":"slow down","type":"rate_limit_error","code":"rate_limit"}}
+    """
+  ]
+
+def turnEngineSuite(): Unit receives testing, logger = suite: "turn engine on the wire", () =>
+  test: "dispatches a streamed tool call and sends its result back", () =>
+    ProviderFixture.withResponses: [speaksThenCalls(), says("Sunny in Zurich.")], server =>
+      val asked = new Asked
+      val recorder = new Recorder
+      val turn = Agent.ask:
+        "What is the weather in Zurich?"
+        brain = model(server)
+        tools = weatherTool(asked)
+        interact = recorder
+
+      // The engine ran the tool with the arguments the provider streamed as
+      // fragments, and reassembling them is the SDK's job, not the engine's.
+      check("called the tool once", asked.calls == 1)
+      checkEquals("tool argument", asked.city, "Zurich")
+
+      // Streamed text, the engine's own events, and the tool bracket, in order.
+      checkEquals:
+        "turn events"
+        recorder.events.join(",")
+        expected = "start,chunk:Let me look.,end,said:Let me look.,tool+lookup,tool-lookup,start,chunk:Sunny in Zurich.,end"
+
+      checkEquals("result", resultTag(turn), "Success")
+      checkEquals("everything the turn said", turn.text, "Let me look.\n\nSunny in Zurich.")
+      checkEquals("closing reply", turn.finalText, "Sunny in Zurich.")
+      checkEquals:
+        "turn messages"
+        turn.messages.map(m => messageTag(m)).join(",")
+        expected = "calls,results,text"
+
+      // The result the engine built has to reach the model as the provider
+      // wants it: keyed by the id the model chose, in the round after the call.
+      check("two requests", server.requestCount == 2)
+      val sent = server.recorded(1).jsonBody.get("messages").cast[py.List]
+      val result = sent.get(sent.size - 1).cast[py.Dict]
+      checkEquals("tool result role", result.get("role").asString, "tool")
+      checkEquals("tool result id", result.get("tool_call_id").asString, "call_1")
+      checkEquals("tool result content", result.get("content").asString, "sunny")
+
+  test: "retries a transient failure and answers on the second attempt", () =>
+    ProviderFixture.withResponses: [unavailable(), says("hello")], server =>
+      val recorder = new Recorder
+      val turn = Agent.ask:
+        "Say hello."
+        brain = model(server)
+        interact = recorder
+        maxRetries = 1
+
+      checkEquals:
+        "turn events"
+        recorder.events.join(",")
+        expected = "start,end,reset,transient,start,chunk:hello,end"
+
+      checkEquals("result", resultTag(turn), "Success")
+      checkEquals("answer", turn.finalText, "hello")
+      check("backed off once", recorder.waits.size == 1)
+      checkEquals("first backoff", recorder.waits.get(0).toString, "1.0")
+
+  test: "waits as long as a 429 asked it to, not as long as its own backoff", () =>
+    ProviderFixture.withResponses: [rateLimited(), says("hello")], server =>
+      val recorder = new Recorder
+      val turn = Agent.ask:
+        "Say hello."
+        brain = model(server)
+        interact = recorder
+        maxRetries = 1
+
+      // 7 is the header the fixture sent, and 1.0 is what the engine's own
+      // backoff would have chosen — so this pins the whole path from the
+      // response header through the SDK to the wait.
+      checkEquals("result", resultTag(turn), "Success")
+      check("waited once", recorder.waits.size == 1)
+      checkEquals("honoured Retry-After", recorder.waits.get(0).toString, "7.0")
+
+  test: "loses the turn on a fatal provider error, retrying nothing", () =>
+    ProviderFixture.withResponses: [unauthorized()], server =>
+      val recorder = new Recorder
+      val turn = Agent.ask:
+        "Say hello."
+        brain = model(server)
+        interact = recorder
+        maxRetries = 4
+
+      checkEquals("turn events", recorder.events.join(","), "start,end")
+      checkEquals("result", resultTag(turn), "Failed")
+      check("no retries", server.requestCount == 1)
+      check("waited for nothing", recorder.waits.isEmpty)
+
+      // A lost turn contributes no messages, so a live turn and one replayed
+      // from a journal agree on what happened.
+      check("produced nothing", turn.messages.isEmpty)
+      checkEquals("said nothing", turn.text, "")
