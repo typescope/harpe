@@ -1,0 +1,102 @@
+//[ ContractTest.jo — stateful Anthropic Messages contracts. //]
+
+namespace harpe.test.providers.anthropic.ContractTest
+
+import jo.IO.stdout
+import harpe.models.anthropic
+import harpe.models.Anthropic
+import harpe.logging.logger
+import harpe.test.providers.ProviderFixture
+import harpe.test.providers.TurnAssertions
+
+private def model(server: ProviderFixture.Server) =
+  anthropic("test-key", "test-model", Anthropic.NoCache, timeoutSeconds = 2, baseUrl = server.origin)
+
+private def toolResponse(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  event: message_start
+  data: {
+    "type": "message_start",
+    "message": {
+      "id": "msg_tool", "type": "message", "role": "assistant", "model": "test-model",
+      "content": [], "stop_reason": null, "stop_sequence": null,
+      "usage": {
+        "input_tokens": 6, "output_tokens": 0,
+        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0
+      }
+    }
+  }
+
+  event: content_block_start
+  data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_1","name":"lookup","input":{}}}
+
+  event: content_block_delta
+  data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\":\"Zurich\"}"}}
+
+  event: content_block_stop
+  data: {"type":"content_block_stop","index":0}
+
+  event: message_delta
+  data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":3}}
+
+  event: message_stop
+  data: {"type":"message_stop"}
+  """
+
+private def textResponse(text: String): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  event: message_start
+  data: {
+    "type": "message_start",
+    "message": {
+      "id": "msg_text", "type": "message", "role": "assistant", "model": "test-model",
+      "content": [], "stop_reason": null, "stop_sequence": null,
+      "usage": {
+        "input_tokens": 8, "output_tokens": 0,
+        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0
+      }
+    }
+  }
+
+  event: content_block_start
+  data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"","citations":null}}
+
+  event: content_block_delta
+  data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\{text}"}}
+
+  event: content_block_stop
+  data: {"type":"content_block_stop","index":0}
+
+  event: message_delta
+  data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}
+
+  event: message_stop
+  data: {"type":"message_stop"}
+  """
+
+def run(): Unit receives stdout, logger =
+  ProviderFixture.withResponses: [toolResponse(), textResponse("done")], server =>
+    TurnAssertions.checkToolRoundTrip(label = "anthropic messages", model = model(server))
+    TurnAssertions.check("anthropic messages two requests", server.requestCount == 2)
+    val first = server.recorded(0).jsonBody
+    val second = server.recorded(1).jsonBody
+    TurnAssertions.check("anthropic sends tool schema", first.get("tools").cast[py.List].size == 1)
+    val messages = second.get("messages").cast[py.List]
+    TurnAssertions.check("anthropic retains tool use", messages.size == 3 &&
+      messages.get(1).cast[py.Dict].get("role").asString == "assistant")
+    val resultContent = messages.get(2).cast[py.Dict].get("content").cast[py.List]
+    TurnAssertions.check("anthropic sends tool result once", resultContent.size == 1 &&
+      resultContent.get(0).cast[py.Dict].get("tool_use_id").asString == "call_1")
+
+  val unavailable = ProviderFixture.response:
+    "529 Overloaded"
+    "application/json"
+    """
+      {"type":"error","error":{"type":"overloaded_error","message":"busy"}}
+      """
+  ProviderFixture.withResponses: [unavailable, textResponse("hello")], server =>
+    TurnAssertions.checkRetryThenText(label = "anthropic retry", model = model(server))
+    val firstMessages = server.recorded(0).jsonBody.get("messages")
+    val retryMessages = server.recorded(1).jsonBody.get("messages")
+    TurnAssertions.check("anthropic retry keeps semantic messages",
+      py.module("json").dumps(firstMessages, sort_keys = true).asString == py.module("json").dumps(retryMessages, sort_keys = true).asString)

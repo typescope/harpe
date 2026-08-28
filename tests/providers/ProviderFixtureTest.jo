@@ -54,3 +54,19 @@ def run(): Unit receives stdout =
     TurnAssertions.check("fixture records query", asked.query == "mode=test")
     TurnAssertions.check("fixture records header", asked.header("X-Test") == "fixture")
     TurnAssertions.check("fixture records JSON body", asked.jsonBody.get("value").asInt == 7)
+
+  val readableSSE = ProviderFixture.sse:
+    """
+    data: {
+      "type": "test",
+      "nested": {"ok":true}
+    }
+    """
+  ProviderFixture.withResponses: [readableSSE], server =>
+    val http = py.module("http.client").HTTPConnection("127.0.0.1", server.port, timeout = 2)
+    http.request("GET", "/events")
+    val response = http.getresponse()
+    val body = response.read().decode().asString
+    http.close()
+    TurnAssertions.check("fixture prefixes SSE JSON continuations",
+      body.contains("data:   \"type\": \"test\"") && body.contains("data: }"))

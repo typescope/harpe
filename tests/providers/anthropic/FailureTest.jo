@@ -21,9 +21,26 @@ private def model(server: ProviderFixture.Server) =
   anthropic("test-key", "test-model", Anthropic.NoCache, timeoutSeconds = 2, baseUrl = server.origin)
 
 def run(): Unit receives stdout, logger =
+  val limited = new ProviderFixture.Response:
+    "429 Too Many Requests"
+    py.list:
+      py.tuple("Content-Type", "application/json")
+      py.tuple("Retry-After", "5")
+    [
+      """
+      {"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}
+      """
+    ]
+
+  ProviderFixture.withResponses: [limited], server =>
+    TurnAssertions.checkRetryAfter(label = "anthropic 429", model = model(server), seconds = 5.0)
+
   ProviderFixture.withResponses: [failure("529 Overloaded", "overloaded_error", "busy")], server =>
     TurnAssertions.checkTransient(label = "anthropic 529", model = model(server))
     TurnAssertions.check("anthropic 529 one request", server.requestCount == 1)
 
   ProviderFixture.withResponses: [failure("401 Unauthorized", "authentication_error", "bad key")], server =>
     TurnAssertions.checkFatal(label = "anthropic 401", model = model(server))
+
+  ProviderFixture.withResponses: [ProviderFixture.sse("event: message_start\ndata: {not-json}")], server =>
+    TurnAssertions.checkFatal(label = "anthropic malformed stream", model = model(server))

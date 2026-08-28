@@ -24,7 +24,23 @@ section ProviderFixture
       py.list:
         py.tuple("Content-Type", "text/event-stream")
         py.tuple("Cache-Control", "no-cache")
-      body.trim.split("\n\n").map(frame => frame + "\n\n")
+      body.trim.split("\n\n").map(frame => sseFrame(frame) + "\n\n")
+
+  //[ Permit readable multi-line JSON after `data:` in fixture literals. SSE
+    ! requires every physical payload line to carry its own `data:` prefix, so
+    ! the fixture adds it to indented continuation lines before serving.
+  //]
+  private def sseFrame(frame: String): String =
+    var lines: List[String] = []
+    var dataStarted = false
+    for line in frame.split("\n") do
+      if line.startsWith("data:") then
+        lines = lines + line
+        dataStarted = true
+      else if dataStarted then
+        lines = lines + "data: " + line
+      else lines = lines + line
+    lines.join("\n")
 
   class RecordedRequest(method: String, path: String, query: String, body: String, environ: py.Dynamic)
     def header(name: String): String =

@@ -11,6 +11,8 @@ import harpe.Interact
 import harpe.Approvals
 import harpe.Model
 import harpe.Model.*
+import harpe.Tool
+import harpe.Tool.*
 import harpe.turns.TurnEvent
 import harpe.logging.logger
 
@@ -35,6 +37,9 @@ section TurnAssertions
   private def runModel(model: Model, interact: RecordingInteract): ReplyResult receives logger =
     val base = new Rendered("You are concise.", [UserInput("Say hello.", [])])
     model.startTurn(base, 32).reply([], [], interact)
+
+  private def base(): Rendered =
+    new Rendered("You are concise.", [UserInput("Say hello.", [])])
 
   def checkTextReply(
       label: String, model: Model,
@@ -78,4 +83,47 @@ section TurnAssertions
     case Transient(detail) => abort "\{label} unexpectedly transient: \{detail}"
     case RetryAfter(detail, _) => abort "\{label} unexpectedly rate limited: \{detail}"
     case Reply(_, _) => abort "\{label} unexpectedly succeeded"
+
+  def checkToolRoundTrip(label: String, model: Model): Unit receives stdout, logger =
+    val session = model.startTurn(base(), 32)
+    val tool = Tool("lookup", "Look up weather", [Tool.strParam("city", "City to look up")])
+
+    match session.reply([], [tool], new RecordingInteract)
+    case Reply(message, _) =>
+      check("\{label} one tool call", message.calls.size == 1)
+      val call = message.calls.get(0)
+      check("\{label} tool id", call.id == "call_1")
+      check("\{label} tool name", call.name == "lookup")
+      check("\{label} tool arguments", call.input.string("city") == "Zurich")
+    case Transient(detail) => abort "\{label} tool call unexpectedly transient: \{detail}"
+    case RetryAfter(detail, _) => abort "\{label} tool call unexpectedly rate limited: \{detail}"
+    case Fatal(detail) => abort "\{label} tool call unexpectedly fatal: \{detail}"
+
+    val result = ToolResult("call_1", "sunny", [])
+    val interact = new RecordingInteract
+    match session.reply([result], [tool], interact)
+    case Reply(message, _) =>
+      check("\{label} follow-up chunks", interact.chunks.join("") == "done")
+      check("\{label} follow-up answer", message.text == "done")
+      check("\{label} follow-up has no calls", message.calls.isEmpty)
+    case Transient(detail) => abort "\{label} follow-up unexpectedly transient: \{detail}"
+    case RetryAfter(detail, _) => abort "\{label} follow-up unexpectedly rate limited: \{detail}"
+    case Fatal(detail) => abort "\{label} follow-up unexpectedly fatal: \{detail}"
+
+  def checkRetryThenText(label: String, model: Model): Unit receives stdout, logger =
+    val session = model.startTurn(base(), 32)
+    match session.reply([], [], new RecordingInteract)
+    case Transient(detail) => check("\{label} first attempt transient", detail != "")
+    case RetryAfter(detail, _) => abort "\{label} first attempt unexpectedly rate limited: \{detail}"
+    case Fatal(detail) => abort "\{label} first attempt unexpectedly fatal: \{detail}"
+    case Reply(_, _) => abort "\{label} first attempt unexpectedly succeeded"
+
+    val interact = new RecordingInteract
+    match session.reply([], [], interact)
+    case Reply(message, _) =>
+      check("\{label} retry chunks", interact.chunks.join("") == "hello")
+      check("\{label} retry answer", message.text == "hello")
+    case Transient(detail) => abort "\{label} retry unexpectedly transient: \{detail}"
+    case RetryAfter(detail, _) => abort "\{label} retry unexpectedly rate limited: \{detail}"
+    case Fatal(detail) => abort "\{label} retry unexpectedly fatal: \{detail}"
 end

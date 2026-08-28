@@ -8,6 +8,17 @@ import harpe.logging.logger
 import harpe.test.providers.ProviderFixture
 import harpe.test.providers.TurnAssertions
 
+private def model(server: ProviderFixture.Server) =
+  openrouter("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
+
+private def error(status: String, message: String): ProviderFixture.Response =
+  ProviderFixture.response:
+    status
+    "application/json"
+    """
+      {"error":{"message":"\{message}","type":"test_error","code":"test"}}
+      """
+
 def run(): Unit receives stdout, logger =
   val limited = new ProviderFixture.Response:
     "429 Too Many Requests"
@@ -21,6 +32,14 @@ def run(): Unit receives stdout, logger =
     ]
 
   ProviderFixture.withResponses: [limited], server =>
-    val model = openrouter("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
-    TurnAssertions.checkRetryAfter(label = "openrouter 429", model = model, seconds = 4.0)
+    TurnAssertions.checkRetryAfter(label = "openrouter 429", model = model(server), seconds = 4.0)
     TurnAssertions.check("openrouter 429 one request", server.requestCount == 1)
+
+  ProviderFixture.withResponses: [error("503 Service Unavailable", "unavailable")], server =>
+    TurnAssertions.checkTransient(label = "openrouter 503", model = model(server))
+
+  ProviderFixture.withResponses: [error("401 Unauthorized", "bad key")], server =>
+    TurnAssertions.checkFatal(label = "openrouter 401", model = model(server))
+
+  ProviderFixture.withResponses: [ProviderFixture.sse("data: {not-json}")], server =>
+    TurnAssertions.checkFatal(label = "openrouter malformed stream", model = model(server))

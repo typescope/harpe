@@ -45,5 +45,17 @@ def run(): Unit receives stdout, logger =
     val compatible = openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 2)
     TurnAssertions.checkFatal(label = "compatible 400", model = compatible)
 
+  ProviderFixture.withResponses: [rateLimited], server =>
+    val compatible = openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 2)
+    TurnAssertions.checkRetryAfter(label = "compatible 429", model = compatible, seconds = 7.0)
+
+  ProviderFixture.withResponses: [error("503 Service Unavailable", "unavailable")], server =>
+    val compatible = openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 2)
+    TurnAssertions.checkTransient(label = "compatible 503", model = compatible)
+
   ProviderFixture.withResponses: [ProviderFixture.sse("data: {not-json}")], server =>
     TurnAssertions.checkFatal(label = "openai malformed stream", model = model(server))
+
+  ProviderFixture.withResponses: [ProviderFixture.sse("data: {not-json}")], server =>
+    val compatible = openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 2)
+    TurnAssertions.checkFatal(label = "compatible malformed stream", model = compatible)
