@@ -10,6 +10,7 @@ import harpe.test.framework.testing
 import harpe.test.framework.suite
 import harpe.test.framework.test
 import harpe.test.framework.check
+import harpe.test.framework.checkEquals
 import harpe.test.integration.ProviderFixture
 import harpe.test.integration.ModelDriver
 
@@ -155,14 +156,17 @@ def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
         py.module("json").dumps(firstMessages, sort_keys = true).asString ==
           py.module("json").dumps(retryMessages, sort_keys = true).asString
 
-  // A DIVERGENCE this records rather than endorses. `parseResponse` has a
-  // truncation branch (`agent/models/OpenAICompatible.jo:112`) that the
-  // streaming path never reaches: the SDK's `get_final_completion()` raises
-  // `LengthFinishReasonError` first, and that classifies as fatal. The other
-  // three wires keep the partial text and drop the partial calls. Rewrite this
-  // test into that shape the day the adapter catches the error.
-  test: "loses a truncated reply, where the other three wires keep its text", () =>
+  test: "keeps the text of a truncated reply and drops its calls", () =>
     ProviderFixture.withResponses: [truncated()], server =>
-      val detail = ModelDriver.start(model(server), prompt = "What is the weather in Zurich?")
-        .expectFatal()
-      check("classified fatal", detail.contains("LengthFinishReason"))
+      val tool = Tool("lookup", "Look up weather", [Tool.strParam("city", "City to look up")])
+      val message = ModelDriver.start(model(server), prompt = "What is the weather in Zurich?")
+        .expectReply(tools = [tool])
+
+      checkEquals:
+        "marks the reply truncated"
+        message.text
+        expected = "Let me loo\n\n[Reply truncated: token limit reached.]"
+
+      // The call was cut off mid-arguments, so running it would run a tool on
+      // half its input. A truncated reply keeps none of them.
+      check("drops the calls", message.calls.isEmpty)
