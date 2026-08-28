@@ -273,6 +273,7 @@ def turnSuite(): Unit receives testing, logger = suite: "turn engine", () =>
     // told has to name the tool, or it cannot correct itself.
     test: "answers a call to a tool nobody wired", () =>
       val toldU = py.list("")
+      val refusedU = py.list(true)
       val askU: Model = (base, maxOut) =>
         val stepU = py.list(0)
         (results, tools, interact) =>
@@ -281,6 +282,7 @@ def turnSuite(): Unit receives testing, logger = suite: "turn engine", () =>
           if n == 0 then toolReply("nosuch")
           else
             toldU.set(0, results.get(0).content)
+            refusedU.set(0, results.get(0).success)
             textReply("recovered")
 
       checkEquals:
@@ -288,7 +290,13 @@ def turnSuite(): Unit receives testing, logger = suite: "turn engine", () =>
         scenario: tools(), 50, 4, askU, live()
         expected = "Answered(recovered) | start,end,tool+nosuch,tool-nosuch,start,end"
 
-      checkEquals("what the model was told", toldU.get(0).asString, "Unknown tool: nosuch")
+      // The prose and the flag have to agree, or a driver reading its own output
+      // back off the turn counts an invented name as work done.
+      val refused = if refusedU.get(0).asBool then "no" else "yes"
+      checkEquals:
+        "what the model was told"
+        "\{toldU.get(0).asString} | refused=\{refused}"
+        expected = "Unknown tool: nosuch | refused=yes"
 
     // `runSafely` turns the exception into an error result the model sees, and
     // the next (text) reply ends the turn.
