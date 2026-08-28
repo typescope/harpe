@@ -34,13 +34,20 @@ section ProviderFixture
       ["data: [DONE]\n\n"]
       delaySeconds = seconds
 
-  def sse(body: String): Response =
+  //[ A scripted SSE stream, optionally held back before its first byte
+    !
+    ! `delaySeconds` keeps the connection open and silent for that long. A
+    ! scenario that has to act while a turn is mid-request — cancelling it, say —
+    ! uses it to hold the turn where it wants it, rather than racing the reply.
+  //]
+  def sse(body: String, delaySeconds: Float = 0.0): Response =
     new Response:
       "200 OK"
       py.list:
         py.tuple("Content-Type", "text/event-stream")
         py.tuple("Cache-Control", "no-cache")
       body.trim.split("\n\n").map(frame => sseFrame(frame) + "\n\n")
+      delaySeconds = delaySeconds
 
   //[ Permit readable multi-line JSON after `data:` in fixture literals. SSE
     ! requires every physical payload line to carry its own `data:` prefix, so

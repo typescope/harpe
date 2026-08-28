@@ -8,9 +8,12 @@
   ! the ones that cross an ownership boundary: the provider suites encode a
   ! contract with a third party whose wire format can change without a line here
   ! changing, and `runCode` drives the real Jo toolchain and a real sandbox.
+  ! `e2e` holds the ones that cross a PROCESS boundary: they build a shipped
+  ! driver, run it, and drive it over its own HTTP API.
   !
   ! Order still matters — the fast unit suites first, then the slower boundary
-  ! ones, with `runCode` last because it shells out to a sandbox build.
+  ! ones, with `runCode` last of those because it shells out to a sandbox build,
+  ! and `e2e` after all of them, since it builds and starts a whole agent.
   !
   ! A path filter selects a subtree — `jo run test -- unit/context`, or
   ! `jo run test -- integration/openai/chat`.
@@ -43,6 +46,7 @@ import harpe.test.integration.openai
 import harpe.test.integration.openaiResponses
 import harpe.test.integration.openrouter
 import harpe.test.integration.RunCodeTest
+import harpe.test.e2e.WebTest
 
 // Suites that drive tools/turns need `logger` in scope. Install a no-op one for
 // the whole harness (RunCodeTest self-provides on its worker threads, since
@@ -84,3 +88,6 @@ private def suites(): Unit receives framework.testing, logger =
     openaiResponses.Tests.openaiResponsesSuite()
     openrouter.Tests.openrouterSuite()
     RunCodeTest.runCodeSuite()
+
+  suite: "e2e", () =>
+    WebTest.webSuite()

@@ -1,0 +1,251 @@
+//[ WebAgent.jo
+  !
+  ! The web agent under test: build it, run it as a real process, and tear it
+  ! down.
+  !
+  ! These suites drive the shipped `web/` driver over its own HTTP API, so what
+  ! runs here is the program a user runs — `ci/web.toml` built from this
+  ! branch's `web/src/` and `agent/`, started by its own `main`. Nothing is
+  ! reached into: the test speaks to it through a socket, exactly as the chat
+  ! page does.
+  !
+  ! Two things are faked, and only two. The MODEL is a `ProviderFixture` on
+  ! localhost, reached through `OPENAI_BASE_URL` — every scenario scripts what
+  ! the agent hears back, so a turn is deterministic and no key is needed. The
+  ! HOME is a fresh temporary directory holding a copy of the agent's `assets/`
+  ! and `AGENT.md`, so sessions, uploads, and logs land there rather than in the
+  ! repo's own `web/data` and `web/logs`. The sandbox is NOT faked: a program a
+  ! scenario runs is compiled by the real toolchain and executed as its own
+  ! process, against the guest built from the same spec as the agent.
+  !
+  ! A failing scenario reports the server's stderr alongside the assertion, and
+  ! leaves its home directory behind — the two things worth having when a test
+  ! fails inside another process.
+//]
+
+namespace harpe.test.e2e
+
+import harpe.ffi.os
+import harpe.ffi.glob
+import harpe.ffi.time
+import harpe.ffi.signal
+import harpe.ffi.tempfile
+import harpe.ffi.subprocess
+import harpe.util.File
+import harpe.util.Process
+
+section WebAgent
+  //[ How long to wait for the server to answer its first request. //]
+  private def startupSeconds: Float = 30.0
+
+  //[ A running web agent: where to reach it, and where it keeps its state.
+    !
+    ! The state paths are here because a scenario asserts on both sides of the
+    ! API — that a delivered file really is in the session's data directory, that
+    ! a conversation really was journalled — and only this class knows where the
+    ! temporary home is.
+  //]
+  class Agent(port: Int, home: String, logPath: String)
+    //[ One session's data directory (uploads, and whatever the agent wrote). //]
+    def dataDir(session: String): String = os.path.join(home, "data", session)
+
+    //[ One session's journal, the file it resumes from. //]
+    def sessionFile(session: String): String =
+      os.path.join(home, "logs/sessions", session + ".jsonl")
+
+    //[ Whatever the server has written to stdout/stderr so far. //]
+    def serverLog: String = if File.exists(logPath) then File.read(logPath) else ""
+  end
+
+  //[ The repository root, wherever `jo run test` was invoked from. //]
+  private def repoRoot(): String =
+    var found = ""
+    for candidate in [".", ".."] do
+      if found == "" && os.path.isfile(os.path.join(candidate, "ci/web.toml")) then found = candidate
+
+    assert: found != "", "web e2e: ci/web.toml not found — run the tests from the repository root"
+    os.path.abspath(found)
+
+  //[ The application and its sandbox guest, built once per process
+    !
+    ! `ci/web.toml` is the spec CI builds: this branch's `web/src/` against this
+    ! branch's `agent/` and `caps/`, rather than the last published release. Both
+    ! halves come from that one spec, so the agent and the programs it compiles
+    ! are from the same commit. The builds are incremental and the environment
+    ! carries the memo, the same way the `runCode` suite remembers its sandbox.
+  //]
+  private def build(root: String): Unit =
+    if os.getenv("HARPE_TEST_WEB_BUILT", "") != root then
+      for module in ["web", "sandbox-guest"] do
+        val built = Process.runCapped:
+          py.list("jo", "build", module, "--spec", "ci/web.toml")
+          300.0
+          cwd = root
+
+        assert: !built.timedOut && built.returnCode == 0,
+          "web e2e: failed to build \{module}:\n\{built.err}"
+
+      os.environ.set("HARPE_TEST_WEB_BUILT", root)
+
+  //[ The one file matching `paths`, or the newest when a stale build lingers
+    !
+    ! Build outputs are keyed by compiler version, so the path is discovered
+    ! rather than spelled out — and an older version's leftovers are ignored
+    ! rather than picked at random.
+  //]
+  private def newestMatch(paths: String, what: String): String =
+    var newest = ""
+    var newestTime = 0.0
+    for candidate in glob.glob(paths, recursive = false) do
+      val path = candidate.asString
+      val modified = os.path.getmtime(path)
+      if modified > newestTime then
+        newest = path
+        newestTime = modified
+
+    assert: newest != "", "web e2e: no \{what} found at \{paths}"
+    newest
+
+  //[ The built application to run. //]
+  private def application(root: String): String =
+    newestMatch(os.path.join(root, "ci/.build/web/*/target/web.py"), "built web agent")
+
+  //[ The record `jo build` left for the sandbox guest, which `runCode` replays. //]
+  private def guestRecord(root: String): String =
+    newestMatch:
+      os.path.join(root, "ci/.build/sandbox-guest/*/target/*.py.done")
+      "built sandbox guest"
+
+  //[ A fresh agent home: the assets it serves, the prompt it loads, empty state
+    !
+    ! `assets/` and `AGENT.md` are the agent's real ones — a scenario that loads
+    ! the chat page or asserts on the system prompt is asserting about the files
+    ! that ship. Everything the agent WRITES is new here, so scenarios cannot see
+    ! each other's sessions, and none of them touch the repo.
+  //]
+  private def prepareHome(root: String): String =
+    val home = tempfile.mkdtemp()
+    val shutil = py.module("shutil")
+
+    shutil.copytree(os.path.join(root, "web/assets"), os.path.join(home, "assets"))
+    File.write:
+      os.path.join(home, "AGENT.md")
+      File.read(os.path.join(root, "web/AGENT.md"))
+
+    // The sandbox the agent compiles programs into. Not a copy of `web/sandbox`:
+    // `runCode` reads exactly one thing there, the `.done` record of how `jo
+    // build` compiled the guest, and replays it with this run's paths swapped
+    // in. So the home links to the guest built above, and a program a scenario
+    // runs is compiled against the same libraries the agent was. Every run
+    // compiles and executes in its own temporary directory, so nothing here is
+    // written back through the link.
+    val target = os.path.dirname(guestRecord(root))
+    val version = os.path.basename(os.path.dirname(target))
+    val guestDir = os.path.join(home, "sandbox/.build/guest", version)
+    File.ensureDir(guestDir)
+    os.symlink(target, os.path.join(guestDir, "target"))
+
+    File.ensureDir(os.path.join(home, "data"))
+    File.ensureDir(os.path.join(home, "logs/sessions"))
+    home
+
+  //[ A port nobody is listening on
+    !
+    ! Bound and released to learn its number, which the agent then binds itself.
+    ! The window between the two is a race in principle and has never been one in
+    ! practice — the alternative is the server reporting the port it got, which
+    ! would mean a startup contract that exists only for tests.
+  //]
+  private def freePort(): Int =
+    val probe = py.module("socket").socket()
+    probe.bind(py.tuple("127.0.0.1", 0))
+    val port = probe.getsockname()[1].asInt
+    probe.close()
+    port
+
+  //[ The child's environment: this process's, plus the model and the socket
+    !
+    ! `OPENAI_API_KEY` selects the OpenAI branch of `Model.default` and
+    ! `OPENAI_BASE_URL` points it at the fixture, so the agent's own model
+    ! selection runs — the test does not construct a `Model` for it. Both are set
+    ! rather than merely inherited, so a developer's real keys in the ambient
+    ! environment cannot reach the network from a test run.
+  //]
+  private def childEnv(modelBaseUrl: String, port: Int): py.Dict =
+    val env = py.module("os").environ.copy().cast[py.Dict]
+    env.set("OPENAI_API_KEY", "e2e-fixture-key")
+    env.set("OPENAI_BASE_URL", modelBaseUrl)
+    env.set("MODEL", "test-model")
+    env.set("HOST", "127.0.0.1")
+    env.set("PORT", port.toString)
+    // So a failure report shows everything the server had printed by then.
+    env.set("PYTHONUNBUFFERED", "1")
+    env
+
+  //[ Start the application, its own session leader so the whole tree is killable. //]
+  private def spawn(app: String, home: String, logPath: String, env: py.Dict): py.Dynamic =
+    val logFile = py.open(logPath, "w")
+    subprocess.Popen:
+      py.list(py.module("sys").executable.asString, app)
+      stdout = logFile
+      stderr = logFile
+      text = true
+      start_new_session = true
+      env = env
+      cwd = home
+
+  //[ Block until the server answers, or say why it never did. //]
+  private def waitReady(agent: Agent, proc: py.Dynamic): Unit =
+    val deadline = time.monotonic() + startupSeconds
+
+    while time.monotonic() < deadline do
+      if !proc.poll().isNone then
+        abort "web e2e: the agent exited during startup (code \{proc.poll().asInt}):\n\{agent.serverLog}"
+
+      match py.try(Rest.get(agent, "/api/info"))
+      case Ok(answer) if answer.status == 200 => return
+      case _ => py.module("time").sleep(0.05)
+
+    abort "web e2e: the agent never answered on port \{agent.port}:\n\{agent.serverLog}"
+
+  //[ Kill the process group, so nothing the agent spawned outlives the test. //]
+  private def terminate(proc: py.Dynamic): Unit =
+    val _ = py.try: os.killpg(os.getpgid(proc.pid.asInt), signal.SIGKILL)
+    val _ = py.try: proc.wait(timeout = 5.0)
+
+  //[ Wait for the agent, then hand it to the scenario — the part that may fail. //]
+  private def run(agent: Agent, proc: py.Dynamic, scenario: Agent => Unit): Unit =
+    waitReady(agent, proc)
+    scenario(agent)
+
+  //[ Run `scenario` against a web agent talking to the model at `modelBaseUrl`
+    !
+    ! One agent per scenario, on its own port and its own home. That costs a
+    ! process start each time and buys complete isolation: a scenario's sessions,
+    ! uploads and scripted model are entirely its own, and a scenario that hangs
+    ! the server cannot take the next one with it.
+  //]
+  def withAgent(modelBaseUrl: String, scenario: Agent => Unit): Unit =
+    val root = repoRoot()
+    build(root)
+    val app = application(root)
+    val home = prepareHome(root)
+    val port = freePort()
+    val logPath = os.path.join(home, "server.log")
+    val agent = new Agent(port, home, logPath)
+
+    val proc = spawn(app, home, logPath, childEnv(modelBaseUrl, port))
+    val result = py.try: run(agent, proc, scenario)
+
+    terminate(proc)
+
+    match result
+    case Ok(_) =>
+      val _ = py.try: py.module("shutil").rmtree(home)
+      pass
+
+    // The home is left behind on failure: its `server.log` holds the traceback
+    // and its `logs/sessions` holds what the agent journalled.
+    case Err(err) =>
+      abort "\{err.message}\n  agent home: \{home}\n  --- server log ---\n\{agent.serverLog}"
+end

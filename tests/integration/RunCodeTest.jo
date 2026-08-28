@@ -94,11 +94,23 @@ end
 
 // Wrap a runTask body in a minimal guest program.
 private def guest(body: String): String =
-  "namespace sandbox.guest\nimport sandbox.api.*\n\ndef runTask(): Unit receives IO.stdout =\n" + body
+  """
+  namespace sandbox.guest
+  import sandbox.api.*
+
+  def runTask(): Unit receives IO.stdout =
+
+  """ + body
 
 // A guest program that also receives the `fs` (FileSystem) capability.
 private def guestFs(body: String): String =
-  "namespace sandbox.guest\nimport sandbox.api.*\n\ndef runTask(): Unit receives IO.stdout, fs =\n" + body
+  """
+  namespace sandbox.guest
+  import sandbox.api.*
+
+  def runTask(): Unit receives IO.stdout, fs =
+
+  """ + body
 
 //[ The fixture sandbox, built once per process
   !
@@ -247,7 +259,12 @@ def runCodeSuite(): Unit receives testing = suite: "runCode tool", () =>
         approvalDeadline = 5
         buildTimeout = 120
         runTimeout = 2
-      checkEquals:
-        "tag"
-        tag(exec(quick, guest("  var i = 0\n  while i >= 0 do i = i + 1\n")))
-        "timeout"
+      val spinning = exec:
+        quick
+        guest:
+          """
+            var i = 0
+            while i >= 0 do i = i + 1
+
+          """
+      checkEquals("tag", tag(spinning), "timeout")
