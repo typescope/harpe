@@ -135,6 +135,93 @@ private def rateLimited(): ProviderFixture.Response = new ProviderFixture.Respon
   ]
 
 
+//[ Two calls in one reply — what a provider does by default when the model
+  ! asks for several things at once. Anthropic gives each its own content block.
+//]
+private def callsTwoTools(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  event: message_start
+  data: {
+    "type": "message_start",
+    "message": {
+      "id": "msg_two", "type": "message", "role": "assistant", "model": "test-model",
+      "content": [], "stop_reason": null, "stop_sequence": null,
+      "usage": {
+        "input_tokens": 6, "output_tokens": 0,
+        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0
+      }
+    }
+  }
+
+  event: content_block_start
+  data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_1","name":"lookup","input":{}}}
+
+  event: content_block_delta
+  data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\":\"Zurich\"}"}}
+
+  event: content_block_stop
+  data: {"type":"content_block_stop","index":0}
+
+  event: content_block_start
+  data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_2","name":"clock","input":{}}}
+
+  event: content_block_delta
+  data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"zone\":\"CET\"}"}}
+
+  event: content_block_stop
+  data: {"type":"content_block_stop","index":1}
+
+  event: message_delta
+  data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":4}}
+
+  event: message_stop
+  data: {"type":"message_stop"}
+  """
+
+private def callsOneTool(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  event: message_start
+  data: {
+    "type": "message_start",
+    "message": {
+      "id": "msg_one", "type": "message", "role": "assistant", "model": "test-model",
+      "content": [], "stop_reason": null, "stop_sequence": null,
+      "usage": {
+        "input_tokens": 9, "output_tokens": 0,
+        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0
+      }
+    }
+  }
+
+  event: content_block_start
+  data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_3","name":"lookup","input":{}}}
+
+  event: content_block_delta
+  data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\":\"Geneva\"}"}}
+
+  event: content_block_stop
+  data: {"type":"content_block_stop","index":0}
+
+  event: message_delta
+  data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":2}}
+
+  event: message_stop
+  data: {"type":"message_stop"}
+  """
+
+//[ The tool-result ids a request carries. Anthropic packs a round's results
+  ! into `tool_result` blocks inside one trailing user message.
+//]
+private def toolResultIds(request: ProviderFixture.RecordedRequest): String =
+  val messages = request.jsonBody.get("messages").cast[py.List]
+  val last = messages.get(messages.size - 1).cast[py.Dict]
+  var ids: List[String] = []
+  for block in last.get("content").cast[py.List] do
+    val entry = block.cast[py.Dict]
+    if entry.get("type", "").asString == "tool_result" then
+      ids = ids + entry.get("tool_use_id").asString
+  ids.join(",")
+
 def engineSuite(): Unit receives testing, logger = suite: "engine", () =>
   test: "dispatches a streamed tool call and sends its result back", () =>
     ProviderFixture.withResponses: [speaksThenCalls(), says("Sunny in Zurich.")], server =>
@@ -232,3 +319,75 @@ def engineSuite(): Unit receives testing, logger = suite: "engine", () =>
       // from a journal agree on what happened.
       check("produced nothing", turn.messages.isEmpty)
       checkEquals("said nothing", turn.text, "")
+
+  test: "keeps its place when a retry lands between two tool rounds", () =>
+    ProviderFixture.withResponses: [callsTwoTools(), unavailable(), callsOneTool(), says("Both sunny.")], server =>
+      val lookup = Tool("lookup", "Look up the weather", [Tool.strParam("city", "City to look up")])
+      val clock = Tool("clock", "Read the clock", [Tool.strParam("zone", "Time zone to read")])
+      val asked = py.list()
+
+      val onLookup: Handler = (input: ToolInput, channel: Interact) =>
+        asked.append("lookup:" + input.string("city"))
+        new ToolOutcome("sunny", "lookup · sunny", attachments = [])
+
+      val onClock: Handler = (input: ToolInput, channel: Interact) =>
+        asked.append("clock:" + input.string("zone"))
+        new ToolOutcome("14:00", "clock · 14:00", attachments = [])
+
+      val recorder = new EngineDriver.Recorder
+      val turn = Agent.ask:
+        "What is the weather in Zurich and Geneva?"
+        brain = model(server)
+        tools = Toolset.of(lookup, onLookup).add(clock, onClock)
+        interact = recorder
+        maxRetries = 1
+
+      // Both calls of the first reply are dispatched, in the order the model
+      // made them, before either result goes back.
+      checkEquals:
+        "what the tools were asked"
+        py.dynamic(",").join(asked).asString
+        expected = "lookup:Zurich,clock:CET,lookup:Geneva"
+
+      checkEquals:
+        "turn events"
+        recorder.trace
+        expected = "start,end,tool+lookup,tool-lookup,tool+clock,tool-clock,start,end,reset,transient,start,end,tool+lookup,tool-lookup,start,chunk:Both sunny.,end"
+
+      checkEquals("result", EngineDriver.resultTag(turn), "Success")
+      checkEquals("answer", turn.finalText, "Both sunny.")
+      checkEquals("turn messages", EngineDriver.messageTags(turn), "calls,results,calls,results,text")
+      check("four requests", server.requestCount == 4)
+
+      // The idempotency `Model.Session` promises: the failed request committed
+      // nothing, so the retry is the same request again — same results, and no
+      // continuation state advanced past a response that never arrived.
+      checkEquals:
+        "the retry re-sent the failed request unchanged"
+        py.module("json").dumps(server.recorded(1).jsonBody, sort_keys = true).asString
+        expected = py.module("json").dumps(server.recorded(2).jsonBody, sort_keys = true).asString
+
+      // Both results travel together in the round that follows the two calls,
+      // each keyed by the id the model chose for it.
+      checkEquals("both results, one round", toolResultIds(server.recorded(2)), "call_1,call_2")
+
+  test: "gives up once the retry budget is spent, walking its backoff ladder", () =>
+    ProviderFixture.withResponses: [unavailable(), unavailable(), unavailable()], server =>
+      val recorder = new EngineDriver.Recorder
+      val turn = Agent.ask:
+        "Say hello."
+        brain = model(server)
+        interact = recorder
+        maxRetries = 2
+
+      checkEquals:
+        "turn events"
+        recorder.trace
+        expected = "start,end,reset,transient,start,end,reset,transient,start,end,reset"
+
+      checkEquals("result", EngineDriver.resultTag(turn), "Failed")
+      check("spent every attempt", server.requestCount == 3)
+      checkEquals:
+        "backoff ladder"
+        recorder.waits.map(w => w.toString).join(",")
+        expected = "1.0,2.0"

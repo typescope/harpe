@@ -76,6 +76,39 @@ private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
     {"error":{"message":"unavailable","type":"server_error","code":"server_error"}}
     """
 
+//[ A reply cut off by the token limit, mid tool call. //]
+private def truncated(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {
+    "id": "chat_cut", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{
+      "index": 0, "delta": {"role":"assistant","content":"Let me loo"}, "finish_reason": null
+    }]
+  }
+
+  data: {
+    "id": "chat_cut", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{
+      "index": 0,
+      "delta": {
+        "tool_calls": [{
+          "index": 0, "id": "call_1", "type": "function",
+          "function": {"name":"lookup","arguments":"{\"city\":\"Zur"}
+        }]
+      },
+      "finish_reason": null
+    }]
+  }
+
+  data: {
+    "id": "chat_cut", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{"index":0,"delta":{},"finish_reason":"length"}],
+    "usage": {"prompt_tokens":6,"completion_tokens":32,"total_tokens":38}
+  }
+
+  data: [DONE]
+  """
+
 def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
   test: "replays the assistant call and its result in messages", () =>
     ProviderFixture.withResponses: [toolResponse(), textResponse("done")], server =>
@@ -121,3 +154,15 @@ def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
         "retry keeps semantic request"
         py.module("json").dumps(firstMessages, sort_keys = true).asString ==
           py.module("json").dumps(retryMessages, sort_keys = true).asString
+
+  // A DIVERGENCE this records rather than endorses. `parseResponse` has a
+  // truncation branch (`agent/models/OpenAICompatible.jo:112`) that the
+  // streaming path never reaches: the SDK's `get_final_completion()` raises
+  // `LengthFinishReasonError` first, and that classifies as fatal. The other
+  // three wires keep the partial text and drop the partial calls. Rewrite this
+  // test into that shape the day the adapter catches the error.
+  test: "loses a truncated reply, where the other three wires keep its text", () =>
+    ProviderFixture.withResponses: [truncated()], server =>
+      val detail = ModelDriver.start(model(server), prompt = "What is the weather in Zurich?")
+        .expectFatal()
+      check("classified fatal", detail.contains("LengthFinishReason"))

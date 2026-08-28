@@ -11,6 +11,7 @@ import harpe.test.framework.testing
 import harpe.test.framework.suite
 import harpe.test.framework.test
 import harpe.test.framework.check
+import harpe.test.framework.checkEquals
 import harpe.test.integration.ProviderFixture
 import harpe.test.integration.ModelDriver
 
@@ -86,6 +87,47 @@ private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
     {"type":"error","error":{"type":"overloaded_error","message":"busy"}}
     """
 
+//[ A reply cut off by the token limit, mid tool call. //]
+private def truncated(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  event: message_start
+  data: {
+    "type": "message_start",
+    "message": {
+      "id": "msg_cut", "type": "message", "role": "assistant", "model": "test-model",
+      "content": [], "stop_reason": null, "stop_sequence": null,
+      "usage": {
+        "input_tokens": 6, "output_tokens": 0,
+        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0
+      }
+    }
+  }
+
+  event: content_block_start
+  data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"","citations":null}}
+
+  event: content_block_delta
+  data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Let me loo"}}
+
+  event: content_block_stop
+  data: {"type":"content_block_stop","index":0}
+
+  event: content_block_start
+  data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_1","name":"lookup","input":{}}}
+
+  event: content_block_delta
+  data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"city\":\"Zurich\"}"}}
+
+  event: content_block_stop
+  data: {"type":"content_block_stop","index":1}
+
+  event: message_delta
+  data: {"type":"message_delta","delta":{"stop_reason":"max_tokens","stop_sequence":null},"usage":{"output_tokens":32}}
+
+  event: message_stop
+  data: {"type":"message_stop"}
+  """
+
 def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
   test: "carries a tool call and its result across two requests", () =>
     ProviderFixture.withResponses: [toolResponse(), textResponse("done")], server =>
@@ -134,3 +176,18 @@ def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
         "retry keeps semantic messages"
         py.module("json").dumps(firstMessages, sort_keys = true).asString ==
           py.module("json").dumps(retryMessages, sort_keys = true).asString
+
+  test: "keeps the text of a truncated reply and drops its calls", () =>
+    ProviderFixture.withResponses: [truncated()], server =>
+      val tool = Tool("lookup", "Look up weather", [Tool.strParam("city", "City to look up")])
+      val message = ModelDriver.start(model(server), prompt = "What is the weather in Zurich?")
+        .expectReply(tools = [tool])
+
+      checkEquals:
+        "marks the reply truncated"
+        message.text
+        expected = "Let me loo\n\n[Reply truncated: max_tokens reached.]"
+
+      // The call was cut off mid-arguments, so running it would run a tool on
+      // half its input. A truncated reply keeps none of them.
+      check("drops the calls", message.calls.isEmpty)

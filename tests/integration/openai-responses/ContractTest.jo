@@ -10,6 +10,7 @@ import harpe.test.framework.testing
 import harpe.test.framework.suite
 import harpe.test.framework.test
 import harpe.test.framework.check
+import harpe.test.framework.checkEquals
 import harpe.test.integration.ProviderFixture
 import harpe.test.integration.ModelDriver
 
@@ -111,6 +112,43 @@ private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
     {"error":{"message":"unavailable","type":"server_error","code":"server_error"}}
     """
 
+//[ A reply cut off by the token limit, mid tool call. //]
+private def truncated(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_cut","output_index":0,"content_index":0,"delta":"Let me loo","logprobs":[]}
+
+  data: {
+    "type": "response.completed", "sequence_number": 2,
+    "response": {
+      "id": "resp_cut", "object": "response", "created_at": 0,
+      "status": "incomplete", "error": null,
+      "incomplete_details": {"reason":"max_output_tokens"},
+      "instructions": null, "max_output_tokens": 32, "model": "test-model",
+      "output": [
+        {
+          "id": "msg_cut", "type": "message", "status": "incomplete", "role": "assistant",
+          "content": [{"type":"output_text","text":"Let me loo","annotations":[],"logprobs":[]}]
+        },
+        {
+          "id": "fc_1", "type": "function_call", "status": "incomplete",
+          "arguments": "{\"city\":\"Zur", "call_id": "call_1", "name": "lookup"
+        }
+      ],
+      "parallel_tool_calls": true, "previous_response_id": null,
+      "reasoning": {"effort":"medium","summary":null}, "store": true,
+      "temperature": 1.0, "text": {"format":{"type":"text"}},
+      "tool_choice": "auto", "tools": [], "top_p": 1.0, "truncation": "disabled",
+      "usage": {
+        "input_tokens": 6, "input_tokens_details": {"cached_tokens":0},
+        "output_tokens": 32, "output_tokens_details": {"reasoning_tokens":0}, "total_tokens": 38
+      },
+      "metadata": {}
+    }
+  }
+
+  data: [DONE]
+  """
+
 def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
   test: "chains a tool call onto the stored response", () =>
     ProviderFixture.withResponses: [toolResponse(), textResponse()], server =>
@@ -154,3 +192,18 @@ def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
       check:
         "did not chain failure"
         !server.recorded(1).jsonBody.contains("previous_response_id")
+
+  test: "keeps the text of a truncated reply and drops its calls", () =>
+    ProviderFixture.withResponses: [truncated()], server =>
+      val tool = Tool("lookup", "Look up weather", [Tool.strParam("city", "City to look up")])
+      val message = ModelDriver.start(model(server), prompt = "What is the weather in Zurich?")
+        .expectReply(tools = [tool])
+
+      checkEquals:
+        "marks the reply truncated"
+        message.text
+        expected = "Let me loo\n\n[Reply truncated: max_output_tokens reached.]"
+
+      // The call was cut off mid-arguments, so running it would run a tool on
+      // half its input. A truncated reply keeps none of them.
+      check("drops the calls", message.calls.isEmpty)

@@ -268,6 +268,28 @@ def turnSuite(): Unit receives testing, logger = suite: "turn engine", () =>
         "\{resultTag(failedResult)} | \{messages.size} | \{msgTag(messages.get(0))}"
         expected = "Failed(bad key) | 1 | user"
 
+    // A name nobody wired is answered rather than refused: the engine sends the
+    // model an error result for it, and the turn goes on. What the model is
+    // told has to name the tool, or it cannot correct itself.
+    test: "answers a call to a tool nobody wired", () =>
+      val toldU = py.list("")
+      val askU: Model = (base, maxOut) =>
+        val stepU = py.list(0)
+        (results, tools, interact) =>
+          val n = stepU.get(0).asInt
+          stepU.set(0, n + 1)
+          if n == 0 then toolReply("nosuch")
+          else
+            toldU.set(0, results.get(0).content)
+            textReply("recovered")
+
+      checkEquals:
+        "unknown tool continues"
+        scenario: tools(), 50, 4, askU, live()
+        expected = "Answered(recovered) | start,end,tool+nosuch,tool-nosuch,start,end"
+
+      checkEquals("what the model was told", toldU.get(0).asString, "Unknown tool: nosuch")
+
     // `runSafely` turns the exception into an error result the model sees, and
     // the next (text) reply ends the turn.
     test: "a tool that raises does not crash the turn", () =>
