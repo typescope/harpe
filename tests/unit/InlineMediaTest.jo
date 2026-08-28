@@ -1,0 +1,49 @@
+//[ InlineMediaTest.jo
+  !
+  ! Tests for the shared inline-attachment helpers (`harpe.models.InlineMedia`):
+  ! the mime gate (`isInlineImage`/`isInlinePdf`) and reading an attachment's
+  ! bytes as base64 off disk (`readInlineBase64`), including its silent-`None`
+  ! failure modes (no data dir, missing file).
+//]
+
+namespace harpe.test.unit.InlineMediaTest
+
+import harpe.ffi.os
+import harpe.ffi.tempfile
+import harpe.util.File
+import harpe.models.*
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
+import harpe.test.framework.check
+
+def inlineMediaSuite(): Unit receives testing = suite: "inline media", () =>
+  suite: "mime gate", () =>
+    test: "accepts the inline image types", () =>
+      check("jpeg", InlineMedia.isImage("image/jpeg"))
+      check("png", InlineMedia.isImage("image/png"))
+      check("gif", InlineMedia.isImage("image/gif"))
+      check("webp", InlineMedia.isImage("image/webp"))
+
+    test: "rejects what is not an inline image", () =>
+      check("pdf", !InlineMedia.isImage("application/pdf"))
+      check("text", !InlineMedia.isImage("text/plain"))
+
+    test: "separates pdf from image", () =>
+      check("application/pdf is a pdf", InlineMedia.isPdf("application/pdf"))
+      check("image/png is not a pdf", !InlineMedia.isPdf("image/png"))
+
+  suite: "readBase64", () =>
+    test: "encodes a file it can read", () =>
+      val dir = tempfile.mkdtemp()
+      File.writeBytes(os.path.join(dir, "hi.bin"), py.dynamic("hi").callDynamic("encode", "utf-8"))
+      match InlineMedia.readBase64(os.path.join(dir, "hi.bin"))
+      case Some(b64) => check("base64 of the bytes", b64 == "aGk=")
+      case None => check("read the file", false)
+
+    test: "is None when the attachment carries no path", () =>
+      check("empty path", InlineMedia.readBase64("") is None)
+
+    test: "is None when the file is missing", () =>
+      val dir = tempfile.mkdtemp()
+      check("missing file", InlineMedia.readBase64(os.path.join(dir, "missing.bin")) is None)

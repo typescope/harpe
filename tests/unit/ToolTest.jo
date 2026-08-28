@@ -1,0 +1,125 @@
+//[ ToolTest.jo
+  !
+  ! Unit tests for the tool layer (`harpe.tools`): the typed `ToolInput`
+  ! accessors and their fallbacks, the parameter constructors, and `runSafely` —
+  ! the backstop that turns a throwing tool into an error `ToolOutcome` instead of
+  ! letting it crash a turn.
+//]
+
+namespace harpe.test.unit.ToolTest
+
+import harpe.ffi.os
+import harpe.ffi.tempfile
+import harpe.tools.*
+import harpe.Tool.*
+import harpe.*
+import harpe.logging.logger
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
+import harpe.test.framework.check
+
+private def rep(c: String, n: Int): String =
+  var s = ""
+  var i = 0
+  while i < n do
+    s = s + c
+    i = i + 1
+  s
+
+private def noop: Handler =
+  (i: ToolInput, channel: Interact) => new ToolOutcome("x", "x", attachments = [])
+
+private def spec(n: String): Tool = Tool(n, "a test tool", [])
+
+private def pair(): Toolset = Toolset.of(spec("alpha"), noop).add(spec("beta"), noop)
+
+def toolSuite(): Unit receives testing, logger = suite: "tool layer", () =>
+  suite: "ToolInput", () =>
+    test: "reads a value of each schema type", () =>
+      val full = ToolInput(py.dict("s" ~ "hi", "n" ~ 42, "b" ~ true, "f" ~ 3.5))
+      check("string", full.string("s") == "hi")
+      check("int", full.int("n") == 42)
+      check("bool", full.bool("b") == true)
+      check("num", full.num("f") == 3.5)
+      check("indexing", full["s"] == "hi")
+
+    test: "falls back to the supplied default when a key is missing", () =>
+      val empty = ToolInput(py.dict())
+      check("stringOr", empty.stringOr("x", "d") == "d")
+      check("intOr", empty.intOr("x", 7) == 7)
+      check("boolOr", empty.boolOr("x", true) == true)
+      check("numOr", empty.numOr("x", 1.5) == 1.5)
+
+    test: "falls back to the type's zero with no default", () =>
+      val empty = ToolInput(py.dict())
+      check("string", empty.string("x") == "")
+      check("int", empty.int("x") == 0)
+      check("bool", empty.bool("x") == false)
+      check("num", empty.num("x") == 0.0)
+      check("indexing", empty["x"] == "")
+
+  suite: "parameters", () =>
+    test: "constructors carry their type and are required", () =>
+      val sp = strParam("a", "d")
+      val ip = intParam("a", "d")
+      val bp = boolParam("a", "d")
+      val np = numParam("a", "d")
+      check("strParam", sp.paramType is StrParam)
+      check("intParam", ip.paramType is IntParam)
+      check("boolParam", bp.paramType is BoolParam)
+      check("numParam", np.paramType is NumParam)
+      check("all required", sp.required && ip.required && bp.required && np.required)
+
+  suite: "runSafely", () =>
+    test: "passes a normal outcome through unchanged", () =>
+      val empty = ToolInput(py.dict())
+      val out = runSafely("ok", (input, channel) => new ToolOutcome("done", "ran"), empty, Interact.unattended)
+      check("result and summary", out.result == "done" && out.summary == "ran")
+      check("an outcome succeeds unless it says otherwise", out.success)
+
+    test: "turns a raising handler into an error outcome", () =>
+      val empty = ToolInput(py.dict())
+      val out = runSafely("boom", (input, channel) => abort "kaboom", empty, Interact.unattended)
+      check("summary names the tool", out.summary == "error · boom")
+      check("result carries the message", out.result.contains("kaboom"))
+      check("did not succeed", !out.success)
+
+  suite: "Toolset", () =>
+    test: "accumulates tools and reports their names", () =>
+      val two = pair()
+      check("contains both", two.contains("alpha") && two.contains("beta"))
+      check("names", two.names.size == 2)
+
+    // The specs the model is offered come from the same entries as the handlers,
+    // so a wired tool is offered and an offered tool is answered, by construction.
+    test: "offers specs matching the wiring, in order", () =>
+      val two = pair()
+      check("one spec per entry", two.specs.size == 2)
+      check("wiring order kept", two.specs.get(0).name == "alpha")
+
+    test: "merges a group with ++", () =>
+      val merged = pair() ++ Toolset.of(spec("gamma"), noop)
+      check("merged", merged.names.size == 3 && merged.contains("gamma"))
+
+    test: "rejects a name wired twice", () =>
+      match py.try(pair().add(spec("alpha"), noop))
+      case Ok(_) => check("add should have been rejected", false)
+      case Err(e) => check("add names the clash", e.message.contains("alpha"))
+
+      match py.try(pair() ++ Toolset.of(spec("beta"), noop))
+      case Ok(_) => check("++ should have been rejected", false)
+      case Err(e) => check("++ names the clash", e.message.contains("beta"))
+
+  suite: "elide", () =>
+    test: "leaves text within the limit unchanged", () =>
+      check("short", elide("hello", 100) == "hello")
+      check("exactly at the limit", elide("abcde", 5) == "abcde")
+
+    test: "shrinks oversized text, keeping head and tail", () =>
+      val big = rep("a", 100) + rep("b", 100)
+      val small = elide(big, 100)
+      check("shrank", small.size < big.size)
+      check("kept the head", small.startsWith("a"))
+      check("kept the tail", small.endsWith("b"))
+      check("marked the omission", small.contains("100 characters elided"))

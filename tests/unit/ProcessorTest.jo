@@ -1,0 +1,304 @@
+//[ ProcessorTest.jo
+  !
+  ! Unit test for the format readers behind `FileSystem` — `openWord` (python-docx
+  ! handle: paragraphs, outline), `openPDF` (pypdfium2 handle: pages, outline,
+  ! metadata, page → image), `openWorkbook` (openpyxl handle: rows, dimensions) —
+  ! wired through the ambient backend params, plus the separately granted
+  ! `PillowImage` and OCR readers (`TesseractOcr`, `RapidOcr`).
+//]
+
+namespace harpe.test.unit.ProcessorTest
+
+import harpe.media.*
+import harpe.caps.*
+import harpe.ffi.tempfile
+import harpe.util.File
+import harpe.ffi.os
+
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
+import harpe.test.framework.check
+
+private def isSize(s: Image.Size, w: Int, h: Int): Bool = s.width == w && s.height == h
+
+// Build a `w`x`h` image at `path` with Pillow.
+private def makeImage(path: String, w: Int, h: Int): Unit =
+  val size = py.module("builtins").callDynamic("tuple", py.list(w, h))
+  py.module("PIL.Image").callDynamic("new", "RGB", size).save(path)
+
+// Build an image at `path` holding the text "HELLO HARPE 42", for OCR.
+private def makeTextImage(path: String): Unit =
+  val size = py.module("builtins").callDynamic("tuple", py.list(400, 80))
+  val img = py.module("PIL.Image").callDynamic("new", "RGB", size, "white")
+  val font = py.module("PIL.ImageFont").load_default(40)
+  py.module("PIL.ImageDraw").Draw(img).text(py.tuple(20, 20), "HELLO HARPE 42", "black", font)
+  img.save(path)
+
+// Whether the Python module `name` is importable.
+private def hasModule(name: String): Bool =
+  match py.try(py.module(name))
+  case Ok(_)  => true
+  case Err(_) => false
+
+// Build a blank `pages`-page PDF (100x100 points per page) at `path` with pypdfium2.
+private def makeBlankPdf(path: String, pages: Int): Unit =
+  val doc = py.module("pypdfium2").PdfDocument.callDynamic("new")
+  var i = 0
+
+  while i < pages do
+    val _ = doc.new_page(100, 100)
+    i = i + 1
+
+  doc.save(path)
+
+// Build a 2-page PDF at `path`: a 50x30 image on page 1, page 2 empty.
+private def makeImagePdf(path: String): Unit =
+  val pdfium = py.module("pypdfium2")
+  val doc = pdfium.PdfDocument.callDynamic("new")
+  val page = doc.new_page(200, 200)
+  val _ = doc.new_page(200, 200)
+
+  val size = py.module("builtins").callDynamic("tuple", py.list(50, 30))
+  val pil = py.module("PIL.Image").callDynamic("new", "RGB", size)
+  val img = pdfium.PdfImage.callDynamic("new", doc)
+  img.set_bitmap(pdfium.PdfBitmap.from_pil(pil))
+  img.set_matrix(pdfium.PdfMatrix().scale(50, 30))
+
+  page.insert_obj(img)
+  page.gen_content()
+  doc.save(path)
+
+// Build a 4-paragraph docx at `path`: two headings, two body paragraphs.
+private def makeDocx(path: String): Unit =
+  val doc = py.module("docx").Document()
+  val _ = doc.add_heading("Intro", level = 1)
+  val _ = doc.add_paragraph("Body one.")
+  val _ = doc.add_heading("Details", level = 2)
+  val _ = doc.add_paragraph("Body two.")
+  doc.save(path)
+
+// Build a 2-sheet workbook at `path`: "Data" (header + 2 rows), "Notes" (1 cell).
+private def makeXlsx(path: String): Unit =
+  val wb = py.module("openpyxl").Workbook()
+  val ws = wb.active
+  ws.title = "Data"
+  ws.append(py.list("name", "qty", "price"))
+  ws.append(py.list("apple", 3, 1.5))
+  ws.append(py.list("pear", 5, 2.25))
+
+  val notes = wb.create_sheet("Notes")
+  notes.append(py.list("hello"))
+  wb.save(path)
+
+// A handwritten 2-page PDF with an information dictionary and a 2-entry outline —
+// pypdfium2 cannot author those, but PDFium parses this fixture fine.
+private def outlinedPdf: String = """
+  %PDF-1.4
+  1 0 obj << /Type /Catalog /Pages 2 0 R /Outlines 6 0 R >> endobj
+  2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >> endobj
+  3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >> endobj
+  4 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >> endobj
+  5 0 obj << /Title (Test Doc) /Author (Harpe) >> endobj
+  6 0 obj << /Type /Outlines /First 7 0 R /Last 8 0 R /Count 2 >> endobj
+  7 0 obj << /Title (Intro) /Parent 6 0 R /Next 8 0 R /Dest [3 0 R /Fit] >> endobj
+  8 0 obj << /Title (Details) /Parent 6 0 R /Prev 7 0 R /Dest [4 0 R /Fit] >> endobj
+  trailer << /Root 1 0 R /Info 5 0 R /Size 9 >>
+  %%EOF
+  """
+
+//[ A filesystem over a temp dir, with the format backends bound
+  !
+  ! Binding happens per test rather than once around the declaration, so a test
+  ! body opens documents through readers rooted at its own directory.
+//]
+private def withMedia(
+    body: (FileSystem, String) => Unit receives pdfReader, excelReader, wordReader)
+: Unit =
+  val dir = tempfile.mkdtemp()
+  File.write(os.path.join(dir, "note.txt"), "not a real document")
+  with
+    pdfReader = new PdfiumReader(dir),
+    excelReader = new OpenpyxlExcel(dir),
+    wordReader = new DocxReader(dir)
+  in body(FileSystemImpl.local(dir), dir)
+
+def processorSuite(): Unit receives testing = suite: "media processors", () =>
+  suite: "word", () =>
+    test: "rejects a file that is not a document", () =>
+      withMedia: (fs, dir) =>
+        check("garbage is Err", fs.openWord("note.txt").isErr)
+
+    test: "counts paragraphs and reads a window of them", () =>
+      withMedia: (fs, dir) =>
+        makeDocx(os.path.join(dir, "memo.docx"))
+        val memo = fs.openWord("memo.docx").success
+        check("paragraphCount", memo.paragraphCount == 4)
+        val body = memo.paragraphs(2, 1)
+        check("window", body.size == 1 && body.get(0) == "Body one.")
+        check("past the end reads short", memo.paragraphs(4, 10).size == 1)
+        memo.close()
+
+    test: "reads the heading outline", () =>
+      withMedia: (fs, dir) =>
+        makeDocx(os.path.join(dir, "memo.docx"))
+        val memo = fs.openWord("memo.docx").success
+        val toc = memo.outline
+        check("entries", toc.size == 2 && toc.get(0).title == "Intro" && toc.get(0).paragraph == 1)
+        check("levels", toc.get(0).level == 1 && toc.get(1).level == 2)
+        memo.close()
+
+  suite: "pdf", () =>
+    test: "rejects garbage and missing files", () =>
+      withMedia: (fs, dir) =>
+        check("garbage is Err", fs.openPDF("note.txt").isErr)
+        check("missing is Err", fs.openPDF("nope.pdf").isErr)
+
+    test: "counts pages and reads their text", () =>
+      withMedia: (fs, dir) =>
+        makeBlankPdf(os.path.join(dir, "doc.pdf"), 2)
+        val doc = fs.openPDF("doc.pdf").success
+        check("pageCount", doc.pageCount == 2)
+        check("pageText runs", doc.pageText(1).isOk)   // blank → empty
+        check("no outline", doc.outline.size == 0)
+        doc.close()
+
+    // 100x100 points at the default scale 2 → 200x200 px.
+    test: "renders a page to an image file", () =>
+      withMedia: (fs, dir) =>
+        makeBlankPdf(os.path.join(dir, "doc.pdf"), 2)
+        val doc = fs.openPDF("doc.pdf").success
+        check("size", isSize(doc.pageImage(1, "p1.png").success, 200, 200))
+        check("wrote the target", os.path.isfile(os.path.join(dir, "p1.png")))
+        doc.close()
+
+    test: "closing twice is safe", () =>
+      withMedia: (fs, dir) =>
+        makeBlankPdf(os.path.join(dir, "doc.pdf"), 1)
+        val doc = fs.openPDF("doc.pdf").success
+        doc.close()
+        doc.close()
+        check("idempotent", true)
+
+    test: "reads the outline of a document that has one", () =>
+      withMedia: (fs, dir) =>
+        File.write(os.path.join(dir, "outlined.pdf"), outlinedPdf)
+        val outlined = fs.openPDF("outlined.pdf").success
+        val headings = outlined.outline
+        check("entries", headings.size == 2)
+        val first = headings.get(0)
+        check("first", first.title == "Intro" && first.page == 1 && first.level == 0)
+        check("second", headings.get(1).page == 2)
+        outlined.close()
+
+    test: "reads the information dictionary, skipping empty keys", () =>
+      withMedia: (fs, dir) =>
+        File.write(os.path.join(dir, "outlined.pdf"), outlinedPdf)
+        val outlined = fs.openPDF("outlined.pdf").success
+        val info = outlined.metadata
+        check("Title", info.getOrElse("Title", "") == "Test Doc")
+        check("Author", info.getOrElse("Author", "") == "Harpe")
+        check("skips empty", info.getOrElse("Subject", "-") == "-")
+        outlined.close()
+
+    test: "profiles what each page holds", () =>
+      withMedia: (fs, dir) =>
+        makeImagePdf(os.path.join(dir, "img.pdf"))
+        val imgDoc = fs.openPDF("img.pdf").success
+        val withImage = imgDoc.pageContent(1)
+        check("an image on page 1", withImage.images == 1 && withImage.texts == 0)
+        val empty = imgDoc.pageContent(2)
+        check("page 2 empty", empty.images == 0 && empty.texts == 0 && empty.paths == 0)
+        imgDoc.close()
+
+  suite: "workbook", () =>
+    test: "rejects a file that is not a workbook", () =>
+      withMedia: (fs, dir) =>
+        check("garbage is Err", fs.openWorkbook("note.txt").isErr)
+
+    test: "lists its sheets", () =>
+      withMedia: (fs, dir) =>
+        makeXlsx(os.path.join(dir, "table.xlsx"))
+        val book = fs.openWorkbook("table.xlsx").success
+        check:
+          "sheets"
+          book.sheets.size == 2 && book.sheets.get(0) == "Data" && book.sheets.get(1) == "Notes"
+        book.close()
+
+    test: "reports sheet dimensions, and None for an unknown sheet", () =>
+      withMedia: (fs, dir) =>
+        makeXlsx(os.path.join(dir, "table.xlsx"))
+        val book = fs.openWorkbook("table.xlsx").success
+        val dims = book.dimensions("Data").getOrElse(new Workbook.SheetSize(0, 0))
+        check("dimensions", dims.rows == 3 && dims.columns == 3)
+        check("unknown is None", book.dimensions("NoSuch") is None)
+        book.close()
+
+    test: "reads a window of rows, rendering cells as text", () =>
+      withMedia: (fs, dir) =>
+        makeXlsx(os.path.join(dir, "table.xlsx"))
+        val book = fs.openWorkbook("table.xlsx").success
+        val window = book.rows("Data", 2, 2).getOrElse(List.empty[List[String]])
+        check("window", window.size == 2 && window.get(0).get(0) == "apple" && window.get(0).get(1) == "3")
+        check("floats", window.get(1).get(2) == "2.25")
+        check:
+          "past the end reads short"
+          book.rows("Data", 3, 10).getOrElse([] as List[List[String]]).size == 1
+        check("unknown sheet is None", book.rows("NoSuch", 1, 1) is None)
+        book.close()
+
+    test: "closing twice is safe", () =>
+      withMedia: (fs, dir) =>
+        makeXlsx(os.path.join(dir, "table.xlsx"))
+        val book = fs.openWorkbook("table.xlsx").success
+        book.close()
+        book.close()
+        check("idempotent", true)
+
+  suite: "image", () =>
+    test: "reports dimensions and metadata", () =>
+      withMedia: (fs, dir) =>
+        makeImage(os.path.join(dir, "pic.png"), 30, 20)
+        val image: Image = new PillowImage(dir)
+        check("dimensions", isSize(image.dimensions("pic.png").success, 30, 20))
+        val meta = image.metadata("pic.png").success
+        check("format", meta.getOrElse("format", "") == "PNG")
+        check("mode", meta.getOrElse("mode", "") == "RGB")
+
+    // Fit 30x20 within a 15x15 box, aspect preserved → 15x10.
+    test: "resizes within a box, preserving aspect", () =>
+      withMedia: (fs, dir) =>
+        makeImage(os.path.join(dir, "pic.png"), 30, 20)
+        val image: Image = new PillowImage(dir)
+        check("resize", isSize(image.resize("pic.png", 15, 15, "small.png").success, 15, 10))
+
+    test: "crops and converts", () =>
+      withMedia: (fs, dir) =>
+        makeImage(os.path.join(dir, "pic.png"), 30, 20)
+        val image: Image = new PillowImage(dir)
+        check("crop", isSize(image.crop("pic.png", 5, 5, 10, 8, "part.png").success, 10, 8))
+        check("convert", isSize(image.convert("pic.png", "pic.jpg").success, 30, 20))
+
+    test: "errors on a missing file", () =>
+      withMedia: (fs, dir) =>
+        val image: Image = new PillowImage(dir)
+        check("missing is Err", image.dimensions("nope.png").isErr)
+
+  suite: "ocr", () =>
+    // Tesseract degrades gracefully when the system binary is absent.
+    test: "tesseract answers either way", () =>
+      withMedia: (fs, dir) =>
+        makeImage(os.path.join(dir, "pic.png"), 30, 20)
+        val tesseract: OCR = TesseractOcr(dir)
+        val result = tesseract.text("pic.png")
+        check("answers", result.isOk || result.isErr)
+
+    test: "rapidocr reads real text when its package is installed", () =>
+      withMedia: (fs, dir) =>
+        if !hasModule("rapidocr_onnxruntime") then check("not installed", true)
+        else
+          makeImage(os.path.join(dir, "pic.png"), 30, 20)
+          makeTextImage(os.path.join(dir, "text.png"))
+          val rapid: OCR = new RapidOcr(dir)
+          check("reads text", rapid.text("text.png").success.contains("HELLO"))
+          check("blank image reads empty", rapid.text("pic.png").success == "")

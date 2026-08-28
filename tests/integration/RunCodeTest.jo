@@ -1,0 +1,253 @@
+//[ RunCodeTest.jo
+  !
+  ! Integration tests for the `runCode` tool (`harpe.tools`). Unlike the pure
+  ! `Agent.ask` tests, `runCode` actually compiles and runs a guest program, so
+  ! these drive `RunCodeTool` against an on-disk sandbox fixture
+  ! (`sandbox-fixtures/basic/`, kept outside the `tests/` source glob) and
+  ! assert a normalized outcome tag — covering the host wall-clock timeout, the
+  ! `sandbox/run.sh` seam, and provider-key env scrub end to end. They shell out
+  ! to `jo build` + `python3`, so they are slower than the unit tests.
+  !
+  ! The fixture ships an executable `sandbox/run.sh`, so every run here goes
+  ! through it. It is silent by default. With `HARPE_TEST_PROBE` set it echoes
+  ! whether `ANTHROPIC_API_KEY` leaked into the child (it must not).
+//]
+
+namespace harpe.test.integration.RunCodeTest
+import harpe.ffi.os
+import harpe.util.Process
+import harpe.ffi.threading
+import harpe.util.Capped
+import harpe.ffi.tempfile
+
+import harpe.*
+import harpe.tools.*
+import harpe.logging.Logging
+import harpe.logging.logger
+import harpe.Tool.*
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
+import harpe.test.framework.check
+import harpe.test.framework.checkEquals
+
+// Locate the sandbox fixture regardless of where `jo run test` is invoked from
+// (the repo root or a subdirectory).
+private def fixtureSandboxDir(): String =
+  var found = ""
+  for c in ["sandbox-fixtures/basic", "../sandbox-fixtures/basic"] do
+    if found == "" && os.path.isdir(c) then found = c
+
+  assert: found != "", "runCode tests: sandbox fixture not found under sandbox-fixtures/basic/"
+  os.path.abspath(found)
+
+// Map an outcome to a stable tag (raw summaries carry nondeterministic timings).
+private def tag(o: ToolOutcome): String =
+  if o.summary.contains("timed out") then "timeout"
+  else if o.summary.contains("did not compile") then "compile-error"
+  else if o.summary.contains("crashed") then "crash"
+  else if o.summary.contains("ran") then "ran"
+  else "other"
+
+// Self-provides a no-op logger, so it works on the spawned worker threads too
+// (context params don't cross threads). These tests assert on outcomes, not logs.
+private def execWith(
+    tool: RunCodeTool, code: String, guestEnv: Map[String, String], channel: Interact)
+: ToolOutcome =
+  with logger = Logging.discard in
+    tool.run(code, guestEnv, channel)
+
+private def exec(tool: RunCodeTool, code: String): ToolOutcome =
+  execWith(tool, code, Map.empty[String, String], Interact.unattended)
+
+private class ApprovalInteract(decision: Approvals.Decision)
+  view Interact
+
+  var seenTitle = ""
+  var seenDetail = ""
+  var approvalCount = 0
+  var sawMarkdown = false
+
+  def cancelled: Bool = false
+  def pause(seconds: Float): Bool = false
+  def emit(event: turns.TurnEvent): Unit = pass
+
+  def approve(request: Approvals.Request): Approvals.Decision =
+    seenTitle = request.title
+    seenDetail = request.detail
+    approvalCount = approvalCount + 1
+    if request.detail.contains("**quarterly-report.pdf**") then sawMarkdown = true
+    decision
+end
+
+private class StuckApprovalInteract
+  view Interact
+
+  def cancelled: Bool = false
+  def pause(seconds: Float): Bool = false
+  def emit(event: turns.TurnEvent): Unit = pass
+
+  def approve(request: Approvals.Request): Approvals.Decision =
+    py.module("time").sleep(py.dynamic(1.0))
+    Approvals.Approved
+end
+
+// Wrap a runTask body in a minimal guest program.
+private def guest(body: String): String =
+  "namespace sandbox.guest\nimport sandbox.api.*\n\ndef runTask(): Unit receives IO.stdout =\n" + body
+
+// A guest program that also receives the `fs` (FileSystem) capability.
+private def guestFs(body: String): String =
+  "namespace sandbox.guest\nimport sandbox.api.*\n\ndef runTask(): Unit receives IO.stdout, fs =\n" + body
+
+//[ The fixture sandbox, built once per process
+  !
+  ! The tool replays the invocation recorded by `jo build`, so the fixture must
+  ! be built before any test runs it. Every test needs it and an incremental
+  ! build still costs about a second, so the environment carries the memo — it
+  ! is the one store that outlives a call without a top-level value.
+//]
+private def sandbox(): String =
+  val dir = fixtureSandboxDir()
+  if os.getenv("HARPE_TEST_SANDBOX_BUILT", "") != dir then
+    val prep = Process.runCapped:
+      py.list("jo", "build", "--spec", os.path.join(dir, "jo.toml"), "guest")
+      180.0
+    assert: !prep.timedOut && prep.returnCode == 0,
+      "failed to pre-build the sandbox fixture:\n\{prep.err}"
+    os.environ.set("HARPE_TEST_SANDBOX_BUILT", dir)
+  dir
+
+private def fastTool(): RunCodeTool = RunCodeTool:
+  sandbox()
+  approvalDeadline = 5
+  buildTimeout = 120
+  runTimeout = 5
+
+// Fire `n` runCode calls in parallel, each printing a distinct number, and check
+// every call gets back its OWN output. If concurrent runs shared one guest source
+// or build dir, outputs would clobber and this would fail.
+private def runConcurrently(tool: RunCodeTool, n: Int): Bool =
+  val results = py.list()
+  var i = 0
+  while i < n do
+    results.append(py.dynamic(""))
+    i = i + 1
+
+  val threads = py.list()
+  var k = 0
+  while k < n do
+    val idx = k
+    val worker = () => results.set(idx, py.dynamic(exec(tool, guest("  println \{idx}\n")).result))
+    val t = Process.daemon(worker)
+    threads.append(t)
+    t.start()
+    k = k + 1
+
+  for t in threads do t.join()
+
+  // The fixture's run.sh prepends a marker line, so each result ends with — but
+  // is not exactly — its own number. Clobbering would leave the wrong number
+  // last.
+  var j = 0
+  var allOk = true
+  while j < n do
+    if !results.get(j).asString.endsWith("\n\{j}") then allOk = false
+    j = j + 1
+  allOk
+
+def runCodeSuite(): Unit receives testing = suite: "runCode tool", () =>
+  test: "reports an unbuilt sandbox instead of building or running anything", () =>
+    val unbuilt = tempfile.mkdtemp()
+    checkEquals:
+      "summary"
+      exec(RunCodeTool(unbuilt, approvalDeadline = 5), guest("  println 1\n")).summary
+      "sandbox not built"
+
+  suite: "running a program", () =>
+    test: "runs a well-formed one and produces its output", () =>
+      checkEquals("tag", tag(exec(fastTool(), guest("  println 42\n"))), "ran")
+
+    // The guest reads its own run dir — which holds the compiled out.py —
+    // through the granted `fs`.
+    test: "grants the FileSystem capability to the guest", () =>
+      val out = exec(fastTool(), guestFs("  println fs.exists(\"out.py\")\n")).result
+      check("guest read its run dir", out.contains("true"))
+
+    // 4 parallel programs, 2 building at a time, each getting back its own
+    // output — no shared Task.jo or .build clobbering.
+    test: "isolates concurrent runs from each other", () =>
+      val concurrent = RunCodeTool:
+        sandbox()
+        approvalDeadline = 5
+        buildTimeout = 120
+        runTimeout = 5
+        maxConcurrent = 2
+      check("no clobbering", runConcurrently(concurrent, 4))
+
+    // The guest runs with a minimal PATH-only environment, so a planted host
+    // secret comes back empty in the wrapper's marker line, and the program
+    // still runs through the wrapper.
+    test: "honours the run.sh seam and scrubs the child environment", () =>
+      os.environ.set("ANTHROPIC_API_KEY", "SECRET-should-not-leak")
+      val probed = exec(fastTool(), guest("  println 42\n")).result
+      check("host secret did not leak", probed.contains("harpe-run-sh key=[]"))
+      check("program output present", probed.contains("42"))
+
+  suite: "approval over the per-run broker", () =>
+    // A trusted sandbox capability can request approval. The request stays out
+    // of the transcript and the decision returns to the waiting process.
+    test: "returns the decision to the waiting sandbox", () =>
+      val channel = new ApprovalInteract(Approvals.Approved)
+      val out = execWith:
+        fastTool()
+        guest("  println 7\n")
+        Map("HARPE_TEST_APPROVAL" ~ "1")
+        channel
+      checkEquals("tag", tag(out), "ran")
+      check:
+        "both requests approved"
+        out.result.contains("approval=approved") && out.result.contains("approval2=approved")
+      checkEquals("one connection reused", "\{channel.approvalCount}", "2")
+
+    test: "carries the request title and its markdown", () =>
+      val channel = new ApprovalInteract(Approvals.Approved)
+      val _ = execWith:
+        fastTool()
+        guest("  println 7\n")
+        Map("HARPE_TEST_APPROVAL" ~ "1")
+        channel
+      checkEquals("title", channel.seenTitle, "Notify customer")
+      check("markdown", channel.sawMarkdown)
+
+    // An application-supplied deadline stops a run even if its trusted
+    // interaction handler never returns.
+    test: "stops a run whose handler never returns", () =>
+      val watchdog = RunCodeTool:
+        sandbox()
+        approvalDeadline = 1
+        buildTimeout = 120
+        runTimeout = 5
+      val stuck = execWith:
+        watchdog
+        guest("  println 7\n")
+        Map("HARPE_TEST_APPROVAL" ~ "1")
+        new StuckApprovalInteract
+      checkEquals("summary", stuck.summary.split(" · ").get(0), "approval timed out")
+
+  suite: "failing programs", () =>
+    test: "catches one that does not type-check, with the compiler diagnostic", () =>
+      val bad = exec(fastTool(), guest("  println undefinedThing\n"))
+      checkEquals("tag", tag(bad), "compile-error")
+      check("diagnostic", bad.result.contains("Undefined term name undefinedThing"))
+
+    test: "kills an infinite loop on the host wall-clock timeout", () =>
+      val quick = RunCodeTool:
+        sandbox()
+        approvalDeadline = 5
+        buildTimeout = 120
+        runTimeout = 2
+      checkEquals:
+        "tag"
+        tag(exec(quick, guest("  var i = 0\n  while i >= 0 do i = i + 1\n")))
+        "timeout"

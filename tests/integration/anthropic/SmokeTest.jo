@@ -1,0 +1,58 @@
+//[ SmokeTest.jo — Anthropic Messages text streaming. //]
+
+namespace harpe.test.integration.anthropic.SmokeTest
+
+import harpe.models.anthropic
+import harpe.models.Anthropic
+import harpe.logging.logger
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
+import harpe.test.integration.ProviderFixture
+import harpe.test.integration.TurnAssertions
+
+def smokeSuite(): Unit receives testing, logger = suite: "smoke", () =>
+  test: "streams a text reply", () =>
+    val response = """
+      event: message_start
+      data: {
+        "type": "message_start",
+        "message": {
+          "id": "msg_test", "type": "message", "role": "assistant", "model": "test-model",
+          "content": [], "stop_reason": null, "stop_sequence": null,
+          "usage": {
+            "input_tokens": 5, "output_tokens": 0,
+            "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0
+          }
+        }
+      }
+
+      event: content_block_start
+      data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"","citations":null}}
+
+      event: content_block_delta
+      data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hel"}}
+
+      event: content_block_delta
+      data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"lo"}}
+
+      event: content_block_stop
+      data: {"type":"content_block_stop","index":0}
+
+      event: message_delta
+      data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":2}}
+
+      event: message_stop
+      data: {"type":"message_stop"}
+      """
+
+    ProviderFixture.withSSE: response, server =>
+      val model = anthropic:
+        "test-key"
+        "test-model"
+        Anthropic.NoCache
+        timeoutSeconds = 2
+        baseUrl = server.origin
+      TurnAssertions.checkTextReply(model = model, expectedInput = 5, expectedOutput = 2)
+      TurnAssertions.check("path", server.path == "/v1/messages")
+      TurnAssertions.check("requests streaming", server.requestJson.get("stream").asBool)

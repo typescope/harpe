@@ -1,0 +1,68 @@
+//[ ResponsesSmokeTest.jo — OpenAI Responses text streaming. //]
+
+namespace harpe.test.integration.openai.ResponsesSmokeTest
+
+import harpe.models.openai
+import harpe.logging.logger
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
+import harpe.test.integration.ProviderFixture
+import harpe.test.integration.TurnAssertions
+
+def smokeSuite(): Unit receives testing, logger = suite: "smoke", () =>
+  test: "streams a text reply", () =>
+    val response = """
+      data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_test","output_index":0,"content_index":0,"delta":"hel","logprobs":[]}
+
+      data: {"type":"response.output_text.delta","sequence_number":2,"item_id":"msg_test","output_index":0,"content_index":0,"delta":"lo","logprobs":[]}
+
+      data: {
+        "type": "response.completed",
+        "sequence_number": 3,
+        "response": {
+          "id": "resp_test",
+          "object": "response",
+          "created_at": 0,
+          "status": "completed",
+          "error": null,
+          "incomplete_details": null,
+          "instructions": "You are concise.",
+          "max_output_tokens": 32,
+          "model": "test-model",
+          "output": [{
+            "id": "msg_test",
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": [{"type":"output_text","text":"hello","annotations":[],"logprobs":[]}]
+          }],
+          "parallel_tool_calls": true,
+          "previous_response_id": null,
+          "reasoning": {"effort":"medium","summary":null},
+          "store": true,
+          "temperature": 1.0,
+          "text": {"format":{"type":"text"}},
+          "tool_choice": "auto",
+          "tools": [],
+          "top_p": 1.0,
+          "truncation": "disabled",
+          "usage": {
+            "input_tokens": 3,
+            "input_tokens_details": {"cached_tokens":0},
+            "output_tokens": 2,
+            "output_tokens_details": {"reasoning_tokens":0},
+            "total_tokens": 5
+          },
+          "metadata": {}
+        }
+      }
+
+      data: [DONE]
+      """
+
+    ProviderFixture.withSSE: response, server =>
+      val model = openai("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
+      TurnAssertions.checkTextReply(model = model, expectedInput = 3, expectedOutput = 2)
+      TurnAssertions.check("path", server.path == "/v1/responses")
+      TurnAssertions.check("requests streaming", server.requestJson.get("stream").asBool)

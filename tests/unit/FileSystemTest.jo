@@ -1,0 +1,217 @@
+//[ FileSystemTest.jo
+  !
+  ! Unit test for `harpe.media.FileSystem`: a `FileSystemImpl` rooted at a temp dir —
+  ! `exists`/`isFile`/`stat`/`list`, one-shot reads and writes (`writeText`,
+  ! `createBinaryFile`), and open files: `TextFile` (whole, head/tail, lazy line reads)
+  ! and `BinaryFile` (as `Bytes`, including in-place write), all over relative paths.
+//]
+
+namespace harpe.test.unit.FileSystemTest
+
+import harpe.media.*
+import harpe.caps.*
+import harpe.ffi.tempfile
+import harpe.util.File
+import harpe.ffi.os
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
+import harpe.test.framework.check
+
+private def isOk[T, E](result: Result[T, E]): Bool =
+  match result
+  case Ok(_)  => true
+  case Err(_) => false
+
+private def errorOf[T](result: Result[T, String]): String =
+  match result
+  case Ok(_)      => ""
+  case Err(error) => error
+
+private def isErr(build: () => FileSystem): Bool =
+  match py.try(build())
+  case Ok(_)  => false
+  case Err(_) => true
+
+private def rejectsPath(fs: FileSystem, path: String): Bool =
+  !fs.exists(path)
+
+// Drain a file's lines into "a|b|c", closing it.
+private def joinLines(f: TextFile): String =
+  var s = ""
+  for line in f.lines do
+    s = if s == "" then line else s + "|" + line
+
+  f.close()
+  s
+
+//[ A filesystem rooted at a temp dir of its own
+  !
+  ! Every test gets a fresh tree — `notes.txt` of three lines, and `sub/a.txt`
+  ! holding "hi" — so a test that writes cannot change what another one reads.
+//]
+private def withFs(body: (FileSystem, String) => Unit): Unit =
+  val dir = tempfile.mkdtemp()
+  File.write(os.path.join(dir, "notes.txt"), "line1\nline2\nline3\n")
+  File.ensureDir(os.path.join(dir, "sub"))
+  File.write(os.path.join(dir, "sub", "a.txt"), "hi")
+  body(FileSystemImpl.local(dir), dir)
+
+def fileSystemSuite(): Unit receives testing = suite: "media filesystem", () =>
+  suite: "paths", () =>
+    test: "rejects paths that leave the root", () =>
+      withFs: (fs, dir) =>
+        check("parent traversal", rejectsPath(fs, "../notes.txt"))
+        check("absolute", rejectsPath(fs, "/notes.txt"))
+
+    test: "reports a rejected write as a path error", () =>
+      withFs: (fs, dir) =>
+        check:
+          "message names the rule"
+          errorOf(fs.writeText("../notes.txt", "no")) ==
+            "invalid path '../notes.txt': path must not contain '..' segments"
+
+    test: "rejects a nonexistent root", () =>
+      withFs: (fs, dir) =>
+        check("no such dir", isErr(() => FileSystemImpl.local(os.path.join(dir, "no-such-subdir"))))
+
+  suite: "reading text", () =>
+    test: "reports what exists", () =>
+      withFs: (fs, dir) =>
+        check("present", fs.exists("notes.txt"))
+        check("missing", !fs.exists("nope.txt"))
+
+    test: "streams lines lazily", () =>
+      withFs: (fs, dir) =>
+        check("lines", joinLines(fs.openTextFile("notes.txt").success) == "line1|line2|line3")
+
+    test: "reads the whole file, and its size, from a handle", () =>
+      withFs: (fs, dir) =>
+        val notes = fs.openTextFile("notes.txt").success
+        check("text", notes.text == "line1\nline2\nline3\n")
+        check("size", notes.size == 18)
+        notes.close()
+
+    test: "reads head and tail, clamping past the ends", () =>
+      withFs: (fs, dir) =>
+        val notes = fs.openTextFile("notes.txt").success
+        val h = notes.head(2)
+        check("head", h.size == 2 && h.get(0) == "line1" && h.get(1) == "line2")
+        check("head past end", notes.head(10).size == 3)
+        val t = notes.tail(2)
+        check("tail", t.size == 2 && t.get(0) == "line2" && t.get(1) == "line3")
+        check("tail past size", notes.tail(10).size == 3)
+        notes.close()
+
+    // ~100 KB read backward in 64 KB blocks, with a final line carrying no
+    // trailing newline.
+    test: "tails across block boundaries", () =>
+      withFs: (fs, dir) =>
+        val filler = py.dynamic("line\n").callDynamic("__mul__", 20000).asString
+        File.write(os.path.join(dir, "big.txt"), filler + "last")
+        val big = fs.openTextFile("big.txt").success
+        val bt = big.tail(2)
+        check("tail", bt.size == 2 && bt.get(0) == "line" && bt.get(1) == "last")
+        big.close()
+
+    test: "closing twice is safe", () =>
+      withFs: (fs, dir) =>
+        val notes = fs.openTextFile("notes.txt").success
+        notes.close()
+        notes.close()
+        check("idempotent", true)
+
+    test: "reads small files in one shot", () =>
+      withFs: (fs, dir) =>
+        check("readText", fs.readText("notes.txt").success == "line1\nline2\nline3\n")
+        check("readBytes", fs.readBytes("sub/a.txt").success.toBase64 == "aGk=")
+
+    // UTF-8 by default with replacement, Windows-1252 by name, anything else Err.
+    test: "decodes with the requested encoding", () =>
+      withFs: (fs, dir) =>
+        File.writeBytes:
+          os.path.join(dir, "legacy.txt")
+          py.dynamic("caf\u{E9}").callDynamic("encode", "windows-1252")
+        check("utf-8 default replaces", fs.readText("legacy.txt").success == "caf\u{FFFD}")
+        check("named encoding", fs.readText("legacy.txt", "windows-1252").success == "caf\u{E9}")
+        check("outside the set is Err", fs.openTextFile("legacy.txt", "utf-16").isErr)
+
+  suite: "environment errors come back typed", () =>
+    test: "never crash on a missing or wrong-kind path", () =>
+      withFs: (fs, dir) =>
+        check("open missing", fs.openTextFile("nope.txt").isErr)
+        check("open a directory", fs.openBinaryFile("sub").isErr)
+        check("list a file", fs.list("notes.txt").isErr)
+        check("readText missing", fs.readText("nope.txt").isErr)
+
+  suite: "metadata", () =>
+    test: "stats a file", () =>
+      withFs: (fs, dir) =>
+        val info = fs.stat("notes.txt").success.getOrElse(new FileSystem.Info(false, 0, 0))
+        check("is a file", info.isFile)
+        check("size", info.sizeBytes == 18)
+        check("mtime", info.modifiedAt > 0)
+
+    test: "stats a directory, and reports a missing path as None", () =>
+      withFs: (fs, dir) =>
+        check("dir", !fs.stat("sub").success.getOrElse(new FileSystem.Info(true, 0, 0)).isFile)
+        check("missing", fs.stat("nope.txt").success is None)
+
+    test: "distinguishes files from directories", () =>
+      withFs: (fs, dir) =>
+        check("file", fs.isFile("notes.txt"))
+        check("dir", !fs.isFile("sub"))
+
+    test: "lists typed entries sorted by name", () =>
+      withFs: (fs, dir) =>
+        val entries = fs.list("").success
+        check("empty path names the root", entries.size == 2)
+        check("sorted", entries.get(0).path == "notes.txt" && entries.get(1).path == "sub")
+        check("kinds", !entries.get(0).isDirectory && entries.get(1).isDirectory)
+
+  suite: "binary files", () =>
+    test: "reads whole and by window", () =>
+      withFs: (fs, dir) =>
+        val bin = fs.openBinaryFile("sub/a.txt").success
+        val bytes = bin.bytes
+        check("whole size", bytes.size == 2)
+        check("whole base64", bytes.toBase64 == "aGk=")
+        check("window", bin.read(1, 1).toBase64 == "aQ==")
+        check("size on handle", bin.size == 2)
+        bin.close()
+
+    test: "patches a byte in place without truncating", () =>
+      withFs: (fs, dir) =>
+        val binEdit = fs.openBinaryFile("sub/a.txt").success
+        val firstByte = binEdit.read(0, 1)        // "h"
+        binEdit.write(1, firstByte)               // "hi" → "hh"
+        check("patched", binEdit.bytes.toBase64 == "aGg=")
+        check("size unchanged", binEdit.size == 2)
+        binEdit.close()
+
+  suite: "writing", () =>
+    test: "overwrites an existing file", () =>
+      withFs: (fs, dir) =>
+        check("succeeds", isOk(fs.writeText("notes.txt", "updated\n")))
+        check("overwrote", fs.readText("notes.txt").success == "updated\n")
+        check("reports errors", !isOk(fs.writeText("", "not a directory")))
+
+    test: "creates a new file and its missing parent", () =>
+      withFs: (fs, dir) =>
+        check:
+          "writeText"
+          isOk(fs.writeText("gen/note.txt", "hello")) &&
+            fs.readText("gen/note.txt").success == "hello"
+
+    test: "createBinaryFile round-trips bytes, and reports a path error", () =>
+      withFs: (fs, dir) =>
+        val blob = fs.createBinaryFile("gen/out.bin").success
+        blob.write(0, fs.readBytes("sub/a.txt").success)
+        blob.close()
+        check("round-trip", fs.readBytes("gen/out.bin").success.toBase64 == "aGk=")
+        check("path error", fs.createBinaryFile("../out.bin") is Err(_))
+
+    test: "round-trips non-ASCII text", () =>
+      withFs: (fs, dir) =>
+        check("succeeds", isOk(fs.writeText("unicode.txt", "caf\u{E9}\n")))
+        check("round-trip", fs.readText("unicode.txt").success == "caf\u{E9}\n")

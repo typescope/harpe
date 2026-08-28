@@ -1,0 +1,29 @@
+//[ Tests.jo
+  !
+  ! OpenAI provider scenarios. The two wire protocols get a suite each, so
+  ! `jo run test -- providers/openai/chat` selects one of them. `FailureTest`
+  ! classifies the same HTTP failures on both paths, which is why it contributes
+  ! a half to each.
+//]
+
+namespace harpe.test.integration.openai.Tests
+
+import harpe.logging.logger
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.integration.openai.ResponsesSmokeTest
+import harpe.test.integration.openai.ResponsesContractTest
+import harpe.test.integration.openai.ChatSmokeTest
+import harpe.test.integration.openai.ChatContractTest
+import harpe.test.integration.openai.FailureTest
+
+def openaiSuite(): Unit receives testing, logger = suite: "openai", () =>
+  suite: "responses", () =>
+    ResponsesSmokeTest.smokeSuite()
+    ResponsesContractTest.contractSuite()
+    FailureTest.responsesFailureSuite()
+
+  suite: "chat", () =>
+    ChatSmokeTest.smokeSuite()
+    ChatContractTest.contractSuite()
+    FailureTest.chatFailureSuite()

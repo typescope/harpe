@@ -1,0 +1,272 @@
+//[ TranscriptTest.jo
+  !
+  ! Tests for the per-session structured logger and its transcript projection.
+//]
+
+namespace harpe.test.unit.TranscriptTest
+import harpe.ffi.os
+import harpe.ffi.time
+import harpe.ffi.json
+import harpe.util.File
+
+import harpe.*
+import harpe.Model.*
+import harpe.Tool.*
+import harpe.turns.TurnResult
+import harpe.logging.logger
+import harpe.logging.JsonlLogger
+import harpe.transcript.Journal
+import harpe.logging.Entry
+import harpe.logging.Value
+import harpe.ffi.tempfile
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
+import harpe.test.framework.check
+
+// Read a session file back as one parsed dict per non-empty line.
+private def readRecords(path: String): List[py.Dict] =
+  var records: List[py.Dict] = []
+  for line in File.read(path).lines do
+    if line.trim != "" then records = records + json.loads(line).cast[py.Dict]
+
+  records
+
+// A string out of an opaque bracket payload.
+// Does any tool result in this turn report a refusal?
+private def turnRefused(d: TurnData): Bool =
+  var refused = false
+  for m in d.messages do
+    if m is ToolResults(results) then
+      for r in results if !r.success do refused = true
+  refused
+
+private def payloadField(v: Value, key: String): String =
+  match v
+  case m: Map[String, Value] =>
+    match m.getOrElse(key, "")
+    case s: String => s
+    case _         => "(not a string)"
+  case _ => "(no payload)"
+
+private def turnSize(d: TurnData): Int =
+  d.messages.size
+
+private def turnText(d: TurnData): String =
+  d.text
+
+private def turnResult(d: TurnData): String =
+  match d.result
+  case TurnResult.Success        => "Success"
+  case TurnResult.Failed(detail) => "Failed(\{detail})"
+  case TurnResult.Interrupted    => "Interrupted"
+
+// Does any record carry `key` with this value?
+private def records(all: List[py.Dict], key: String, value: String): Bool =
+  var found = false
+  for record in all do
+    if record.get(key, "").asString == value then found = true
+  found
+
+private def entriesOf(path: String): List[Entry] =
+  var entries: List[Entry] = []
+  for record in readRecords(path) do entries = entries + Entry.fromDict(record)
+  entries
+
+private def call(): ToolCall = ToolCall("c1", "runCode", ToolInput(py.dict("code" ~ "println 1")))
+
+//[ A journal of its own, writing into a fresh nested path
+  !
+  ! The nested path also exercises on-demand directory creation.
+//]
+private def withJournal(body: (Journal, String) => Unit receives logger): Unit =
+  val path = os.path.join(tempfile.mkdtemp(), "sub", "session.jsonl")
+  val sessionLog = new JsonlLogger(path)
+  val journal = new Journal(sessionLog)
+  with logger = sessionLog in body(journal, path)
+  sessionLog.close()
+
+// One answered turn, including an unrelated diagnostic entry between messages.
+private def answeredTurn(journal: Journal): Unit receives logger =
+  journal.start(UserInput("hi", []))
+  journal.append(Assistant("on it", [call()]))
+  logger.log("myagent.debug", "note" ~ "between messages")
+  journal.append(ToolResults([ToolResult("c1", "42", [], success = false)]))
+  journal.commit()
+
+//[ A failed turn, an answered one, and one whose process died mid-turn
+  !
+  ! A user message is durable even when its turn fails, because a driver closes
+  ! the bracket on every outcome. Assistant messages stay provisional. A turn
+  ! whose bracket never closed is a fragment, and falls out of the model's
+  ! context exactly as it falls out of the transcript.
+//]
+private def bracketedTurns(journal: Journal): Unit receives logger =
+  journal.request(Journal.payload("text" ~ "will fail"))
+  journal.start(UserInput("will fail", []))
+  journal.append(Assistant("partial", []))
+  journal.failed("bad model")
+  journal.response("turnEnd")
+
+  journal.request(Journal.payload("text" ~ "again"))
+  journal.start(UserInput("again", []))
+  journal.append(Assistant("done", [call()]))
+  journal.append(ToolResults([ToolResult("c1", "no such file", [], success = false)]))
+  journal.commit()
+  journal.response("turnEnd")
+
+  journal.request(Journal.payload("text" ~ "crashed"))
+  journal.start(UserInput("crashed", []))
+
+// A delegating turn, an externally interrupted one, unbracketed machinery, and a
+// bracket the process died inside.
+private def projectableTurns(journal: Journal): Unit receives logger =
+  journal.request(Journal.payload("kind" ~ "upload", "file" ~ "a.png"))
+  journal.start(UserInput("look", []))
+  journal.append(Assistant("delegating", [call()]))
+  journal.start(UserInput("subagent work", []))
+  journal.append(Assistant("sub answer", []))
+  journal.commit()
+  journal.append(ToolResults([ToolResult("c1", "42", [])]))
+  journal.append(Assistant("done", []))
+  journal.commit()
+  journal.response(Journal.payload("text" ~ "done"))
+
+  // A response can survive even when the engine's terminator does not. Treat
+  // that externally interrupted turn as interrupted rather than nullable.
+  journal.request(Journal.payload("kind" ~ "chat"))
+  journal.start(UserInput("partial", []))
+  journal.append(Assistant("working", []))
+  journal.response(Journal.payload("text" ~ ""))
+
+  // Machinery: a turn nobody bracketed.
+  journal.start(UserInput("cron job", []))
+  journal.append(Assistant("tick", []))
+  journal.commit()
+
+  // Bracketed, but the process died mid-turn.
+  journal.request(Journal.payload("kind" ~ "chat"))
+  journal.start(UserInput("and this?", []))
+
+def transcriptSuite(): Unit receives testing = suite: "session log", () =>
+  suite: "what the journal writes", () =>
+    test: "turn and diagnostic records share one log", () =>
+      withJournal: (journal, path) =>
+        answeredTurn(journal)
+        val all = readRecords(path)
+        check("five records", all.size == 5)
+        check("diagnostic category retained", all.get(2).get("category", "").asString == "myagent.debug")
+
+    test: "records the user message", () =>
+      withJournal: (journal, path) =>
+        answeredTurn(journal)
+        val user = readRecords(path).get(0)
+        check("category", user.get("category", "").asString == "harpe.turn.started")
+        check("role", user.get("role", "").asString == "user")
+        check("text", user.get("text", "").asString == "hi")
+        val timestamp = user.get("time", "").asString
+        check("RFC 3339 timestamp", timestamp.contains("T") && timestamp.endsWith("Z"))
+
+    test: "records the assistant message and its tool calls", () =>
+      withJournal: (journal, path) =>
+        answeredTurn(journal)
+        val asst = readRecords(path).get(1)
+        check("role", asst.get("role", "").asString == "assistant")
+        check("text", asst.get("text", "").asString == "on it")
+        val calls = asst.get("calls", py.list()).cast[py.List]
+        check("one call", calls.size == 1)
+        val c0 = calls.get(0).cast[py.Dict]
+        check("name", c0.get("name", "").asString == "runCode")
+        check("id", c0.get("id", "").asString == "c1")
+        check("input", c0.get("input").cast[py.Dict].get("code", "").asString == "println 1")
+
+    // A refused call says so in the journal, so a driver reading its own output
+    // back off a turn cannot mistake a refusal for work done.
+    test: "records tool results, including a refusal", () =>
+      withJournal: (journal, path) =>
+        answeredTurn(journal)
+        val tr = readRecords(path).get(3)
+        check("role", tr.get("role", "").asString == "tool_results")
+        val results = tr.get("results", py.list()).cast[py.List]
+        check("one result", results.size == 1)
+        val r0 = results.get(0).cast[py.Dict]
+        check("id", r0.get("id", "").asString == "c1")
+        check("content", r0.get("content", "").asString == "42")
+        check("refusal", !r0.get("success", default = true).asBool)
+
+    test: "records a failed turn's diagnostic", () =>
+      withJournal: (journal, path) =>
+        bracketedTurns(journal)
+        check("error field", records(readRecords(path), "error", "bad model"))
+
+  suite: "the transcript projection", () =>
+    // A turn written WITHOUT a bracket is machinery: in the log, in neither the
+    // transcript nor the context.
+    test: "leaves an unbracketed turn out", () =>
+      withJournal: (journal, path) =>
+        answeredTurn(journal)
+        bracketedTurns(journal)
+        check("two records", Journal.records(entriesOf(path)).size == 2)
+
+    test: "keeps a failed turn, dropping its provisional messages", () =>
+      withJournal: (journal, path) =>
+        bracketedTurns(journal)
+        val projected = Journal.records(entriesOf(path))
+        check("still a record", turnResult(projected.get(0).data) == "Failed(bad model)")
+        check("provisional messages dropped", turnSize(projected.get(0).data) == 0)
+
+    test: "keeps an answered turn's messages and refusals", () =>
+      withJournal: (journal, path) =>
+        bracketedTurns(journal)
+        val projected = Journal.records(entriesOf(path))
+        check("answered", turnResult(projected.get(1).data) == "Success")
+        check("refusal survives reload", turnRefused(projected.get(1).data))
+
+    test: "only bracketed turns become records", () =>
+      withJournal: (journal, path) =>
+        projectableTurns(journal)
+        // An unclosed bracket is a fragment, not a turn the user had. It stays
+        // in the journal and out of the transcript.
+        check("two records", Journal.records(entriesOf(path)).size == 2)
+
+    test: "round-trips the request and response payloads", () =>
+      withJournal: (journal, path) =>
+        projectableTurns(journal)
+        val r1 = Journal.records(entriesOf(path)).get(0)
+        check("every request field", payloadField(r1.request, "file") == "a.png")
+        check("request kind", payloadField(r1.request, "kind") == "upload")
+        check("response", payloadField(r1.response, "text") == "done")
+
+    test: "does not let a nested turn leak into the outer one", () =>
+      withJournal: (journal, path) =>
+        projectableTurns(journal)
+        val r1 = Journal.records(entriesOf(path)).get(0)
+        check("own messages", turnSize(r1.data) == 3)
+        check("own text", turnText(r1.data) == "delegating\n\ndone")
+        check("answered", turnResult(r1.data) == "Success")
+
+    test: "treats an externally terminated turn as interrupted", () =>
+      withJournal: (journal, path) =>
+        projectableTurns(journal)
+        val r2 = Journal.records(entriesOf(path)).get(1)
+        check("interrupted", turnResult(r2.data) == "Interrupted")
+        check("keeps messages", turnText(r2.data) == "working")
+
+  suite: "the model context", () =>
+    test: "comes from the transcript alone", () =>
+      withJournal: (journal, path) =>
+        answeredTurn(journal)
+        bracketedTurns(journal)
+        val loaded = Journal.fromEntries(entriesOf(path))
+        check("four messages", loaded.size == 4)
+        check("failed turn's user message", loaded.get(0) is UserInput("will fail", _))
+        check("its provisional reply dropped", loaded.get(1) is UserInput("again", _))
+        check("answered turn's reply", loaded.get(2) is Assistant("done", _))
+        check("its tool results", loaded.get(3) is ToolResults(_))
+
+    test: "loads the same from a journal on disk", () =>
+      withJournal: (journal, path) =>
+        answeredTurn(journal)
+        bracketedTurns(journal)
+        val loaded = Journal.fromEntries(entriesOf(path))
+        check("same size", Journal.load(path).size == loaded.size)

@@ -1,0 +1,164 @@
+//[ LoggingTest.jo
+  !
+  ! Tests for the logging layer (`harpe.logging`): that `Logger.log` accepts bare
+  ! typed pairs and assembles an `Entry` (via the `Value` adapters), that
+  ! `JsonlLogger` appends every category to one file as well-formed JSON — with
+  ! `category` a field and values kept typed — and that `Logging.withLogger`
+  ! installs a `logger` that reaches producers.
+//]
+
+namespace harpe.test.unit.LoggingTest
+
+import harpe.ffi.os
+import harpe.ffi.json
+import harpe.ffi.tempfile
+import harpe.util.File
+import harpe.*
+import harpe.logging.*
+import harpe.models.logUsage
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
+import harpe.test.framework.check
+
+// Read a JSONL file back as one parsed dict per non-empty line.
+private def readRecords(path: String): List[py.Dict] =
+  var records: List[py.Dict] = []
+  for line in File.read(path).lines do
+    if line.trim != "" then records = records + json.loads(line).cast[py.Dict]
+
+  records
+
+// An in-memory Logger that keeps the entries it is handed.
+private class Capture
+  view Logger
+
+  var entries: List[Entry] = []
+
+  def logEntry(entry: Entry): Unit = entries = entries + entry
+
+  def close(): Unit = pass
+end
+
+// A producer: emits through the ambient `logger` channel.
+private def emitOne(): Unit receives logger =
+  logger.log("runs", "code" ~ "hello")
+
+//[ Write one record of every shape this suite asserts on, and read them back
+  !
+  ! One file for all five, because that a single JSONL file carries every
+  ! category is itself part of the contract.
+//]
+private def withRecords(body: List[py.Dict] => Unit): Unit =
+  val path = os.path.join(tempfile.mkdtemp(), "log.jsonl")
+  val jsonl = new JsonlLogger(path)
+  jsonl.log("runs", "code" ~ "x", "exitCode" ~ 0, "ok" ~ true, "secs" ~ 1.5)
+  jsonl.log("runs", "code" ~ "y", "exitCode" ~ 1)
+  jsonl.log("tools", "name" ~ "read")
+  jsonl.warn("harpe.test", "rate limited", "attempt" ~ 3)
+  with logger = jsonl in logUsage("anthropic", "claude-x", 100, 20)
+  jsonl.close()
+  body(readRecords(path))
+
+// A record written by a `JsonlLogger` in the sandbox, read as a dict and rebuilt
+// into an `Entry` by `runCode` on the host.
+private def withAuditEntry(body: Entry => Unit): Unit =
+  val path = os.path.join(tempfile.mkdtemp(), "audit.jsonl")
+  val alog = new JsonlLogger(path)
+  var items: List[Value] = []
+  items = items + "a"
+  items = items + Value.IntVal(1)
+  alog.log("harpe.sandbox.runtime", "info" ~ "ready", "count" ~ 3, "secs" ~ 1.5,
+           "ok" ~ true, "items" ~ items)
+  alog.close()
+  body(Entry.fromDict(readRecords(path).get(0)))
+
+def loggingSuite(): Unit receives testing = suite: "logging", () =>
+  test: "log builds one entry from bare typed pairs", () =>
+    val cap = new Capture
+    cap.log("runs", "code" ~ "x", "exitCode" ~ 0, "ok" ~ true, "secs" ~ 1.5)
+    check("one entry", cap.entries.size == 1)
+    val rec = cap.entries.get(0)
+    check("category", rec.category == "runs")
+    check("field count", rec.fields.size == 4)
+    check("time stamped", rec.time > 0.0)
+
+  suite: "JsonlLogger", () =>
+    test: "writes every category to one file", () =>
+      withRecords: all =>
+        check("all five", all.size == 5)
+        check("category is a field", all.get(0).get("category", "").asString == "runs")
+        // Categories coexist, distinguished by the field (jq's job downstream).
+        check("another category", all.get(2).get("category", "").asString == "tools")
+        check("its fields", all.get(2).get("name", "").asString == "read")
+
+    test: "keeps each field at its own type", () =>
+      withRecords: all =>
+        val first = all.get(0)
+        check("string", first.get("code", "").asString == "x")
+        check("int", first.get("exitCode", -1).asInt == 0)
+        check("bool", first.get("ok", false).asBool)
+        check("float", first.get("secs", 0.0).asFloat == 1.5)
+
+    test: "serializes the entry time as RFC 3339", () =>
+      withRecords: all =>
+        val timestamp = all.get(0).get("time", "").asString
+        check("shape", timestamp.contains("T") && timestamp.endsWith("Z"))
+
+    test: "writes a severity message under its reserved key", () =>
+      withRecords: all =>
+        val warnRec = all.get(3)
+        check("category", warnRec.get("category", "").asString == "harpe.test")
+        check("message", warnRec.get("warning", "").asString == "rate limited")
+        check("extras kept", warnRec.get("attempt", -1).asInt == 3)
+
+    test: "records model usage with its billing fields", () =>
+      withRecords: all =>
+        val usageRec = all.get(4)
+        check("category", usageRec.get("category", "").asString == "harpe.model")
+        check("provider", usageRec.get("provider", "").asString == "anthropic")
+        check("input tokens", usageRec.get("inputTokens", -1).asInt == 100)
+        check("output tokens", usageRec.get("outputTokens", -1).asInt == 20)
+
+  suite: "the logger channel", () =>
+    test: "withLogger installs it for the wrapped work", () =>
+      val cap = new Capture
+      Logging.withLogger(cap, () => emitOne())
+      check("producer reached it", cap.entries.size == 1)
+
+    test: "discard is a no-op that never throws", () =>
+      Logging.discard.log("runs", "code" ~ "z")
+      check("silent", true)
+
+    test: "withContext nests context under its key, never flattening it", () =>
+      val path = os.path.join(tempfile.mkdtemp(), "ctx.jsonl")
+      val emit: () => Unit receives logger = () => logger.log("harpe.web", "note" ~ "hi")
+      val tagged: () => Unit receives logger =
+        () => Logging.withContext("context", Map("session" ~ "s1"), emit)
+      Logging.withLogger(new JsonlLogger(path), tagged)
+
+      val ctxRec = readRecords(path).get(0)
+      check("nested", ctxRec.get("context").cast[py.Dict].get("session", "").asString == "s1")
+      check("producer field untouched", ctxRec.get("note", "").asString == "hi")
+      check("not flattened", !ctxRec.contains("session"))
+
+  suite: "audit codec", () =>
+    test: "preserves the category, time, and field count", () =>
+      withAuditEntry: back =>
+        check("category", back.category == "harpe.sandbox.runtime")
+        check("parses RFC 3339 time", back.time > 0.0)
+        check("field count", back.fields.size == 5)
+
+    test: "keeps each field typed on the way back", () =>
+      withAuditEntry: back =>
+        match back.fields.getOpt("count")
+        case Some(Value.IntVal(n)) => check("int", n == 3)
+        case _ => check("int present", false)
+
+        match back.fields.getOpt("ok")
+        case Some(Value.BoolVal(b)) => check("bool", b)
+        case _ => check("bool present", false)
+
+        match back.fields.getOpt("items")
+        case Some(xs: List[Value]) => check("array", xs.size == 2)
+        case _ => check("array present", false)

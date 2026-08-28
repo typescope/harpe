@@ -1,14 +1,19 @@
 //[ Tests.jo
   !
   ! The `jo test` entry point for the `harpe` package. The [test] module is a
-  ! single app, so all suites are aggregated here: fast unit tests first
-  ! (`TurnTest`), then the slower integration tests that shell out
-  ! (`RunCodeTest`).
+  ! single app, so every suite is declared into one tree here and walked by
+  ! `Runner`, which reports each test and keeps going when one fails.
   !
-  ! The provider suites have moved to the declared tree in `harpe.test.framework`
-  ! — they are collected first and then walked by `Runner`, which reports each
-  ! test rather than aborting the process on the first failure. The remaining
-  ! suites still follow the older `run()` convention.
+  ! `unit` holds the tests of components this project owns. `integration` holds
+  ! the ones that cross an ownership boundary: the provider suites encode a
+  ! contract with a third party whose wire format can change without a line here
+  ! changing, and `runCode` drives the real Jo toolchain and a real sandbox.
+  !
+  ! Order still matters — the fast unit suites first, then the slower boundary
+  ! ones, with `runCode` last because it shells out to a sandbox build.
+  !
+  ! A path filter selects a subtree — `jo run test -- unit/context`, or
+  ! `jo run test -- integration/openai/chat`.
 //]
 
 namespace harpe.test
@@ -19,72 +24,61 @@ import harpe.logging.logger
 import harpe.Interact
 import harpe.test.framework.Testing
 import harpe.test.framework.Runner
+import harpe.test.framework.suite
+import harpe.test.unit.SocketTest
+import harpe.test.unit.BrokerTest
+import harpe.test.unit.FileSystemValidationTest
+import harpe.test.unit.FileSystemTest
+import harpe.test.unit.InlineMediaTest
+import harpe.test.unit.ProcessorTest
+import harpe.test.unit.TurnTest
+import harpe.test.unit.ToolTest
+import harpe.test.unit.ContextTest
+import harpe.test.unit.SkillsTest
+import harpe.test.unit.TranscriptTest
+import harpe.test.unit.LoggingTest
+import harpe.test.integration.ProviderFixtureTest
+import harpe.test.integration.anthropic
+import harpe.test.integration.openai
+import harpe.test.integration.openrouter
+import harpe.test.integration.RunCodeTest
 
 // Suites that drive tools/turns need `logger` in scope. Install a no-op one for
 // the whole harness (RunCodeTest self-provides on its worker threads, since
 // context params do not cross thread boundaries).
 def main(): Unit receives stdout =
-  with logger = Logging.discard in suites()
+  with logger = Logging.discard in run()
 
-private def suites(): Unit receives stdout, logger =
-  val filter = Runner.filterFromArgs()
-
-  // A filter names a path inside the declared tree, so it selects nothing among
-  // the suites below. Passing one skips them rather than running every last one.
-  if filter == "" then unitSuites()
-
+private def run(): Unit receives stdout, logger =
   // `define` runs the declaration bodies, and each test body captures the scope
   // it is declared in — so this call has to sit inside `with logger`, not around
   // the `Runner.run` below it.
-  val declared = Testing.define: "harpe", () =>
-    providers.ProviderTests.providerSuite()
-  val passed = Runner.run(declared, filter)
-
-  if filter == "" then
-    println ""
-    println "runCode tool (integration):"
-    RunCodeTest.run()
+  val declared = Testing.define: "harpe", () => suites()
 
   // The runner has already printed what failed and where, so exit on that rather
   // than aborting and burying the report under a host traceback.
-  if !passed then py.module("sys").exit(1)
+  if !Runner.run(declared, Runner.filterFromArgs()) then py.module("sys").exit(1)
   println ""
   println "all harpe tests passed"
 
-private def unitSuites(): Unit receives stdout, logger =
-  println "unix socket (unit):"
-  SocketTest.run()
+private def suites(): Unit receives framework.testing, logger =
+  suite: "unit", () =>
+    SocketTest.socketSuite()
+    BrokerTest.brokerSuite()
+    FileSystemValidationTest.validationSuite()
+    FileSystemTest.fileSystemSuite()
+    InlineMediaTest.inlineMediaSuite()
+    ProcessorTest.processorSuite()
+    TurnTest.turnSuite()
+    ToolTest.toolSuite()
+    ContextTest.contextSuite()
+    SkillsTest.skillsSuite()
+    TranscriptTest.transcriptSuite()
+    LoggingTest.loggingSuite()
 
-  println "broker (unit):"
-  BrokerTest.run()
-
-  println "filesystem path validation (unit):"
-  FileSystemValidationTest.run()
-
-  println "media filesystem (unit):"
-  FileSystemTest.run()
-
-  println "media processors (unit):"
-  ProcessorTest.run()
-
-  println "turn engine (unit):"
-  TurnTest.run()
-
-  println "tool layer (unit):"
-  ToolTest.run()
-
-  println "context / truncate (unit):"
-  ContextTest.run()
-
-  println "skill tools (unit, security):"
-  SkillsTest.run()
-
-  println "session log (unit):"
-  TranscriptTest.run()
-
-  println "inline media (unit):"
-  InlineMediaTest.run()
-
-  println "logging (unit):"
-  LoggingTest.run()
-  println ""
+  suite: "integration", () =>
+    ProviderFixtureTest.fixtureSuite()
+    anthropic.Tests.anthropicSuite()
+    openai.Tests.openaiSuite()
+    openrouter.Tests.openrouterSuite()
+    RunCodeTest.runCodeSuite()
