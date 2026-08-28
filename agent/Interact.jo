@@ -7,10 +7,6 @@
 namespace harpe
 
 import harpe.turns.TurnEvent
-import harpe.Model
-import harpe.Model.Rendered
-import harpe.Model.ReplyResult
-import harpe.Tool
 
 //[ UI interaction during a turn
   !
@@ -33,10 +29,10 @@ interface Interact
   //[ Ask the current session user to approve an action.
     !
     ! This is an out-of-band runtime interaction. It is not a turn event and does
-    ! not enter the model transcript. `id` identifies this request within the
-    ! active run so a stale response cannot approve a later action.
+    ! not enter the model transcript. The interaction implementation owns any
+    ! correlation ID required by its user interface.
   //]
-  def approve(id: String, request: Approvals.Request): Approvals.Decision
+  def approve(request: Approvals.Request): Approvals.Decision
 end
 
 section Interact
@@ -45,13 +41,13 @@ section Interact
     ! Approval is unavailable and therefore cancelled.
   //]
   def unattended: Interact = new UnattendedInteract
-end
 
-private class UnattendedInteract
-  view Interact
+  private class UnattendedInteract
+    view Interact
 
-  def cancelled: Bool = false
-  def pause(seconds: Float): Bool = false
-  def emit(event: TurnEvent): Unit = pass
-  def approve(id: String, request: Approvals.Request): Approvals.Decision = Approvals.Cancelled
+    def cancelled: Bool = false
+    def pause(seconds: Float): Bool = false
+    def emit(event: TurnEvent): Unit = pass
+    def approve(request: Approvals.Request): Approvals.Decision = Approvals.Cancelled
+  end
 end

@@ -6,52 +6,39 @@
     <marker id="arr-b" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
       <path d="M0,0 L8,3 L0,6 Z" fill="#8ec5ff"/>
     </marker>
-    <marker id="arr-r" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-      <path d="M0,0 L8,3 L0,6 Z" fill="#ff736b"/>
-    </marker>
   </defs>
 
   <rect width="680" height="300" fill="#0b0f10"/>
 
-  <!-- ===== entry: trigger + gather context, merged ===== -->
-  <rect x="190" y="24" width="170" height="54" rx="8" fill="#101512" stroke="#293236" stroke-width="1.5"/>
-  <text x="275" y="48" text-anchor="middle" font-size="13" font-weight="600" fill="#edf3ef">Prepare LLM task</text>
-  <text x="275" y="64" text-anchor="middle" font-size="10" fill="#77837e">on a message · request · tick</text>
+  <!-- ===== entry ===== -->
+  <rect x="255" y="24" width="170" height="54" rx="8" fill="#101512" stroke="#293236" stroke-width="1.5"/>
+  <text x="340" y="48" text-anchor="middle" font-size="13" font-weight="600" fill="#edf3ef">User message</text>
+  <text x="340" y="64" text-anchor="middle" font-size="10" fill="#77837e">Agent.ask(...)</text>
 
-  <!-- ===== terminal: reply (a process), emitted by the model ===== -->
-  <rect x="18" y="150" width="130" height="62" rx="8" fill="#101512" stroke="#293236" stroke-width="1.5"/>
-  <text x="83" y="176" text-anchor="middle" font-size="13" font-weight="600" fill="#edf3ef">Handle result</text>
-  <text x="83" y="194" text-anchor="middle" font-size="10" fill="#6ed17f">reply / respond / log</text>
+  <!-- ===== completed turn ===== -->
+  <rect x="30" y="150" width="150" height="62" rx="8" fill="#101512" stroke="#293236" stroke-width="1.5"/>
+  <text x="105" y="176" text-anchor="middle" font-size="13" font-weight="600" fill="#edf3ef">Turn complete</text>
+  <text x="105" y="194" text-anchor="middle" font-size="10" fill="#6ed17f">return TurnData</text>
 
-  <!-- ===== loop core ===== -->
-  <rect x="190" y="150" width="170" height="62" rx="8" fill="#101512" stroke="#293236" stroke-width="1.5"/>
-  <text x="275" y="176" text-anchor="middle" font-size="13" font-weight="600" fill="#edf3ef">LLM processing</text>
-  <text x="275" y="194" text-anchor="middle" font-size="10" fill="#77837e">a runCode call, or a result</text>
+  <!-- ===== model ===== -->
+  <rect x="255" y="150" width="170" height="62" rx="8" fill="#101512" stroke="#293236" stroke-width="1.5"/>
+  <text x="340" y="176" text-anchor="middle" font-size="13" font-weight="600" fill="#edf3ef">Ask model</text>
+  <text x="340" y="194" text-anchor="middle" font-size="10" fill="#77837e">answer or tool call</text>
 
-  <rect x="400" y="150" width="104" height="62" rx="8" fill="#101512" stroke="#293236" stroke-width="1.5"/>
-  <text x="452" y="176" text-anchor="middle" font-size="13" font-weight="600" fill="#edf3ef">Compile</text>
-  <text x="452" y="194" text-anchor="middle" font-size="10" fill="#42e2b7">security checkpoint</text>
+  <!-- ===== tool ===== -->
+  <rect x="500" y="150" width="150" height="62" rx="8" fill="#101512" stroke="#293236" stroke-width="1.5"/>
+  <text x="575" y="176" text-anchor="middle" font-size="13" font-weight="600" fill="#edf3ef">Run tool</text>
+  <text x="575" y="194" text-anchor="middle" font-size="10" fill="#77837e">API · code · workflow</text>
 
-  <rect x="548" y="150" width="110" height="62" rx="8" fill="#101512" stroke="#293236" stroke-width="1.5"/>
-  <text x="603" y="176" text-anchor="middle" font-size="13" font-weight="600" fill="#edf3ef">Run</text>
-  <text x="603" y="194" text-anchor="middle" font-size="10" fill="#77837e">runtime supplies caps</text>
+  <!-- ===== flow ===== -->
+  <line x1="340" y1="78" x2="340" y2="149" stroke="#77837e" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="255" y1="181" x2="181" y2="181" stroke="#77837e" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="218" y="170" text-anchor="middle" font-size="10" fill="#a6b0ab">final answer</text>
+  <line x1="425" y1="181" x2="499" y2="181" stroke="#77837e" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="462" y="170" text-anchor="middle" font-size="10" fill="#a6b0ab">tool call</text>
 
-  <!-- ===== straight flow arrows ===== -->
-  <line x1="275" y1="78"  x2="275" y2="149" stroke="#77837e" stroke-width="1.5" marker-end="url(#arr)"/>
-  <line x1="360" y1="181" x2="399" y2="181" stroke="#77837e" stroke-width="1.5" marker-end="url(#arr)"/>
-  <text x="380" y="170" text-anchor="middle" font-size="10" fill="#a6b0ab">runCode</text>
-  <line x1="504" y1="181" x2="547" y2="181" stroke="#77837e" stroke-width="1.5" marker-end="url(#arr)"/>
-  <!-- exit: the model emits the reply when done -->
-  <line x1="190" y1="181" x2="149" y2="181" stroke="#77837e" stroke-width="1.5" marker-end="url(#arr)"/>
-  <text x="169" y="140" text-anchor="middle" font-size="10" fill="#a6b0ab">when done</text>
-
-  <!-- ===== compile-error loop: Compile -> Write ===== -->
-  <path d="M452,150 V118 Q452,110 444,110 H308 Q300,110 300,118 V148" fill="none"
-        stroke="#ff736b" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr-r)"/>
-  <text x="376" y="104" text-anchor="middle" font-size="10" fill="#ff736b">compile error</text>
-
-  <!-- ===== result loop: Run output -> back to the model ===== -->
-  <path d="M603,212 V250 Q603,258 595,258 H290 Q282,258 282,250 V214" fill="none"
+  <!-- ===== tool result loop ===== -->
+  <path d="M575,212 V250 Q575,258 567,258 H355 Q347,258 347,250 V214" fill="none"
         stroke="#8ec5ff" stroke-width="1.6" marker-end="url(#arr-b)"/>
-  <text x="442" y="276" text-anchor="middle" font-size="10.5" fill="#8ec5ff">result → back to the LLM</text>
+  <text x="461" y="276" text-anchor="middle" font-size="10.5" fill="#8ec5ff">tool result</text>
 </svg>

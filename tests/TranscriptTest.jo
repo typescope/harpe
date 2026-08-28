@@ -59,8 +59,7 @@ private def turnResult(d: TurnData): String =
   match d.result
   case TurnResult.Success        => "Success"
   case TurnResult.Failed(detail) => "Failed(\{detail})"
-  case None                      => "None"
-  case _                         => "Interrupted"
+  case TurnResult.Interrupted    => "Interrupted"
 
 def run(): Unit receives stdout =
   val call = ToolCall("c1", "runCode", ToolInput(py.dict("code" ~ "println 1")))
@@ -157,6 +156,9 @@ def run(): Unit receives stdout =
   check("context keeps an answered turn's reply", loaded.get(2) is Assistant("done", _))
   check("context keeps its tool results", loaded.get(3) is ToolResults(_))
 
+  val loadedFromFile = Journal.load(path)
+  check("load existing journal", loadedFromFile.size == loaded.size)
+
   sessionLog.close()
   os.unlink(path)
 
@@ -180,6 +182,13 @@ def run(): Unit receives stdout =
     recJournal.commit()
     recJournal.response(Journal.payload("text" ~ "done"))
 
+    // A response can survive even when the engine's terminator does not. Treat
+    // that externally interrupted turn as interrupted rather than nullable.
+    recJournal.request(Journal.payload("kind" ~ "chat"))
+    recJournal.start(UserInput("partial", []))
+    recJournal.append(Assistant("working", []))
+    recJournal.response(Journal.payload("text" ~ ""))
+
     // Machinery: a turn nobody bracketed.
     recJournal.start(UserInput("cron job", []))
     recJournal.append(Assistant("tick", []))
@@ -193,7 +202,7 @@ def run(): Unit receives stdout =
   for record in readRecords(recPath) do recEntries = recEntries + Entry.fromDict(record)
 
   val recs = Journal.records(recEntries)
-  check("only complete bracketed turns become records", recs.size == 1)
+  check("only bracketed turns become records", recs.size == 2)
   check("record keeps every request field", payloadField(recs.get(0).request, "file") == "a.png")
 
   val r1 = recs.get(0)
@@ -203,9 +212,13 @@ def run(): Unit receives stdout =
   check("nested turn does not leak into the outer one", turnText(r1.data) == "delegating\n\ndone")
   check("bracketed turn answered", turnResult(r1.data) == "Success")
 
+  val r2 = recs.get(1)
+  check("unterminated turn is interrupted", turnResult(r2.data) == "Interrupted")
+  check("unterminated turn keeps messages", turnText(r2.data) == "working")
+
   // An unclosed bracket is a fragment, not a turn the user had. It stays in the
   // journal (the raw entries are all still there) and out of the transcript.
-  check("crash mid-turn yields no record", recs.size == 1)
+  check("crash mid-turn yields no record", recs.size == 2)
 
   recLog.close()
   os.unlink(recPath)

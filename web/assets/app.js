@@ -1088,6 +1088,14 @@ function handle(ev, bubble, statusText) {
     finishApproval(ev.id, ev.decision);
   } else if (ev.type === 'assistant-message') {
     appendAgentText(bubble, ev.text);
+  } else if (ev.type === 'assistant-chunk') {
+    var streamed = bubble.dataset.streamedText || '';
+    streamed += ev.text || '';
+    bubble.dataset.streamedText = streamed;
+    renderAgentProgress(bubble);
+  } else if (ev.type === 'assistant-stream-reset') {
+    bubble.dataset.streamedText = '';
+    renderAgentProgress(bubble);
   } else if (ev.type === 'turnFinish') {
     // The committed turn, rendered by the server exactly as /api/history would.
     // Stashed here and applied by finish(), so the swap happens once the stream
@@ -1109,6 +1117,18 @@ function appendAgentText(bubble, text) {
   var previous = bubble.dataset.agentText || '';
   var combined = previous ? previous + '\n\n' + text : text;
   bubble.dataset.agentText = combined;
+  bubble.dataset.streamedText = '';
+  var html = renderMarkdown(combined);
+  if (html === null) bubble.textContent = combined;
+  else bubble.innerHTML = html;
+}
+
+function renderAgentProgress(bubble) {
+  var committed = bubble.dataset.agentText || '';
+  var provisional = bubble.dataset.streamedText || '';
+  var combined = committed && provisional
+    ? committed + '\n\n' + provisional
+    : committed + provisional;
   var html = renderMarkdown(combined);
   if (html === null) bubble.textContent = combined;
   else bubble.innerHTML = html;

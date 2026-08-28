@@ -210,6 +210,7 @@ section Model
   union ReplyResult =
       Reply(message: Assistant, usage: Usage)
     | Transient(detail: String)
+    | RetryAfter(detail: String, retryAfterSeconds: Float)
     | Fatal(detail: String)
 
   //[ Session
@@ -221,8 +222,11 @@ section Model
     ! provider reasoning state). The engine feeds it results and reads back the
     ! reply, but never re-composes the base.
     !
-    ! `reply` `receives logger` — read at call time — so a provider can emit its
-    ! token usage to the turn's logging context (see `harpe.models.logUsage`).
+    ! `reply` receives the active `Interact`: a streaming provider emits
+    ! provisional text chunks and observes cancellation while it assembles the
+    ! complete `ReplyResult`. It also `receives logger` at call time so a
+    ! provider can emit token usage to the turn's logging context (see
+    ! `harpe.models.logUsage`).
     ! An attachment carries its own `path`, so nothing here needs to be told a
     ! data directory to resolve it against.
     !
@@ -232,7 +236,7 @@ section Model
     ! failed attempt mutates nothing. The caller never tracks what it committed.
   //]
   interface Session
-    def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger
+    def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult receives logger
 
   //[ SimpleSession
     !
@@ -242,19 +246,19 @@ section Model
     ! Providers that carry intra-turn state (e.g. reasoning handles) implement
     ! `Session` directly instead.
   //]
-  class SimpleSession(base: Rendered, send: (Rendered, List[Tool]) => ReplyResult receives logger)
+  class SimpleSession(base: Rendered, send: (Rendered, List[Tool], Interact) => ReplyResult receives logger)
     view Session
 
     private var messages: List[Message] = base.messages
 
-    def reply(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
+    def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult receives logger =
       // Build the request WITHOUT committing, so a failed attempt leaves the tail
       // untouched and a retry (same results) re-sends identically.
       val outgoing =
         if results.isEmpty then messages
         else messages + ToolResults(results)
 
-      val res = send(new Rendered(base.system, outgoing), tools)
+      val res = send(new Rendered(base.system, outgoing), tools, interact)
 
       // Commit the results and the reply together — only on success.
       if res is Reply(msg, _) then

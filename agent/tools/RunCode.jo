@@ -123,11 +123,10 @@ private def handleBroker(
     else if title.size > 200 then Frame.error("approval title exceeds 200 characters")
     else if detail.size > 10000 then Frame.error("approval detail exceeds 10000 characters")
     else
-      val id = py.module("uuid").uuid4().toString
       approvalActive.set()
       val attempted = py.try:
         if interact.cancelled then Approvals.Cancelled
-        else interact.approve(id, Approvals.Request(title, detail))
+        else interact.approve(Approvals.Request(title, detail))
       approvalActive.clear()
       val decision =
         match attempted
@@ -138,7 +137,6 @@ private def handleBroker(
         json.dumps:
           py.dict:
             "ok"       ~ true
-            "id"       ~ id
             "decision" ~ Approvals.wire(decision)
 
 //[ Replay the sandbox's audit log through the ambient (contextual) `logger`.
@@ -198,9 +196,9 @@ private def replayAudit(path: String): Unit receives logger =
 //]
 class RunCodeTool(
     sandboxDir: String,
-    approvalDeadline: Float,
-    buildTimeout: Float = 120.0,
-    runTimeout: Float = 30.0,
+    approvalDeadline: Int,
+    buildTimeout: Int = 120,
+    runTimeout: Int = 30,
     maxConcurrent: Int = 4,
     maxResultChars: Int = 4000)
   view Tool
@@ -245,10 +243,10 @@ class RunCodeTool(
   //]
   def run(code: String, guestEnv: Map[String, String] = noGuestEnv,
           interact: Interact = Interact.unattended)
-  : RunOutcome receives logger =
+  : ToolOutcome receives logger =
     match findDoneFile
     case None =>
-      new RunOutcome:
+      new ToolOutcome:
         "The sandbox is not built. Run `jo build` in the sandbox project once before starting the agent."
         "sandbox not built"
         attachments = []
@@ -263,8 +261,8 @@ class RunCodeTool(
       // Bound only the text the model sees. `buildAndRun` has already logged the
       // full output/error to the run log, so nothing is lost from the record.
       match outcome
-      case Ok(outc) => new RunOutcome(elide(outc.result, maxResultChars), outc.summary, outc.attachments)
-      case Err(e)   => new RunOutcome("The run failed unexpectedly: \{e.message}", "internal error", attachments = [])
+      case Ok(outc) => new ToolOutcome(elide(outc.result, maxResultChars), outc.summary, outc.attachments)
+      case Err(e)   => new ToolOutcome("The run failed unexpectedly: \{e.message}", "internal error", attachments = [])
 
   //[ Locate the compiler-invocation record left by `jo build` for the guest
     !
@@ -282,7 +280,7 @@ class RunCodeTool(
   private def buildAndRun(
       code: String, donePath: String, runDir: String, guestEnv: Map[String, String],
       interact: Interact)
-  : RunOutcome receives logger =
+  : ToolOutcome receives logger =
     // Each run emits one `harpe.tools.runCode` log entry — the program under test
     // plus the fields specific to how it ended — to the injected channel. What
     // becomes of the entry (format, destination) is the Logger backend's policy.
@@ -296,7 +294,7 @@ class RunCodeTool(
 
     // 1. Compile — the security checkpoint — timed, bounded, and error-captured.
     val t0 = Clock.now()
-    val build = Process.runCapped(args, buildTimeout)
+    val build = Process.runCapped(args, buildTimeout.toFloat)
     val compileSeconds = builtins.round(Clock.now() - t0, 2)
 
     if build.timedOut then
@@ -307,7 +305,7 @@ class RunCodeTool(
         "compileSeconds" ~ compileSeconds
         "timedOut"       ~ true
         "phase"          ~ "compile"
-      return new RunOutcome:
+      return new ToolOutcome:
         "The build timed out after \{buildTimeout}s."
         "build timed out · \{buildTimeout}s"
         attachments = []
@@ -320,14 +318,14 @@ class RunCodeTool(
         "compiled"       ~ false
         "compileSeconds" ~ compileSeconds
         "compileError"   ~ compileError
-      return new RunOutcome:
+      return new ToolOutcome:
         "The program did not compile (\{compileSeconds}s):\n\{compileError}"
         "did not compile · \{compileSeconds}s"
         attachments = []
 
     // 2. Run the compiled program (its path is the `-o` we just supplied).
     if !os.path.isfile(runOut) then
-      return new RunOutcome("The program compiled but no executable was found.", "no executable produced", attachments = [])
+      return new ToolOutcome("The program compiled but no executable was found.", "no executable produced", attachments = [])
 
     // A `sandbox/run.sh` wrapper (defense in depth) owns how the program runs — the
     // interpreter, any uid drop, and OS-level confinement (ulimit/landrun/bwrap/…).
@@ -377,9 +375,9 @@ class RunCodeTool(
     val attemptedRun = py.try:
       Process.runCappedWithPauses:
         runCmd
-        runTimeout
+        runTimeout.toFloat
         approvalActive
-        approvalDeadline
+        approvalDeadline.toFloat
         env = runEnv
         cwd = runDir
     broker.stop()
@@ -400,12 +398,12 @@ class RunCodeTool(
         "phase"          ~ (if run.pauseTimedOut then "approval" else "run")
 
       if run.pauseTimedOut then
-        return new RunOutcome:
+        return new ToolOutcome:
           "The approval did not finish within \{approvalDeadline}s, so the program was stopped."
           "approval timed out · \{runSeconds}s"
           attachments = []
       else
-        return new RunOutcome:
+        return new ToolOutcome:
           "The program ran too long and was stopped after \{runTimeout}s (possible infinite loop)."
           "timed out · ran \{runSeconds}s"
           attachments = []
@@ -435,7 +433,7 @@ class RunCodeTool(
       "runSeconds"     ~ runSeconds
       "exitCode"       ~ runReturnCode
       "output"         ~ result
-    new RunOutcome(result, summary, attachments = [])
+    new ToolOutcome(result, summary, attachments = [])
 end
 
 //[ The optional `run.sh` wrapper in `sandboxDir`, refused if it cannot run. //]

@@ -1,28 +1,84 @@
 +++
-title = "Human approval"
+title = "Human Approval"
 +++
-Compile-time capabilities decide which operations generated programs may call.
-Human approval decides whether one particular operation should proceed.
+Human approval is a human-in-the-loop check before an agent performs a specific
+operation. An agent might prepare a payment, for example, while every transfer
+still requires confirmation.
 
-Harpe supports **instant approval** during an active agent run. The session user is
-also the approver. CLI, Web, and Telegram present the request in their native
-interfaces and choose how long to wait.
+Approval is an application interaction. The request does not become a message
+for the model, and the model cannot approve its own action. The code responsible
+for the operation waits for the user's decision and performs the effect only
+when the decision is `Approved`.
 
-## The approval boundary
+## Where approval happens
 
-Approval belongs in the trusted implementation of an irreversible capability. The
-generated program may ask that capability to perform an operation, but it cannot
-remove the approval requirement or approve its own request.
+An agent can reach an operation through a host-side tool or through generated
+code. Harpe supports approval in both paths:
+
+![A host-side tool requests approval directly through Interact. Generated code requests approval through a trusted capability and the runCode broker. Interact presents both requests to the user.](/img/approval-flow.svg)
+
+A host-side tool asks through the turn's `Interact`. A trusted code-mode
+capability asks through `Approvals`. The `runCode` broker carries that request
+back to the same `Interact` used by the turn.
+
+In both cases, put the approval check in the trusted code that performs the
+effect. A prompt may tell the model to ask first, but a prompt is not an
+enforcement boundary.
+
+## Approval from a tool
+
+Every tool handler receives the active `Interact`. A tool can use it immediately
+before a consequential operation:
+
+```jo
+def transfer(input: Transfer, interact: Interact): ToolOutcome =
+  val request = Approvals.Request:
+    "Transfer funds"
+    "Transfer **CHF \{input.amount}** to **\{input.recipient}**."
+
+  match interact.approve(request)
+  case Approvals.Approved =>
+    executeTransfer(input)
+
+  case Approvals.Rejected =>
+    failedTransfer("The transfer was rejected.")
+
+  case Approvals.TimedOut =>
+    failedTransfer("Approval timed out.")
+
+  case Approvals.Cancelled =>
+    failedTransfer("Approval was cancelled.")
+```
+
+The handler receives `Interact` through its toolset wiring:
+
+```jo
+def toolset(): Toolset =
+  Toolset.of: this, (input: ToolInput, interact: Interact) =>
+    transfer(parseTransfer(input), interact)
+```
+
+The tool should return a failed `ToolOutcome` for rejection, timeout, or
+cancellation. That result tells the model why the operation did not happen and
+lets it respond appropriately.
+
+When a tool runs with `Interact.unattended`, approval returns
+`Approvals.Cancelled` because no user is available to decide.
+
+## Approval from generated code
+
+Generated code does not receive `Interact` or direct access to approval. It
+calls a domain capability such as `Payments`. The trusted implementation of that
+capability decides which operations require approval:
 
 ```jo
 class PaymentsImpl(approvals: Approvals)
   view Payments
 
   def transfer(input: Transfer): Result[Receipt, String] =
-    val request = Approvals.Request(
-      "Transfer funds",
+    val request = Approvals.Request:
+      "Transfer funds"
       "Transfer **CHF \{input.amount}** to **\{input.recipient}**."
-    )
 
     match approvals.request(request)
     case Approvals.Approved =>
@@ -36,128 +92,66 @@ class PaymentsImpl(approvals: Approvals)
 end
 ```
 
-The implementation creates the request from validated action arguments. It
-performs the effect only after receiving `Approvals.Approved`.
+The generated program can request `payment.transfer`, but it cannot remove the
+approval check or approve the request. Those decisions stay in the trusted
+runtime on the other side of the [capability boundary](/concepts/sandbox/).
 
-## Request and decision types
+The sandbox runtime connects `Approvals` to the `runCode` broker. The broker
+assigns the request ID and forwards the request to `Interact`. If generated code
+runs without a broker, approval returns `Approvals.Cancelled`.
 
-An approval request has a short plain-text title and Markdown detail:
+## The two approval interfaces
+
+Tools and code-mode capabilities enter the flow through different interfaces:
 
 ```jo
+interface Interact
+  def approve(request: Approvals.Request): Approvals.Decision
+end
+
 interface Approvals
   def request(request: Approvals.Request): Approvals.Decision
 end
-
-section Approvals
-  class Request(title: String, detail: String)
-end
 ```
 
-The decision distinguishes four outcomes:
+`Interact.approve` belongs to the active turn. The application implements it to
+show a request to the user and wait for a decision. An interaction that needs a
+correlation ID for its user interface creates that ID internally.
+`Approvals.request` belongs to the sandbox runtime. Its broker adapts a
+capability request to the active interaction.
 
-```jo
-section Approvals
-  union Decision = Approved | Rejected | TimedOut | Cancelled
-end
-```
+Approval remains outside the model conversation in both paths. It does not
+consume model context or appear in the transcript when a conversation is
+resumed. An application may still log requests and decisions for auditing.
 
-Timeout is not rejection. Cancellation means the enclosing agent run or
-interaction ended before a decision was made.
+## Interaction and timeouts
 
-## Runtime wiring
+Harpe's CLI, Web, and Telegram drivers present approval through their own user
+interfaces. A custom driver provides the same behavior by implementing
+`Interact.approve`. See [Turn](/concepts/turn/) for the complete interaction
+contract.
 
-The sandbox runtime opens one broker connection when it starts and binds the
-implementation as an ambient capability:
+The application controls how long its interaction waits. A timeout is different
+from rejection because the user never made a decision.
 
-```jo
-def main(): Unit receives stdout =
-  with approvals = BrokerApprovals.connect() in
-    run()
-```
+For generated code, `runCode` also has an approval deadline as a watchdog. Set
+it slightly longer than the interaction deadline. This prevents a broken
+interaction implementation from leaving the sandbox process waiting forever.
+Time spent waiting for approval does not consume the generated program's
+execution budget.
 
-Trusted capability implementations can receive or capture `approvals` when the
-runtime constructs them:
+Harpe approval is synchronous. The tool handler or generated program remains
+active while it waits. An approval that may take hours, involve another person,
+or survive a process restart needs a durable application workflow instead.
 
-```jo
-private def run(): Unit receives stdout, approvals =
-  val payments = new PaymentsImpl(approvals)
+## Designing an approval request
 
-  with payment = payments in
-    sandbox.api.runTask()
-```
-
-The generated guest receives `payment`, not `approvals`. Approval policy therefore
-stays in trusted runtime code.
-
-`BrokerApprovals` keeps one connection for the sandbox program and serializes
-requests over it. When a runtime is launched outside `runCode` and has no broker,
-approval requests return `Approvals.Cancelled`.
-
-## Interaction flow
-
-Approval travels outside the model conversation:
-
-```text
-sandbox capability
-       │ request
-       ▼
-     broker
-       │
-       ▼
-     agent
-       │
-       ▼
-    Interact
-       │
-       ▼
- CLI, Web, or Telegram
-
- decision returns along the same path
-```
-
-The agent assigns a unique ID to each request and binds the decision to the active
-run and session. The request and decision do not enter the transcript, consume
-model context, or appear when the conversation is resumed.
-
-They may still be written to the application log for auditing.
-
-## Driver behavior
-
-- CLI displays the title and rendered Markdown, then accepts a single-key decision.
-- Web streams an approval card with Approve and Reject buttons. A reconnected tab
-  receives the pending request.
-- Telegram sends inline buttons. Only the user who initiated the turn can decide.
-
-The approval deadline belongs to the application. The shipped CLI, Web, and
-Telegram applications wait for at most 10 minutes. Stale and duplicate decisions
-are ignored.
-
-Approval wait time is accounted separately from guest execution time. Waiting for
-a person does not consume the program's execution budget, and it does not give a
-busy program additional runtime.
-
-The framework does not choose the deadline. The application passes an approval
-deadline to `runCode` as a watchdog. It should be slightly longer than the
-interaction deadline. This ensures a broken interaction handler cannot leave the
-sandbox waiting forever.
-
-## Instant and delayed approval
-
-Instant approval assumes the current session user can decide promptly. It keeps
-the sandboxed program active and returns the decision to the waiting capability
-call.
-
-Delayed approval is a different application workflow. It may involve another
-person and take hours or days. The Web application can later represent it as a
-durable work request with an associated conversation. Delayed approval is not part
-of the current framework primitive.
-
-## Designing an approval
-
-- Require approval in trusted capability code.
-- Describe the exact operation and important arguments.
-- Keep the title short and put context in the Markdown detail.
-- Execute the effect immediately after approval.
-- Treat rejection, timeout, and cancellation separately.
-- Make the underlying operation idempotent when retries could duplicate it.
-- Do not use approval as a substitute for narrow capability interfaces.
+- Enforce approval in the host tool or trusted capability that performs the
+  operation.
+- Build the request from validated operation arguments.
+- Describe the exact effect and the important values the user should verify.
+- Keep the title short and put supporting context in the Markdown detail.
+- Perform the effect immediately after `Approved` so the request still describes
+  the operation being executed.
+- Handle rejection, timeout, and cancellation explicitly.
+- Make the operation idempotent when a retry could otherwise perform it twice.

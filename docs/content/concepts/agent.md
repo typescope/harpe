@@ -10,27 +10,21 @@ is. The university is not another building. It is the way those institutions
 are organized and coordinated.
 
 An agent is likewise not one component, but a way of organizing components. Its
-boundary depends on the speaker's perspective: a user may mean the whole
-system they interact with, while a developer may mean a particular assembly of
-models, tools, and context.
+boundary depends on the speaker's perspective. A user may mean the whole system
+they interact with, while a developer may mean a particular assembly of models,
+tools, and context.
 
-What matters is a robust, flexible structure that enables different components
-to work together while keeping each independently extensible and customizable.
+An agent combines a model with the tools and conversation context it needs to
+help a user. Your application supplies those parts when it asks Harpe to run a
+turn. It also decides how users interact with the turn and how conversations
+are stored.
 
 ![A driver owns sessions, persistence, and presentation. Its core coordinates a model, tools, and context through an iterative turn engine.](/img/agent-components.svg)
 
-## There is no Agent object
+## Building an agent
 
-Harpe has no `Agent` class, and this is the reason why.
-
-Suppose there were one. It would hold some of what a turn needs — a model, some
-tools, a context — while the rest stayed arguments. Ask why the boundary falls
-there and the answer runs out. Why is the tool budget a turn policy but the
-toolset the agent? Any answer describes a habit, not a distinction. Naming a
-subset "the agent" is pointing at a fourth building.
-
-So a turn takes what a turn needs, and each input is an ordinary parameter with
-a default:
+`Agent.ask` runs one [turn](/concepts/turn/). Each argument supplies one part of
+the agent:
 
 ```jo
 def ask(
@@ -40,8 +34,10 @@ def ask(
     tools: Toolset = Toolset.empty,
     interact: Interact = Interact.unattended,
     context: Context = Context.noHistory,
+    transcript: Transcript = Transcript.NoTranscript,
     maxToolRounds: Int = 50,
-    maxRetries: Int = 4)
+    maxRetries: Int = 4,
+    maxOutputTokens: Int = 8192)
 : TurnData receives logger
 ```
 
@@ -52,11 +48,10 @@ with logger = Logging.discard in
   Agent.ask("hello")
 ```
 
-`Agent` there is a namespace, not a thing. A driver writes the same call with
-its own pieces supplied:
+For an application, supply the parts you want to keep across turns:
 
 ```jo
-val runCode = RunCodeTool(sandboxDir, approvalDeadline = 610.0)
+val runCode = RunCodeTool(sandboxDir, approvalDeadline = 610)
 val tools = SkillTools.toolset(skillsDir) ++ runCode.toolset()
 
 val context = new WindowedContext:
@@ -72,8 +67,16 @@ with logger = sessionLog in
     context = context
 ```
 
-Nothing was assembled. The same function served both, and the difference
-between the two agents is entirely in the arguments.
+- `brain` chooses the [model](/concepts/models/).
+- `tools` defines what the model can [do](/concepts/tools/).
+- `context` defines what the model remembers and sees.
+- `transcript` records the conversation independently of model context.
+- `interact` connects progress, cancellation, and approval to your user
+  interface.
+
+`Agent` is a namespace, not a class you construct. The arguments to `ask`
+describe the agent for that turn. Reuse values such as `brain`, `tools`, and
+`context` when they should live across turns.
 
 ### What the defaults mean
 
@@ -83,30 +86,13 @@ user's input and every tool result — and is discarded at the end. Two defaulte
 turns never see each other's transcript. Remembering across turns is what a
 driver's own `context` is for, and keeping one alive is the whole of it.
 
-`logger` is a required context parameter; a caller that intentionally records
+`logger` is a required context parameter. A caller that intentionally records
 nothing binds `Logging.discard`. `interact` is an ordinary argument defaulting
 to `Interact.unattended`. Drivers with an active user pass their live channel as
 `interact = channel`.
 
-- `brain` is the provider-independent [model](/concepts/models/).
-- `tools` is a [`Toolset`](/concepts/tools/): each entry is a spec the model is
-  offered wired to the code that answers it.
-- `context` determines what the model is shown — see
-  [context](/concepts/context/).
-
 None of these owns user identity, session storage, locking, or UI state. Those
 stay in the driver.
-
-## Turn execution
-
-The core runs an iterative model-tool loop:
-
-![A turn gathers context, asks the model for either a program or a final result, compiles and runs each program, and returns its output to the model until the turn is complete.](/img/how-a-turn-works.svg)
-
-Context provides the information relevant to the turn. The model either answers
-or calls tools. Tool results return to the model, and the loop continues until
-the model produces an answer or the turn stops. The driver receives the outcome
-and decides how to present and persist it.
 
 ## Drivers
 
@@ -118,11 +104,5 @@ owns lifecycle concerns such as concurrency, persistence, and logging.
 The CLI, Web, and Telegram applications implement that role differently while
 using the same core components.
 
-## Custom execution
-
-`ask` is one coordination, not the only one. If it does not fit, build a
-loop over `Model` and `Tool.runSafely`. The same components support parallel
-tool execution, planner and executor roles, or application-specific control
-between steps — and because there was never an `Agent` to be outside of, such a
-loop is not a departure from the framework. It is the same parts, coordinated
-differently.
+The [Turn](/concepts/turn/) concept describes the model-tool loop and the events
+through which a driver observes work in progress.

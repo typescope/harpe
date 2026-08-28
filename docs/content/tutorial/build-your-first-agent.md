@@ -49,7 +49,7 @@ my-agent/
 Open `src/Main.jo`. It names the pieces a turn will be run with:
 
 ```jo
-val runCode = RunCodeTool(os.path.abspath("sandbox"), approvalDeadline = 610.0)
+val runCode = RunCodeTool(os.path.abspath("sandbox"), approvalDeadline = 610)
 
 val brain = Model.default()
 
@@ -89,7 +89,7 @@ private class SimpleInteract
     py.module("time").sleep(py.dynamic(seconds))
     false
 
-  def approve(id: String, request: Approvals.Request): Approvals.Decision =
+  def approve(request: Approvals.Request): Approvals.Decision =
     Approvals.Cancelled
 
   def emit(event: harpe.turns.TurnEvent): Unit = pass

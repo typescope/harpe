@@ -23,7 +23,6 @@ import harpe.transcript.Journal
 import harpe.logging.JsonlLogger
 import harpe.logging.Logger
 import harpe.logging.logger
-import harpe.logging.Entry
 import harpe.Model
 import harpe.Tool
 import harpe.Tool.ToolInput
@@ -267,5 +266,5 @@ section Session
   def load(chatId: String): List[Message] receives appHome =
     val path = sessionPath(chatId)
     if !File.exists(path) then []
-    else Journal.fromEntries(Entry.readJsonl(path))
+    else Journal.load(path)
 end

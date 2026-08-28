@@ -25,7 +25,6 @@ import jo.IO.stdout
 import harpe.*
 import harpe.logging.JsonlLogger
 import harpe.transcript.Journal
-import harpe.logging.Entry
 import harpe.logging.logger
 import harpe.Model.UserInput
 import harpe.Model.Message
@@ -56,7 +55,7 @@ private def runChat(): Unit receives stdout, appHome =
   val journal = new Journal(sessionLog)
   // `runCode` owns a build semaphore, so it is an object built once here. The
   // rest own nothing and are reached through their sections.
-  val runCode = RunCodeTool(os.path.join(appHome, "sandbox"), 610.0)
+  val runCode = RunCodeTool(os.path.join(appHome, "sandbox"), approvalDeadline = 610)
   val bash    = new RunBashTool
   val skillsDir = os.path.join(appHome, "skills")
 
@@ -111,7 +110,8 @@ private def runChat(): Unit receives stdout, appHome =
 
     match res.result
     case TurnResult.Success =>
-      console.agentResponse(res.finalText)
+      if console.replyWasStreamed then println ""
+      else console.agentResponse(res.finalText)
 
     case TurnResult.Interrupted =>
       println("  " + Style.warning("⎋ interrupted"))
@@ -152,7 +152,7 @@ section Session
   //[ A session's transcript, or `[]` for a log this run is about to create. //]
   def load(path: String): List[Message] =
     if !File.exists(path) then []
-    else Journal.fromEntries(Entry.readJsonl(path))
+    else Journal.load(path)
 
   //[ Up to `limit` CLI session logs, newest first. //]
   def recentFiles(limit: Int): List[String] receives appHome =

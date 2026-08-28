@@ -30,6 +30,9 @@ private class Console(out: String => Unit, historyFile: String)
   // One spinner resource for the whole session.
   private val spinner = new Spinner
   private val workerLock = threading.Lock()
+  private var streamedReply: Bool = false
+
+  def replyWasStreamed: Bool = streamedReply
 
   //[ Init console interaction
     !
@@ -134,6 +137,7 @@ private class Console(out: String => Unit, historyFile: String)
   def display(event: TurnEvent): Unit = with IO.stdout = out in
     match event
     case TurnEvent.ModelRequestStarted(attempt, maxAttempts) =>
+      streamedReply = false
       val label =
         if attempt == 0 then "thinking · ESC to interrupt"
         else "retrying \{attempt}/\{maxAttempts} · ESC to interrupt"
@@ -145,8 +149,17 @@ private class Console(out: String => Unit, historyFile: String)
     case TurnEvent.TransientError(detail, delaySeconds) =>
       println("  " + Style.warning("· transient error") + " (\{detail}); retrying in \{delaySeconds}s")
 
+    case TurnEvent.AssistantChunk(text) =>
+      spinner.stop()
+      streamedReply = true
+      out(text)
+
+    case TurnEvent.AssistantStreamReset =>
+      if streamedReply then out("\n")
+      streamedReply = false
+
     case TurnEvent.AssistantMessage(text) =>
-      agentResponse(text)
+      if streamedReply then out("\n") else agentResponse(text)
 
     case TurnEvent.ToolBudgetReached(budget) =>
       println("  " + Style.warning("· tool budget reached") + " (\{budget}); requesting final answer")
@@ -187,7 +200,7 @@ private section Console
     def emit(event: TurnEvent): Unit =
       if !cancelled then console.display(event)
 
-    def approve(id: String, request: Approvals.Request): Approvals.Decision =
+    def approve(request: Approvals.Request): Approvals.Decision =
       with IO.stdout = console.out in
         Console.askApproval(console, interrupt, active, approvalActive, request)
   end

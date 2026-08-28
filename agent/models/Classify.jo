@@ -10,6 +10,7 @@
 
 namespace harpe.models
 import harpe.ffi.builtins
+import harpe.ffi.time
 
 
 import harpe.Model.*
@@ -36,8 +37,42 @@ private def classifyError(err: py.Error): ReplyResult =
     else
       name.contains("Connection") || name.contains("Timeout")
 
-  if transient then Transient("\{name}: \{err.message}")
+  if transient then
+    val detail = "\{name}: \{err.message}"
+    match retryAfterOf(err)
+    case Some(seconds) => RetryAfter(detail, seconds)
+    case None          => Transient(detail)
   else Fatal("\{name}: \{err.message}")
+
+//[ The server-requested delay, when `Retry-After` is present and valid.
+  !
+  ! HTTP permits either a non-negative number of seconds or an HTTP date. SDK
+  ! status errors expose the originating response (and its headers) on
+  ! `err.response`. A past date means the retry may happen immediately.
+//]
+private def retryAfterOf(err: py.Error): Option[Float] =
+  val response = builtins.getattrOr(err, "response", py.none)
+  if response.isNone then return None
+
+  val headers = builtins.getattrOr(response, "headers", py.none)
+  if headers.isNone then return None
+
+  val raw = headers.get("Retry-After", py.none)
+  if raw.isNone then return None
+
+  val value = raw.asString
+  match Int.parse(value)
+  case Some(seconds) =>
+    if seconds >= 0 then Some(seconds.toFloat) else None
+
+  case None =>
+    val parsed = py.try:
+      py.module("email.utils").parsedate_to_datetime(value).timestamp().asFloat
+    match parsed
+    case Ok(epoch) =>
+      val remaining = epoch - time.time()
+      Some(if remaining > 0.0 then remaining else 0.0)
+    case Err(_) => None
 
 //[ The exception's HTTP status, or 0 when it carries none. //]
 private def statusOf(err: py.Error): Int =

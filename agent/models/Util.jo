@@ -1,0 +1,40 @@
+//[ Util.jo
+  !
+  ! Shared implementation details for model adapters.
+//]
+
+namespace harpe.models
+
+private section Util
+  //[ Run `body` with the value entered from an SDK context manager.
+    !
+    ! Opening, entering, and running the body return Python failures as `Err`.
+    ! Once entered, `__exit__` is always attempted. Cleanup failures are ignored
+    ! so they do not replace the body's result; `__exit__` receives three `None`
+    ! values because `py.try` has already captured any body exception. This is
+    ! deliberately narrower than a complete emulation of Python's `with`.
+  //]
+  def withPyContext[T](managerResult: Result[py.Dynamic, py.Error], body: py.Dynamic => T): Result[T, py.Error] =
+    match managerResult
+    case Err(err) => Err(err)
+    case Ok(manager) =>
+      match py.try(manager.__enter__())
+      case Err(err) => Err(err)
+      case Ok(value) =>
+        val result = py.try: body(value)
+        val _ = py.try: manager.__exit__(py.none, py.none, py.none)
+        result
+
+  //[ Run `body` with an SDK stream and always attempt to close it afterward.
+    !
+    ! Opening and running the body return Python failures as `Err`. A cleanup
+    ! failure is ignored so it does not replace the body's result.
+  //]
+  def withPyStream[T](streamResult: Result[py.Dynamic, py.Error], body: py.Dynamic => T): Result[T, py.Error] =
+    match streamResult
+    case Err(err) => Err(err)
+    case Ok(stream) =>
+      val result = py.try: body(stream)
+      val _ = py.try: stream.close()
+      result
+end

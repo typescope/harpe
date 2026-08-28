@@ -11,7 +11,7 @@
   ! from this model, so `Tool` stays provider-neutral and authors never
   ! hand-write JSON.
   !
-  ! Handlers read arguments via the typed `ToolInput` and return a `RunOutcome`.
+  ! Handlers read arguments via the typed `ToolInput` and return a `ToolOutcome`.
 //]
 
 namespace harpe
@@ -58,7 +58,7 @@ end
   ! `logger` stays ambient. The turn passes its ordinary `Interact` argument to
   ! the selected handler, so a driver can still build its `Toolset` once.
 //]
-type Handler = (ToolInput, Interact) => RunOutcome receives logger
+type Handler = (ToolInput, Interact) => ToolOutcome receives logger
 
 //[ A tool spec from its three parts
   !
@@ -78,6 +78,9 @@ def Tool(name: String, description: String, params: List[ToolParam]): Tool =
   new Tool.SimpleTool(name, description, params)
 
 section Tool
+  //[ The empty attachment list used by ordinary text-only tool outcomes. //]
+  def NoAttachments: List[Attachment] = []
+
   //[ A tool result
     !
     ! - `result` is the text fed back to the model
@@ -85,7 +88,7 @@ section Tool
     ! - `attachments` is any file the tool wants to show the model directly (not
     !   just reference by name) — e.g. `uploadMedia` returning the file so the
     !   render layer sends it as a real image/document content block.
-    !   `[]` for the ordinary, text-only case.
+    !   Defaults to `[]` for the ordinary, text-only case.
     ! - `success` is whether the call did what it was asked to
     !
     ! `success` is for CODE, `result` is for the model. A handler that refuses a
@@ -95,7 +98,11 @@ section Tool
     ! output back off the finished turn (see `harpe.web.Session.reply`) reads the
     ! flag, so a refused call is not mistaken for work done.
   //]
-  class RunOutcome(result: String, summary: String, attachments: List[Attachment], success: Bool = true)
+  class ToolOutcome(
+      result: String,
+      summary: String,
+      attachments: List[Attachment] = Tool.NoAttachments,
+      success: Bool = true)
 
   //[ Tool parameter type
     !
@@ -130,8 +137,8 @@ section Tool
 
   //[ The result of running a tool call, fed back to the model next turn.
     !
-    ! `attachments` mirrors `RunOutcome.attachments` — carried through for the
-    ! provider render layer to send as content blocks (see `RunOutcome`).
+    ! `attachments` mirrors `ToolOutcome.attachments` — carried through for the
+    ! provider render layer to send as content blocks (see `ToolOutcome`).
     !
     ! `success` mirrors it too, and rides into the transcript rather than stopping
     ! at the engine: a turn reloaded from the journal knows which of its calls
@@ -187,18 +194,18 @@ section Tool
 
   //[ Run a handler, containing an unexpected host exception
     !
-    ! A well-behaved handler returns a `RunOutcome`. This is the backstop for
+    ! A well-behaved handler returns a `ToolOutcome`. This is the backstop for
     ! one that raises. The failure is fed back to the model as a tool result —
     ! so the model can react — rather than crashing the turn (or the driver).
     ! The engine applies it to every route, so a driver's wiring cannot take the
     ! turn down.
   //]
-  def runSafely(name: String, handler: Handler, input: ToolInput, interact: Interact): RunOutcome receives logger =
+  def runSafely(name: String, handler: Handler, input: ToolInput, interact: Interact): ToolOutcome receives logger =
     match py.try(handler(input, interact))
     case Ok(outcome) => outcome
 
     case Err(e) =>
-      new RunOutcome:
+      new ToolOutcome:
         "The tool '\{name}' failed: \{e.message}"
         "error · \{name}"
         attachments = []

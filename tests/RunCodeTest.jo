@@ -38,7 +38,7 @@ private def fixtureSandboxDir(): String =
   os.path.abspath(found)
 
 // Map an outcome to a stable tag (raw summaries carry nondeterministic timings).
-private def tag(o: RunOutcome): String =
+private def tag(o: ToolOutcome): String =
   if o.summary.contains("timed out") then "timeout"
   else if o.summary.contains("did not compile") then "compile-error"
   else if o.summary.contains("crashed") then "crash"
@@ -49,11 +49,11 @@ private def tag(o: RunOutcome): String =
 // (context params don't cross threads). These tests assert on outcomes, not logs.
 private def execWith(
     tool: RunCodeTool, code: String, guestEnv: Map[String, String], channel: Interact)
-: RunOutcome =
+: ToolOutcome =
   with logger = Logging.discard in
     tool.run(code, guestEnv, channel)
 
-private def exec(tool: RunCodeTool, code: String): RunOutcome =
+private def exec(tool: RunCodeTool, code: String): ToolOutcome =
   execWith(tool, code, Map.empty[String, String], Interact.unattended)
 
 private class ApprovalInteract(decision: Approvals.Decision)
@@ -68,7 +68,7 @@ private class ApprovalInteract(decision: Approvals.Decision)
   def pause(seconds: Float): Bool = false
   def emit(event: turns.TurnEvent): Unit = pass
 
-  def approve(id: String, request: Approvals.Request): Approvals.Decision =
+  def approve(request: Approvals.Request): Approvals.Decision =
     seenTitle = request.title
     seenDetail = request.detail
     approvalCount = approvalCount + 1
@@ -83,7 +83,7 @@ private class StuckApprovalInteract
   def pause(seconds: Float): Bool = false
   def emit(event: turns.TurnEvent): Unit = pass
 
-  def approve(id: String, request: Approvals.Request): Approvals.Decision =
+  def approve(request: Approvals.Request): Approvals.Decision =
     py.module("time").sleep(py.dynamic(1.0))
     Approvals.Approved
 end
@@ -144,10 +144,21 @@ def run(): Unit receives stdout =
 
   // An unbuilt sandbox reports clearly instead of building or running anything.
   val unbuilt = tempfile.mkdtemp()
-  check("not-built", exec(RunCodeTool(unbuilt, 5.0), guest("  println 1\n")).summary, "sandbox not built")
+  check:
+    "not-built"
+    exec(RunCodeTool(unbuilt, approvalDeadline = 5), guest("  println 1\n")).summary
+    "sandbox not built"
 
-  val fast  = RunCodeTool(sandboxDir, 5.0, 120.0, 5.0)   // 5s run backstop
-  val quick = RunCodeTool(sandboxDir, 5.0, 120.0, 2.0)   // 2s run backstop
+  val fast = RunCodeTool:
+    sandboxDir
+    approvalDeadline = 5
+    buildTimeout = 120
+    runTimeout = 5
+  val quick = RunCodeTool:
+    sandboxDir
+    approvalDeadline = 5
+    buildTimeout = 120
+    runTimeout = 2
 
   // A well-formed program runs and produces output.
   check("normal", tag(exec(fast, guest("  println 42\n"))), "ran")
@@ -180,7 +191,11 @@ def run(): Unit receives stdout =
 
   // An application-supplied approval deadline stops a run even if its trusted
   // interaction handler never returns.
-  val approvalWatchdog = RunCodeTool(sandboxDir, 0.2, 120.0, 5.0)
+  val approvalWatchdog = RunCodeTool:
+    sandboxDir
+    approvalDeadline = 1
+    buildTimeout = 120
+    runTimeout = 5
   val stuckApproval = execWith(
     approvalWatchdog,
     guest("  println 7\n"),
@@ -197,7 +212,13 @@ def run(): Unit receives stdout =
 
   // Concurrent runs are isolated: 4 parallel programs, 2 building at a time,
   // each must get back its own output (no shared Task.jo / .build clobbering).
-  concurrentCheck(RunCodeTool(sandboxDir, 5.0, 120.0, 5.0, 2), 4)
+  val concurrent = RunCodeTool:
+    sandboxDir
+    approvalDeadline = 5
+    buildTimeout = 120
+    runTimeout = 5
+    maxConcurrent = 2
+  concurrentCheck(concurrent, 4)
 
   // A program that does not type-check is caught at the compile checkpoint.
   val badCompile = exec(fast, guest("  println undefinedThing\n"))

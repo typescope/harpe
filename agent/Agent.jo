@@ -171,7 +171,7 @@ section Agent
               if tools.contains(toolName) then
                 runSafely(toolName, tools.handler(toolName), call.input, interact)
               else
-                RunOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}", attachments = [])
+                ToolOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}", attachments = [])
 
             interact.emit: TurnEvent.ToolCallEnded(toolName, outcome.summary)
 
@@ -274,7 +274,7 @@ section Agent
 
       // `reply` is idempotent — the Session commits `results` only on success, so
       // every attempt (including retries) passes the same `results`.
-      val res = session.reply(results, tools)
+      val res = session.reply(results, tools, interact)
 
       interact.emit: TurnEvent.ModelRequestEnded
 
@@ -293,6 +293,7 @@ section Agent
           break
 
         case Transient(detail) =>
+          interact.emit: TurnEvent.AssistantStreamReset
           attempt = attempt + 1
           if attempt > maxRetries then
             logger.error("harpe.model.request", detail, "retries" ~ maxRetries)
@@ -301,6 +302,23 @@ section Agent
 
           else
             val delay = backoffSeconds(attempt)
+            logger.warn("harpe.model.request", detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
+            interact.emit: TurnEvent.TransientError(detail, delay)
+            // pause returns true if cancellation fired during the backoff.
+            if interact.pause(delay) then
+              outcome = Stopped
+              break
+
+        case RetryAfter(detail, retryAfterSeconds) =>
+          interact.emit: TurnEvent.AssistantStreamReset
+          attempt = attempt + 1
+          if attempt > maxRetries then
+            logger.error("harpe.model.request", detail, "retries" ~ maxRetries)
+            outcome = GaveUp(detail)
+            break
+
+          else
+            val delay = retryAfterSeconds
             logger.warn("harpe.model.request", detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
             interact.emit: TurnEvent.TransientError(detail, delay)
             // pause returns true if cancellation fired during the backoff.

@@ -48,18 +48,18 @@ section UploadMediaTool
     Toolset.of: spec, (i: ToolInput, _: Interact) => show(i["fileName"], dataDir)
 
   //[ Attach the data-directory file `fileName` for the model to look at. //]
-  def show(fileName: String, dir: String): RunOutcome =
+  def show(fileName: String, dir: String): ToolOutcome =
     val baseName = os.path.basename(fileName.replace("\\", "/"))
 
     if dir == "" then
-      new RunOutcome:
+      new ToolOutcome:
         "No data directory is available to upload from."
         "uploadMedia · no data dir"
         attachments = []
         success = false
 
     else if !isDataFile(dir, baseName) then
-      new RunOutcome:
+      new ToolOutcome:
         "No such file: '\{fileName}'. Write it to your data directory first, then upload it."
         "uploadMedia · no such file"
         attachments = []
@@ -73,11 +73,11 @@ section UploadMediaTool
     baseName != "" && baseName != "." && baseName != ".." && os.path.isfile(os.path.join(dir, baseName))
 
   //[ Attach `baseName` for the model to see, or explain why its type cannot be. //]
-  private def attach(dir: String, baseName: String): RunOutcome =
+  private def attach(dir: String, baseName: String): ToolOutcome =
     val mime = File.mimeType(baseName).getOrElse("application/octet-stream")
 
     if !InlineMedia.isImage(mime) && !InlineMedia.isPdf(mime) then
-      new RunOutcome:
+      new ToolOutcome:
         "'\{baseName}' is \{mime}, which cannot be shown directly — only JPEG/PNG/GIF/WebP images and PDFs can. Use `ocr`/`pdf`/`fs` to read it instead."
         "uploadMedia · unsupported · \{mime}"
         attachments = []
@@ -85,7 +85,7 @@ section UploadMediaTool
 
     else
       val path = os.path.join(dir, baseName)
-      new RunOutcome:
+      new ToolOutcome:
         "'\{baseName}' is attached below — look at it directly in your next reply."
         "uploadMedia · \{baseName}"
         attachments = [Attachment(baseName, os.path.getsize(path), mime, path = path)]

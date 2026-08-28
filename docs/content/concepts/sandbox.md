@@ -1,22 +1,32 @@
 +++
-title = "Sandbox Architecture"
+title = "Code and Sandboxing"
 +++
-Harpe treats LLM-generated programs as untrusted code. Before a program can
-run, it must compile against capability interfaces chosen by the agent
-developer. Authority that is not granted is a compilation error.
+Harpe provides a `runCode` tool that you can add to an agent. It lets the model
+write and run a small Jo program for a task. The compile-time sandbox applies to
+these generated programs. It does not apply to ordinary model replies or change
+how other tools run.
+
+Treat generated code as untrusted. Before Harpe runs it, the code must compile
+against a set of capabilities chosen by the application developer. If the code
+tries to use authority it was not given, compilation fails.
 
 ![The compiled guest is sealed behind a type-checked boundary. Its only paths to the trusted runtime and outside world are the typed capabilities explicitly granted to it.](/img/typed-sandbox.svg)
 
 ## The capability boundary
 
-Generated code belongs to a guest module. Its dependency graph contains the
-application's capability API and any explicitly included pure libraries. It
-does not contain Python FFI, capability implementations, or the rest of the
-host application.
+A capability is a typed interface for something generated code is allowed to
+do. It might read a customer record, search a catalog, or get the current time.
+The interface exposes the permitted operations without exposing credentials,
+SDK clients, or application internals.
+
+The generated program runs as a **guest**. Your application and the capability
+implementations form the **trusted runtime**. The guest can use only the
+capability interfaces and pure libraries included in its build. It cannot see
+the implementations or the rest of the application.
 
 ![The untrusted guest uses the API contract. The trusted runtime implements the contract and links the guest entry point.](/img/project-deps.svg)
 
-This separation applies Jo's
+This separation uses Jo's
 [two-world architecture](https://jo-lang.org/security/two-worlds.html). Untrusted
 code is checked in the confined world, then linked with implementations from the
 trusted world.
@@ -41,13 +51,13 @@ def runTask(): Unit receives stdout, clock =
 ```
 
 It cannot access a file system, network client, shell, Python module, or an
-undeclared clock operation. Those paths are absent from its compilation
-environment.
+undeclared clock operation. Those APIs are not available when the guest is
+compiled.
 
 ## Trusted implementations
 
-A trusted runtime implements capability interfaces and binds them before
-entering generated code:
+Your application provides the trusted implementation of each capability and
+binds it before entering generated code:
 
 ```jo
 class SystemClock
@@ -59,9 +69,9 @@ with clock = new SystemClock in
   runTask()
 ```
 
-Trusted implementations may use FFI, credentials, provider SDKs, and
-application state. They are responsible for validation and tenant scope.
-Generated code receives only the narrow capability interface.
+The implementation may use credentials, provider SDKs, and application state.
+It is responsible for validation and for limiting operations to the current
+user or tenant. Generated code receives only the narrow capability interface.
 
 Harpe's built-in capability interfaces and value types live in the pure
 `harpe-caps` module. Their trusted implementations live outside the guest
@@ -73,18 +83,20 @@ Separate read and write authority when they should be granted independently.
 The [custom capability tutorial](/tutorial/create-custom-capabilities/) shows
 the complete pattern.
 
-## Per program
+## What happens when a program runs
 
 When the model calls `runCode`, Harpe:
 
-1. writes the generated source into a fresh run directory
-2. compiles it against the prebuilt capability API and dependencies
-3. executes it only if compilation succeeds
-4. starts the trusted runtime, which supplies the granted capabilities
+1. Places the generated source in a fresh run directory.
+2. Compiles it with only the granted capability interfaces and dependencies.
+3. Stops and reports a compiler error if the code asks for anything outside
+   that boundary.
+4. Runs the program with the trusted capability implementations if compilation
+   succeeds.
 
 Each program gets its own source, output, and compiler artifacts. Shared
-dependencies remain read-only, so concurrent runs do not mutate one another's
-build state.
+dependencies remain read-only. Concurrent runs therefore do not change one
+another's build state.
 
 ## What the compiler guarantees
 
@@ -96,13 +108,14 @@ For a program that compiles:
 - every required capability is declared by the guest entry point
 - FFI and modules outside the guest dependency graph remain unavailable
 
-The grant is structural. Prompt instructions cannot widen it. Prompt injection
-cannot make an undeclared operation compile.
+These guarantees come from the program's build boundary, not from the prompt.
+Prompt instructions and prompt injection cannot make an undeclared operation
+compile.
 
 ## What it does not guarantee
 
-The compiler proves authority, not intent. A permitted program can still choose
-the wrong argument or misuse an allowed operation. Consequential capabilities
+The compiler proves which operations a program may use. It does not prove that
+the program chose the right operation or argument. Consequential capabilities
 may require [human approval](/concepts/approvals/) in their trusted
 implementations.
 

@@ -1,6 +1,17 @@
 +++
-title = "Structured output"
+title = "Structured Output"
 +++
+Structured output is information your application needs to consume as data,
+not just display as prose. Harpe supports two main patterns:
+
+| Use | Pattern |
+|---|---|
+| The agent computes data and sends it to an API, database, or file | Keep the typed value inside a generated Jo program and pass it to a capability |
+| The agent declares something your application should present or handle | Put the typed value in a tool call and read that call from `TurnData` |
+
+Use ordinary assistant text for explanations meant for people. A turn can use
+text and either structured-output pattern together.
+
 Most agent frameworks produce text. When code needs the answer, they ask the
 model for JSON matching a schema, parse it, and validate the result. The value is
 untyped for the whole middle of that journey, and a response that does not
@@ -70,21 +81,19 @@ section SendFileTool
       "Deliver a file to the user — it appears as an attachment in your reply."
       [Tool.strParam("fileName", "The name of the file in your data directory to send")]
 
-  def send(fileName: String, dir: String): Tool.RunOutcome =
+  def send(fileName: String, dir: String): Tool.ToolOutcome =
     val baseName = os.path.basename(fileName)
 
     if !os.path.isfile(os.path.join(dir, baseName)) then
-      new Tool.RunOutcome:
+      new Tool.ToolOutcome:
         "No such file: '\{fileName}'. Write it to your data directory first, then send it."
         "sendFile · no such file"
-        attachments = []
         success = false
 
     else
-      new Tool.RunOutcome:
+      new Tool.ToolOutcome:
         "Sent '\{baseName}' to the user."
         "sendFile · \{baseName}"
-        attachments = []
 end
 ```
 
@@ -145,25 +154,10 @@ that is well-formed but wrong — a file that does not exist — comes back as a
 readable error the model can act on:
 
 ```jo
-new Tool.RunOutcome:
+new Tool.ToolOutcome:
   "No such file: '\{fileName}'. Write it to your data directory first, then send it."
   "sendFile · no such file"
-  attachments = []
 ```
-
-## Choosing a route
-
-| | Route 1: program | Route 2: tool call |
-|---|---|---|
-| The value goes to | a capability | the application |
-| Checked by | the compiler | the tool's `params` |
-| Good for | payloads, records, computation | presentation, delivery, UI intent |
-| The model can | branch, loop, transform | state one intent per call |
-
-Route 1 suits a value the agent *computes* and hands onward. Route 2 suits a
-decision the agent *declares* about the turn itself. Reach for route 2 when the
-generated program has no business knowing the answer, as with which files the
-user should see.
 
 ## Messages are for people
 

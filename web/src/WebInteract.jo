@@ -40,7 +40,8 @@ private class WebInteract(sink: Sink, stop: py.Dynamic, approvalHandler: Approva
 
   def pause(seconds: Float): Bool = stop.wait(seconds).asBool
 
-  def approve(id: String, request: Approvals.Request): Approvals.Decision =
+  def approve(request: Approvals.Request): Approvals.Decision =
+    val id = py.module("uuid").uuid4().toString
     approvalHandler(id, request)
 
   //[ Translate one engine event into a UI event on the stream
@@ -59,6 +60,12 @@ private class WebInteract(sink: Sink, stop: py.Dynamic, approvalHandler: Approva
 
     case TurnEvent.TransientError(detail, delaySeconds) =>
       sink(py.dict("type" ~ "status", "label" ~ "transient error; retrying in \{delaySeconds}s"))
+
+    case TurnEvent.AssistantChunk(text) =>
+      sink(py.dict("type" ~ "assistant-chunk", "text" ~ text))
+
+    case TurnEvent.AssistantStreamReset =>
+      sink(py.dict("type" ~ "assistant-stream-reset"))
 
     case TurnEvent.AssistantMessage(text) =>
       sink(py.dict("type" ~ "assistant-message", "text" ~ text))

@@ -9,6 +9,13 @@ Harpe handles that continuity for you. Choose a reasoning-capable model and the
 agent can move through its tool loop without application code managing provider
 response IDs, thinking blocks, or other reasoning metadata.
 
+## When reasoning helps
+
+Reasoning is useful for tasks that require planning, comparing alternatives, or
+using several tool results together. Simple questions may be faster and cheaper
+with less reasoning. Choose a reasoning-capable model, set an appropriate
+effort, and let Harpe preserve its work across the turn.
+
 ## The tool-loop boundary
 
 Pure reasoning does not require a client-side loop. In one model request, the
