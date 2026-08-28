@@ -114,6 +114,39 @@ private def truncated(): ProviderFixture.Response = ProviderFixture.sse:
   data: [DONE]
   """
 
+//[ A reply carrying a provider reasoning extension beside its tool call
+  !
+  ! `reasoning_content` is not part of the Chat Completions schema. Adapters
+  ! that rebuild an assistant message field by field drop it, which is why this
+  ! one re-sends the provider's own message object instead.
+//]
+private def reasonsThenCalls(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {
+    "id": "chat_reason", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{
+      "index": 0,
+      "delta": {
+        "role": "assistant",
+        "reasoning_content": "Zurich is in Switzerland.",
+        "tool_calls": [{
+          "index": 0, "id": "call_1", "type": "function",
+          "function": {"name":"lookup","arguments":"{\"city\":\"Zurich\"}"}
+        }]
+      },
+      "finish_reason": null
+    }]
+  }
+
+  data: {
+    "id": "chat_reason", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{"index":0,"delta":{},"finish_reason":"tool_calls"}],
+    "usage": {"prompt_tokens":6,"completion_tokens":3,"total_tokens":9}
+  }
+
+  data: [DONE]
+  """
+
 def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
   test: "replays the assistant call and its result in messages", () =>
     ProviderFixture.withResponses: [toolResponse(), textResponse("done")], server =>
@@ -198,3 +231,25 @@ def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
         "inlined bytes"
         image.get("image_url").cast[py.Dict].get("url").asString
         expected = "data:image/png;base64,aGk="
+
+  test: "replays the reasoning extension that came with a tool call", () =>
+    ProviderFixture.withResponses: [reasonsThenCalls(), textResponse("done")], server =>
+      val tool = Tool("lookup", "Look up weather", [Tool.strParam("city", "City to look up")])
+      val turn = ModelDriver.start(model(server), prompt = "What is the weather in Zurich?")
+
+      val requested = turn.expectReply(tools = [tool])
+      check("one tool call", requested.calls.size == 1)
+      // Reasoning rides the wire history only. It never reaches the
+      // provider-independent `Assistant`, which carries text and calls.
+      checkEquals("keeps reasoning off the transcript", requested.text, "")
+
+      val _ = turn.expectReply(results = [ToolResult("call_1", "sunny", [])], tools = [tool])
+
+      val messages = server.recorded(1).jsonBody.get("messages").cast[py.List]
+      var replayed = ""
+      for message in messages do
+        val entry = message.cast[py.Dict]
+        if entry.get("role", "").asString == "assistant" then
+          replayed = entry.get("reasoning_content", "").asString
+
+      checkEquals("replays the extension field", replayed, "Zurich is in Switzerland.")

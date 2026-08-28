@@ -132,6 +132,56 @@ private def truncated(): ProviderFixture.Response = ProviderFixture.sse:
   data: {"type":"message_stop"}
   """
 
+//[ A reply that thinks before it calls
+  !
+  ! `thinking` is on for every request this adapter makes, so a real tool round
+  ! always looks like this. The signature is the part that matters: Anthropic
+  ! rejects a tool result whose preceding assistant turn lost its thinking
+  ! block, so the block has to come back verbatim, signature and all.
+//]
+private def thinksThenCalls(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  event: message_start
+  data: {
+    "type": "message_start",
+    "message": {
+      "id": "msg_think", "type": "message", "role": "assistant", "model": "test-model",
+      "content": [], "stop_reason": null, "stop_sequence": null,
+      "usage": {
+        "input_tokens": 6, "output_tokens": 0,
+        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0
+      }
+    }
+  }
+
+  event: content_block_start
+  data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
+
+  event: content_block_delta
+  data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Zurich is in Switzerland."}}
+
+  event: content_block_delta
+  data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-abc"}}
+
+  event: content_block_stop
+  data: {"type":"content_block_stop","index":0}
+
+  event: content_block_start
+  data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_1","name":"lookup","input":{}}}
+
+  event: content_block_delta
+  data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"city\":\"Zurich\"}"}}
+
+  event: content_block_stop
+  data: {"type":"content_block_stop","index":1}
+
+  event: message_delta
+  data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":5}}
+
+  event: message_stop
+  data: {"type":"message_stop"}
+  """
+
 def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
   test: "carries a tool call and its result across two requests", () =>
     ProviderFixture.withResponses: [toolResponse(), textResponse("done")], server =>
@@ -216,3 +266,28 @@ def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
       checkEquals("kind", image.get("type").asString, "image")
       checkEquals("media type", source.get("media_type").asString, "image/png")
       checkEquals("inlined bytes", source.get("data").asString, "aGk=")
+
+  test: "replays the thinking block that preceded a tool call", () =>
+    ProviderFixture.withResponses: [thinksThenCalls(), textResponse("done")], server =>
+      val tool = Tool("lookup", "Look up weather", [Tool.strParam("city", "City to look up")])
+      val turn = ModelDriver.start(model(server), prompt = "What is the weather in Zurich?")
+
+      val requested = turn.expectReply(tools = [tool])
+      check("one tool call", requested.calls.size == 1)
+      // Reasoning rides the wire history only. It never reaches the
+      // provider-independent `Assistant`, which carries text and calls.
+      checkEquals("keeps reasoning off the transcript", requested.text, "")
+
+      val _ = turn.expectReply(results = [ToolResult("call_1", "sunny", [])], tools = [tool])
+
+      val messages = server.recorded(1).jsonBody.get("messages").cast[py.List]
+      val blocks = messages.get(1).cast[py.Dict].get("content").cast[py.List]
+      // Named before it is indexed: an adapter that rebuilt this turn from what
+      // the engine understood would leave it short, and that should read as a
+      // failed expectation rather than an index error.
+      check("replays the assistant's own content blocks", blocks.size == 2)
+      val thinking = blocks.get(0).cast[py.Dict]
+      checkEquals("replays the thinking block", thinking.get("type").asString, "thinking")
+      checkEquals("with its signature", thinking.get("signature").asString, "sig-abc")
+      checkEquals("and its text", thinking.get("thinking").asString, "Zurich is in Switzerland.")
+      checkEquals("ahead of the call it explains", blocks.get(1).cast[py.Dict].get("type").asString, "tool_use")

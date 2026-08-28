@@ -153,6 +153,45 @@ private def truncated(): ProviderFixture.Response = ProviderFixture.sse:
   data: [DONE]
   """
 
+//[ A second tool call, from its own stored response
+  !
+  ! Its `output` carries a reasoning item that stored mode must NOT replay: the
+  ! server already holds it, and `previous_response_id` is what points at it.
+//]
+private def callsAgain(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {
+    "type": "response.completed", "sequence_number": 1,
+    "response": {
+      "id": "resp_second", "object": "response", "created_at": 0,
+      "status": "completed", "error": null, "incomplete_details": null,
+      "instructions": null, "max_output_tokens": 32, "model": "test-model",
+      "output": [
+        {
+          "id": "rs_1", "type": "reasoning",
+          "summary": [{"type":"summary_text","text":"Now Geneva."}],
+          "encrypted_content": "enc-abc"
+        },
+        {
+          "id": "fc_2", "type": "function_call", "status": "completed",
+          "arguments": "{\"city\":\"Geneva\"}", "call_id": "call_2", "name": "lookup"
+        }
+      ],
+      "parallel_tool_calls": true, "previous_response_id": "resp_tool",
+      "reasoning": {"effort":"medium","summary":null}, "store": true,
+      "temperature": 1.0, "text": {"format":{"type":"text"}},
+      "tool_choice": "auto", "tools": [], "top_p": 1.0, "truncation": "disabled",
+      "usage": {
+        "input_tokens": 9, "input_tokens_details": {"cached_tokens":0},
+        "output_tokens": 3, "output_tokens_details": {"reasoning_tokens":2}, "total_tokens": 12
+      },
+      "metadata": {}
+    }
+  }
+
+  data: [DONE]
+  """
+
 def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
   test: "chains a tool call onto the stored response", () =>
     ProviderFixture.withResponses: [toolResponse(), textResponse()], server =>
@@ -233,3 +272,35 @@ def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
         "inlined bytes"
         image.get("image_url").asString
         expected = "data:image/png;base64,aGk="
+
+  test: "advances the stored continuation with every round", () =>
+    ProviderFixture.withResponses: [toolResponse(), callsAgain(), textResponse()], server =>
+      val tool = Tool("lookup", "Look up weather", [Tool.strParam("city", "City to look up")])
+      val turn = ModelDriver.start(model(server), prompt = "What is the weather in Zurich?")
+
+      val _ = turn.expectReply(tools = [tool])
+      val _ = turn.expectReply(results = [ToolResult("call_1", "sunny", [])], tools = [tool])
+      val _ = turn.expectReply(results = [ToolResult("call_2", "sunny", [])], tools = [tool])
+
+      check("three requests", server.requestCount == 3)
+      check("the first opens the chain", !server.recorded(0).jsonBody.contains("previous_response_id"))
+      checkEquals:
+        "the second chains onto the first reply"
+        server.recorded(1).jsonBody.get("previous_response_id").asString
+        expected = "resp_tool"
+
+      // The pointer has to MOVE. An adapter that set it once and never again
+      // would satisfy every other assertion in this file.
+      checkEquals:
+        "the third chains onto the second, not the first"
+        server.recorded(2).jsonBody.get("previous_response_id").asString
+        expected = "resp_second"
+
+      // Stored mode leaves reasoning on the server, so a round sends only what
+      // is new — the opposite of what the stateless wires do.
+      val input = server.recorded(2).jsonBody.get("input").cast[py.List]
+      check("sends only the new result", input.size == 1)
+      checkEquals:
+        "and it is the newest call's"
+        input.get(0).cast[py.Dict].get("call_id").asString
+        expected = "call_2"
