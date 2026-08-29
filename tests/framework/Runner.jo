@@ -8,7 +8,7 @@
   ! holds, so a test line carries only its own name. Full paths are kept for the
   ! failure list at the end, which is what someone re-runs with a filter.
   !
-  ! RUNNING AND REPORTING ARE SEPARATE for a suite marked `parallelSuite`. Its
+  ! RUNNING AND REPORTING ARE SEPARATE for a suite that set `parallel`. Its
   ! tests are dispatched across a pool first, and the walk below then prints
   ! their recorded outcomes in declaration order — so the report reads exactly
   ! as it does serially, whatever order the pool happened to finish in. A test
@@ -25,9 +25,7 @@
   ! param is captured by the closure where it is written, not looked up per
   ! thread, so a test declared inside `with logger = Logging.discard` carries
   ! that logger onto whichever lane runs it — the runner re-establishes nothing
-  ! and still names no capability. (The warnings elsewhere about context not
-  ! crossing a thread are about a different shape: a thread body built where the
-  ! effect was never discharged, whose closure has nothing to carry.)
+  ! and still names no capability.
 //]
 
 namespace harpe.test.framework

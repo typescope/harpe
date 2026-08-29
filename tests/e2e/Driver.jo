@@ -38,8 +38,8 @@ section Driver
     ! Only `jo build` ever writes there. A scenario that RUNS a program does not:
     ! `runCode` reads the `.done` record and replays it in a temporary directory
     ! of its own. So getting every build done here, before the pool starts, is
-    ! the whole of what parallel scenarios need. The e2e suite calls this from
-    ! `beforeAll`, which the runner runs once and serially.
+    ! the whole of what parallel scenarios need. The e2e suite hangs this on its
+    ! `thisSuite.beforeSuite`, which the runner runs once and on its own thread.
   //]
   def prepare(): Unit =
     val root = repoRoot()
