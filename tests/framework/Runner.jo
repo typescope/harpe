@@ -101,10 +101,27 @@ section Runner
   //]
   def lanesFromEnv(): Int =
     val setting = os.getenv("HARPE_TEST_WORKERS", "")
-    if setting != "" then builtins.int(setting)
-    else
-      val cores = py.module("os").cpu_count()
-      if py.isNone(cores) then 1 else cores.asInt
+    if setting != "" then builtins.int(setting) else availableCores()
+
+  //[ How many CPUs this PROCESS may use, which is not how many the machine has
+    !
+    ! `process_cpu_count` respects a cgroup quota or an affinity mask — what a
+    ! container or a CI runner actually hands out. `cpu_count` reports the whole
+    ! host and would oversubscribe there, which is worst for exactly this pool,
+    ! since some of its lanes fork a compiler.
+    !
+    ! It arrived in Python 3.13 and CI still runs 3.12, so the older call is the
+    ! fallback rather than the other way round.
+  //]
+  private def availableCores(): Int =
+    val host = py.module("os")
+    val counted =
+      match py.try(host.process_cpu_count())
+      case Ok(usable) => usable
+      case Err(_) => host.cpu_count()
+
+    // Both are documented to return None when they cannot tell.
+    if py.isNone(counted) then 1 else counted.asInt
 
   //[ Run every test under `root` whose path starts with `filter`
     !
