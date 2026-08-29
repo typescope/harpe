@@ -116,29 +116,8 @@ jobs:
         working-directory: examples/flight-booker
         run: jo build guest --spec sandbox/jo.toml
 
-      - name: Build pycompose
-        run: jo build pycompose
-
-      # The compiled Python reaches these dependencies only at run time. They
-      # cover the agent media processors and the pycompose Cairo backend.
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: |
-            requirements.txt
-            pycompose/requirements.txt
-
       - name: Install test dependencies
-        run: pip install -r requirements.txt
-
-      - name: Install pycompose dependencies
-        working-directory: pycompose
         run: pip install -r requirements.txt
 
       - name: Test agent library
         run: jo run test
-
-      - name: Test pycompose
-        run: jo run pycompose
