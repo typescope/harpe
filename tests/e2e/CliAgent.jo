@@ -47,21 +47,6 @@ section CliAgent
   //[ The prompt the console draws when it is ready for a line. //]
   private def prompt: String = "You \u{25b8}"
 
-  //[ How long the console can still be reading the keyboard after a turn ends
-    !
-    ! `Console.turn` sets its stop event and returns, but the ESC watcher it
-    ! started only notices at the top of its next iteration — until then it is
-    ! inside a `select` with a 0.1s timeout and will consume a byte if one
-    ! arrives. The prompt is printed inside that window, so a line typed the
-    ! instant it appears can be swallowed by the watcher rather than read by the
-    ! console, and the harness would then wait forever for a turn nobody started.
-    !
-    ! This is that window, with room to spare for a loaded machine. It is the one
-    ! wait here that is not on an observable condition, because the condition —
-    ! whether a thread in another process has come back around its loop — is not
-    ! observable from this side of the terminal.
-  //]
-  private def watcherSeconds: Float = 0.5
 
   class Session(console: Int, home: String, proc: py.Dynamic)
     // What has been read but not yet waited for. `expect` consumes through what
@@ -132,12 +117,15 @@ section CliAgent
       !
       ! Waiting for the prompt is not politeness. A turn runs with the terminal
       ! in cbreak mode and a watcher thread reading stdin for an ESC, so a line
-      ! typed before the console comes back is read by the watcher and thrown
-      ! away. The prompt is the console saying the watcher has stopped.
+      ! typed before the console comes back is read by that watcher and thrown
+      ! away. The prompt is the console saying it is the one reading again.
+      !
+      ! Typed the instant the prompt appears, with no settling pause — which is
+      ! also how a fast typist uses this program, and was a lost keystroke until
+      ! the watcher was taught to stop reading the moment its turn ends.
     //]
     def ask(line: String): Unit =
       expect(prompt)
-      py.module("time").sleep(watcherSeconds)
       val _ = py.module("os").write(console, py.dynamic(line + "\n").encode("utf-8"))
       // Consume the line's own echo — proof that the console read it, and not
       // the watcher above. Leaving it unread would also leave the prompt it is
