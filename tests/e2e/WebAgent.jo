@@ -65,21 +65,31 @@ section WebAgent
     val home = tempfile.mkdtemp()
     val shutil = py.module("shutil")
 
-    shutil.copytree(os.path.join(root, "web/assets"), os.path.join(home, "assets"))
+    shutil.copytree:
+      os.path.join(root, "web/assets")
+      os.path.join(home, "assets")
 
     // Tag this agent so it can be told apart over its own API — see `freePort`.
     // A trailing comment, so the script the page loads is otherwise untouched.
     val script = os.path.join(home, "assets/app.js")
-    File.write(script, File.read(script) + "\n// \{marker}\n")
+    File.write:
+      script
+      """
+      \{File.read(script)}
+
+      // \{marker}
+
+      """
+
     File.write:
       os.path.join(home, "AGENT.md")
-      File.read(os.path.join(root, "web/AGENT.md"))
+      File.read: os.path.join(root, "web/AGENT.md")
 
     // The sandbox the agent compiles programs into.
     Driver.linkGuest(root, home)
 
-    File.ensureDir(os.path.join(home, "data"))
-    File.ensureDir(os.path.join(home, "logs/sessions"))
+    File.ensureDir: os.path.join(home, "data")
+    File.ensureDir: os.path.join(home, "logs/sessions")
     home
 
   //[ A port nobody is listening on, probably
@@ -182,9 +192,7 @@ section WebAgent
     ! A fresh home each attempt rather than a reused one: it costs a millisecond,
     ! and it keeps the invariant that a scenario's agent has never seen anything.
   //]
-  private def attempt(
-      root: String, app: String, modelBaseUrl: String, scenario: Agent => Unit, left: Int)
-  : Unit =
+  private def attempt(root: String, app: String, modelBaseUrl: String, scenario: Agent => Unit, left: Int): Unit =
     val marker = "harpe-e2e-" + py.module("uuid").uuid4().hex.asString
     val home = prepareHome(root, marker)
     val port = freePort()
@@ -214,8 +222,7 @@ section WebAgent
       abort "\{err.message}\n  agent home: \{home}\n  --- server log ---\n\{agent.serverLog}"
 
   //[ True once the scenario has run; false when the port was not ours to keep. //]
-  private def startAndRun(
-      agent: Agent, proc: py.Dynamic, marker: String, scenario: Agent => Unit): Bool =
+  private def startAndRun(agent: Agent, proc: py.Dynamic, marker: String, scenario: Agent => Unit): Bool =
     if !waitReady(agent, proc, marker) then false
     else
       run(agent, scenario)
