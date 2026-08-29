@@ -98,8 +98,15 @@ private section CompatibleChat
     val message = choice.message
     val content = message.content
     val text = if content.isNone then "" else content.asString
-    var calls: List[ToolCall] = []
 
+    // Before parsing anything: a cut-off reply's last `tool_call` carries
+    // arguments that stop mid-JSON, so parsing the calls in order to drop them
+    // would fail on the very reply this branch exists for.
+    val reason = choice.finish_reason
+    if !reason.isNone && reason.asString == "length" then
+      return new Assistant((text + "\n\n[Reply truncated: token limit reached.]").trim, [])
+
+    var calls: List[ToolCall] = []
     val rawCalls = message.tool_calls
     if !rawCalls.isNone then
       for call in rawCalls.cast[py.List] do
@@ -107,11 +114,7 @@ private section CompatibleChat
         val args = json.loads(fn.arguments.asString).cast[py.Dict]
         calls = calls + ToolCall(call.id.asString, fn.name.asString, ToolInput(args))
 
-    val reason = choice.finish_reason
-    if !reason.isNone && reason.asString == "length" then
-      new Assistant((text + "\n\n[Reply truncated: token limit reached.]").trim, [])
-    else
-      new Assistant(text.trim, calls)
+    new Assistant(text.trim, calls)
 
   def appendResults(messages: py.List, results: List[ToolResult]): Unit =
     val media = py.list()
@@ -216,7 +219,14 @@ private def consumeCompatibleStream(stream: py.Dynamic, interact: Interact): py.
     if interact.cancelled then abort "model request cancelled"
     if builtins.getattrOr(event, "type", "").asString == "content.delta" then
       interact.emit: TurnEvent.AssistantChunk(event.delta.asString)
-  stream.get_final_completion()
+
+  // The accumulated completion, NOT `get_final_completion()`. That helper runs
+  // the SDK's structured-output parsing, which promises a fully parsed result
+  // and therefore refuses a reply the token limit cut off — and this adapter
+  // never asks for that parsing, since `parseResponse` reads the raw message
+  // itself. Taking the snapshot keeps a truncated reply an ordinary reply, the
+  // way it is on every other wire here.
+  stream.current_completion_snapshot
 
 //[ Build a model using the portable OpenAI Chat Completions API. //]
 private[harpe] def openaiCompatible(

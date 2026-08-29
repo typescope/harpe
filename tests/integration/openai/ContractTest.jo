@@ -1,0 +1,255 @@
+//[ ContractTest.jo — stateful OpenAI Chat Completions contracts. //]
+
+namespace harpe.test.integration.openai.ContractTest
+
+import harpe.models.openai
+import harpe.Tool
+import harpe.Model.Attachment
+import harpe.Tool.*
+import harpe.ffi.os
+import harpe.ffi.tempfile
+import harpe.util.File
+import harpe.logging.logger
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
+import harpe.test.framework.check
+import harpe.test.framework.checkEquals
+import harpe.test.integration.ProviderFixture
+import harpe.test.integration.ModelDriver
+
+private def model(server: ProviderFixture.Server) =
+  openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 2)
+
+private def toolResponse(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {
+    "id": "chat_tool", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{
+      "index": 0,
+      "delta": {
+        "role": "assistant",
+        "tool_calls": [{
+          "index": 0, "id": "call_1", "type": "function",
+          "function": {"name":"lookup","arguments":"{\"city\":"}
+        }]
+      },
+      "finish_reason": null
+    }]
+  }
+
+  data: {
+    "id": "chat_tool", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{
+      "index": 0,
+      "delta": {"tool_calls":[{"index":0,"function":{"arguments":"\"Zurich\"}"}}]},
+      "finish_reason": null
+    }]
+  }
+
+  data: {
+    "id": "chat_tool", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{"index":0,"delta":{},"finish_reason":"tool_calls"}],
+    "usage": {"prompt_tokens":6,"completion_tokens":3,"total_tokens":9}
+  }
+
+  data: [DONE]
+  """
+
+private def textResponse(text: String): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {
+    "id": "chat_text", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{
+      "index": 0, "delta": {"role":"assistant","content":"\{text}"}, "finish_reason": null
+    }]
+  }
+
+  data: {
+    "id": "chat_text", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{"index":0,"delta":{},"finish_reason":"stop"}],
+    "usage": {"prompt_tokens":8,"completion_tokens":1,"total_tokens":9}
+  }
+
+  data: [DONE]
+  """
+
+private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
+  "503 Service Unavailable"
+  "application/json"
+  """
+    {"error":{"message":"unavailable","type":"server_error","code":"server_error"}}
+    """
+
+//[ A reply cut off by the token limit, mid tool call. //]
+private def truncated(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {
+    "id": "chat_cut", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{
+      "index": 0, "delta": {"role":"assistant","content":"Let me loo"}, "finish_reason": null
+    }]
+  }
+
+  data: {
+    "id": "chat_cut", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{
+      "index": 0,
+      "delta": {
+        "tool_calls": [{
+          "index": 0, "id": "call_1", "type": "function",
+          "function": {"name":"lookup","arguments":"{\"city\":\"Zur"}
+        }]
+      },
+      "finish_reason": null
+    }]
+  }
+
+  data: {
+    "id": "chat_cut", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{"index":0,"delta":{},"finish_reason":"length"}],
+    "usage": {"prompt_tokens":6,"completion_tokens":32,"total_tokens":38}
+  }
+
+  data: [DONE]
+  """
+
+//[ A reply carrying a provider reasoning extension beside its tool call
+  !
+  ! `reasoning_content` is not part of the Chat Completions schema. Adapters
+  ! that rebuild an assistant message field by field drop it, which is why this
+  ! one re-sends the provider's own message object instead.
+//]
+private def reasonsThenCalls(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {
+    "id": "chat_reason", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{
+      "index": 0,
+      "delta": {
+        "role": "assistant",
+        "reasoning_content": "Zurich is in Switzerland.",
+        "tool_calls": [{
+          "index": 0, "id": "call_1", "type": "function",
+          "function": {"name":"lookup","arguments":"{\"city\":\"Zurich\"}"}
+        }]
+      },
+      "finish_reason": null
+    }]
+  }
+
+  data: {
+    "id": "chat_reason", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+    "choices": [{"index":0,"delta":{},"finish_reason":"tool_calls"}],
+    "usage": {"prompt_tokens":6,"completion_tokens":3,"total_tokens":9}
+  }
+
+  data: [DONE]
+  """
+
+def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
+  test: "replays the assistant call and its result in messages", () =>
+    ProviderFixture.withResponses: [toolResponse(), textResponse("done")], server =>
+      val tool = Tool("lookup", "Look up weather", [Tool.strParam("city", "City to look up")])
+      val turn = ModelDriver.start(model(server), prompt = "What is the weather in Zurich?")
+
+      val requested = turn.expectReply(tools = [tool])
+      check("one tool call", requested.calls.size == 1)
+      val call = requested.calls.get(0)
+      check("tool id", call.id == "call_1")
+      check("tool name", call.name == "lookup")
+      check("tool arguments", call.input.string("city") == "Zurich")
+
+      val answered = turn.expectReply(results = [ToolResult(call.id, "sunny", [])], tools = [tool])
+      check("follow-up streams the answer", turn.streamed == "done")
+      check("follow-up answer", answered.text == "done")
+      check("follow-up has no calls", answered.calls.isEmpty)
+
+      check("two requests", server.requestCount == 2)
+      val first = server.recorded(0).jsonBody
+      val second = server.recorded(1).jsonBody
+      check("sends tool schema", first.get("tools").cast[py.List].size == 1)
+      val messages = second.get("messages").cast[py.List]
+      check:
+        "retains assistant call"
+        messages.size == 4 && messages.get(2).cast[py.Dict].contains("tool_calls")
+      check:
+        "sends tool result once"
+        messages.get(3).cast[py.Dict].get("tool_call_id").asString == "call_1"
+
+  test: "retry after 503 re-sends the same messages", () =>
+    ProviderFixture.withResponses: [unavailable(), textResponse("hello")], server =>
+      val turn = ModelDriver.start(model(server), prompt = "Say hello.")
+      check("first attempt transient", turn.expectTransient() != "")
+
+      val retried = turn.expectReply()
+      check("retry streams the answer", turn.streamed == "hello")
+      check("retry answer", retried.text == "hello")
+
+      val firstMessages = server.recorded(0).jsonBody.get("messages")
+      val retryMessages = server.recorded(1).jsonBody.get("messages")
+      check:
+        "retry keeps semantic request"
+        py.module("json").dumps(firstMessages, sort_keys = true).asString ==
+          py.module("json").dumps(retryMessages, sort_keys = true).asString
+
+  test: "keeps the text of a truncated reply and drops its calls", () =>
+    ProviderFixture.withResponses: [truncated()], server =>
+      val tool = Tool("lookup", "Look up weather", [Tool.strParam("city", "City to look up")])
+      val message = ModelDriver.start(model(server), prompt = "What is the weather in Zurich?")
+        .expectReply(tools = [tool])
+
+      checkEquals:
+        "marks the reply truncated"
+        message.text
+        expected = "Let me loo\n\n[Reply truncated: token limit reached.]"
+
+      // The call was cut off mid-arguments, so running it would run a tool on
+      // half its input. A truncated reply keeps none of them.
+      check("drops the calls", message.calls.isEmpty)
+
+  // Two bytes is a legal file and encodes to a base64 short enough to assert on
+  // whole. Nothing here decodes it, so it needs no image structure — only the
+  // mime type decides whether it is inlined at all.
+  test: "inlines an attached image into the user message", () =>
+    ProviderFixture.withResponses: [textResponse("done")], server =>
+      val dir = tempfile.mkdtemp()
+      val path = os.path.join(dir, "shot.png")
+      File.writeBytes(path, py.dynamic("hi").callDynamic("encode", "utf-8"))
+      val shot = new Attachment("shot.png", 2, "image/png", path)
+
+      val _ = ModelDriver.start(model(server), prompt = "What is this?", files = [shot])
+        .expectReply()
+
+      // Chat Completions puts the system prompt in `messages` too, so the user
+      // message is the last one, not the first.
+      val messages = server.requestJson.get("messages").cast[py.List]
+      val content = messages.get(messages.size - 1).cast[py.Dict].get("content").cast[py.List]
+      val image = content.get(content.size - 1).cast[py.Dict]
+      checkEquals("kind", image.get("type").asString, "image_url")
+      checkEquals:
+        "inlined bytes"
+        image.get("image_url").cast[py.Dict].get("url").asString
+        expected = "data:image/png;base64,aGk="
+
+  test: "replays the reasoning extension that came with a tool call", () =>
+    ProviderFixture.withResponses: [reasonsThenCalls(), textResponse("done")], server =>
+      val tool = Tool("lookup", "Look up weather", [Tool.strParam("city", "City to look up")])
+      val turn = ModelDriver.start(model(server), prompt = "What is the weather in Zurich?")
+
+      val requested = turn.expectReply(tools = [tool])
+      check("one tool call", requested.calls.size == 1)
+      // Reasoning rides the wire history only. It never reaches the
+      // provider-independent `Assistant`, which carries text and calls.
+      checkEquals("keeps reasoning off the transcript", requested.text, "")
+
+      val _ = turn.expectReply(results = [ToolResult("call_1", "sunny", [])], tools = [tool])
+
+      val messages = server.recorded(1).jsonBody.get("messages").cast[py.List]
+      var replayed = ""
+      for message in messages do
+        val entry = message.cast[py.Dict]
+        if entry.get("role", "").asString == "assistant" then
+          replayed = entry.get("reasoning_content", "").asString
+
+      checkEquals("replays the extension field", replayed, "Zurich is in Switzerland.")

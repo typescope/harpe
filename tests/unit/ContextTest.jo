@@ -1,0 +1,303 @@
+//[ ContextTest.jo
+  !
+  ! Unit tests for the context surface (`harpe.context.Context`): `WindowedContext`'s
+  ! default composition (memory rendered as the transient tail, transcript windowed),
+  ! its explicit turn lifecycle, and `truncate`'s turn-boundary
+  ! windowing (pairing-safe, keeps the most recent turns).
+//]
+
+namespace harpe.test.unit.ContextTest
+
+import harpe.*
+import harpe.turns.TurnEvent
+import harpe.util.truncate
+import harpe.context.FullContext
+import harpe.context.TurnContext
+import harpe.context.WindowedContext
+import harpe.context.SummarizingContext
+import harpe.models.echo
+import harpe.Model.*
+import harpe.logging.logger
+import harpe.Tool.*
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
+import harpe.test.framework.check
+
+// A do-nothing Interact: the default WindowedContext.render is pure and never
+// touches it.
+private class NoInteract
+  view Interact
+
+  def emit(event: TurnEvent): Unit = pass
+
+  def cancelled: Bool = false
+
+  def pause(seconds: Float): Bool = false
+
+  def approve(request: Approvals.Request): Approvals.Decision = Approvals.Cancelled
+end
+
+private class CompactInteract
+  view Interact
+
+  var compactions = 0
+
+  def emit(event: TurnEvent): Unit =
+    if event is TurnEvent.ContextCompacted(_) then compactions = compactions + 1
+
+  def cancelled: Bool = false
+
+  def pause(seconds: Float): Bool = false
+
+  def approve(request: Approvals.Request): Approvals.Decision = Approvals.Cancelled
+end
+
+// A distiller double: records each request's excerpt text and returns a canned
+// summary (`Some`) or a failure (`None`). Passed as the `distill` function — no
+// `Model` needed.
+private class RecordingDistiller(result: Option[String])
+  val prompts = py.list()
+
+  def distill(rendered: Rendered): Option[String] =
+    if rendered.messages.get(0) is UserInput(t, _) then prompts.append(t)
+    result
+end
+
+private def user(t: String): Message = UserInput(t, [])
+private def asst(t: String): Message = Assistant(t, [])
+
+// A short exchange turn: 8 chars under the `truncate` char measure.
+private def turn8(u: String, a: String): List[Message] = [user(u), asst(a)]
+
+// A turn that calls a tool: user, assistant tool_use, tool result, assistant text.
+private def toolTurn(u: String, code: String, out: String): List[Message] =
+  val call = ToolCall("id", "runCode", ToolInput(py.dict("code" ~ code)))
+  [UserInput(u, []), Assistant("", [call]), ToolResults([ToolResult("id", out, [])]), Assistant("done", [])]
+
+// Trigger at 30 reported tokens (fed via observe), keep to a 16-char low-water
+// window — 8-char turns, so two of them survive.
+private def summarizing(distiller: RecordingDistiller): SummarizingContext =
+  new SummarizingContext("BASE", [], 30, 16, rendered => distiller.distill(rendered))
+
+// Three 8-char turns: AAAA/BBBB/CCCC.
+private def threeTurns(): List[Message] =
+  turn8("AAAA", "aaaa") ++ turn8("BBBB", "bbbb") ++ turn8("CCCC", "cccc")
+
+// Five, adding DDDD/EEEE — enough to push over the high-water mark.
+private def fiveTurns(): List[Message] =
+  threeTurns() ++ turn8("DDDD", "dddd") ++ turn8("EEEE", "eeee")
+
+private def feed(ctx: SummarizingContext, messages: List[Message]): Unit =
+  for m in messages do ctx.append(m)
+
+def contextSuite(): Unit receives testing, logger = suite: "context", () =>
+  suite: "FullContext keeps the transcript verbatim", () =>
+    test: "renders the system prompt with an empty transcript", () =>
+      val empty = new FullContext("SYS", []).compact(new NoInteract).rendered
+      check("no messages", empty.messages.size == 0)
+      check("system prompt", empty.system == "SYS")
+
+    test: "keeps every appended message, and observing changes nothing", () =>
+      val ctx = new FullContext("SYS", [])
+      ctx.append(user("first"))
+      ctx.append(asst("reply"))
+      ctx.append(user("second"))
+      ctx.append(asst("done"))
+      check("all present", ctx.compact(new NoInteract).rendered.messages.size == 4)
+      ctx.observe(new Usage(999, 0))
+      check("unchanged after observe", ctx.compact(new NoInteract).rendered.messages.size == 4)
+
+    test: "aborting a turn retains its input and drops provisional traffic", () =>
+      val ctx = new FullContext("SYS", [])
+      ctx.append(user("first"))
+      ctx.beginTurn(UserInput("oops", []))
+      check("input visible after begin", ctx.compact(new NoInteract).rendered.messages.size == 2)
+      ctx.append(asst("provisional"))
+      ctx.abortTurn()
+      check("only the input kept", ctx.compact(new NoInteract).rendered.messages.size == 2)
+
+    test: "counts initial messages as part of the transcript", () =>
+      val ctx = new FullContext("BASE", [user("seed")])
+      check("included in the first render", ctx.compact(new NoInteract).rendered.messages.size == 1)
+      ctx.append(asst("hi"))
+      check("appends accumulate on top", ctx.compact(new NoInteract).rendered.messages.size == 2)
+
+  suite: "WindowedContext", () =>
+    test: "passes the base prompt and transcript through", () =>
+      val ctx = new WindowedContext("BASE", [])
+      ctx.append(user("hi"))
+      ctx.append(asst("hello"))
+      val plain = ctx.compact(new NoInteract).rendered
+      check("system", plain.system == "BASE")
+      check("messages", plain.messages.size == 2)
+
+    test: "aborting drops provisional traffic, retaining the input", () =>
+      val ctx = new WindowedContext("BASE", [])
+      ctx.append(user("hi"))
+      ctx.append(asst("hello"))
+      ctx.beginTurn(UserInput("oops", []))
+      ctx.append(asst("half-done"))
+      check("in the window", ctx.compact(new NoInteract).rendered.messages.size == 4)
+      ctx.abortTurn()
+      check("window plus its input", ctx.compact(new NoInteract).rendered.messages.size == 3)
+
+  suite: "truncate windows on turn boundaries", () =>
+    test: "keeps everything that fits", () =>
+      check("unchanged", truncate(threeTurns(), 100).size == 6)
+
+    test: "drops whole oldest turns to fit", () =>
+      val two = truncate(threeTurns(), 16)
+      check("dropped one turn", two.size == 4)
+      check("starts at a user turn", two.get(0) is UserInput("BBBB", _))
+
+      val one = truncate(threeTurns(), 7)
+      check("down to the last turn", one.size == 2)
+      check("kept the most recent", one.get(0) is UserInput("CCCC", _))
+
+    test: "never drops the final turn, even when oversized", () =>
+      val big = truncate(threeTurns(), 1)
+      check("final turn survives", big.size == 2 && big.get(0) is UserInput("CCCC", _))
+
+    test: "never splits a tool_use / tool_result pair", () =>
+      val paired = toolTurn("keep me", "print 1", "1") ++ toolTurn("and me", "print 2", "2")
+      val kept = truncate(paired, 30)     // room for ~one turn
+      check("starts at a user message", kept.get(0) is UserInput(_, _))
+      check("no orphaned tool result", !(kept.get(0) is ToolResults(_)))
+
+  suite: "SummarizingContext", () =>
+    test: "leaves the transcript alone under the high-water mark", () =>
+      val distiller = new RecordingDistiller(Some("DISTILLED"))
+      val ctx = summarizing(distiller)
+      feed(ctx, threeTurns())
+      ctx.observe(new Usage(20, 0))
+
+      val result = ctx.compact(new CompactInteract)
+      check("reports unchanged", !result.compacted)
+      check("transcript passes through", result.rendered.messages.size == 6)
+      check("no summary yet", !result.rendered.system.contains("Conversation summary"))
+      check("no distillation call", distiller.prompts.size == 0)
+
+    test: "compacts to the low-water window over the high-water mark", () =>
+      val distiller = new RecordingDistiller(Some("DISTILLED"))
+      val ctx = summarizing(distiller)
+      val interact = new CompactInteract
+      feed(ctx, fiveTurns())
+      ctx.observe(new Usage(40, 0))
+
+      val compacted = ctx.compact(interact)
+      check("reports compaction", compacted.compacted)
+      val over = compacted.rendered
+      check("low-water window kept", over.messages.size == 4)
+      check("starts at the first kept turn", over.messages.get(0) is UserInput("DDDD", _))
+      check("one distillation call", distiller.prompts.size == 1)
+      check("compaction event emitted", interact.compactions == 1)
+
+    test: "renders the summary into the system prompt, after the base", () =>
+      val distiller = new RecordingDistiller(Some("DISTILLED"))
+      val ctx = summarizing(distiller)
+      feed(ctx, fiveTurns())
+      ctx.observe(new Usage(40, 0))
+
+      val system = ctx.compact(new CompactInteract).rendered.system
+      check("summary present", system.contains("Conversation summary") && system.contains("DISTILLED"))
+      check("base stays at the front", system.startsWith("BASE"))
+
+    test: "excerpts the dropped turns, not the kept ones", () =>
+      val distiller = new RecordingDistiller(Some("DISTILLED"))
+      val ctx = summarizing(distiller)
+      feed(ctx, fiveTurns())
+      ctx.observe(new Usage(40, 0))
+      val _ = ctx.compact(new CompactInteract)
+
+      val excerpt = distiller.prompts.get(0).asString
+      check("dropped turns present", excerpt.contains("AAAA") && excerpt.contains("CCCC"))
+      check("kept turns absent", !excerpt.contains("DDDD"))
+
+    // Hysteresis: the compacted window reports fewer tokens, so no new call.
+    test: "does not re-distil while back under the high-water mark", () =>
+      val distiller = new RecordingDistiller(Some("DISTILLED"))
+      val ctx = summarizing(distiller)
+      val interact = new CompactInteract
+      feed(ctx, fiveTurns())
+      ctx.observe(new Usage(40, 0))
+      val _ = ctx.compact(interact)
+
+      ctx.observe(new Usage(15, 0))
+      val settled = ctx.compact(interact)
+      check("reports no change", !settled.compacted)
+      check("no re-distillation", distiller.prompts.size == 1)
+      check("summary persists across requests", settled.rendered.system.contains("DISTILLED"))
+
+    test: "folds the prior summary into the next compaction", () =>
+      val distiller = new RecordingDistiller(Some("DISTILLED"))
+      val ctx = summarizing(distiller)
+      val interact = new CompactInteract
+      feed(ctx, fiveTurns())
+      ctx.observe(new Usage(40, 0))
+      val _ = ctx.compact(interact)
+
+      feed(ctx, turn8("FFFF", "ffff") ++ turn8("GGGG", "gggg"))
+      ctx.observe(new Usage(40, 0))
+      val again = ctx.compact(interact)
+      check("reports compaction", again.compacted)
+      check("second compaction event", interact.compactions == 2)
+
+      val second = distiller.prompts.get(1).asString
+      check("prior summary folded in", second.contains("Current summary") && second.contains("DISTILLED"))
+      check("newly dropped turns present", second.contains("DDDD"))
+
+    test: "sends the oversized window as-is when distillation fails", () =>
+      val failing = new CompactInteract
+      val ctx = summarizing(new RecordingDistiller(None))
+      feed(ctx, fiveTurns())
+      ctx.observe(new Usage(40, 0))
+
+      val result = ctx.compact(failing)
+      check("reports no change", !result.compacted)
+      check("window intact", result.rendered.messages.size == 10)
+      check("no summary", !result.rendered.system.contains("Conversation summary"))
+      check("no compaction event", failing.compactions == 0)
+
+    test: "aborting restores both the window and the pre-turn summary", () =>
+      val interact = new CompactInteract
+      val ctx = summarizing(new RecordingDistiller(Some("DISTILLED")))
+      feed(ctx, threeTurns())
+
+      ctx.beginTurn(UserInput("DDDD", []))
+      ctx.append(asst("dddd"))
+      feed(ctx, turn8("EEEE", "eeee"))
+
+      ctx.observe(new Usage(40, 0))
+      val before = ctx.compact(interact)
+      check("compaction succeeded first", before.compacted)
+      check("window was compacted", before.rendered.messages.size == 4)
+
+      ctx.abortTurn()
+      val restored = ctx.compact(interact).rendered
+      check("history plus the turn input", restored.messages.size == 7)
+      check("pre-turn summary restored", !restored.system.contains("Conversation summary"))
+
+  suite: "TurnContext keeps no history across a turn boundary", () =>
+    test: "shows the active turn's traffic", () =>
+      val ctx = new TurnContext("BASE")
+      ctx.beginTurn(UserInput("first", []))
+      ctx.append(asst("answer"))
+      check("visible", ctx.compact(new NoInteract).rendered.messages.size == 2)
+
+    test: "clears committed history when the next turn begins", () =>
+      val ctx = new TurnContext("BASE")
+      ctx.beginTurn(UserInput("first", []))
+      ctx.append(asst("answer"))
+      ctx.commitTurn()
+      ctx.beginTurn(UserInput("second", []))
+      val second = ctx.compact(new NoInteract).rendered
+      check("cleared", second.messages.size == 1)
+      check("only the new input", second.messages.get(0) is UserInput("second", _))
+
+    test: "clears aborted history too", () =>
+      val ctx = new TurnContext("BASE")
+      ctx.beginTurn(UserInput("first", []))
+      ctx.append(asst("answer"))
+      ctx.abortTurn()
+      check("cleared", ctx.compact(new NoInteract).rendered.messages.isEmpty)

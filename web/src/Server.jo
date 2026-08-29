@@ -334,6 +334,21 @@ class ChatServer(brain: Model, name: String, home: String)
     SkillTools.toolset(os.path.join(home, "skills"))
       ++ UploadMediaTool.toolset(dataDir)
       ++ SendFileTool.toolset(dataDir)
+      ++ runTool.toolset(guestEnv(dataDir))
+
+  //[ The environment one session's guest programs run in
+    !
+    ! `runCode` grants the guest nothing but what a driver hands it here, and the
+    ! sandbox runtime roots every capability it binds — `fs` and the document
+    ! readers — at `HARPE_DATA_DIR`. So this grant is what makes a program able to
+    ! read the files the user uploaded and write the ones it will send back, and a
+    ! session's programs see that session's directory and no other's.
+    !
+    ! The driver's own `sandboxEnv` rides along, and comes first: a deployment
+    ! configures its guest through it, but not out of its data directory.
+  //]
+  private def guestEnv(dataDir: String): Map[String, String] =
+    Map("HARPE_DATA_DIR" ~ dataDir)
 
   //[ The files that arrived with a message, for the turn's opening transcript record
     !
@@ -698,7 +713,11 @@ class ChatServer(brain: Model, name: String, home: String)
       val sessionId = session.id
       val outcome =
         with logger = session.log in
-          runTool.run(code, interact = Interact.unattended)
+          runTool.run:
+            code
+            guestEnv(os.path.abspath(Session.dataDir(sessionId)))
+            interact = Interact.unattended
+
       Http.respondJson: py.dict("session" ~ sessionId, "result" ~ outcome.result, "summary" ~ outcome.summary)
 
   //[ Save a script into a session's files (overwriting a same-named one), so it can be reopened, edited, and re-run

@@ -102,17 +102,21 @@ private section OpenRouterResponses
   def parseResponse(response: py.Dynamic): Assistant =
     val ot = response.output_text
     val text = if !ot.isNone then ot.asString else ""
+
+    // Before parsing anything: a cut-off reply's last `function_call` carries
+    // arguments that stop mid-JSON, so parsing the calls in order to drop them
+    // would fail on the very reply this branch exists for.
+    val status = response.status
+    if !status.isNone && status.asString == "incomplete" then
+      return new Assistant((text + "\n\n[Reply truncated: max_output_tokens reached.]").trim, [])
+
     var calls: List[ToolCall] = []
     for it in response.output.cast[py.List] do
       if builtins.getattr(it, "type").asString == "function_call" then
         val args = json.loads(it.arguments.asString).cast[py.Dict]
         calls = calls + ToolCall(it.call_id.asString, it.name.asString, ToolInput(args))
 
-    val status = response.status
-    if !status.isNone && status.asString == "incomplete" then
-      new Assistant((text + "\n\n[Reply truncated: max_output_tokens reached.]").trim, [])
-    else
-      new Assistant(text.trim, calls)
+    new Assistant(text.trim, calls)
 end
 
 private class OpenRouterModel(

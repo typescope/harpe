@@ -1,0 +1,102 @@
+//[ EngineDriver.jo
+  !
+  ! What a turn-engine scenario needs in order to watch `Agent.ask` run, and
+  ! nothing else.
+  !
+  ! `ModelDriver` next door stands in for the engine so a provider suite can
+  ! reach the model layer alone. This is the other half: the engine is real
+  ! here, and driven by an ordinary `Agent.ask` call written in the scenario
+  ! itself, so all this supplies is the channel it reports through and two ways
+  ! of reading a finished turn as a string.
+  !
+  ! It holds no fixture, no tool, and no expected value — every one of those is
+  ! coupled to the wire transcript that produces it, and belongs beside it.
+//]
+
+namespace harpe.test.integration
+
+import harpe.*
+import harpe.turns.*
+import harpe.Model.*
+
+section EngineDriver
+  //[ The turn's progress, as one tag per event
+    !
+    ! A whole turn compares as a single string, which is the only way the event
+    ! ORDER — streamed chunks interleaved with the engine's own brackets — gets
+    ! asserted rather than just the set of events.
+  //]
+  private def tag(event: TurnEvent): String =
+    match event
+    case TurnEvent.ModelRequestStarted(_, _) => "start"
+    case TurnEvent.ModelRequestEnded         => "end"
+    case TurnEvent.TransientError(_, _)      => "transient"
+    case TurnEvent.AssistantChunk(text)      => "chunk:\{text}"
+    case TurnEvent.AssistantStreamReset      => "reset"
+    case TurnEvent.AssistantMessage(text)    => "said:\{text}"
+    case TurnEvent.ToolBudgetReached(_)      => "budget"
+    case TurnEvent.ToolCallStarted(name)     => "tool+\{name}"
+    case TurnEvent.ToolCallEnded(name, _)    => "tool-\{name}"
+    case TurnEvent.ContextCompacted(_)       => "compact"
+
+  //[ The `Interact` a scenario hands `Agent.ask`
+    !
+    ! It records the backoffs the engine asks for and returns from each of them
+    ! at once. A test that actually waited would be testing `time.sleep`, and
+    ! would spend the engine's real 1s, 2s, 4s ladder doing it.
+  //]
+  class Recorder
+    view Interact
+
+    var events: List[String] = []
+    var waits: List[Float] = []
+
+    //[ How many assistant chunks to let through before asking to stop
+      !
+      ! Negative — the default — never asks. Set it to interrupt a scenario in
+      ! the middle of a reply the provider is still streaming, which is the only
+      ! place several of the adapters' cancellation checks can be reached from.
+    //]
+    var cancelAfterChunks: Int = -1
+
+    //[ How many assistant chunks arrived. //]
+    var streamed: Int = 0
+
+    //[ Everything that happened, in order. //]
+    def trace: String = events.join(",")
+
+    def cancelled: Bool = cancelAfterChunks >= 0 && streamed >= cancelAfterChunks
+
+    def pause(seconds: Float): Bool =
+      waits = waits + seconds
+      false
+
+    def approve(request: Approvals.Request): Approvals.Decision = Approvals.Cancelled
+
+    def emit(event: TurnEvent): Unit =
+      if event is TurnEvent.AssistantChunk(_) then streamed = streamed + 1
+      events = events + tag(event)
+  end
+
+  //[ How the turn ended, without its detail — which is the provider's wording. //]
+  def resultTag(turn: TurnData): String =
+    match turn.result
+    case TurnResult.Success        => "Success"
+    case TurnResult.Interrupted    => "Interrupted"
+    case TurnResult.Failed(_)      => "Failed"
+
+  //[ The shape of what the turn produced: `calls,results,text` for a turn that
+    ! called one tool and then answered.
+  //]
+  def messageTags(turn: TurnData): String =
+    var out: List[String] = []
+    for message in turn.messages do
+      out = out + messageTag(message)
+    out.join(",")
+
+  private def messageTag(message: Message): String =
+    match message
+    case UserInput(_, _)     => "user"
+    case Assistant(_, calls) => if calls.isEmpty then "text" else "calls"
+    case ToolResults(_)      => "results"
+end

@@ -351,11 +351,13 @@ def anthropic(
     model: String,
     cache: Anthropic.Cache,
     timeoutSeconds: Int = 120,
-    extraBody: py.Dict = py.none)
+    extraBody: py.Dict = py.none,
+    baseUrl: String = "https://api.anthropic.com")
 : Model =
   val body = if py.isNone(extraBody) then py.dict() else extraBody
   val client = py.module("anthropic").Anthropic:
     api_key = apiKey
+    base_url = baseUrl
     timeout = timeoutSeconds
     max_retries = 0
   new AnthropicModel(client, model, cache, body)

@@ -1,0 +1,68 @@
+//[ FailureTest.jo — Anthropic HTTP failure classification. //]
+
+namespace harpe.test.integration.anthropic.FailureTest
+
+import harpe.models.anthropic
+import harpe.models.Anthropic
+import harpe.logging.logger
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
+import harpe.test.framework.check
+import harpe.test.integration.ProviderFixture
+import harpe.test.integration.ModelDriver
+
+private def failure(status: String, kind: String, message: String): ProviderFixture.Response =
+  ProviderFixture.response:
+    status
+    "application/json"
+    """
+      {"type":"error","error":{"type":"\{kind}","message":"\{message}"}}
+      """
+
+private def model(server: ProviderFixture.Server) =
+  anthropic("test-key", "test-model", Anthropic.NoCache, timeoutSeconds = 2, baseUrl = server.origin)
+
+def failureSuite(): Unit receives testing, logger = suite: "failure", () =>
+  test: "429 reports the Retry-After delay", () =>
+    val limited = new ProviderFixture.Response:
+      "429 Too Many Requests"
+      py.list:
+        py.tuple("Content-Type", "application/json")
+        py.tuple("Retry-After", "5")
+      [
+        """
+        {"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}
+        """
+      ]
+    ProviderFixture.withResponses: [limited], server =>
+      val turn = ModelDriver.start(model(server), prompt = "Say hello.")
+      val detail = turn.expectRetryAfter()
+      check("classified rate limited", detail != "")
+      check("retry-after", turn.retryAfterSeconds == 5.0)
+
+  test: "529 is transient", () =>
+    ProviderFixture.withResponses: [failure("529 Overloaded", "overloaded_error", "busy")], server =>
+      val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectTransient()
+      check("classified transient", detail != "")
+      check("one request", server.requestCount == 1)
+
+  test: "401 is fatal", () =>
+    ProviderFixture.withResponses: [failure("401 Unauthorized", "authentication_error", "bad key")], server =>
+      val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectFatal()
+      check("classified fatal", detail != "")
+
+  test: "a malformed stream is fatal", () =>
+    ProviderFixture.withResponses: [ProviderFixture.sse("event: message_start\ndata: {not-json}")], server =>
+      val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectFatal()
+      check("classified fatal", detail != "")
+
+  // Every other failure here arrives as an HTTP status. This one never becomes
+  // one: the server holds the request open past the client's own deadline, so
+  // the SDK gives up locally and `Classify` has only the exception type to go
+  // on. Retrying is right — nothing reached the model.
+  test: "a client-side timeout is transient", () =>
+    ProviderFixture.withResponses: [ProviderFixture.stalled(3.0)], server =>
+      val impatient = anthropic("test-key", "test-model", Anthropic.NoCache, timeoutSeconds = 1, baseUrl = server.origin)
+      val detail = ModelDriver.start(impatient, prompt = "Say hello.").expectTransient()
+      check("classified transient", detail != "")

@@ -1,0 +1,423 @@
+//[ EngineTest.jo
+  !
+  ! The turn engine (`Agent.ask`) over the OpenAI Responses wire.
+  !
+  ! `unit/TurnTest.jo` drives the engine against a scripted `Responder`: every
+  ! reply it reacts to was handed to it as a Jo value. This runs the same engine
+  ! over a provider SDK and a real socket, where its decisions have to survive
+  ! the round trip — a `ToolResult` it built has to come back as something this
+  ! protocol accepts, a `Retry-After` header has to reach its backoff, and the
+  ! chunks the SDK emits have to interleave with its own events in order.
+  !
+  ! The expectations are deliberately identical to the other three protocols'.
+  ! That the engine reads the same over every wire is the claim being made, and
+  ! it only reads that way if the assertions are written the same way.
+//]
+
+namespace harpe.test.integration.openaiResponses.EngineTest
+
+import harpe.*
+import harpe.turns.*
+import harpe.Model.*
+import harpe.Tool.*
+import harpe.models.openai
+import harpe.logging.logger
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
+import harpe.test.framework.check
+import harpe.test.framework.checkEquals
+import harpe.test.integration.ProviderFixture
+import harpe.test.integration.EngineDriver
+
+private def model(server: ProviderFixture.Server): Model =
+  openai("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
+
+//[ Text, then a call to `lookup` — the shape that makes the engine speak
+  ! before it dispatches a tool. The Responses API streams the text as deltas
+  ! and delivers the call whole, in the completed response's `output`.
+//]
+private def speaksThenCalls(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_pre","output_index":0,"content_index":0,"delta":"Let me look.","logprobs":[]}
+
+  data: {
+    "type": "response.completed", "sequence_number": 2,
+    "response": {
+      "id": "resp_tool", "object": "response", "created_at": 0,
+      "status": "completed", "error": null, "incomplete_details": null,
+      "instructions": null, "max_output_tokens": 8192, "model": "test-model",
+      "output": [
+        {
+          "id": "msg_pre", "type": "message", "status": "completed", "role": "assistant",
+          "content": [{"type":"output_text","text":"Let me look.","annotations":[],"logprobs":[]}]
+        },
+        {
+          "id": "fc_1", "type": "function_call", "status": "completed",
+          "arguments": "{\"city\":\"Zurich\"}", "call_id": "call_1", "name": "lookup"
+        }
+      ],
+      "parallel_tool_calls": true, "previous_response_id": null,
+      "reasoning": {"effort":"medium","summary":null}, "store": true,
+      "temperature": 1.0, "text": {"format":{"type":"text"}},
+      "tool_choice": "auto", "tools": [], "top_p": 1.0, "truncation": "disabled",
+      "usage": {
+        "input_tokens": 6, "input_tokens_details": {"cached_tokens":0},
+        "output_tokens": 3, "output_tokens_details": {"reasoning_tokens":0}, "total_tokens": 9
+      },
+      "metadata": {}
+    }
+  }
+
+  data: [DONE]
+  """
+
+private def says(text: String): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_said","output_index":0,"content_index":0,"delta":"\{text}","logprobs":[]}
+
+  data: {
+    "type": "response.completed", "sequence_number": 2,
+    "response": {
+      "id": "resp_said", "object": "response", "created_at": 0,
+      "status": "completed", "error": null, "incomplete_details": null,
+      "instructions": null, "max_output_tokens": 8192, "model": "test-model",
+      "output": [{
+        "id": "msg_said", "type": "message", "status": "completed", "role": "assistant",
+        "content": [{"type":"output_text","text":"\{text}","annotations":[],"logprobs":[]}]
+      }],
+      "parallel_tool_calls": true, "previous_response_id": "resp_tool",
+      "reasoning": {"effort":"medium","summary":null}, "store": true,
+      "temperature": 1.0, "text": {"format":{"type":"text"}},
+      "tool_choice": "auto", "tools": [], "top_p": 1.0, "truncation": "disabled",
+      "usage": {
+        "input_tokens": 8, "input_tokens_details": {"cached_tokens":0},
+        "output_tokens": 2, "output_tokens_details": {"reasoning_tokens":0}, "total_tokens": 10
+      },
+      "metadata": {}
+    }
+  }
+
+  data: [DONE]
+  """
+
+private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
+  "503 Service Unavailable"
+  "application/json"
+  """
+    {"error":{"message":"unavailable","type":"server_error","code":"server_error"}}
+    """
+
+private def unauthorized(): ProviderFixture.Response = ProviderFixture.response:
+  "401 Unauthorized"
+  "application/json"
+  """
+    {"error":{"message":"bad key","type":"invalid_request_error","code":"invalid_api_key"}}
+    """
+
+private def rateLimited(): ProviderFixture.Response = new ProviderFixture.Response:
+  "429 Too Many Requests"
+  py.list:
+    py.tuple("Content-Type", "application/json")
+    py.tuple("Retry-After", "7")
+  [
+    """
+    {"error":{"message":"slow down","type":"rate_limit_error","code":"rate_limit"}}
+    """
+  ]
+
+
+//[ Two calls in one reply — what a provider does by default when the model
+  ! asks for several things at once. The Responses API lists them in `output`.
+//]
+private def callsTwoTools(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {
+    "type": "response.completed", "sequence_number": 1,
+    "response": {
+      "id": "resp_two", "object": "response", "created_at": 0,
+      "status": "completed", "error": null, "incomplete_details": null,
+      "instructions": null, "max_output_tokens": 8192, "model": "test-model",
+      "output": [
+        {
+          "id": "fc_1", "type": "function_call", "status": "completed",
+          "arguments": "{\"city\":\"Zurich\"}", "call_id": "call_1", "name": "lookup"
+        },
+        {
+          "id": "fc_2", "type": "function_call", "status": "completed",
+          "arguments": "{\"zone\":\"CET\"}", "call_id": "call_2", "name": "clock"
+        }
+      ],
+      "parallel_tool_calls": true, "previous_response_id": null,
+      "reasoning": {"effort":"medium","summary":null}, "store": true,
+      "temperature": 1.0, "text": {"format":{"type":"text"}},
+      "tool_choice": "auto", "tools": [], "top_p": 1.0, "truncation": "disabled",
+      "usage": {
+        "input_tokens": 6, "input_tokens_details": {"cached_tokens":0},
+        "output_tokens": 4, "output_tokens_details": {"reasoning_tokens":0}, "total_tokens": 10
+      },
+      "metadata": {}
+    }
+  }
+
+  data: [DONE]
+  """
+
+private def callsOneTool(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {
+    "type": "response.completed", "sequence_number": 1,
+    "response": {
+      "id": "resp_one", "object": "response", "created_at": 0,
+      "status": "completed", "error": null, "incomplete_details": null,
+      "instructions": null, "max_output_tokens": 8192, "model": "test-model",
+      "output": [{
+        "id": "fc_3", "type": "function_call", "status": "completed",
+        "arguments": "{\"city\":\"Geneva\"}", "call_id": "call_3", "name": "lookup"
+      }],
+      "parallel_tool_calls": true, "previous_response_id": null,
+      "reasoning": {"effort":"medium","summary":null}, "store": true,
+      "temperature": 1.0, "text": {"format":{"type":"text"}},
+      "tool_choice": "auto", "tools": [], "top_p": 1.0, "truncation": "disabled",
+      "usage": {
+        "input_tokens": 9, "input_tokens_details": {"cached_tokens":0},
+        "output_tokens": 2, "output_tokens_details": {"reasoning_tokens":0}, "total_tokens": 11
+      },
+      "metadata": {}
+    }
+  }
+
+  data: [DONE]
+  """
+
+//[ The tool-result ids a request carries, as `function_call_output` items. //]
+private def toolResultIds(request: ProviderFixture.RecordedRequest): String =
+  var ids: List[String] = []
+  for item in request.jsonBody.get("input").cast[py.List] do
+    val entry = item.cast[py.Dict]
+    if entry.get("type", "").asString == "function_call_output" then
+      ids = ids + entry.get("call_id").asString
+  ids.join(",")
+
+//[ A reply that arrives in three pieces, so a scenario can stop after one. //]
+private def saysInPieces(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_slow","output_index":0,"content_index":0,"delta":"one","logprobs":[]}
+
+  data: {"type":"response.output_text.delta","sequence_number":2,"item_id":"msg_slow","output_index":0,"content_index":0,"delta":"two","logprobs":[]}
+
+  data: {"type":"response.output_text.delta","sequence_number":3,"item_id":"msg_slow","output_index":0,"content_index":0,"delta":"three","logprobs":[]}
+
+  data: {
+    "type": "response.completed", "sequence_number": 4,
+    "response": {
+      "id": "resp_slow", "object": "response", "created_at": 0,
+      "status": "completed", "error": null, "incomplete_details": null,
+      "instructions": null, "max_output_tokens": 8192, "model": "test-model",
+      "output": [{
+        "id": "msg_slow", "type": "message", "status": "completed", "role": "assistant",
+        "content": [{"type":"output_text","text":"onetwothree","annotations":[],"logprobs":[]}]
+      }],
+      "parallel_tool_calls": true, "previous_response_id": null,
+      "reasoning": {"effort":"medium","summary":null}, "store": true,
+      "temperature": 1.0, "text": {"format":{"type":"text"}},
+      "tool_choice": "auto", "tools": [], "top_p": 1.0, "truncation": "disabled",
+      "usage": {
+        "input_tokens": 4, "input_tokens_details": {"cached_tokens":0},
+        "output_tokens": 3, "output_tokens_details": {"reasoning_tokens":0}, "total_tokens": 7
+      },
+      "metadata": {}
+    }
+  }
+
+  data: [DONE]
+  """
+
+def engineSuite(): Unit receives testing, logger = suite: "engine", () =>
+  test: "dispatches a streamed tool call and sends its result back", () =>
+    ProviderFixture.withResponses: [speaksThenCalls(), says("Sunny in Zurich.")], server =>
+      val asked = py.list()
+      val weather = Toolset.of:
+        Tool("lookup", "Look up the weather", [Tool.strParam("city", "City to look up")])
+        (input: ToolInput, channel: Interact) =>
+          asked.append(input.string("city"))
+          new ToolOutcome("sunny", "lookup · sunny", attachments = [])
+
+      val recorder = new EngineDriver.Recorder
+      val turn = Agent.ask:
+        "What is the weather in Zurich?"
+        brain = model(server)
+        tools = weather
+        interact = recorder
+
+      // The arguments arrive as stream fragments. Reassembling them is the
+      // SDK's job, so what the handler was called with is what proves it done.
+      check("called the tool once", asked.size == 1)
+      checkEquals("tool argument", asked.get(0).asString, "Zurich")
+
+      checkEquals:
+        "turn events"
+        recorder.trace
+        expected = "start,chunk:Let me look.,end,said:Let me look.,tool+lookup,tool-lookup,start,chunk:Sunny in Zurich.,end"
+
+      checkEquals("result", EngineDriver.resultTag(turn), "Success")
+      checkEquals("everything the turn said", turn.text, "Let me look.\n\nSunny in Zurich.")
+      checkEquals("closing reply", turn.finalText, "Sunny in Zurich.")
+      checkEquals("turn messages", EngineDriver.messageTags(turn), "calls,results,text")
+
+      // Where the result the engine built has to land is this protocol's own
+      // business, so this is the one assertion the four files disagree on.
+      check("two requests", server.requestCount == 2)
+      val input = server.recorded(1).jsonBody.get("input").cast[py.List]
+      val result = input.get(input.size - 1).cast[py.Dict]
+      checkEquals("tool result kind", result.get("type").asString, "function_call_output")
+      checkEquals("tool result id", result.get("call_id").asString, "call_1")
+      checkEquals("tool result content", result.get("output").asString, "sunny")
+
+
+  test: "retries a transient failure and answers on the second attempt", () =>
+    ProviderFixture.withResponses: [unavailable(), says("hello")], server =>
+      val recorder = new EngineDriver.Recorder
+      val turn = Agent.ask:
+        "Say hello."
+        brain = model(server)
+        interact = recorder
+        maxRetries = 1
+
+      checkEquals:
+        "turn events"
+        recorder.trace
+        expected = "start,end,reset,transient,start,chunk:hello,end"
+
+      checkEquals("result", EngineDriver.resultTag(turn), "Success")
+      checkEquals("answer", turn.finalText, "hello")
+      check("backed off once", recorder.waits.size == 1)
+      checkEquals("first backoff", recorder.waits.get(0).toString, "1.0")
+
+  test: "waits as long as a 429 asked it to, not as long as its own backoff", () =>
+    ProviderFixture.withResponses: [rateLimited(), says("hello")], server =>
+      val recorder = new EngineDriver.Recorder
+      val turn = Agent.ask:
+        "Say hello."
+        brain = model(server)
+        interact = recorder
+        maxRetries = 1
+
+      // 7 is the header the fixture sent, and 1.0 is what the engine's own
+      // backoff would have chosen — so this pins the whole path from the
+      // response header, through the SDK and its classifier, to the wait.
+      checkEquals("result", EngineDriver.resultTag(turn), "Success")
+      check("waited once", recorder.waits.size == 1)
+      checkEquals("honoured Retry-After", recorder.waits.get(0).toString, "7.0")
+
+  test: "loses the turn on a fatal provider error, retrying nothing", () =>
+    ProviderFixture.withResponses: [unauthorized()], server =>
+      val recorder = new EngineDriver.Recorder
+      val turn = Agent.ask:
+        "Say hello."
+        brain = model(server)
+        interact = recorder
+        maxRetries = 4
+
+      checkEquals("turn events", recorder.trace, "start,end")
+      checkEquals("result", EngineDriver.resultTag(turn), "Failed")
+      check("no retries", server.requestCount == 1)
+      check("waited for nothing", recorder.waits.isEmpty)
+
+      // A lost turn contributes no messages, so a live turn and one replayed
+      // from a journal agree on what happened.
+      check("produced nothing", turn.messages.isEmpty)
+      checkEquals("said nothing", turn.text, "")
+
+  test: "keeps its place when a retry lands between two tool rounds", () =>
+    ProviderFixture.withResponses: [callsTwoTools(), unavailable(), callsOneTool(), says("Both sunny.")], server =>
+      val lookup = Tool("lookup", "Look up the weather", [Tool.strParam("city", "City to look up")])
+      val clock = Tool("clock", "Read the clock", [Tool.strParam("zone", "Time zone to read")])
+      val asked = py.list()
+
+      val onLookup: Handler = (input: ToolInput, channel: Interact) =>
+        asked.append("lookup:" + input.string("city"))
+        new ToolOutcome("sunny", "lookup · sunny", attachments = [])
+
+      val onClock: Handler = (input: ToolInput, channel: Interact) =>
+        asked.append("clock:" + input.string("zone"))
+        new ToolOutcome("14:00", "clock · 14:00", attachments = [])
+
+      val recorder = new EngineDriver.Recorder
+      val turn = Agent.ask:
+        "What is the weather in Zurich and Geneva?"
+        brain = model(server)
+        tools = Toolset.of(lookup, onLookup).add(clock, onClock)
+        interact = recorder
+        maxRetries = 1
+
+      // Both calls of the first reply are dispatched, in the order the model
+      // made them, before either result goes back.
+      checkEquals:
+        "what the tools were asked"
+        py.dynamic(",").join(asked).asString
+        expected = "lookup:Zurich,clock:CET,lookup:Geneva"
+
+      checkEquals:
+        "turn events"
+        recorder.trace
+        expected = "start,end,tool+lookup,tool-lookup,tool+clock,tool-clock,start,end,reset,transient,start,end,tool+lookup,tool-lookup,start,chunk:Both sunny.,end"
+
+      checkEquals("result", EngineDriver.resultTag(turn), "Success")
+      checkEquals("answer", turn.finalText, "Both sunny.")
+      checkEquals("turn messages", EngineDriver.messageTags(turn), "calls,results,calls,results,text")
+      check("four requests", server.requestCount == 4)
+
+      // The idempotency `Model.Session` promises: the failed request committed
+      // nothing, so the retry is the same request again — same results, and no
+      // continuation state advanced past a response that never arrived.
+      checkEquals:
+        "the retry re-sent the failed request unchanged"
+        py.module("json").dumps(server.recorded(1).jsonBody, sort_keys = true).asString
+        expected = py.module("json").dumps(server.recorded(2).jsonBody, sort_keys = true).asString
+
+      // Both results travel together in the round that follows the two calls,
+      // each keyed by the id the model chose for it.
+      checkEquals("both results, one round", toolResultIds(server.recorded(2)), "call_1,call_2")
+
+  test: "gives up once the retry budget is spent, walking its backoff ladder", () =>
+    ProviderFixture.withResponses: [unavailable(), unavailable(), unavailable()], server =>
+      val recorder = new EngineDriver.Recorder
+      val turn = Agent.ask:
+        "Say hello."
+        brain = model(server)
+        interact = recorder
+        maxRetries = 2
+
+      checkEquals:
+        "turn events"
+        recorder.trace
+        expected = "start,end,reset,transient,start,end,reset,transient,start,end,reset"
+
+      checkEquals("result", EngineDriver.resultTag(turn), "Failed")
+      check("spent every attempt", server.requestCount == 3)
+      checkEquals:
+        "backoff ladder"
+        recorder.waits.map(w => w.toString).join(",")
+        expected = "1.0,2.0"
+
+  test: "abandons the stream the moment cancellation is asked for", () =>
+    ProviderFixture.withResponses: [saysInPieces()], server =>
+      val recorder = new EngineDriver.Recorder
+      // Stop as soon as the first piece of the reply has been seen.
+      recorder.cancelAfterChunks = 1
+
+      val turn = Agent.ask:
+        "Say hello."
+        brain = model(server)
+        interact = recorder
+
+      // The adapter checks between stream events, so the two remaining pieces
+      // never arrive even though the fixture is still willing to send them.
+      checkEquals("turn events", recorder.trace, "start,chunk:one,end")
+      check("stopped inside the stream", recorder.streamed == 1)
+      checkEquals("result", EngineDriver.resultTag(turn), "Interrupted")
+
+      // An interrupted turn is rolled back whole, so it contributes nothing.
+      check("produced nothing", turn.messages.isEmpty)
+      checkEquals("said nothing", turn.text, "")

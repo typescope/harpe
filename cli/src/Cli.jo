@@ -73,13 +73,15 @@ private def runChat(): Unit receives stdout, appHome =
   val dataDir = os.path.abspath(data)
 
   // What the model is offered, and what actually runs for each name — one
-  // table, so the two can never disagree. The CLI grants the guest no
-  // configuration of its own, so `runCode` takes its default (empty)
-  // environment.
+  // table, so the two can never disagree. `runCode` grants the guest exactly
+  // one variable, and it is not optional: the sandbox runtime roots every
+  // capability it binds — `fs` and the document readers — at HARPE_DATA_DIR, so
+  // this grant is what lets a program read the files under `data/` and write the
+  // ones it leaves behind. Without it the runtime refuses to start.
   val tools =
     SkillTools.toolset(skillsDir)
       ++ UploadMediaTool.toolset(dataDir)
-      ++ runCode.toolset()
+      ++ runCode.toolset(Map("HARPE_DATA_DIR" ~ dataDir))
       ++ bash.toolset()
 
   while true do

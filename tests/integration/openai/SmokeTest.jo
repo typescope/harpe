@@ -1,0 +1,55 @@
+//[ SmokeTest.jo — OpenAI Chat Completions text streaming. //]
+
+namespace harpe.test.integration.openai.SmokeTest
+
+import harpe.models.openai
+import harpe.logging.logger
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
+import harpe.test.framework.check
+import harpe.test.integration.ProviderFixture
+import harpe.test.integration.ModelDriver
+
+def smokeSuite(): Unit receives testing, logger = suite: "smoke", () =>
+  test: "streams a text reply", () =>
+    val response = """
+      data: {
+        "id": "chatcmpl_test", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+        "choices": [{"index":0,"delta":{"role":"assistant","content":"hel"},"finish_reason":null}],
+        "usage": null
+      }
+
+      data: {
+        "id": "chatcmpl_test", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+        "choices": [{"index":0,"delta":{"content":"lo"},"finish_reason":null}],
+        "usage": null
+      }
+
+      data: {"id":"chatcmpl_test","object":"chat.completion.chunk","created":0,"model":"test-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null}
+
+      data: {
+        "id": "chatcmpl_test", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+        "choices": [],
+        "usage": {
+          "prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6,
+          "prompt_tokens_details": {"cached_tokens":0}
+        }
+      }
+
+      data: [DONE]
+      """
+
+    ProviderFixture.withSSE: response, server =>
+      val model = openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 2)
+      val turn = ModelDriver.start(model, prompt = "Say hello.")
+      val message = turn.expectReply()
+      check("streams two chunks", turn.chunks.size == 2)
+      check("streamed text", turn.streamed == "hello")
+      check("answer", message.text == "hello")
+      check("no tool calls", message.calls.isEmpty)
+      check("input usage", turn.usage.inputTokens == 4)
+      check("output usage", turn.usage.outputTokens == 2)
+      check("path", server.path == "/v1/chat/completions")
+      check("requests streaming", server.requestJson.get("stream").asBool)
+      check("carries the token budget", server.requestJson.get("max_tokens").asInt == 32)

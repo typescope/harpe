@@ -171,7 +171,11 @@ section Agent
               if tools.contains(toolName) then
                 runSafely(toolName, tools.handler(toolName), call.input, interact)
               else
-                ToolOutcome("Unknown tool: \{toolName}", "unknown tool · \{toolName}", attachments = [])
+                ToolOutcome:
+                  "Unknown tool: \{toolName}"
+                  "unknown tool · \{toolName}"
+                  attachments = []
+                  success = false
 
             interact.emit: TurnEvent.ToolCallEnded(toolName, outcome.summary)
 

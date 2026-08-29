@@ -21,6 +21,23 @@ jo run test
 environment is where the media tests find `pypdfium2`, `python-docx`,
 `openpyxl`, and `pillow`.
 
+The suite has three layers, and a path filter selects one of them:
+
+```sh
+jo run test -- unit          # the components this repo owns
+jo run test -- integration   # provider wire contracts, and the real toolchain
+jo run test -- e2e           # the shipped agents, built and run as their own processes
+jo run test -- e2e/cli       # just one of them
+```
+
+An `e2e` suite builds a shipped application through its `ci/` spec, starts it as
+its own process, and drives it the way a user would — the web agent over its
+HTTP API, the CLI agent by typing at a pseudo-terminal — against a scripted
+model server, with no network and no API key. Programs the agent writes are
+compiled by the real toolchain and run in the real sandbox. A scenario that
+fails leaves its temporary agent home in place and quotes what the agent had
+printed, both named in the failure.
+
 Each shipped application builds against the sources in this branch through a
 spec in `ci/`, which is what CI does:
 

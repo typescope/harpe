@@ -1,0 +1,106 @@
+//[ ModelScript.jo
+  !
+  ! What the agent hears back from the model, in the OpenAI Responses wire
+  ! format the `ProviderFixture` serves.
+  !
+  ! A scenario hands `withResponses` one of these per model request the turn will
+  ! make, in order: `[calls("sendFile", …), says("Sent it.")]` is an agent that
+  ! delivers a file and then speaks. That is the whole scripting language, and it
+  ! is enough because a turn's requests are sequential.
+  !
+  ! Only the fields the adapter reads carry meaning. The rest of the envelope is
+  ! present because the SDK parses the response object whole, and is deliberately
+  ! identical across these builders, so a diff between two scripted turns shows
+  ! only what the model said.
+  !
+  ! The Responses protocol is used because `Model.default` selects it from
+  ! `OPENAI_API_KEY`, and it is the one provider whose endpoint is redirectable
+  ! by environment variable — which is what lets these suites drive the agent's
+  ! own model selection rather than constructing a `Model` for it.
+//]
+
+namespace harpe.test.e2e
+
+import harpe.ffi.json
+import harpe.test.integration.ProviderFixture
+
+section ModelScript
+  //[ Assemble SSE frames, each trimmed, separated by the blank line SSE wants. //]
+  private def frames(parts: List[String]): String = parts.map(part => part.trim).join("\n\n")
+
+  //[ A completed response carrying `output` — the items the adapter reads. //]
+  private def completed(output: String): String =
+    """
+    data: {
+      "type": "response.completed", "sequence_number": 9,
+      "response": {
+        "id": "resp_e2e", "object": "response", "created_at": 0,
+        "status": "completed", "error": null, "incomplete_details": null,
+        "instructions": null, "max_output_tokens": 8192, "model": "test-model",
+        "output": [\{output}],
+        "parallel_tool_calls": true, "previous_response_id": null,
+        "reasoning": {"effort":"medium","summary":null}, "store": true,
+        "temperature": 1.0, "text": {"format":{"type":"text"}},
+        "tool_choice": "auto", "tools": [], "top_p": 1.0, "truncation": "disabled",
+        "usage": {
+          "input_tokens": 12, "input_tokens_details": {"cached_tokens":0},
+          "output_tokens": 4, "output_tokens_details": {"reasoning_tokens":0}, "total_tokens": 16
+        },
+        "metadata": {}
+      }
+    }
+
+    data: [DONE]
+    """
+
+  //[ The assistant message item for `text`. //]
+  private def messageItem(text: String): String =
+    """
+    {
+      "id": "msg_e2e", "type": "message", "status": "completed", "role": "assistant",
+      "content": [{"type":"output_text","text":"\{text}","annotations":[],"logprobs":[]}]
+    }
+    """
+
+  //[ The tool call item. `arguments` is a JSON object encoded as a string, as the wire has it. //]
+  private def callItem(tool: String, arguments: String, callId: String): String =
+    """
+    {
+      "id": "fc_e2e", "type": "function_call", "status": "completed",
+      "arguments": \{arguments}, "call_id": "\{callId}", "name": "\{tool}"
+    }
+    """
+
+  //[ The delta frame — the text arriving a piece at a time, as a user watches it. //]
+  private def delta(text: String): String =
+    """
+    data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_e2e","output_index":0,"content_index":0,"delta":"\{text}","logprobs":[]}
+    """
+
+  //[ The model answers with `text` and calls nothing — the turn ends here. //]
+  def says(text: String): ProviderFixture.Response =
+    ProviderFixture.sse(frames([delta(text), completed(messageItem(text))]))
+
+  //[ The same answer, withheld for `seconds` before a single byte of it is sent
+    !
+    ! For a scenario that has to do something while the turn is in flight. The
+    ! agent sits inside its model request for that whole time, which is where a
+    ! cancellation has to arrive to be worth testing.
+  //]
+  def saysAfter(seconds: Float, text: String): ProviderFixture.Response =
+    ProviderFixture.sse:
+      frames([delta(text), completed(messageItem(text))])
+      delaySeconds = seconds
+
+  //[ The model calls one tool and says nothing — the turn continues once the result is in. //]
+  def calls(tool: String, arguments: py.Dict, callId: String = "call_e2e")
+  : ProviderFixture.Response =
+    ProviderFixture.sse(frames([completed(callItem(tool, encodedArguments(arguments), callId))]))
+
+  //[ A call's arguments as the protocol carries them: JSON, inside a JSON string
+    !
+    ! Double-encoded by `json.dumps` rather than by hand, so a scenario writes
+    ! `py.dict("fileName" ~ name)` and never counts backslashes.
+  //]
+  private def encodedArguments(arguments: py.Dict): String = json.dumps(json.dumps(arguments))
+end

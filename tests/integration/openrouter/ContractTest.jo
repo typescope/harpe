@@ -1,0 +1,277 @@
+//[ ContractTest.jo — stateful OpenRouter Responses contracts. //]
+
+namespace harpe.test.integration.openrouter.ContractTest
+
+import harpe.models.openrouter
+import harpe.Tool
+import harpe.Model.Attachment
+import harpe.Tool.*
+import harpe.ffi.os
+import harpe.ffi.tempfile
+import harpe.util.File
+import harpe.logging.logger
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
+import harpe.test.framework.check
+import harpe.test.framework.checkEquals
+import harpe.test.integration.ProviderFixture
+import harpe.test.integration.ModelDriver
+
+private def model(server: ProviderFixture.Server) =
+  openrouter("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
+
+private def toolResponse(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {
+    "type": "response.completed", "sequence_number": 1,
+    "response": {
+      "id": "resp_tool", "object": "response", "created_at": 0,
+      "status": "completed", "error": null, "incomplete_details": null,
+      "instructions": "You are concise.", "max_output_tokens": 32, "model": "test-model",
+      "output": [{
+        "id": "fc_1", "type": "function_call", "status": "completed",
+        "arguments": "{\"city\":\"Zurich\"}", "call_id": "call_1", "name": "lookup"
+      }],
+      "parallel_tool_calls": true, "previous_response_id": null,
+      "reasoning": {"effort":null,"summary":null}, "store": false,
+      "temperature": 1.0, "text": {"format":{"type":"text"}},
+      "tool_choice": "auto", "tools": [], "top_p": 1.0, "truncation": "disabled",
+      "usage": {
+        "input_tokens": 6, "input_tokens_details": {"cached_tokens":0},
+        "output_tokens": 3, "output_tokens_details": {"reasoning_tokens":0}, "total_tokens": 9
+      },
+      "metadata": {}
+    }
+  }
+
+  data: [DONE]
+  """
+
+private def textResponse(text: String): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_done","output_index":0,"content_index":0,"delta":"\{text}","logprobs":[]}
+
+  data: {
+    "type": "response.completed", "sequence_number": 2,
+    "response": {
+      "id": "resp_done", "object": "response", "created_at": 0,
+      "status": "completed", "error": null, "incomplete_details": null,
+      "instructions": "You are concise.", "max_output_tokens": 32, "model": "test-model",
+      "output": [{
+        "id": "msg_done", "type": "message", "status": "completed", "role": "assistant",
+        "content": [{"type":"output_text","text":"\{text}","annotations":[],"logprobs":[]}]
+      }],
+      "parallel_tool_calls": true, "previous_response_id": null,
+      "reasoning": {"effort":null,"summary":null}, "store": false,
+      "temperature": 1.0, "text": {"format":{"type":"text"}},
+      "tool_choice": "auto", "tools": [], "top_p": 1.0, "truncation": "disabled",
+      "usage": {
+        "input_tokens": 8, "input_tokens_details": {"cached_tokens":0},
+        "output_tokens": 1, "output_tokens_details": {"reasoning_tokens":0}, "total_tokens": 9
+      },
+      "metadata": {}
+    }
+  }
+
+  data: [DONE]
+  """
+
+private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
+  "503 Service Unavailable"
+  "application/json"
+  """
+    {"error":{"message":"unavailable","type":"server_error","code":"server_error"}}
+    """
+
+//[ A reply cut off by the token limit, mid tool call. //]
+private def truncated(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_cut","output_index":0,"content_index":0,"delta":"Let me loo","logprobs":[]}
+
+  data: {
+    "type": "response.completed", "sequence_number": 2,
+    "response": {
+      "id": "resp_cut", "object": "response", "created_at": 0,
+      "status": "incomplete", "error": null,
+      "incomplete_details": {"reason":"max_output_tokens"},
+      "instructions": null, "max_output_tokens": 32, "model": "test-model",
+      "output": [
+        {
+          "id": "msg_cut", "type": "message", "status": "incomplete", "role": "assistant",
+          "content": [{"type":"output_text","text":"Let me loo","annotations":[],"logprobs":[]}]
+        },
+        {
+          "id": "fc_1", "type": "function_call", "status": "incomplete",
+          "arguments": "{\"city\":\"Zur", "call_id": "call_1", "name": "lookup"
+        }
+      ],
+      "parallel_tool_calls": true, "previous_response_id": null,
+      "reasoning": {"effort":"medium","summary":null}, "store": false,
+      "temperature": 1.0, "text": {"format":{"type":"text"}},
+      "tool_choice": "auto", "tools": [], "top_p": 1.0, "truncation": "disabled",
+      "usage": {
+        "input_tokens": 6, "input_tokens_details": {"cached_tokens":0},
+        "output_tokens": 32, "output_tokens_details": {"reasoning_tokens":0}, "total_tokens": 38
+      },
+      "metadata": {}
+    }
+  }
+
+  data: [DONE]
+  """
+
+//[ A reply whose `output` carries a reasoning item before the call
+  !
+  ! OpenRouter is always stateless, so nothing is held server-side: the reasoning
+  ! item has to be replayed, unchanged and in order, on the request that returns
+  ! the tool result.
+//]
+private def reasonsThenCalls(): ProviderFixture.Response = ProviderFixture.sse:
+  """
+  data: {
+    "type": "response.completed", "sequence_number": 1,
+    "response": {
+      "id": "resp_reason", "object": "response", "created_at": 0,
+      "status": "completed", "error": null, "incomplete_details": null,
+      "instructions": null, "max_output_tokens": 32, "model": "test-model",
+      "output": [
+        {
+          "id": "rs_1", "type": "reasoning",
+          "summary": [{"type":"summary_text","text":"Zurich is in Switzerland."}],
+          "encrypted_content": "enc-abc"
+        },
+        {
+          "id": "fc_1", "type": "function_call", "status": "completed",
+          "arguments": "{\"city\":\"Zurich\"}", "call_id": "call_1", "name": "lookup"
+        }
+      ],
+      "parallel_tool_calls": true, "previous_response_id": null,
+      "reasoning": {"effort":"medium","summary":null}, "store": false,
+      "temperature": 1.0, "text": {"format":{"type":"text"}},
+      "tool_choice": "auto", "tools": [], "top_p": 1.0, "truncation": "disabled",
+      "usage": {
+        "input_tokens": 6, "input_tokens_details": {"cached_tokens":0},
+        "output_tokens": 3, "output_tokens_details": {"reasoning_tokens":2}, "total_tokens": 9
+      },
+      "metadata": {}
+    }
+  }
+
+  data: [DONE]
+  """
+
+def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
+  test: "replays the call and result instead of chaining state", () =>
+    ProviderFixture.withResponses: [toolResponse(), textResponse("done")], server =>
+      val tool = Tool("lookup", "Look up weather", [Tool.strParam("city", "City to look up")])
+      val turn = ModelDriver.start(model(server), prompt = "What is the weather in Zurich?")
+
+      val requested = turn.expectReply(tools = [tool])
+      check("one tool call", requested.calls.size == 1)
+      val call = requested.calls.get(0)
+      check("tool id", call.id == "call_1")
+      check("tool name", call.name == "lookup")
+      check("tool arguments", call.input.string("city") == "Zurich")
+
+      val answered = turn.expectReply(results = [ToolResult(call.id, "sunny", [])], tools = [tool])
+      check("follow-up streams the answer", turn.streamed == "done")
+      check("follow-up answer", answered.text == "done")
+      check("follow-up has no calls", answered.calls.isEmpty)
+
+      check("two requests", server.requestCount == 2)
+      val first = server.recorded(0).jsonBody
+      val second = server.recorded(1).jsonBody
+      check("forces stateless mode", !first.get("store").asBool)
+      check("sends tool schema", first.get("tools").cast[py.List].size == 1)
+      val input = second.get("input").cast[py.List]
+      check:
+        "replays call and result"
+        input.size == 3 && input.get(1).cast[py.Dict].get("type").asString == "function_call" &&
+          input.get(2).cast[py.Dict].get("type").asString == "function_call_output"
+      check("has no stored continuation", !second.contains("previous_response_id"))
+
+  test: "retry after 503 re-sends the same input", () =>
+    ProviderFixture.withResponses: [unavailable(), textResponse("hello")], server =>
+      val turn = ModelDriver.start(model(server), prompt = "Say hello.")
+      check("first attempt transient", turn.expectTransient() != "")
+
+      val retried = turn.expectReply()
+      check("retry streams the answer", turn.streamed == "hello")
+      check("retry answer", retried.text == "hello")
+
+      val firstInput = server.recorded(0).jsonBody.get("input")
+      val retryInput = server.recorded(1).jsonBody.get("input")
+      check:
+        "retry keeps semantic input"
+        py.module("json").dumps(firstInput, sort_keys = true).asString ==
+          py.module("json").dumps(retryInput, sort_keys = true).asString
+
+  test: "keeps the text of a truncated reply and drops its calls", () =>
+    ProviderFixture.withResponses: [truncated()], server =>
+      val tool = Tool("lookup", "Look up weather", [Tool.strParam("city", "City to look up")])
+      val message = ModelDriver.start(model(server), prompt = "What is the weather in Zurich?")
+        .expectReply(tools = [tool])
+
+      checkEquals:
+        "marks the reply truncated"
+        message.text
+        expected = "Let me loo\n\n[Reply truncated: max_output_tokens reached.]"
+
+      // The call was cut off mid-arguments, so running it would run a tool on
+      // half its input. A truncated reply keeps none of them.
+      check("drops the calls", message.calls.isEmpty)
+
+  // Two bytes is a legal file and encodes to a base64 short enough to assert on
+  // whole. Nothing here decodes it, so it needs no image structure — only the
+  // mime type decides whether it is inlined at all.
+  test: "inlines an attached image into the user message", () =>
+    ProviderFixture.withResponses: [textResponse("done")], server =>
+      val dir = tempfile.mkdtemp()
+      val path = os.path.join(dir, "shot.png")
+      File.writeBytes(path, py.dynamic("hi").callDynamic("encode", "utf-8"))
+      val shot = new Attachment("shot.png", 2, "image/png", path)
+
+      val _ = ModelDriver.start(model(server), prompt = "What is this?", files = [shot])
+        .expectReply()
+
+      val content = server.requestJson.get("input").cast[py.List]
+        .get(0).cast[py.Dict].get("content").cast[py.List]
+      val image = content.get(content.size - 1).cast[py.Dict]
+      checkEquals("kind", image.get("type").asString, "input_image")
+      checkEquals:
+        "inlined bytes"
+        image.get("image_url").asString
+        expected = "data:image/png;base64,aGk="
+
+  test: "replays the reasoning item that preceded a tool call", () =>
+    ProviderFixture.withResponses: [reasonsThenCalls(), textResponse("done")], server =>
+      val tool = Tool("lookup", "Look up weather", [Tool.strParam("city", "City to look up")])
+      val turn = ModelDriver.start(model(server), prompt = "What is the weather in Zurich?")
+
+      val requested = turn.expectReply(tools = [tool])
+      check("one tool call", requested.calls.size == 1)
+      // Reasoning rides the wire history only. It never reaches the
+      // provider-independent `Assistant`, which carries text and calls.
+      checkEquals("keeps reasoning off the transcript", requested.text, "")
+
+      val _ = turn.expectReply(results = [ToolResult("call_1", "sunny", [])], tools = [tool])
+
+      val input = server.recorded(1).jsonBody.get("input").cast[py.List]
+      var reasoning: py.Dict = py.dict()
+      var reasoningAt = -1
+      var callAt = -1
+      var i = 0
+      for item in input do
+        val entry = item.cast[py.Dict]
+        val kind = entry.get("type", "").asString
+        if kind == "reasoning" then
+          reasoning = entry
+          reasoningAt = i
+        if kind == "function_call" then callAt = i
+        i = i + 1
+
+      check("replays the reasoning item", reasoningAt >= 0)
+      checkEquals("keeping its id", reasoning.get("id").asString, "rs_1")
+      checkEquals("and its opaque payload", reasoning.get("encrypted_content").asString, "enc-abc")
+      check("ahead of the call it explains", reasoningAt < callAt)

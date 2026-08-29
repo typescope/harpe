@@ -1,0 +1,68 @@
+//[ BrokerTest.jo
+  !
+  ! Unit test for `harpe.broker`: a frame handler answering a request over the Unix
+  ! socket — the JSON header path, the raw binary-trailer path, sequential reuse of
+  ! one connection, and the error path (a handler that raises becomes an error frame
+  ! the client aborts on, not a dropped connection).
+//]
+
+namespace harpe.test.unit.BrokerTest
+
+import harpe.broker.*
+import harpe.ffi.json
+import harpe.ffi.tempfile
+import harpe.ffi.os
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.framework.test
+import harpe.test.framework.check
+
+// Echoes the request's `msg` field back as JSON, and returns its UTF-8 bytes on the
+// raw trailer (exercising the binary path without base64). A `msg` of "boom" raises,
+// exercising the broker's error-frame path.
+private def echo(frame: Frame): Frame =
+  val msg = json.loads(frame.json).cast[py.Dict].get("msg").asString
+  if msg == "boom" then
+    abort "handler exploded"
+
+  val result = py.dynamic(py.dict("msg" ~ msg))
+  new Frame(json.dumps(result), py.dynamic(msg).callDynamic("encode", "utf-8"))
+
+private def msgOf(frame: Frame): String =
+  json.loads(frame.json).cast[py.Dict].get("msg").asString
+
+private def ask(client: Broker.Client, msg: String): Frame =
+  client.request(Frame.of(json.dumps(py.dict("msg" ~ msg))))
+
+//[ Run `body` against a broker of its own, so one test cannot disturb another. //]
+private def withBroker(body: Broker.Client => Unit): Unit =
+  val dir = tempfile.mkdtemp()
+  val path = os.path.join(dir, "b.sock")
+  val broker = Broker.start(path, f => echo(f))
+  val client = Broker.connect(path)
+
+  val result = py.try: body(client)
+  val _ = py.try: client.close()
+  val _ = py.try: broker.stop()
+
+  match result
+  case Ok(_) => pass
+  case Err(err) => abort err.message
+
+def brokerSuite(): Unit receives testing = suite: "broker", () =>
+  test: "answers on both the json header and the raw trailer", () =>
+    withBroker: client =>
+      val reply = ask(client, "hello")
+      check("json header echoed", msgOf(reply) == "hello")
+      check("raw blob trailer", reply.blob.callDynamic("decode", "utf-8").asString == "hello")
+
+  test: "reuses one connection for a second call", () =>
+    withBroker: client =>
+      val _ = ask(client, "hello")
+      check("second call", msgOf(ask(client, "world")) == "world")
+
+  test: "turns a raising handler into an error the client sees", () =>
+    withBroker: client =>
+      match py.try(ask(client, "boom"))
+      case Ok(_) => check("request should have failed", false)
+      case Err(_) => check("errors cleanly rather than hanging", true)

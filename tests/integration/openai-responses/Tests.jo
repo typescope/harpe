@@ -1,0 +1,27 @@
+//[ Tests.jo
+  !
+  ! OpenAI Responses scenarios. A sibling of the Chat Completions suite rather
+  ! than a half of it: the two share a vendor and an SDK, but not a wire — one
+  ! chains on a stored response id, the other replays every message — so a
+  ! failure in one says nothing about the other.
+  !
+  ! The directory is `openai-responses` to match the suite this registers, and
+  ! the namespace is `openaiResponses` because a namespace cannot carry a
+  ! hyphen. Nothing else in the tree depends on the two agreeing.
+//]
+
+namespace harpe.test.integration.openaiResponses.Tests
+
+import harpe.logging.logger
+import harpe.test.framework.testing
+import harpe.test.framework.suite
+import harpe.test.integration.openaiResponses.SmokeTest
+import harpe.test.integration.openaiResponses.ContractTest
+import harpe.test.integration.openaiResponses.FailureTest
+import harpe.test.integration.openaiResponses.EngineTest
+
+def openaiResponsesSuite(): Unit receives testing, logger = suite: "openai-responses", () =>
+  SmokeTest.smokeSuite()
+  ContractTest.contractSuite()
+  FailureTest.failureSuite()
+  EngineTest.engineSuite()
