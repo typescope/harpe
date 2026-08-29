@@ -43,7 +43,7 @@ private class Tally
 end
 
 //[ How one test ended. Recorded by a lane, printed later by the walk. //]
-private class Done(failed: Bool, message: String)
+private class Outcome(failed: Bool, message: String)
 
 //[ A selected test and the path it will be reported under. //]
 private class Pending(path: String, test: Testing.Test)
@@ -68,17 +68,20 @@ end
 
 //[ What the lanes finished, keyed by test path
   !
-  ! Written from many threads and read from one, after they are all joined. The
-  ! store is a `py.Dict` because a single insert on one is atomic, and because
-  ! nothing here needs a compound update.
+  ! Written from many threads and read from one, after they are all joined.
+  ! Updating an immutable Map is a read-modify-write operation, so writers are
+  ! serialized to prevent one lane from replacing another lane's update.
 //]
-private class Board
-  private val done: py.Dict = py.dict()
+private class OutcomeStore
+  private var outcomes: Map[String, Outcome] = Map.empty[String, Outcome]
+  private val lock: py.Dynamic = threading.Lock()
 
-  def record(path: String, outcome: Done): Unit = done.set(path, outcome)
+  def record(path: String, outcome: Outcome): Unit =
+    lock.acquire()
+    outcomes = outcomes.add(path, outcome)
+    lock.release()
 
-  def result(path: String): Option[Done] =
-    if done.contains(path) then Some(done.get(path).cast[Done]) else None
+  def result(path: String): Option[Outcome] = outcomes.getOpt(path)
 end
 
 section Runner
@@ -130,29 +133,30 @@ section Runner
   //]
   def run(root: Testing.Suite, filter: String, lanes: Int): Bool receives stdout =
     val tally = new Tally
-    val board = new Board
+    val outcomes = new OutcomeStore
 
     // Every selected suite is prepared, and everything under a parallel one is
     // run, before a line is printed. `beforeSuite` therefore happens exactly
     // once per suite — the walk below only reports.
     if holdsSelected(root, "", filter) then root.beforeSuite()
-    dispatch(root, "", filter, lanes, board)
+    dispatch(root, "", filter, lanes, outcomes)
 
     println Style.strong("\{root.name}:")
-    walk(root, "", "  ", filter, tally, board)
+    walk(root, "", "  ", filter, tally, outcomes)
     report(tally)
     tally.failures.isEmpty
 
   // The root contributes no path segment, so a filter reads as `providers/openai`.
   private def walk(
-      node: Testing.Suite, path: String, indent: String, filter: String, tally: Tally, board: Board)
+      node: Testing.Suite, path: String, indent: String, filter: String, tally: Tally,
+      outcomes: OutcomeStore)
   : Unit receives stdout =
     for child in node.children do
       match child
       case t: Testing.Test =>
         val full = "\{path}\{t.name}"
         if !full.startsWith(filter) then tally.skipped = tally.skipped + 1
-        else reportTest(full, t, indent, tally, outcome(full, t, board))
+        else reportTest(full, t, indent, tally, outcome(full, t, outcomes))
       case nested: Testing.Suite =>
         val nestedPath = "\{path}\{nested.name}/"
         // A suite whose tests are all filtered out prints no header at all.
@@ -160,20 +164,20 @@ section Runner
           tally.skipped = tally.skipped + count(nested)
         else
           println "\{indent}\{Style.strong(nested.name)}"
-          walk(nested, nestedPath, indent + "  ", filter, tally, board)
+          walk(nested, nestedPath, indent + "  ", filter, tally, outcomes)
 
   //[ What a lane recorded, or — for a test outside any pool — run it now. //]
-  private def outcome(full: String, t: Testing.Test, board: Board): Done =
-    match board.result(full)
+  private def outcome(full: String, t: Testing.Test, outcomes: OutcomeStore): Outcome =
+    match outcomes.result(full)
     case Some(recorded) => recorded
     case None => execute(t)
 
-  private def execute(t: Testing.Test): Done =
+  private def execute(t: Testing.Test): Outcome =
     match py.try(t.run())
-    case Ok(_) => new Done(false, "")
-    case Err(err) => new Done(true, err.message)
+    case Ok(_) => new Outcome(false, "")
+    case Err(err) => new Outcome(true, err.message)
 
-  private def reportTest(full: String, t: Testing.Test, indent: String, tally: Tally, done: Done)
+  private def reportTest(full: String, t: Testing.Test, indent: String, tally: Tally, done: Outcome)
   : Unit receives stdout =
     if !done.failed then
       tally.passed = tally.passed + 1
@@ -190,7 +194,8 @@ section Runner
     ! interleave rather than each waiting for the last. A parallel suite nested
     ! inside another is therefore just part of the outer one's batch.
   //]
-  private def dispatch(node: Testing.Suite, path: String, filter: String, lanes: Int, board: Board)
+  private def dispatch(
+      node: Testing.Suite, path: String, filter: String, lanes: Int, outcomes: OutcomeStore)
   : Unit =
     for child in node.children do
       match child
@@ -202,10 +207,10 @@ section Runner
           // Everything under here is about to run at once, so everything under
           // here is prepared first — this suite and any nested in it.
           prepareAll(nested, nestedPath, filter)
-          pool(gather(nested, nestedPath, filter), lanes, board)
+          pool(gather(nested, nestedPath, filter), lanes, outcomes)
         else
           nested.beforeSuite()
-          dispatch(nested, nestedPath, filter, lanes, board)
+          dispatch(nested, nestedPath, filter, lanes, outcomes)
 
   //[ Run `beforeSuite` for every selected suite in a subtree, outermost first. //]
   private def prepareAll(node: Testing.Suite, path: String, filter: String): Unit =
@@ -231,13 +236,13 @@ section Runner
     found
 
   //[ Run `items` across at most `lanes` threads, and wait for all of them. //]
-  private def pool(items: List[Pending], lanes: Int, board: Board): Unit =
+  private def pool(items: List[Pending], lanes: Int, outcomes: OutcomeStore): Unit =
     val queue = new Queue(items)
     var threads: List[py.Dynamic] = []
 
     var started = 0
     while started < lanes && started < items.size do
-      val thread = Process.daemon(() => drain(queue, board))
+      val thread = Process.daemon(() => drain(queue, outcomes))
       thread.start()
       threads = threads + thread
       started = started + 1
@@ -249,15 +254,15 @@ section Runner
     ! A named function rather than the thread's own lambda, so its loop state is
     ! a local of a call — a closure here may not capture a `var`.
   //]
-  private def drain(queue: Queue, board: Board): Unit =
+  private def drain(queue: Queue, outcomes: OutcomeStore): Unit =
     var running = true
     while running do
       match queue.take()
       case None => running = false
       case Some(item) =>
         match py.try(item.test.run())
-        case Ok(_) => board.record(item.path, new Done(false, ""))
-        case Err(err) => board.record(item.path, new Done(true, err.message))
+        case Ok(_) => outcomes.record(item.path, new Outcome(false, ""))
+        case Err(err) => outcomes.record(item.path, new Outcome(true, err.message))
 
   private def holdsSelected(node: Testing.Suite, path: String, filter: String): Bool =
     var any = false
