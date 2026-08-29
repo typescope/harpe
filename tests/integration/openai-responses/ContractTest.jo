@@ -10,7 +10,7 @@ import harpe.ffi.os
 import harpe.ffi.tempfile
 import harpe.util.File
 import harpe.logging.logger
-import harpe.test.framework.testing
+import harpe.test.framework.thisSuite
 import harpe.test.framework.suite
 import harpe.test.framework.test
 import harpe.test.framework.check
@@ -235,7 +235,7 @@ private def reasonsThenCalls(): ProviderFixture.Response = ProviderFixture.sse:
   data: [DONE]
   """
 
-def contractSuite(): Unit receives testing, logger = suite: "contract", () =>
+def contractSuite(): Unit receives thisSuite, logger = suite: "contract", () =>
   test: "chains a tool call onto the stored response", () =>
     ProviderFixture.withResponses: [toolResponse(), textResponse()], server =>
       val tool = Tool("lookup", "Look up weather", [Tool.strParam("city", "City to look up")])

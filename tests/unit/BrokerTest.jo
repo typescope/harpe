@@ -12,7 +12,7 @@ import harpe.broker.*
 import harpe.ffi.json
 import harpe.ffi.tempfile
 import harpe.ffi.os
-import harpe.test.framework.testing
+import harpe.test.framework.thisSuite
 import harpe.test.framework.suite
 import harpe.test.framework.test
 import harpe.test.framework.check
@@ -49,7 +49,7 @@ private def withBroker(body: Broker.Client => Unit): Unit =
   case Ok(_) => pass
   case Err(err) => abort err.message
 
-def brokerSuite(): Unit receives testing = suite: "broker", () =>
+def brokerSuite(): Unit receives thisSuite = suite: "broker", () =>
   test: "answers on both the json header and the raw trailer", () =>
     withBroker: client =>
       val reply = ask(client, "hello")

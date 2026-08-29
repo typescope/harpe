@@ -7,16 +7,80 @@
   ! The report mirrors the tree: a suite prints its name and indents what it
   ! holds, so a test line carries only its own name. Full paths are kept for the
   ! failure list at the end, which is what someone re-runs with a filter.
+  !
+  ! RUNNING AND REPORTING ARE SEPARATE for a suite marked `parallelSuite`. Its
+  ! tests are dispatched across a pool first, and the walk below then prints
+  ! their recorded outcomes in declaration order — so the report reads exactly
+  ! as it does serially, whatever order the pool happened to finish in. A test
+  ! outside such a suite is still run by the walk itself, where it prints as it
+  ! goes.
+  !
+  ! The dispatch pass is also the one that runs each selected suite's
+  ! `beforeSuite`, outermost first, so a suite is prepared exactly once and
+  ! before any test under it — including tests the walk will run. Which suites
+  ! were prepared is the runner's bookkeeping, and stays here: the tree records
+  ! what a suite IS, never what has been done to it.
+  !
+  ! WHAT A LANE STILL HAS. Everything the body was declared with. A context
+  ! param is captured by the closure where it is written, not looked up per
+  ! thread, so a test declared inside `with logger = Logging.discard` carries
+  ! that logger onto whichever lane runs it — the runner re-establishes nothing
+  ! and still names no capability. (The warnings elsewhere about context not
+  ! crossing a thread are about a different shape: a thread body built where the
+  ! effect was never discharged, whose closure has nothing to carry.)
 //]
 
 namespace harpe.test.framework
 
 import jo.IO.stdout
+import harpe.ffi.os
+import harpe.ffi.builtins
+import harpe.ffi.threading
+import harpe.util.Process
 
 private class Tally
   var passed: Int = 0
   var skipped: Int = 0
   var failures: List[String] = []
+end
+
+//[ How one test ended. Recorded by a lane, printed later by the walk. //]
+private class Done(failed: Bool, message: String)
+
+//[ A selected test and the path it will be reported under. //]
+private class Pending(path: String, test: Testing.Test)
+
+//[ The work a pool has left, handed out one item at a time
+  !
+  ! A cursor rather than a slice per lane: the scenarios are nothing like equal
+  ! in cost — two of them compile a program with the real toolchain — so a fixed
+  ! split would leave lanes idle behind the slowest one.
+//]
+private class Queue(items: List[Pending])
+  private val cursor: py.Dict = py.dict("next" ~ 0)
+  private val lock: py.Dynamic = threading.Lock()
+
+  def take(): Option[Pending] =
+    lock.acquire()
+    val index = cursor.get("next", 0).asInt
+    cursor.set("next", index + 1)
+    lock.release()
+    if index < items.size then Some(items.get(index)) else None
+end
+
+//[ What the lanes finished, keyed by test path
+  !
+  ! Written from many threads and read from one, after they are all joined. The
+  ! store is a `py.Dict` because a single insert on one is atomic, and because
+  ! nothing here needs a compound update.
+//]
+private class Board
+  private val done: py.Dict = py.dict()
+
+  def record(path: String, outcome: Done): Unit = done.set(path, outcome)
+
+  def result(path: String): Option[Done] =
+    if done.contains(path) then Some(done.get(path).cast[Done]) else None
 end
 
 section Runner
@@ -29,27 +93,51 @@ section Runner
     val argv = py.module("sys").argv.cast[py.List]
     if argv.size > 1 then argv.get(1).asString else ""
 
+  //[ How many tests a parallel suite may have in flight at once
+    !
+    ! One per core, which is what the e2e scenarios want: each is a process
+    ! start and then mostly waiting on that process, but the two that compile a
+    ! program are squarely CPU-bound. `HARPE_TEST_WORKERS=1` puts the whole run
+    ! back on one thread, which is the first thing to try when a parallel run
+    ! fails and a serial one does not.
+  //]
+  def lanesFromEnv(): Int =
+    val setting = os.getenv("HARPE_TEST_WORKERS", "")
+    if setting != "" then builtins.int(setting)
+    else
+      val cores = py.module("os").cpu_count()
+      if py.isNone(cores) then 1 else cores.asInt
+
   //[ Run every test under `root` whose path starts with `filter`
     !
     ! Prints the tree as it goes, then a summary. Returns true when nothing
     ! failed.
   //]
-  def run(root: Testing.Suite, filter: String): Bool receives stdout =
+  def run(root: Testing.Suite, filter: String, lanes: Int): Bool receives stdout =
     val tally = new Tally
+    val board = new Board
+
+    // Every selected suite is prepared, and everything under a parallel one is
+    // run, before a line is printed. `beforeSuite` therefore happens exactly
+    // once per suite — the walk below only reports.
+    if holdsSelected(root, "", filter) then root.beforeSuite()
+    dispatch(root, "", filter, lanes, board)
+
     println Style.strong("\{root.name}:")
-    walk(root, "", "  ", filter, tally)
+    walk(root, "", "  ", filter, tally, board)
     report(tally)
     tally.failures.isEmpty
 
   // The root contributes no path segment, so a filter reads as `providers/openai`.
-  private def walk(node: Testing.Suite, path: String, indent: String, filter: String, tally: Tally)
+  private def walk(
+      node: Testing.Suite, path: String, indent: String, filter: String, tally: Tally, board: Board)
   : Unit receives stdout =
     for child in node.children do
       match child
       case t: Testing.Test =>
         val full = "\{path}\{t.name}"
         if !full.startsWith(filter) then tally.skipped = tally.skipped + 1
-        else runTest(full, t, indent, tally)
+        else reportTest(full, t, indent, tally, outcome(full, t, board))
       case nested: Testing.Suite =>
         val nestedPath = "\{path}\{nested.name}/"
         // A suite whose tests are all filtered out prints no header at all.
@@ -57,18 +145,104 @@ section Runner
           tally.skipped = tally.skipped + count(nested)
         else
           println "\{indent}\{Style.strong(nested.name)}"
-          walk(nested, nestedPath, indent + "  ", filter, tally)
+          walk(nested, nestedPath, indent + "  ", filter, tally, board)
 
-  private def runTest(full: String, t: Testing.Test, indent: String, tally: Tally)
-  : Unit receives stdout =
+  //[ What a lane recorded, or — for a test outside any pool — run it now. //]
+  private def outcome(full: String, t: Testing.Test, board: Board): Done =
+    match board.result(full)
+    case Some(recorded) => recorded
+    case None => execute(t)
+
+  private def execute(t: Testing.Test): Done =
     match py.try(t.run())
-    case Ok(_) =>
+    case Ok(_) => new Done(false, "")
+    case Err(err) => new Done(true, err.message)
+
+  private def reportTest(full: String, t: Testing.Test, indent: String, tally: Tally, done: Done)
+  : Unit receives stdout =
+    if !done.failed then
       tally.passed = tally.passed + 1
       println "\{indent}\{Style.success("ok")}   \{t.name}"
-    case Err(err) =>
-      tally.failures = tally.failures + "\{full}: \{err.message}"
+    else
+      tally.failures = tally.failures + "\{full}: \{done.message}"
       println "\{indent}\{Style.error("FAIL")} \{t.name}"
-      println "\{indent}     \{err.message}"
+      println "\{indent}     \{done.message}"
+
+  //[ Find each parallel suite and run its selected tests across a pool
+    !
+    ! Depth-first, and it stops descending at the first parallel suite it finds:
+    ! that suite's whole subtree goes into ONE pool, so its sibling suites
+    ! interleave rather than each waiting for the last. A parallel suite nested
+    ! inside another is therefore just part of the outer one's batch.
+  //]
+  private def dispatch(node: Testing.Suite, path: String, filter: String, lanes: Int, board: Board)
+  : Unit =
+    for child in node.children do
+      match child
+      case _: Testing.Test => pass
+      case nested: Testing.Suite =>
+        val nestedPath = "\{path}\{nested.name}/"
+        if !holdsSelected(nested, nestedPath, filter) then pass
+        else if nested.parallel then
+          // Everything under here is about to run at once, so everything under
+          // here is prepared first — this suite and any nested in it.
+          prepareAll(nested, nestedPath, filter)
+          pool(gather(nested, nestedPath, filter), lanes, board)
+        else
+          nested.beforeSuite()
+          dispatch(nested, nestedPath, filter, lanes, board)
+
+  //[ Run `beforeSuite` for every selected suite in a subtree, outermost first. //]
+  private def prepareAll(node: Testing.Suite, path: String, filter: String): Unit =
+    node.beforeSuite()
+    for child in node.children do
+      match child
+      case _: Testing.Test => pass
+      case nested: Testing.Suite =>
+        val nestedPath = "\{path}\{nested.name}/"
+        if holdsSelected(nested, nestedPath, filter) then
+          prepareAll(nested, nestedPath, filter)
+
+  //[ Every selected test in a subtree, in declaration order. //]
+  private def gather(node: Testing.Suite, path: String, filter: String): List[Pending] =
+    var found: List[Pending] = []
+    for child in node.children do
+      match child
+      case t: Testing.Test =>
+        val full = "\{path}\{t.name}"
+        if full.startsWith(filter) then found = found + new Pending(full, t)
+      case nested: Testing.Suite =>
+        found = found ++ gather(nested, "\{path}\{nested.name}/", filter)
+    found
+
+  //[ Run `items` across at most `lanes` threads, and wait for all of them. //]
+  private def pool(items: List[Pending], lanes: Int, board: Board): Unit =
+    val queue = new Queue(items)
+    var threads: List[py.Dynamic] = []
+
+    var started = 0
+    while started < lanes && started < items.size do
+      val thread = Process.daemon(() => drain(queue, board))
+      thread.start()
+      threads = threads + thread
+      started = started + 1
+
+    for thread in threads do thread.join()
+
+  //[ One lane: take a test, run it, record how it ended, repeat
+    !
+    ! A named function rather than the thread's own lambda, so its loop state is
+    ! a local of a call — a closure here may not capture a `var`.
+  //]
+  private def drain(queue: Queue, board: Board): Unit =
+    var running = true
+    while running do
+      match queue.take()
+      case None => running = false
+      case Some(item) =>
+        match py.try(item.test.run())
+        case Ok(_) => board.record(item.path, new Done(false, ""))
+        case Err(err) => board.record(item.path, new Done(true, err.message))
 
   private def holdsSelected(node: Testing.Suite, path: String, filter: String): Bool =
     var any = false

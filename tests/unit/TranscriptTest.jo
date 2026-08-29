@@ -19,7 +19,7 @@ import harpe.transcript.Journal
 import harpe.logging.Entry
 import harpe.logging.Value
 import harpe.ffi.tempfile
-import harpe.test.framework.testing
+import harpe.test.framework.thisSuite
 import harpe.test.framework.suite
 import harpe.test.framework.test
 import harpe.test.framework.check
@@ -148,7 +148,7 @@ private def projectableTurns(journal: Journal): Unit receives logger =
   journal.request(Journal.payload("kind" ~ "chat"))
   journal.start(UserInput("and this?", []))
 
-def transcriptSuite(): Unit receives testing = suite: "session log", () =>
+def transcriptSuite(): Unit receives thisSuite = suite: "session log", () =>
   suite: "what the journal writes", () =>
     test: "turn and diagnostic records share one log", () =>
       withJournal: (journal, path) =>

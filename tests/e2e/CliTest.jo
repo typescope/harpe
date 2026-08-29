@@ -26,7 +26,7 @@ import harpe.ffi.json
 import harpe.ffi.os
 import harpe.util.File
 
-import harpe.test.framework.testing
+import harpe.test.framework.thisSuite
 import harpe.test.framework.suite
 import harpe.test.framework.test
 import harpe.test.framework.check
@@ -39,7 +39,7 @@ import harpe.test.e2e.ModelScript
 private def requestText(server: ProviderFixture.Server, index: Int): String =
   json.dumps(server.recorded(index).jsonBody)
 
-def cliSuite(): Unit receives testing = suite: "cli", () =>
+def cliSuite(): Unit receives thisSuite = suite: "cli", () =>
 
   test: "answers a question, and journals the exchange", () =>
     ProviderFixture.withResponses: [ModelScript.says("I write Jo programs.")], server =>

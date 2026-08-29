@@ -28,6 +28,24 @@ section Driver
     assert: found != "", "e2e: ci/ not found — run the tests from the repository root"
     os.path.abspath(found)
 
+  //[ Build every driver these suites run, before any scenario starts
+    !
+    ! Two builds cannot overlap. Each `ci/` spec compiles its guest to the SAME
+    ! `ci/.build/sandbox-guest/`, so concurrent scenarios would drive `jo build`
+    ! at one output directory — across suites as much as within one, since
+    ! `web.toml` and `cli.toml` both target it.
+    !
+    ! Only `jo build` ever writes there. A scenario that RUNS a program does not:
+    ! `runCode` reads the `.done` record and replays it in a temporary directory
+    ! of its own. So getting every build done here, before the pool starts, is
+    ! the whole of what parallel scenarios need. The e2e suite calls this from
+    ! `beforeAll`, which the runner runs once and serially.
+  //]
+  def prepare(): Unit =
+    val root = repoRoot()
+    build(root, "web.toml", "web")
+    build(root, "cli.toml", "cli")
+
   //[ Build an application and its sandbox guest from one `ci/` spec, once per process
     !
     ! Those specs are what CI builds: this branch's driver sources against this
@@ -43,6 +61,10 @@ section Driver
     !
     ! The builds are incremental, and the environment carries the memo, the same
     ! way the `runCode` suite remembers its sandbox.
+    !
+    ! `prepare` above has normally set both memos already, so the call each
+    ! scenario makes is a lookup. That is what makes it safe to reach here from
+    ! a pool thread: the write happened before any lane started.
   //]
   def build(root: String, spec: String, application: String): Unit =
     val memo = "HARPE_TEST_E2E_BUILT_" + application

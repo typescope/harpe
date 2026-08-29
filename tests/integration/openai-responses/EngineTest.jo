@@ -22,7 +22,7 @@ import harpe.Model.*
 import harpe.Tool.*
 import harpe.models.openai
 import harpe.logging.logger
-import harpe.test.framework.testing
+import harpe.test.framework.thisSuite
 import harpe.test.framework.suite
 import harpe.test.framework.test
 import harpe.test.framework.check
@@ -233,7 +233,7 @@ private def saysInPieces(): ProviderFixture.Response = ProviderFixture.sse:
   data: [DONE]
   """
 
-def engineSuite(): Unit receives testing, logger = suite: "engine", () =>
+def engineSuite(): Unit receives thisSuite, logger = suite: "engine", () =>
   test: "dispatches a streamed tool call and sends its result back", () =>
     ProviderFixture.withResponses: [speaksThenCalls(), says("Sunny in Zurich.")], server =>
       val asked = py.list()

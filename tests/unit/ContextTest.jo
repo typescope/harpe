@@ -19,7 +19,7 @@ import harpe.models.echo
 import harpe.Model.*
 import harpe.logging.logger
 import harpe.Tool.*
-import harpe.test.framework.testing
+import harpe.test.framework.thisSuite
 import harpe.test.framework.suite
 import harpe.test.framework.test
 import harpe.test.framework.check
@@ -91,7 +91,7 @@ private def fiveTurns(): List[Message] =
 private def feed(ctx: SummarizingContext, messages: List[Message]): Unit =
   for m in messages do ctx.append(m)
 
-def contextSuite(): Unit receives testing, logger = suite: "context", () =>
+def contextSuite(): Unit receives thisSuite, logger = suite: "context", () =>
   suite: "FullContext keeps the transcript verbatim", () =>
     test: "renders the system prompt with an empty transcript", () =>
       val empty = new FullContext("SYS", []).compact(new NoInteract).rendered

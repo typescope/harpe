@@ -14,7 +14,7 @@ import harpe.tools.*
 import harpe.Tool.*
 import harpe.*
 import harpe.logging.logger
-import harpe.test.framework.testing
+import harpe.test.framework.thisSuite
 import harpe.test.framework.suite
 import harpe.test.framework.test
 import harpe.test.framework.check
@@ -34,7 +34,7 @@ private def spec(n: String): Tool = Tool(n, "a test tool", [])
 
 private def pair(): Toolset = Toolset.of(spec("alpha"), noop).add(spec("beta"), noop)
 
-def toolSuite(): Unit receives testing, logger = suite: "tool layer", () =>
+def toolSuite(): Unit receives thisSuite, logger = suite: "tool layer", () =>
   suite: "ToolInput", () =>
     test: "reads a value of each schema type", () =>
       val full = ToolInput(py.dict("s" ~ "hi", "n" ~ 42, "b" ~ true, "f" ~ 3.5))

@@ -1,7 +1,7 @@
 //[ Testing.jo
   !
   ! The test tree and the channel that collects it. A scenario file declares its
-  ! cases with `test` and `suite` from anywhere that `receives testing`, and
+  ! cases with `test` and `suite` from anywhere that `receives thisSuite`, and
   ! `Testing.define` is the one place that provides the channel: it installs a
   ! fresh root for the duration of a declaration block and hands back the tree
   ! for `Runner` to walk.
@@ -15,6 +15,13 @@
   ! need. `with logger = Logging.discard in Testing.define(...)` captures a
   ! logger. Wrapping the `Runner.run` call instead captures nothing, because by
   ! then every body has already closed over the ambient scope.
+  !
+  ! That same separation is what lets a suite run concurrently. Declaration is
+  ! always serial and always on this thread, so a tree is built once and read
+  ! many times, and the runner is free to dispatch the bodies it finds however
+  ! it likes. A suite says only whether its tests hold common state, by setting
+  ! `thisSuite.parallel` in its own body — true of `e2e`, because every scenario
+  ! builds its own agent, its own home and its own scripted model.
 //]
 
 namespace harpe.test.framework
@@ -22,19 +29,19 @@ namespace harpe.test.framework
 //[ The suite being declared into
   !
   ! Provided by `Testing.define`, and rebound by `suite` for the extent of a
-  ! nested block. Picked up by scenario files via `receives testing`.
+  ! nested block. Picked up by scenario files via `receives thisSuite`.
 //]
-param testing: Testing.Suite
+param thisSuite: Testing.Suite
 
 //[ Declare one test in the enclosing suite. //]
-def test(name: String, body: () => Unit): Unit receives testing =
-  testing.addTest(name, body)
+def test(name: String, body: () => Unit): Unit receives thisSuite =
+  thisSuite.addTest(name, body)
 
 //[ Declare a nested suite, collecting `content` into it. //]
-def suite(name: String, content: () => Unit receives testing): Unit receives testing =
+def suite(name: String, content: () => Unit receives thisSuite): Unit receives thisSuite =
   val nested = new Testing.Suite(name)
-  with testing = nested in content()
-  testing.addSuite(nested)
+  with thisSuite = nested in content()
+  thisSuite.addSuite(nested)
 
 section Testing
   //[ A leaf: a name, and the work that proves it. //]
@@ -48,11 +55,36 @@ section Testing
   class Suite(name: String)
     var children: List[Suite | Test] = []
 
+    //[ May this suite's tests run at the same time as each other?
+      !
+      ! Set from inside the suite's own body — `thisSuite.parallel = true`. It
+      ! is a claim about the tests, not a request for threads: they share
+      ! NOTHING, no fixture, no directory, no port, no assumption about the
+      ! order they ran in. What a runner does with the claim is its own affair.
+    //]
+    var parallel: Bool = false
+
+    //[ Work to do once before any of this suite's tests
+      !
+      ! Set from inside the suite's own body — `thisSuite.beforeSuite = () =>
+      ! ...`. For what its tests all need and none of them should do twice:
+      ! `e2e` builds its drivers here, because `jo build` is not safe to run
+      ! twice at one output directory and its scenarios may run at once.
+      !
+      ! A runner is expected to skip it when the filter selected nothing under
+      ! this suite, so a `-- unit` run pays for nothing under `e2e`.
+      !
+      ! NOT a way to build a fixture for the tests to share: it hands back
+      ! nothing, and a test still gets its state from where it is written.
+    //]
+    var beforeSuite: () => Unit = () => pass
+
     def addTest(name: String, run: () => Unit): Unit =
       children = children + new Test(name, run)
 
     def addSuite(child: Suite): Unit =
       children = children + child
+
   end
 
   //[ Build a root suite from a declaration block
@@ -60,8 +92,8 @@ section Testing
     ! The root's `name` titles the report. It contributes no path segment, so a
     ! filter starts at the first nested suite.
   //]
-  def define(name: String, content: () => Unit receives testing): Suite =
+  def define(name: String, content: () => Unit receives thisSuite): Suite =
     val root = new Suite(name)
-    with testing = root in content()
+    with thisSuite = root in content()
     root
 end
