@@ -54,6 +54,7 @@ section Testing
   //]
   class Suite(name: String)
     var children: List[Suite | Test] = []
+    private var childNames: Set[String] = Set.empty[String]
 
     //[ May this suite's tests run at the same time as each other?
       !
@@ -80,10 +81,17 @@ section Testing
     var beforeSuite: () => Unit = () => pass
 
     def addTest(name: String, run: () => Unit): Unit =
+      requireAvailable(name)
       children = children + new Test(name, run)
 
     def addSuite(child: Suite): Unit =
+      requireAvailable(child.name)
       children = children + child
+
+    private def requireAvailable(childName: String): Unit =
+      if childNames.contains(childName) then
+        abort: "duplicate child name '\{childName}' in suite '\{name}'"
+      childNames = childNames + childName
 
   end
 
