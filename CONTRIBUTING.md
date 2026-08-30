@@ -42,8 +42,8 @@ Each shipped application builds against the sources in this branch through a
 spec in `ci/`, which is what CI does:
 
 ```sh
-jo build cli --spec ci/cli.toml            # also: hello, web, telegram
-jo build sandbox-guest --spec ci/cli.toml
+jo build cli --spec ci/cli/jo.toml            # also: hello, web, telegram
+jo build sandbox-guest --spec ci/cli/jo.toml
 ```
 
 Building from an application's own `jo.toml` instead resolves `harpe` and

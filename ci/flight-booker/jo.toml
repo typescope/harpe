@@ -1,16 +1,16 @@
 jo = "0.12"
 
 # The flight booking example, built against this branch's own agent/ sources.
-# See ci/pr-review.toml for why this spec exists alongside the example's own
+# See ci/pr-review/jo.toml for why this spec exists alongside the example's own
 # jo.toml.
 
 [module.flight-booker]
 kind = "app"
 platform = "python"
 enable-ffi = true
-src = ["../examples/flight-booker/src/"]
+src = ["../../examples/flight-booker/src/"]
 depth = 2
-modules = [{ id = "harpe", path = ".." }]
+modules = [{ id = "harpe", path = "../.." }]
 
 links = [
   { from = "jo.main", to = "harpe.examples.flightbooker.main" },
@@ -19,22 +19,22 @@ links = [
 [module.sandbox-api]
 kind = "lib"
 platform = "python"
-src = ["../examples/flight-booker/sandbox/API.jo"]
+src = ["../../examples/flight-booker/sandbox/API.jo"]
 
 [module.sandbox-runtime]
 kind = "lib"
 platform = "python"
 enable-ffi = true
 src = [
-  "../examples/flight-booker/sandbox/Runtime.jo",
-  "../examples/flight-booker/sandbox/DuffelClient.jo",
+  "../../examples/flight-booker/sandbox/Runtime.jo",
+  "../../examples/flight-booker/sandbox/DuffelClient.jo",
 ]
-modules = ["sandbox-api", { id = "harpe", path = ".." }]
+modules = ["sandbox-api", { id = "harpe", path = "../.." }]
 
 [module.sandbox-guest]
 kind = "app"
 platform = "python"
-src = ["../examples/flight-booker/sandbox/Task.jo"]
+src = ["../../examples/flight-booker/sandbox/Task.jo"]
 modules = ["sandbox-api", { id = "sandbox-runtime", link = true }]
 
 links = [

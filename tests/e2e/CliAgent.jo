@@ -190,7 +190,7 @@ section CliAgent
       os.path.join(root, "cli/skills")
       os.path.join(home, "skills")
 
-    Driver.linkGuest(root, home)
+    Driver.linkGuest(root, "cli", home)
     File.ensureDir(os.path.join(home, "data"))
     File.ensureDir(os.path.join(home, "logs"))
     home
@@ -229,7 +229,7 @@ section CliAgent
   //]
   def withAgent(modelBaseUrl: String, scenario: Session => Unit): Unit =
     val root = Driver.repoRoot()
-    Driver.build(root, "cli.toml", "cli")
+    Driver.build(root, "cli")
     val app = Driver.application(root, "cli")
     val home = prepareHome(root)
 

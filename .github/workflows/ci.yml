@@ -34,45 +34,45 @@ jobs:
         run: jo --version
 
       # Every driver, built against this branch's own caps/ and agent/ sources via
-      # the ci/*.toml specs. These catch a framework change that breaks a driver on
+      # the ci/*/jo.toml specs. These catch a framework change that breaks a driver on
       # the same commit that makes it, which the package builds below cannot: those
       # resolve the last PUBLISHED harpe, so a driver updated alongside a new API
       # stays red there until that API ships in a release.
       - name: Build hello agent
-        run: jo build hello --spec ci/hello.toml
+        run: jo build hello --spec ci/hello/jo.toml
 
       - name: Build hello sandbox guest
-        run: jo build sandbox-guest --spec ci/hello.toml
+        run: jo build sandbox-guest --spec ci/hello/jo.toml
 
       - name: Build CLI agent (local sources)
-        run: jo build cli --spec ci/cli.toml
+        run: jo build cli --spec ci/cli/jo.toml
 
       - name: Build CLI sandbox guest (local sources)
-        run: jo build sandbox-guest --spec ci/cli.toml
+        run: jo build sandbox-guest --spec ci/cli/jo.toml
 
       - name: Build web agent (local sources)
-        run: jo build web --spec ci/web.toml
+        run: jo build web --spec ci/web/jo.toml
 
       - name: Build web sandbox guest (local sources)
-        run: jo build sandbox-guest --spec ci/web.toml
+        run: jo build sandbox-guest --spec ci/web/jo.toml
 
       - name: Build Telegram agent (local sources)
-        run: jo build telegram --spec ci/telegram.toml
+        run: jo build telegram --spec ci/telegram/jo.toml
 
       - name: Build Telegram sandbox guest (local sources)
-        run: jo build sandbox-guest --spec ci/telegram.toml
+        run: jo build sandbox-guest --spec ci/telegram/jo.toml
 
       - name: Build PR review agent (local sources)
-        run: jo build pr-review --spec ci/pr-review.toml
+        run: jo build pr-review --spec ci/pr-review/jo.toml
 
       - name: Build PR review sandbox guest (local sources)
-        run: jo build sandbox-guest --spec ci/pr-review.toml
+        run: jo build sandbox-guest --spec ci/pr-review/jo.toml
 
       - name: Build flight booker agent (local sources)
-        run: jo build flight-booker --spec ci/flight-booker.toml
+        run: jo build flight-booker --spec ci/flight-booker/jo.toml
 
       - name: Build flight booker sandbox guest (local sources)
-        run: jo build sandbox-guest --spec ci/flight-booker.toml
+        run: jo build sandbox-guest --spec ci/flight-booker/jo.toml
 
       # The same drivers from their own jo.toml, resolving harpe and harpe-caps
       # from the registry — the check that a shipped release still builds them.

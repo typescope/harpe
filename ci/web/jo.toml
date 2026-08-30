@@ -1,36 +1,36 @@
 jo = "0.12"
 
-[module.cli]
+[module.web]
 kind = "app"
 platform = "python"
 enable-ffi = true
-src = ["../cli/src/"]
-modules = [{ id = "harpe", path = ".." }]
+src = ["../../web/src/"]
+modules = [{ id = "harpe", path = "../.." }]
 
 links = [
-  { from = "jo.main", to = "harpe.cli.main" },
+  { from = "jo.main", to = "harpe.web.main" },
 ]
 
 [module.sandbox-api]
 kind = "lib"
 platform = "python"
-src = ["../cli/sandbox/SandboxAPI.jo"]
-modules = [{ id = "caps", path = ".." }]
+src = ["../../web/sandbox/SandboxAPI.jo"]
+modules = [{ id = "caps", path = "../.." }]
 
 [module.sandbox-runtime]
 kind = "lib"
 platform = "python"
 enable-ffi = true
-src = ["../cli/sandbox/SandboxRuntime.jo"]
-modules = ["sandbox-api", { id = "harpe", path = ".." }]
+src = ["../../web/sandbox/SandboxRuntime.jo"]
+modules = ["sandbox-api", { id = "harpe", path = "../.." }]
 
 [module.sandbox-guest]
 kind = "app"
 platform = "python"
-src = ["../cli/sandbox/Task.jo"]
+src = ["../../web/sandbox/Task.jo"]
 modules = [
   "sandbox-api",
-  { id = "caps", path = ".." },
+  { id = "caps", path = "../.." },
   { id = "sandbox-runtime", link = true },
 ]
 
@@ -46,7 +46,7 @@ kind = "app"
 platform = "python"
 enable-ffi = true
 src = []
-modules = [{ id = "harpe", path = ".." }]
+modules = [{ id = "harpe", path = "../.." }]
 
 links = [
   { from = "jo.main", to = "harpe.transcript.serve" },
