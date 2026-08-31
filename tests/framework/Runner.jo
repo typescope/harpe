@@ -8,18 +8,15 @@
   ! holds, so a test line carries only its own name. Full paths are kept for the
   ! failure list at the end, which is what someone re-runs with a filter.
   !
-  ! RUNNING AND REPORTING ARE SEPARATE for a suite that set `parallel`. Its
-  ! tests are dispatched across a pool first, and the walk below then prints
-  ! their recorded outcomes in declaration order — so the report reads exactly
-  ! as it does serially, whatever order the pool happened to finish in. A test
-  ! outside such a suite is still run by the walk itself, where it prints as it
-  ! goes.
+  ! When the report walk reaches a suite that set `parallel`, it prints the
+  ! suite header, dispatches its tests across a pool, then prints their recorded
+  ! outcomes in declaration order. The tree therefore stays in declaration
+  ! order while an indented progress line shows what that suite is doing. A test
+  ! outside such a suite is run by the walk itself, where it prints as it goes.
   !
-  ! The dispatch pass is also the one that runs each selected suite's
-  ! `beforeSuite`, outermost first, so a suite is prepared exactly once and
-  ! before any test under it — including tests the walk will run. Which suites
-  ! were prepared is the runner's bookkeeping, and stays here: the tree records
-  ! what a suite IS, never what has been done to it.
+  ! The walk runs each selected suite's `beforeSuite`, outermost first. Before a
+  ! parallel pool starts it prepares that whole subtree, so every lane sees its
+  ! prerequisites and no suite is prepared twice.
   !
   ! WHAT A LANE STILL HAS. Everything the body was declared with. A context
   ! param is captured by the closure where it is written, not looked up per
@@ -84,6 +81,41 @@ private class OutcomeStore
   def result(path: String): Option[Outcome] = outcomes.getOpt(path)
 end
 
+//[ Thread-safe progress while parallel tests run ahead of the ordered report. //]
+private class Progress(indent: String, total: Int)
+  private var completed: Int = 0
+  private val lock: py.Dynamic = threading.Lock()
+  private val terminal: Bool = py.module("sys").stdout.isatty().asBool
+
+  def start(): Unit = show(0, first = true)
+
+  def advance(): Unit =
+    lock.acquire()
+    completed = completed + 1
+    // A terminal can redraw one line cheaply. Redirected CI output keeps every
+    // tenth update, so a long run stays visibly alive without printing a line
+    // per test.
+    if terminal || completed % 10 == 0 then show(completed)
+    lock.release()
+
+  def finish(): Unit =
+    lock.acquire()
+    // Erase the transient line before the suite's ordered results take its
+    // place. Redirected logs cannot erase history, so their periodic updates
+    // remain useful evidence that the run was alive.
+    if terminal then py.module("sys").stdout.write("\r\u{1b}[2K")
+    else if completed % 10 != 0 then show(completed)
+    py.module("sys").stdout.flush()
+    lock.release()
+
+  private def show(done: Int, first: Bool = false): Unit =
+    val stream = py.module("sys").stdout
+    val prefix = if terminal && !first then "\r" else ""
+    val suffix = if terminal then "" else "\n"
+    stream.write(prefix + indent + "... \{done}/\{total} completed" + suffix)
+    stream.flush()
+end
+
 section Runner
   //[ The path filter given on the command line, or `""` for everything
     !
@@ -135,21 +167,18 @@ section Runner
     val tally = new Tally
     val outcomes = new OutcomeStore
 
-    // Every selected suite is prepared, and everything under a parallel one is
-    // run, before a line is printed. `beforeSuite` therefore happens exactly
-    // once per suite — the walk below only reports.
+    // The root has no report line of its own before preparation.
     if holdsSelected(root, "", filter) then root.beforeSuite()
-    dispatch(root, "", filter, lanes, outcomes)
 
     println Style.strong("\{root.name}:")
-    walk(root, "", "  ", filter, tally, outcomes)
+    walk(root, "", "  ", filter, tally, outcomes, lanes, prepared = false)
     report(tally)
     tally.failures.isEmpty
 
   // The root contributes no path segment, so a filter reads as `providers/openai`.
   private def walk(
       node: Testing.Suite, path: String, indent: String, filter: String, tally: Tally,
-      outcomes: OutcomeStore)
+      outcomes: OutcomeStore, lanes: Int, prepared: Bool)
   : Unit receives stdout =
     for child in node.children do
       match child
@@ -163,8 +192,19 @@ section Runner
         if !holdsSelected(nested, nestedPath, filter) then
           tally.skipped = tally.skipped + count(nested)
         else
-          println "\{indent}\{Style.strong(nested.name)}"
-          walk(nested, nestedPath, indent + "  ", filter, tally, outcomes)
+          val mode = if nested.parallel then Style.muted(" (parallel)") else ""
+          println "\{indent}\{Style.strong(nested.name)}\{mode}"
+          if nested.parallel && !prepared then
+            val items = gather(nested, nestedPath, filter)
+            val progress = new Progress(indent + "  ", items.size)
+            progress.start()
+            prepareAll(nested, nestedPath, filter)
+            pool(items, lanes, outcomes, progress)
+            progress.finish()
+            walk(nested, nestedPath, indent + "  ", filter, tally, outcomes, lanes, prepared = true)
+          else
+            if !prepared then nested.beforeSuite()
+            walk(nested, nestedPath, indent + "  ", filter, tally, outcomes, lanes, prepared)
 
   //[ What a lane recorded, or — for a test outside any pool — run it now. //]
   private def outcome(full: String, t: Testing.Test, outcomes: OutcomeStore): Outcome =
@@ -186,31 +226,6 @@ section Runner
       tally.failures = tally.failures + "\{full}: \{done.message}"
       println "\{indent}\{Style.error("FAIL")} \{t.name}"
       println "\{indent}     \{done.message}"
-
-  //[ Find each parallel suite and run its selected tests across a pool
-    !
-    ! Depth-first, and it stops descending at the first parallel suite it finds:
-    ! that suite's whole subtree goes into ONE pool, so its sibling suites
-    ! interleave rather than each waiting for the last. A parallel suite nested
-    ! inside another is therefore just part of the outer one's batch.
-  //]
-  private def dispatch(
-      node: Testing.Suite, path: String, filter: String, lanes: Int, outcomes: OutcomeStore)
-  : Unit =
-    for child in node.children do
-      match child
-      case _: Testing.Test => pass
-      case nested: Testing.Suite =>
-        val nestedPath = "\{path}\{nested.name}/"
-        if !holdsSelected(nested, nestedPath, filter) then pass
-        else if nested.parallel then
-          // Everything under here is about to run at once, so everything under
-          // here is prepared first — this suite and any nested in it.
-          prepareAll(nested, nestedPath, filter)
-          pool(gather(nested, nestedPath, filter), lanes, outcomes)
-        else
-          nested.beforeSuite()
-          dispatch(nested, nestedPath, filter, lanes, outcomes)
 
   //[ Run `beforeSuite` for every selected suite in a subtree, outermost first. //]
   private def prepareAll(node: Testing.Suite, path: String, filter: String): Unit =
@@ -236,13 +251,15 @@ section Runner
     found
 
   //[ Run `items` across at most `lanes` threads, and wait for all of them. //]
-  private def pool(items: List[Pending], lanes: Int, outcomes: OutcomeStore): Unit =
+  private def pool(
+      items: List[Pending], lanes: Int, outcomes: OutcomeStore, progress: Progress)
+  : Unit =
     val queue = new Queue(items)
     var threads: List[py.Dynamic] = []
 
     var started = 0
     while started < lanes && started < items.size do
-      val thread = Process.daemon(() => drain(queue, outcomes))
+      val thread = Process.daemon(() => drain(queue, outcomes, progress))
       thread.start()
       threads = threads + thread
       started = started + 1
@@ -254,7 +271,7 @@ section Runner
     ! A named function rather than the thread's own lambda, so its loop state is
     ! a local of a call — a closure here may not capture a `var`.
   //]
-  private def drain(queue: Queue, outcomes: OutcomeStore): Unit =
+  private def drain(queue: Queue, outcomes: OutcomeStore, progress: Progress): Unit =
     var running = true
     while running do
       match queue.take()
@@ -263,6 +280,7 @@ section Runner
         match py.try(item.test.run())
         case Ok(_) => outcomes.record(item.path, new Outcome(false, ""))
         case Err(err) => outcomes.record(item.path, new Outcome(true, err.message))
+        progress.advance()
 
   private def holdsSelected(node: Testing.Suite, path: String, filter: String): Bool =
     var any = false
