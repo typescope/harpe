@@ -1,0 +1,46 @@
+#!/bin/sh
+# sandbox/run.sh — optional defense-in-depth wrapper for running the model's
+# compiled program. Opt-in: rename this file to `run.sh` and `chmod +x` it.
+#
+# If `sandbox/run.sh` exists and is executable, harpe runs each guest program as
+#     sandbox/run.sh <out.py>
+# instead of `python3 <out.py>`, and THIS SCRIPT owns everything about how it
+# runs: the Python interpreter, any privilege drop, and OS-level confinement.
+# Absent, the guest runs under the system Python with no extra confinement.
+#
+# Contract:
+#   - $1 is the absolute path to the compiled program (a .py file).
+#   - The run directory is `dirname "$1"` — bind-mount it for container wrappers.
+#   - Do your setup, then `exec <python> "$@"`.
+#
+# The runner passes PATH, HARPE_AUDIT_LOG, and the key/value pairs the
+# application explicitly grants through its call context. No other host
+# variables are inherited. Add anything else only when the guest needs it.
+#
+# Pick and adapt ONE of the blocks below (they are examples, not layered):
+
+# 1) Resource limits only — no external dependency:
+# ulimit -v 1048576   # ~1 GiB address space (RLIMIT_AS)
+# ulimit -t 30        # 30 CPU-seconds (RLIMIT_CPU)
+# exec python3 "$@"
+
+# 2) Drop to a low-privilege uid, so nftables can filter its egress by uid
+#    (create the account first; see docs/sandbox.md):
+# exec setpriv --reuid=harpe-sandbox --regid=harpe-sandbox --clear-groups python3 "$@"
+
+# 3) Filesystem + network confinement with landrun (github.com/Zouuup/landrun):
+# exec landrun --ro /usr /lib /lib64 /etc --rw "$(dirname "$1")" -- python3 "$@"
+
+# 4) Filesystem + network confinement with bubblewrap:
+# exec bwrap \
+#   --ro-bind /usr /usr --ro-bind /lib /lib --ro-bind /lib64 /lib64 \
+#   --proc /proc --dev /dev --tmpfs /tmp \
+#   --bind "$(dirname "$1")" "$(dirname "$1")" \
+#   --unshare-net -- python3 "$@"
+
+# 5) Full container isolation with docker:
+# exec docker run --rm --network none \
+#   -v "$(dirname "$1"):$(dirname "$1"):ro" python:3.12-slim python3 "$@"
+
+# Default once enabled: system Python, no extra confinement.
+exec python3 "$@"

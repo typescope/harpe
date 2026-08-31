@@ -1,0 +1,186 @@
+//[ GithubClient.jo
+  !
+  ! Typed Jo wrappers around PyGithub for PR operations.
+//]
+
+namespace sandbox.runtime
+
+def json: py.Dynamic = py.module("json")
+
+//[ Typed interface for the `github` module — lets us call Github(...) with keyword args //]
+@py.interop
+private interface GitHub
+  def Github(token: String, user_agent: String @py.keyword): py.Dynamic
+end
+
+//[ Typed interface for PyGithub's PR actions //]
+@py.interop
+private interface Review
+  def create_review(
+    commit: py.Dynamic @py.keyword,
+    body: String @py.keyword,
+    event: String @py.keyword, // can be py.none
+    comments: py.Dynamic @py.keyword
+  ): py.Dynamic
+  def create_issue_comment(body: String): py.Dynamic
+  def merge(sha: String @py.keyword, commit_message: String @py.keyword): py.Dynamic
+end
+
+private def module: GitHub = py.module("github").cast[GitHub]
+
+@py.interop
+private interface ZipFileObj
+  def namelist(): py.Dynamic
+  def extractall(path: String): Unit
+  def close(): Unit
+end
+
+@py.interop
+private interface ZipFileMod
+  def ZipFile(f: py.Dynamic): ZipFileObj
+end
+
+@py.interop
+private interface IoMod
+  def BytesIO(data: py.Dynamic): py.Dynamic
+end
+
+@py.interop
+private interface UrllibRequestMod
+  def Request(url: String, headers: py.Dynamic @py.keyword): py.Dynamic
+  def urlopen(req: py.Dynamic): py.Dynamic
+end
+
+@py.interop
+private interface HttpResponse
+  def read(): py.Dynamic
+  def close(): Unit
+end
+
+private class GithubClient
+  val client: py.Dynamic
+  private val token: String
+
+  def GithubClient(token: String): GithubClient =
+    this.token = token
+    this.client = module.Github(token, user_agent = "harpe-pr-review/1.0")
+
+  def getPR(owner: String, repo: String, num: Int): Result[py.Dict, String] =
+    val pr = py.try(client.get_repo(owner + "/" + repo).get_pull(num))
+      rescue Err(err) => return Err(err.message)
+
+    val diffs: py.List = py.list()
+    for f in pr.get_files().cast[py.List] do
+      diffs.append(py.dict(
+          "path"      ~   f.filename,
+          "status"    ~   f.status,
+          "additions" ~   f.additions,
+          "deletions" ~   f.deletions,
+          "patch"     ~   f.patch
+      ))
+    end
+
+    Ok(py.dict(
+        "owner"    ~      owner,
+        "repo"     ~      repo,
+        "number"   ~      pr.number,
+        "title"    ~      pr.title,
+        "body"     ~      pr.body,
+        "author"   ~      pr.user.login,
+        "base_br"  ~      pr.base.ref,
+        "head_br"  ~      pr.head.ref,
+        "head_sha" ~      pr.head.sha,
+        "state"    ~      pr.state,
+        "diffs"    ~      diffs
+    ))
+
+  //[ Submit a PR review via PyGithub.
+    !
+    ! event:        "APPROVE", "REQUEST_CHANGES", or "COMMENT"
+    ! commentsJson: JSON array of {path, line, body} objects (pass "[]" for none)
+  //]
+  def submitReview(
+    owner: String,
+    repo: String,
+    num: Int,
+    headSha: String,
+    eventOpt: Option[String],
+    body: String,
+    commentsJson: String
+  ): Result[String, String] =
+    val pr =
+      py.try(client.get_repo(owner + "/" + repo).get_pull(num))
+      rescue Err(err)=> return Err(err.message)
+
+    val commit =
+      py.try(client.get_repo(owner + "/" + repo).get_commit(headSha))
+      rescue Err(err) => return Err(err.message)
+
+    val comments = json.loads(commentsJson)
+
+    val event = eventOpt rescue None => py.none
+
+    match py.try(pr.create_review(commit, body, event, comments))
+    case Ok(_) => Ok("")
+    case Err(e) => Err(e.message)
+
+  //[ Post an issue-level comment on the PR. //]
+  def addComment(owner: String, repo: String, num: Int, body: String): Result[String, String] =
+    val pr =
+      py.try(client.get_repo(owner + "/" + repo).get_pull(num))
+      rescue Err(err) => return Err(err.message)
+
+    match py.try: pr.create_issue_comment(body)
+    case Ok(_) => Ok("")
+    case Err(e) => Err(e.message)
+
+  //[ Merge the PR using the head SHA as a guard against concurrent updates.
+    !
+    ! commitMessage: merge commit message. Pass "" to use GitHub's default.
+  //]
+  def mergePR(
+    owner: String,
+    repo: String,
+    num: Int,
+    headSha: String,
+    commitMessage: String
+  ): Result[String, String] =
+
+    val pr =
+      py.try(client.get_repo(owner + "/" + repo).get_pull(num))
+      rescue Err(err) => return Err(err.message)
+
+    match py.try(pr.merge(sha = headSha, commit_message = commitMessage))
+    case Ok(_) => Ok("")
+    case Err(e) => Err(e.message)
+
+  //[ Download a repository snapshot as a zip archive and extract to destDir.
+    !
+    ! Uses GitHub's zipball API — one HTTP request regardless of repo size.
+    ! Returns the top-level prefix directory name extracted from the zip
+    ! (e.g. "owner-repo-sha7chars") so callers can resolve relative paths.
+  //]
+  def downloadRepo(owner: String, repo: String, ref: String): Result[String, String] =
+    val url = "https://api.github.com/repos/" + owner + "/" + repo + "/zipball/" + ref
+    val headers = py.dict(
+      "Authorization" ~ ("token " + token),
+      "User-Agent"    ~ "harpe-pr-review/1.0"
+    )
+    val urllibreq = py.module("urllib.request").cast[UrllibRequestMod]
+    val req  = urllibreq.Request(url, headers = py.dynamic(headers))
+
+    val resp = py.try(urllibreq.urlopen(req).cast[HttpResponse]) rescue Err(err) => return Err(err.message)
+    val data = py.try(resp.read()) rescue Err(err) => return Err(err.message)
+    resp.close()
+
+    val ioMod  = py.module("io").cast[IoMod]
+    val zipMod = py.module("zipfile").cast[ZipFileMod]
+    val zf     = zipMod.ZipFile(ioMod.BytesIO(data))
+    zf.extractall("./")
+    val namelist = zf.namelist().cast[py.List]
+    zf.close()
+
+    if namelist.size > 0 then
+      Ok(namelist[0].asString.split("/")[0])
+    else
+      Err("empty namelist from repo extraction")

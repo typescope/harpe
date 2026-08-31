@@ -1,0 +1,43 @@
+//[ Word.jo
+  !
+  ! An open Word (`.docx`) document, read paragraph-wise. A `.docx` has no pages —
+  ! pagination is a rendering artifact — so the structural units are paragraphs
+  ! and heading styles: take the outline, then read a paragraph window. Windowed
+  ! access keeps a 200-page document's cost proportional to what the program
+  ! actually needs.
+//]
+
+namespace harpe.caps
+
+import harpe.caps.Word.Heading
+
+//[ An open Word document. Paragraphs are 1-based. //]
+interface Word
+  //[ The number of paragraphs. //]
+  def paragraphCount: Int
+
+  //[ The headings, in document order — the map of a large document
+    !
+    ! Find the section, then read just its paragraphs.
+  //]
+  def outline: List[Heading]
+
+  //[ The text of paragraphs [`start`, `start + count`)
+    !
+    ! A window past the end reads short. A `start` below 1 is a bug in the
+    ! program and aborts the run.
+  //]
+  def paragraphs(start: Int, count: Int): List[String]
+
+  //[ Release the parsed document. Safe to call more than once. //]
+  def close(): Unit
+end
+
+section Word
+  //[ One heading in a Word document
+    !
+    ! Its title, the 1-based paragraph index it sits at, and its level (1 for a
+    ! top-level heading).
+  //]
+  class Heading(title: String, paragraph: Int, level: Int)
+end

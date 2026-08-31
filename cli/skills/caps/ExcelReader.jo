@@ -1,0 +1,17 @@
+//[ ExcelReader.jo
+  !
+  ! The spreadsheet parsing backend: opens a workbook into a `Workbook` handle. The
+  ! `FileSystem.openWorkbook` shortcut reads through the `excelReader` param, so an
+  ! agent swaps backends by rebinding the param without touching `FileSystem`.
+//]
+
+namespace harpe.caps
+
+//[ Open spreadsheet workbooks (`.xlsx`). //]
+interface ExcelReader
+  //[ Open the workbook at `src` — parse and validate once. Close it when done. //]
+  def open(src: String): Result[Workbook, String]
+end
+
+//[ The ambient spreadsheet backend. //]
+param excelReader: ExcelReader

@@ -1,0 +1,75 @@
+//[ A CLI-only shell tool
+  !
+  ! The trusted CLI asks the current user to approve the exact command before
+  ! starting Bash.
+//]
+namespace harpe.cli
+
+import harpe.*
+import harpe.util.Process
+import harpe.util.Capped
+import harpe.util.Terminal
+
+//[ The `runBash` tool: its spec, and the command runner a route calls. //]
+class RunBashTool
+  view Tool
+
+  def name: String = "runBash"
+
+  def description: String =
+    "Run a Bash command in the agent home directory after asking the user for approval."
+
+  def params: List[Tool.ToolParam] =
+    [Tool.strParam("command", "The exact Bash command to run")]
+
+  //[ This tool, wired. The parameter name lives with the spec above. //]
+  def toolset(): Toolset =
+    Toolset.of: this, (i: Tool.ToolInput, interact: Interact) => run(i["command"], interact)
+
+  def run(command: String, interact: Interact): Tool.ToolOutcome receives appHome =
+    runBash(command, interact)
+end
+
+private def runBash(command: String, interact: Interact): Tool.ToolOutcome receives appHome =
+  if command.trim == "" then
+    return new Tool.ToolOutcome("The command is empty.", "empty command", attachments = [])
+
+  match interact.approve("Run a Bash command?", "```bash\n\{command}\n```")
+  case Approvals.Rejected =>
+    new Tool.ToolOutcome("The user rejected the command.", "command rejected", attachments = [])
+
+  case Approvals.TimedOut =>
+    new Tool.ToolOutcome("Approval timed out. The command was not run.", "approval timed out", attachments = [])
+
+  case Approvals.Cancelled =>
+    new Tool.ToolOutcome("Approval was cancelled. The command was not run.", "approval cancelled", attachments = [])
+
+  case Approvals.Approved =>
+    val result = Process.runCapped(
+      py.list("bash", "-lc", command),
+      30.0,
+      cwd = appHome
+    )
+
+    if result.timedOut then
+      new Tool.ToolOutcome:
+        "The command ran longer than 30 seconds and was stopped."
+        "command timed out"
+        attachments = []
+
+    else
+      val out = result.out.trim
+      val err = Terminal.stripAnsi(result.err).trim
+      val combined =
+        if out == "" then err
+        else if err == "" then out
+        else out + "\n" + err
+      val content = if combined == "" then "(the command produced no output)" else combined
+
+      if result.returnCode == 0 then
+        new Tool.ToolOutcome(Tool.elide(content, 4000), "command completed", attachments = [])
+      else
+        new Tool.ToolOutcome:
+          Tool.elide("The command exited with status \{result.returnCode}:\n\{content}", 4000)
+          "command failed · exit \{result.returnCode}"
+          attachments = []

@@ -1,0 +1,201 @@
+//[ WebServer.jo
+  !
+  ! The flight-booker HTTP server: a minimal WSGI application that routes
+  ! browser requests and drives the shared turn engine. One `FlightServer` is
+  ! built per process and holds a registry of live sessions.
+  !
+  ! Routes:
+  !   GET  /             the chat page
+  !   GET  /api/info     agent name (for the page title)
+  !   POST /api/message  run one turn — streams NDJSON progress then done
+  !   POST /api/stop     request cancellation of a session's running turn
+  !   POST /api/approval resolve the pending booking approval
+  !
+  ! Sessions are keyed by a time-sortable id minted on first message. The id is
+  ! returned as the first stream event and stored by the browser in localStorage
+  ! so the conversation context survives page refreshes (as long as the server
+  ! is still running and the session is in memory).
+//]
+
+namespace harpe.examples.flightbooker
+
+import harpe.ffi.secrets
+import harpe.ffi.time
+import harpe.ffi.json
+import harpe.ffi.os
+import harpe.ffi.threading
+import harpe.util.Clock
+import harpe.util.File
+
+import harpe.context.WindowedContext
+import harpe.transcript.Journal
+import harpe.logging.logger
+import harpe.Model
+import harpe.Toolset
+import harpe.Tool
+import harpe.Http
+import harpe.Http.request
+
+
+class Server(brain: Model, home: String, sandboxEnv: Map[String, String])
+  private val registry = py.dict()
+  private val registryLock = threading.Lock()
+  private val runTool: harpe.tools.RunCodeTool =
+    harpe.tools.RunCodeTool(os.path.join(home, "sandbox"), approvalDeadline = 610)
+
+  //[ The WSGI entry point: re-establish `appHome` from the server's field, then route. //]
+  def route(): py.List receives request =
+    with appHome = home in dispatch()
+
+  private def dispatch(): py.List receives request, appHome =
+    match request
+    case Http.Get("/")             => page()
+    case Http.Get("/api/info")     => Http.respondJson(py.dict("name" ~ "Sky"))
+    case Http.Post("/api/message") => handleMessage()
+    case Http.Post("/api/stop")    => handleStop()
+    case Http.Post("/api/approval") => handleApproval()
+    case _                         => Http.respond("404 Not Found", "text/plain; charset=utf-8", "not found")
+
+  //[ Serve the chat page from assets/index.html. //]
+  private def page(): py.List receives request, appHome =
+    Http.respond: "200 OK", "text/html; charset=utf-8",
+      File.read(os.path.join(appHome, "assets/index.html"))
+
+  //[ Run one agent turn, streaming NDJSON progress events to the browser.
+    !
+    ! A request without a `session` field mints a new one. A request with a
+    ! `session` resumes the existing session from the in-memory registry. A
+    ! `session` event is always emitted first so the browser can store (or
+    ! confirm) the id before the turn begins.
+  //]
+  private def handleMessage(): py.List receives request, appHome =
+    val body = Http.readJson()
+    val text = body.get("text", "").asString
+    val reqId = body.get("session", "").asString
+
+    val write = Http.beginStream("application/x-ndjson")
+    val sink: Sink = (obj: py.Dict) =>
+      py.call(write, py.dynamic(json.dumps(obj) + "\n").encode())
+
+    if text.trim == "" then
+      sink(py.dict("type" ~ "error", "detail" ~ "empty message"))
+
+    else
+      evictIdle()
+      val session = if reqId == "" then createSession() else resumeSession(reqId)
+
+      // Always emit the session id first. On the first message the browser mints
+      // it. On subsequent messages it confirms the id the browser already has.
+      // If `resumeSession` fell back to a new session (server restart etc.) the
+      // browser learns the replacement id and stays in sync.
+      sink(py.dict("type" ~ "session", "id" ~ session.id))
+
+      val turnRequest = Journal.payload("text" ~ text)
+      session.runTurn(turnRequest, text, sink)
+
+    py.list()
+
+  //[ Request cancellation of the session's running turn. //]
+  private def handleStop(): py.List receives request =
+    val body = Http.readJson()
+    val id = body.get("session", "").asString
+
+    registryLock.acquire()
+    if registry.contains(id) then registry.get(id).cast[Session].requestStop()
+    registryLock.release()
+
+    Http.respondJson(py.dict("ok" ~ true))
+
+  //[ Resolve the pending booking approval for a session. //]
+  private def handleApproval(): py.List receives request =
+    val body = Http.readJson()
+    val sessionId = body.get("session", "").asString
+    val approvalId = body.get("id", "").asString
+    val decision = body.get("decision", "").asString
+
+    registryLock.acquire()
+    val found: Option[Session] =
+      if registry.contains(sessionId) then Some(registry.get(sessionId).cast[Session])
+      else None
+    registryLock.release()
+
+    val accepted = match found
+      case Some(session) => session.decideApproval(approvalId, decision)
+      case None          => false
+
+    Http.respondJson(py.dict("ok" ~ accepted))
+
+  //[ Build the toolset for a session: skills + runCode (with Duffel env) + bonus tools. //]
+  private def sessionTools(): Toolset =
+    harpe.tools.SkillTools.toolset(os.path.join(home, "skills"))
+      ++ runTool.toolset(sandboxEnv)
+      ++ getToday()
+
+  //[ Mint a fresh session under a new time-sortable id. //]
+  private def createSession(): Session receives appHome =
+    val id = time.strftime("%Y%m%dT%H%M%S") + "-" + secrets.token_hex(2)
+    buildSession(id)
+
+  //[ Resume the session for `id` if it is in the registry.
+    !
+    ! Falls back to a fresh session with the SAME `id` so the browser's stored
+    ! id remains valid (e.g. after a server restart). Conversation history is
+    ! lost in that case — we have no disk replay — but the id stays consistent
+    ! so the browser does not get stuck in an endless create-new-session loop.
+  //]
+  private def resumeSession(id: String): Session receives appHome =
+    registryLock.acquire()
+    val found: Option[Session] =
+      if registry.contains(id) then Some(registry.get(id).cast[Session])
+      else None
+    registryLock.release()
+
+    match found
+    case Some(session) => session
+    case None          => buildSession(id)
+
+  //[ Build and register a session under the given id. //]
+  private def buildSession(id: String): Session receives appHome =
+    // Ensure the log directory exists so JsonlLogger can write the file.
+    File.ensureDir(os.path.join(appHome, "logs/sessions"))
+
+    val context = new WindowedContext:
+      baseSystem = File.read(os.path.join(appHome, "AGENT.md"))
+      initial = []
+
+    val session = new Session:
+      id
+      brain
+      sessionTools()
+      context
+
+    registryLock.acquire()
+    registry.set(id, session)
+    registryLock.release()
+
+    session
+
+  //[ Drop sessions idle for more than 30 minutes from the in-memory registry. //]
+  private def evictIdle(): Unit =
+    val cutoff = Clock.now() - 1800.0
+
+    registryLock.acquire()
+    val stale = py.list()
+    for k in py.iter(registry.keys()) do
+      if registry.get(k).cast[Session].lastActive < cutoff then stale.append(k)
+    for k in py.iter(stale) do
+      val _ = registry.pop(k)
+    registryLock.release()
+end
+
+def getToday(): Toolset =
+  val spec = Tool:
+    "getToday"
+    "Get today's date and day of the week. Call this whenever the user mentions a relative date such as \"this Friday\", \"next Monday\", or \"tomorrow\", then compute the target date from the result."
+    []
+  Toolset.of: spec, (input, channel) =>
+    val dt = py.module("datetime")
+    val today = dt.date.today()
+    val iso = today.isoformat().asString
+    val weekday = today.strftime("%A").asString
+    new Tool.ToolOutcome("Today is " + weekday + ", " + iso + ".", "getToday · " + iso)

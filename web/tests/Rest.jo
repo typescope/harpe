@@ -1,0 +1,175 @@
+//[ Rest.jo
+  !
+  ! Talking to a running agent over HTTP, and reading what a turn streamed back.
+  !
+  ! `Rest` is the client the scenarios use — deliberately a plain
+  ! `http.client` conversation, with no retries, no redirects and no shared
+  ! connection, so what a test asserts is one request and one response. Statuses
+  ! come back as values rather than exceptions, because half of what these
+  ! suites check is a refusal.
+  !
+  ! `Events` reads the NDJSON a turn emits (`/api/message`, `/api/subscribe`).
+  ! The chat page consumes exactly this stream, so a scenario asserting on these
+  ! events is asserting on what the browser would have rendered — one layer down
+  ! from the DOM, which is where the driver's own contract actually lives.
+//]
+
+namespace harpe.web.tests
+
+import harpe.ffi.json
+import harpe.ffi.builtins
+
+section Rest
+  //[ How long a single request may take. Generous: a turn holds the stream open. //]
+  private def timeoutSeconds: Float = 60.0
+
+  //[ One answered request
+    !
+    ! The body is kept as bytes, since a scenario downloading a file compares
+    ! bytes and one reading an API compares JSON.
+  //]
+  class Response(status: Int, raw: py.Dynamic)
+    //[ The body decoded as UTF-8 text. //]
+    def text: String = raw.decode("utf-8").asString
+
+    //[ The body parsed as a JSON object. //]
+    def json: py.Dict = parse(text)
+
+    //[ One top-level string field of a JSON body. //]
+    def field(name: String): String = json.get(name, "").asString
+
+  end
+
+  //[ Outside the class, so `json` there names the field rather than this module. //]
+  private def parse(body: String): py.Dict = json.loads(body).cast[py.Dict]
+
+  private def connect(agent: WebAgent.Agent): py.Dynamic =
+    py.module("http.client").HTTPConnection("127.0.0.1", agent.port, timeout = timeoutSeconds)
+
+  private def jsonHeaders(): py.Dict = py.dict("Content-Type" ~ "application/json")
+
+  private def send(agent: WebAgent.Agent, method: String, path: String, body: String): Response =
+    val conn = connect(agent)
+    conn.request(method, path, body, jsonHeaders())
+    val answer = conn.getresponse()
+    val status = answer.status.asInt
+    val raw = answer.read()
+    conn.close()
+    new Response(status, raw)
+
+  //[ `GET path`. //]
+  def get(agent: WebAgent.Agent, path: String): Response = send(agent, "GET", path, "")
+
+  //[ `POST path` with a JSON body. //]
+  def postJson(agent: WebAgent.Agent, path: String, body: py.Dict): Response =
+    send(agent, "POST", path, json.dumps(body))
+
+  //[ `DELETE path` with a JSON body. //]
+  def deleteJson(agent: WebAgent.Agent, path: String, body: py.Dict): Response =
+    send(agent, "DELETE", path, json.dumps(body))
+
+  //[ A path with an encoded query string — `url("/api/file", py.dict("session" ~ id, "name" ~ n))`. //]
+  def url(base: String, params: py.Dict): String =
+    base + "?" + py.module("urllib.parse").urlencode(params).asString
+
+  //[ Base64 for an upload body, which is how the page sends a file. //]
+  def base64(data: String): String =
+    py.module("base64").b64encode(py.dynamic(data).encode("utf-8")).decode("ascii").asString
+
+  //[ Run one NDJSON endpoint to completion, collecting every event
+    !
+    ! `watch` is called with each event AS IT ARRIVES, which is the only way to
+    ! act on a turn while it is still running — the cancellation scenario posts
+    ! `/api/stop` from inside it. Sending that on a second connection is safe:
+    ! the agent's server is threaded, so a request does not queue behind the
+    ! stream it is interrupting.
+  //]
+  def stream(agent: WebAgent.Agent, path: String, body: py.Dict, watch: py.Dict => Unit)
+  : List[py.Dict] =
+    drain(agent, "POST", path, json.dumps(body), watch)
+
+  //[ The same, for a scenario with nothing to do mid-turn. //]
+  def events(agent: WebAgent.Agent, path: String, body: py.Dict): List[py.Dict] =
+    stream(agent, path, body, (event: py.Dict) => pass)
+
+  //[ Attach to a turn already running, and follow it to its end
+    !
+    ! What a tab does when it loads (or reloads) while a turn is in flight: the
+    ! page sees `state.active` on its history, and opens this to watch the rest.
+  //]
+  def subscribe(agent: WebAgent.Agent, session: String): List[py.Dict] =
+    drain:
+      agent
+      "GET"
+      url("/api/subscribe", py.dict("session" ~ session))
+      ""
+      (event: py.Dict) => pass
+
+  //[ Read an NDJSON response line by line, as the events are produced. //]
+  private def drain(
+      agent: WebAgent.Agent, method: String, path: String, body: String, watch: py.Dict => Unit)
+  : List[py.Dict] =
+    val conn = connect(agent)
+    conn.request(method, path, body, jsonHeaders())
+    val answer = conn.getresponse()
+    assert: answer.status.asInt == 200, "\{path}: expected a 200 stream, got \{answer.status.asInt}"
+
+    var events: List[py.Dict] = []
+    var reading = true
+
+    while reading do
+      val line = answer.readline()
+      if builtins.len(line) == 0 then reading = false
+      else
+        val text = line.decode("utf-8").asString.trim
+        if text != "" then
+          val event = parse(text)
+          events = events + event
+          watch(event)
+
+    conn.close()
+    events
+
+  //[ One turn: send `text` (resuming `session`, or minting one when empty). //]
+  def turn(agent: WebAgent.Agent, session: String, text: String): List[py.Dict] =
+    events(agent, "/api/message", py.dict("session" ~ session, "text" ~ text))
+end
+
+//[ Reading a turn's event stream. //]
+section Events
+  //[ Every event's `type`, in arrival order — what a scenario names a shape with. //]
+  def types(events: List[py.Dict]): List[String] =
+    events.map(event => event.get("type", "").asString)
+
+  //[ Did the turn emit one of these at all? //]
+  def has(events: List[py.Dict], kind: String): Bool = types(events).contains(kind)
+
+  //[ The first event of a type, for a scenario that reads its fields. //]
+  def first(events: List[py.Dict], kind: String): py.Dict =
+    match events.find(event => event.get("type", "").asString == kind)
+    case Some(event) => event
+    case None => abort "no '\{kind}' event in the stream: [\{types(events).join(", ")}]"
+
+  //[ The session the turn ran under, from the id a new session is announced with. //]
+  def session(events: List[py.Dict]): String = first(events, "session").get("id", "").asString
+
+  //[ The reply as the page streamed it — every chunk, in order, joined. //]
+  def streamed(events: List[py.Dict]): String =
+    var text = ""
+    for event in events do
+      if event.get("type", "").asString == "assistant-chunk" then
+        text = text + event.get("text", "").asString
+    text
+
+  //[ The committed rows the finished turn broadcast — the turn as history will render it. //]
+  def rows(events: List[py.Dict]): py.List =
+    first(events, "turnFinish").get("rows", py.list()).cast[py.List]
+
+  //[ The `status` labels the turn reported, in order — its progress as the page saw it. //]
+  def statuses(events: List[py.Dict]): List[String] =
+    var labels: List[String] = []
+    for event in events do
+      if event.get("type", "").asString == "status" then
+        labels = labels + event.get("label", "").asString
+    labels
+end

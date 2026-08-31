@@ -1,0 +1,208 @@
+//[ Cli.jo
+  !
+  ! The CLI agent loop (the Harpe "conversational" trigger) and its entry
+  ! points. Each turn it:
+  !
+  !   1. reads a line from the user
+  !   2. asks the LLM, offering the configured tools (default: runCode plus the
+  !      read-only skill tools)
+  !   3. dispatches each tool call to its handler and feeds the result back
+  !   4. repeats until the LLM replies with text, then prints the reply
+  !
+  ! `jo.main = harpe.cli.main` wires an agent to the loop.
+  !
+//]
+
+namespace harpe.cli
+import harpe.ffi.glob
+import harpe.ffi.os
+import harpe.util.File
+import harpe.ffi.time
+
+import harpe.util.Process
+
+import jo.IO.stdout
+import harpe.*
+import harpe.logging.JsonlLogger
+import harpe.transcript.Journal
+import harpe.logging.logger
+import harpe.Model.UserInput
+import harpe.Model.Message
+import harpe.tools.*
+import harpe.context.WindowedContext
+import harpe.turns.TurnResult
+
+//[ Where this application's files live: `sandbox/`, `skills/`, `data/`, `logs/`, `AGENT.md`
+  !
+  ! This driver's own convention, not the framework's. Provided once at startup
+  ! and picked up as context by every layer that resolves a path, so nothing
+  ! below has to be handed a directory it did not ask for.
+//]
+param appHome: String
+
+//[ The entry point   //]
+def main(): Unit receives stdout =
+  Process.loadDotenv(".env")
+  with appHome = os.path.abspath(".") in runChat()
+
+private def runChat(): Unit receives stdout, appHome =
+  val inputHistory = os.path.join(appHome, "logs/inputs.txt")
+  val console = new Console(stdout, inputHistory)
+  console.init()
+
+  val sessionPath = chooseSession(resumeRequested())
+  val sessionLog = new JsonlLogger(sessionPath)
+  val journal = new Journal(sessionLog)
+  // `runCode` owns a build semaphore, so it is an object built once here. The
+  // rest own nothing and are reached through their sections.
+  val runCode = RunCodeTool(os.path.join(appHome, "sandbox"), approvalDeadline = 610)
+  val bash    = new RunBashTool
+  val skillsDir = os.path.join(appHome, "skills")
+
+  val brain = Model.default()
+
+  // The context is what carries the conversation between turns, so it is built
+  // once here and handed to every turn below.
+  val context = new WindowedContext:
+    baseSystem = File.read(os.path.join(appHome, "AGENT.md"))
+    initial = Session.load(sessionPath)
+
+  // One local working directory for the whole run.
+  val data = os.path.join(appHome, "data")
+  if !os.path.isdir(data) then File.ensureDir(data)
+  val dataDir = os.path.abspath(data)
+
+  // What the model is offered, and what actually runs for each name — one
+  // table, so the two can never disagree. `runCode` grants the guest exactly
+  // one variable, and it is not optional: the sandbox runtime roots every
+  // capability it binds — `fs` and the document readers — at HARPE_DATA_DIR, so
+  // this grant is what lets a program read the files under `data/` and write the
+  // ones it leaves behind. Without it the runtime refuses to start.
+  val tools =
+    SkillTools.toolset(skillsDir)
+      ++ UploadMediaTool.toolset(dataDir)
+      ++ runCode.toolset(Map("HARPE_DATA_DIR" ~ dataDir))
+      ++ bash.toolset()
+
+  while true do
+    // `None` is end-of-input (Ctrl-D). A blank line or a Ctrl-C'd prompt is
+    // `Some("")`, which just re-prompts.
+    val userInput = console.userInput() rescue None => break
+
+    if userInput == "quit" || userInput == "exit" then break
+
+    if userInput == "" then continue
+
+    val userMsg = UserInput(userInput, [])
+    val runTurn = (turnInteract: Interact) =>
+      with logger = sessionLog in
+        Agent.ask:
+          userInput
+          brain = brain
+          tools = tools
+          context = context
+          transcript = journal
+          interact = turnInteract
+
+    // Open the turn's transcript bracket. The console is this driver's live UI,
+    // so nothing reads these records back today — but they are what makes a CLI
+    // journal replayable as a conversation rather than just an audit log.
+    journal.request(Journal.payload("text" ~ userInput))
+    val res = console.turn(userMsg, runTurn)
+
+    match res.result
+    case TurnResult.Success =>
+      if console.replyWasStreamed then println ""
+      else console.agentResponse(res.finalText)
+
+    case TurnResult.Interrupted =>
+      println("  " + Style.warning("⎋ interrupted"))
+
+    case TurnResult.Failed(detail) =>
+      val message = if detail == "" then "request failed" else "request failed: \{detail}"
+      println("  " + Style.error("· \{message}"))
+
+    case _ => pass
+
+    // A bare marker: the console is this driver's UI, and how the turn ended is
+    // already in the journal. The record exists to close the bracket, nothing more.
+    // A bare marker: the console is this driver's UI, and how the turn ended is
+    // already recorded. The record exists to close the bracket, nothing more.
+    journal.response("turnEnd")
+
+  end
+
+  sessionLog.close()
+
+  println("  " + Style.success("♪ Elise stopped."))
+end
+
+//[ Whether the user explicitly requested the session picker
+  !
+  ! The template's `jo resume` command passes this internal application flag.
+//]
+private def resumeRequested(): Bool =
+  for argDyn in py.module("sys").argv.cast[py.List] do
+    if argDyn.asString == "--resume" then return true
+  false
+
+section Session
+  //[ A new CLI session log, named from its start time. //]
+  def newLog(): String receives appHome =
+    os.path.join(appHome, time.strftime("logs/sessions/%Y/%m/%d/%H-%M-%S") + ".jsonl")
+
+  //[ A session's transcript, or `[]` for a log this run is about to create. //]
+  def load(path: String): List[Message] =
+    if !File.exists(path) then []
+    else Journal.load(path)
+
+  //[ Up to `limit` CLI session logs, newest first. //]
+  def recentFiles(limit: Int): List[String] receives appHome =
+    val root = os.path.join(appHome, "logs/sessions")
+    if limit <= 0 || !os.path.isdir(root) then []
+    else
+      var paths: List[String] = []
+      for pathDyn in glob.glob(os.path.join(root, "**/*.jsonl"), recursive = true) do
+        paths = paths + pathDyn.asString
+
+      val ordered = paths.sortBy(path => path)
+      var recent: List[String] = []
+      var i = ordered.size - 1
+      while i >= 0 && recent.size < limit do
+        recent = recent + ordered.get(i)
+        i = i - 1
+      end
+      recent
+end
+
+//[ Let an interactive user continue one of the five newest sessions
+  !
+  ! The normal startup path creates a fresh session without another prompt.
+//]
+private def chooseSession(resume: Bool): String receives stdout, appHome =
+  val recent = Session.recentFiles(5)
+  val interactive = py.module("sys").stdin.isatty().asBool
+
+  if !resume || recent.isEmpty || !interactive then Session.newLog()
+  else
+    println Style.accent("Recent sessions")
+    var i = 0
+    for path in recent do
+      val relative = os.path.relpath(path, os.path.abspath("."))
+      println("  " + Style.note("\{i + 1}.") + " " + Style.muted(relative))
+      i = i + 1
+
+    println ""
+    val answer =
+      match py.try(py.input("Resume a session number, or press Enter for a new session ▸ "))
+      case Ok(value) => value.trim
+      case Err(_)    => ""
+
+    val selected = Int.parse(answer) rescue None => 0
+    if selected >= 1 && selected <= recent.size then
+      val path = recent.get(selected - 1)
+      val relative = os.path.relpath(path, os.path.abspath("."))
+      println(Style.success("Resuming") + " " + relative)
+      path
+    else
+      Session.newLog()

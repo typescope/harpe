@@ -1,0 +1,76 @@
+//[ TelegramInteract.jo
+  !
+  ! The Telegram driver's `Interact` implementation — the seam between the shared
+  ! turn engine and a Telegram chat. Telegram is a discrete-message channel with
+  ! no live progress stream, so unlike the web driver (which streams every
+  ! `TurnEvent` as NDJSON) this one surfaces only a "typing…" chat action while
+  ! the model or a tool is working. The session reports the final turn result.
+  !
+  ! There is no cancellation: `cancelled` is always false and `pause` simply waits
+  ! out a retry backoff. A later phase could wire a per-chat "stop" command.
+//]
+
+namespace harpe.telegram
+
+import harpe.Interact
+import harpe.Approvals
+import harpe.Model
+import harpe.Model.ReplyResult
+import harpe.Model.Rendered
+import harpe.Tool
+import harpe.turns.TurnEvent
+
+//[ Approval callback: the correlation ID, the title, and the Markdown detail. //]
+type TelegramApprovalHandler = (String, String, String) => Approvals.Decision
+
+private class TelegramInteract(
+    client: TelegramClient,
+    chatId: String,
+    approvalHandler: TelegramApprovalHandler)
+  view Interact
+
+  def cancelled: Bool = false
+
+  def pause(seconds: Float): Bool =
+    py.module("time").sleep(seconds)
+    false
+
+  def approve(title: String, detail: String): Approvals.Decision =
+    val id = py.module("uuid").uuid4().toString
+    approvalHandler(id, title, detail)
+
+  //[ Reflect engine progress as a "typing" indicator
+    !
+    ! Other events remain silent because a Telegram chat cannot carry per-step
+    ! status without spamming it.
+  //]
+  def emit(event: TurnEvent): Unit =
+    match event
+    case TurnEvent.ModelRequestStarted(attempt, maxAttempts) =>
+      client.sendChatAction(chatId, "typing")
+
+    case TurnEvent.ModelRequestEnded =>
+      pass
+
+    case TurnEvent.TransientError(detail, delaySeconds) =>
+      pass
+
+    case TurnEvent.AssistantChunk(_) => pass
+    case TurnEvent.AssistantStreamReset => pass
+
+    case TurnEvent.AssistantMessage(text) =>
+      client.sendMessage(chatId, text)
+
+    case TurnEvent.ToolBudgetReached(budget) =>
+      pass
+
+    case TurnEvent.ToolCallStarted(name) =>
+      client.sendChatAction(chatId, "typing")
+
+    case TurnEvent.ToolCallEnded(name, summary) =>
+      pass
+
+    case TurnEvent.ContextCompacted(droppedMessages) =>
+      pass
+  end
+end

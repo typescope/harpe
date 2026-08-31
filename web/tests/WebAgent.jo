@@ -1,0 +1,230 @@
+//[ WebAgent.jo
+  !
+  ! The web agent under test: build it, run it as a real process, and tear it
+  ! down.
+  !
+  ! These suites drive the shipped `web/` driver over its own HTTP API, so what
+  ! runs here is the program a user runs — built either against this branch's
+  ! sources or the registry package, and started by its own `main`. Nothing is
+  ! reached into: the test speaks to it through a socket, exactly as the chat
+  ! page does.
+  !
+  ! Two things are faked, and only two. The MODEL is a `ProviderFixture` on
+  ! localhost, reached through `OPENAI_BASE_URL` — every scenario scripts what
+  ! the agent hears back, so a turn is deterministic and no key is needed. The
+  ! HOME is a fresh temporary directory holding a copy of the agent's `assets/`
+  ! and `AGENT.md`, so sessions, uploads, and logs land there rather than in the
+  ! repo's own `web/data` and `web/logs`. The sandbox is NOT faked: a program a
+  ! scenario runs is compiled by the real toolchain and executed as its own
+  ! process, against the guest built from the same spec as the agent.
+  !
+  ! A failing scenario reports the server's stderr alongside the assertion, and
+  ! leaves its home directory behind — the two things worth having when a test
+  ! fails inside another process.
+//]
+
+namespace harpe.web.tests
+
+
+import harpe.ffi.os
+import harpe.ffi.time
+import harpe.ffi.tempfile
+import harpe.ffi.subprocess
+import harpe.util.File
+
+section WebAgent
+  //[ How long to wait for the server to answer its first request. //]
+  private def startupSeconds: Float = 30.0
+
+  //[ A running web agent: where to reach it, and where it keeps its state.
+    !
+    ! The state paths are here because a scenario asserts on both sides of the
+    ! API — that a delivered file really is in the session's data directory, that
+    ! a conversation really was journalled — and only this class knows where the
+    ! temporary home is.
+  //]
+  class Agent(port: Int, home: String, logPath: String)
+    //[ One session's data directory (uploads, and whatever the agent wrote). //]
+    def dataDir(session: String): String = os.path.join(home, "data", session)
+
+    //[ One session's journal, the file it resumes from. //]
+    def sessionFile(session: String): String =
+      os.path.join(home, "logs/sessions", session + ".jsonl")
+
+    //[ Whatever the server has written to stdout/stderr so far. //]
+    def serverLog: String = if File.exists(logPath) then File.read(logPath) else ""
+  end
+
+  //[ A fresh agent home: the assets it serves, the prompt it loads, empty state
+    !
+    ! `assets/` and `AGENT.md` are the agent's real ones — a scenario that loads
+    ! the chat page or asserts on the system prompt is asserting about the files
+    ! that ship. Everything the agent WRITES is new here, so scenarios cannot see
+    ! each other's sessions, and none of them touch the repo.
+  //]
+  private def prepareHome(application: Driver.Application, marker: String): String =
+    val home = tempfile.mkdtemp()
+    val shutil = py.module("shutil")
+
+    shutil.copytree:
+      application.path("assets")
+      os.path.join(home, "assets")
+
+    // Tag this agent so it can be told apart over its own API — see `freePort`.
+    // A trailing comment, so the script the page loads is otherwise untouched.
+    val script = os.path.join(home, "assets/app.js")
+    File.write:
+      script
+      """
+      \{File.read(script)}
+
+      // \{marker}
+
+      """
+
+    File.write:
+      os.path.join(home, "AGENT.md")
+      File.read: application.path("AGENT.md")
+
+    // The sandbox the agent compiles programs into.
+    application.installGuest(home)
+
+    File.ensureDir: os.path.join(home, "data")
+    File.ensureDir: os.path.join(home, "logs/sessions")
+    home
+
+  //[ A port nobody is listening on, probably
+    !
+    ! Bound and released to learn its number, which the agent then binds itself.
+    ! The window between the two is a real race once scenarios run concurrently:
+    ! probing this way from four threads hands back a port another thread has
+    ! already been given about 6% of the time, because the kernel is free to
+    ! reissue one the instant it is released.
+    !
+    ! So the port is not trusted, it is checked. `waitReady` confirms the server
+    ! answering on it is the one we started, and `attempt` takes a fresh port
+    ! when it is not — which is cheaper than a startup contract (the server
+    ! reporting the port it got) that would exist only for tests.
+  //]
+  private def freePort(): Int =
+    val probe = py.module("socket").socket()
+    probe.bind(py.tuple("127.0.0.1", 0))
+    val port = probe.getsockname()[1].asInt
+    probe.close()
+    port
+
+  //[ Where this agent listens, on top of the scripted model every suite shares. //]
+  private def childEnv(modelBaseUrl: String, port: Int): py.Dict =
+    val env = Driver.modelEnv(modelBaseUrl)
+    env.set("HOST", "127.0.0.1")
+    env.set("PORT", port.toString)
+    env
+
+  //[ Start the application, its own session leader so the whole tree is killable. //]
+  private def spawn(app: String, home: String, logPath: String, env: py.Dict): py.Dynamic =
+    val logFile = py.open(logPath, "w")
+    subprocess.Popen:
+      py.list(py.module("sys").executable.asString, app)
+      stdout = logFile
+      stderr = logFile
+      text = true
+      start_new_session = true
+      env = env
+      cwd = home
+
+  //[ Block until OUR server answers, or say why it never did
+    !
+    ! False rather than an abort when the port turned out to belong to another
+    ! scenario — that is not a failure, it is a port to give up on. Everything
+    ! else still aborts, because it means this agent is genuinely broken.
+  //]
+  private def waitReady(agent: Agent, proc: py.Dynamic, marker: String): Bool =
+    val deadline = time.monotonic() + startupSeconds
+
+    while time.monotonic() < deadline do
+      if !proc.poll().isNone then
+        // Exiting immediately while something IS serving here is the collision:
+        // a sibling lane bound this port first and ours could not.
+        if answers(agent) then return false
+        abort "web e2e: the agent exited during startup (code \{proc.poll().asInt}):\n\{agent.serverLog}"
+
+      match py.try(Rest.get(agent, "/api/info"))
+      // Answering is not enough — a sibling agent answers exactly the same way.
+      // Driving one of those is what turns a lost port into a scenario that
+      // hangs on a script written for somebody else.
+      case Ok(answer) if answer.status == 200 => return servesMarker(agent, marker)
+      case _ => py.module("time").sleep(0.05)
+
+    abort "web e2e: the agent never answered on port \{agent.port}:\n\{agent.serverLog}"
+
+  //[ Is anything at all serving on this port? //]
+  private def answers(agent: Agent): Bool =
+    match py.try(Rest.get(agent, "/api/info"))
+    case Ok(answer) => answer.status == 200
+    case Err(_) => false
+
+  //[ Is the thing serving on this port the agent we just started? //]
+  private def servesMarker(agent: Agent, marker: String): Bool =
+    match py.try(Rest.get(agent, "/app.js"))
+    case Ok(answer) => answer.text.contains(marker)
+    case Err(_) => false
+
+  //[ Wait for the agent, then hand it to the scenario — the part that may fail. //]
+  private def run(agent: Agent, scenario: Agent => Unit): Unit =
+    scenario(agent)
+
+  //[ Run `scenario` against a web agent talking to the model at `modelBaseUrl`
+    !
+    ! One agent per scenario, on its own port and its own home. That costs a
+    ! process start each time and buys complete isolation: a scenario's sessions,
+    ! uploads and scripted model are entirely its own, and a scenario that hangs
+    ! the server cannot take the next one with it.
+  //]
+  def withAgent(modelBaseUrl: String, scenario: Agent => Unit): Unit =
+    val application = Driver.application()
+    attempt(application, modelBaseUrl, scenario, portAttempts)
+
+  //[ How many ports to try before giving up on getting one to ourselves. //]
+  private def portAttempts: Int = 4
+
+  //[ Start an agent and run `scenario` against it, re-picking a lost port
+    !
+    ! A fresh home each attempt rather than a reused one: it costs a millisecond,
+    ! and it keeps the invariant that a scenario's agent has never seen anything.
+  //]
+  private def attempt(application: Driver.Application, modelBaseUrl: String, scenario: Agent => Unit, left: Int): Unit =
+    val marker = "harpe-e2e-" + py.module("uuid").uuid4().hex.asString
+    val home = prepareHome(application, marker)
+    val port = freePort()
+    val logPath = os.path.join(home, "server.log")
+    val agent = new Agent(port, home, logPath)
+
+    val proc = spawn(application.executable, home, logPath, childEnv(modelBaseUrl, port))
+    val result = py.try: startAndRun(agent, proc, marker, scenario)
+
+    Driver.terminate(proc)
+
+    match result
+    case Ok(ours) if ours =>
+      Driver.discardHome(home)
+
+    // Somebody else was on that port. Nothing ran, so this is not a failure —
+    // take another port and start over.
+    case Ok(_) =>
+      Driver.discardHome(home)
+      assert: left > 1,
+        "web e2e: lost the port to another scenario \{portAttempts} times running"
+      attempt(application, modelBaseUrl, scenario, left - 1)
+
+    // The home is left behind on failure: its `server.log` holds the traceback
+    // and its `logs/sessions` holds what the agent journalled.
+    case Err(err) =>
+      abort "\{err.message}\n  agent home: \{home}\n  --- server log ---\n\{agent.serverLog}"
+
+  //[ True once the scenario has run; false when the port was not ours to keep. //]
+  private def startAndRun(agent: Agent, proc: py.Dynamic, marker: String, scenario: Agent => Unit): Bool =
+    if !waitReady(agent, proc, marker) then false
+    else
+      run(agent, scenario)
+      true
+end
