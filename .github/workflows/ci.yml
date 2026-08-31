@@ -44,18 +44,6 @@ jobs:
       - name: Build hello sandbox guest
         run: jo build sandbox-guest --spec ci/hello/jo.toml
 
-      - name: Build CLI agent (local sources)
-        run: jo build cli --spec ci/cli/jo.toml
-
-      - name: Build CLI sandbox guest (local sources)
-        run: jo build sandbox-guest --spec ci/cli/jo.toml
-
-      - name: Build web agent (local sources)
-        run: jo build web --spec ci/web/jo.toml
-
-      - name: Build web sandbox guest (local sources)
-        run: jo build sandbox-guest --spec ci/web/jo.toml
-
       - name: Build Telegram agent (local sources)
         run: jo build telegram --spec ci/telegram/jo.toml
 
@@ -74,24 +62,8 @@ jobs:
       - name: Build flight booker sandbox guest (local sources)
         run: jo build sandbox-guest --spec ci/flight-booker/jo.toml
 
-      # The same drivers from their own jo.toml, resolving harpe and harpe-caps
-      # from the registry — the check that a shipped release still builds them.
-      - name: Build CLI agent
-        working-directory: cli
-        run: jo build
-
-      - name: Build CLI sandbox guest
-        working-directory: cli
-        run: jo build guest --spec sandbox/jo.toml
-
-      - name: Build web agent
-        working-directory: web
-        run: jo build
-
-      - name: Build web sandbox guest
-        working-directory: web
-        run: jo build guest --spec sandbox/jo.toml
-
+      # The remaining drivers from their own jo.toml, resolving harpe and
+      # harpe-caps from the registry. Web and CLI get this coverage from e2e.
       - name: Build Telegram agent
         working-directory: telegram
         run: jo build
