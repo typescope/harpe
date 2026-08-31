@@ -22,7 +22,11 @@ cd my-reviewer
 pip install -r requirements.txt
 ```
 
-Create a `.env` file with your tokens:
+Copy the example environment file and fill in your tokens:
+
+```sh
+cp .env.example .env
+```
 
 ```sh
 GITHUB_TOKEN=ghp_...

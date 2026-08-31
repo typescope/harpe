@@ -14,8 +14,12 @@ cd my-reviewer
 pip install -r requirements.txt
 ```
 
-Create a `.env` file with a GitHub personal access token carrying the `repo`
-scope, plus one model provider key:
+Copy the example environment file, and fill in a GitHub personal access token
+carrying the `repo` scope, plus one model provider key:
+
+```sh
+cp .env.example .env
+```
 
 ```sh
 GITHUB_TOKEN=...
