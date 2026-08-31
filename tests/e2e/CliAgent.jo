@@ -181,17 +181,17 @@ section CliAgent
     ! `AGENT.md` and `skills/` are the agent's real ones, so a scenario reading
     ! the system prompt or listing skills is reading what ships.
   //]
-  private def prepareHome(root: String): String receives published =
+  private def prepareHome(application: Driver.Application): String =
     val home = tempfile.mkdtemp()
     File.write:
       os.path.join(home, "AGENT.md")
-      File.read(os.path.join(root, "cli/AGENT.md"))
+      File.read(application.path("AGENT.md"))
 
     py.module("shutil").copytree:
-      os.path.join(root, "cli/skills")
+      application.path("skills")
       os.path.join(home, "skills")
 
-    Driver.linkGuest(root, "cli", home)
+    application.installGuest(home)
     File.ensureDir(os.path.join(home, "data"))
     File.ensureDir(os.path.join(home, "logs"))
     home
@@ -229,12 +229,11 @@ section CliAgent
     ! next one with it.
   //]
   def withAgent(modelBaseUrl: String, scenario: Session => Unit): Unit receives published =
-    val root = Driver.repoRoot()
-    Driver.build(root, "cli")
-    val app = Driver.application(root, "cli")
-    val home = prepareHome(root)
+    val application = Driver.application("cli")
+    application.build()
+    val home = prepareHome(application)
 
-    val console ~ proc = spawn(app, home, Driver.modelEnv(modelBaseUrl))
+    val console ~ proc = spawn(application.executable, home, Driver.modelEnv(modelBaseUrl))
     val session = new Session(console, home, proc)
 
     val result = py.try: run(session, scenario)

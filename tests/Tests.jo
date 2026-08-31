@@ -103,11 +103,19 @@ private def suites(): Unit receives framework.thisSuite, logger =
   suite: "e2e", () =>
     thisSuite.parallel = true
     with e2e.published = false in suite: "source", () =>
-      thisSuite.beforeSuite = () => Driver.prepare()
+      thisSuite.beforeSuite = () =>
+          Driver.application("web").build()
+          Driver.application("cli").build()
+
+      thisSuite.parallel = true
       WebTest.webSuite()
       CliTest.cliSuite()
 
     with e2e.published = true in suite: "published", () =>
-      thisSuite.beforeSuite = () => Driver.prepare()
+      thisSuite.beforeSuite = () =>
+          Driver.application("web").build()
+          Driver.application("cli").build()
+
+      thisSuite.parallel = true
       WebTest.webSuite()
       CliTest.cliSuite()
