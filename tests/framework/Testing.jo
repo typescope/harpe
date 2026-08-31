@@ -56,12 +56,34 @@ section Testing
     var children: List[Suite | Test] = []
     private var childNames: Set[String] = Set.empty[String]
 
-    //[ May this suite's tests run at the same time as each other?
+    //[ May this suite's structurally independent work run concurrently?
       !
-      ! Set from inside the suite's own body — `thisSuite.parallel = true`. It
-      ! is a claim about the tests, not a request for threads: they share
-      ! NOTHING, no fixture, no directory, no port, no assumption about the
-      ! order they ran in. What a runner does with the claim is its own affair.
+      ! Set from inside the suite's own body — `thisSuite.parallel = true`. The
+      ! runner traverses parallel child suites into the same scheduling domain:
+      ! each test it reaches is one work item. A serial child suite is a boundary
+      ! and becomes one atomic work item, preserving the order of everything in
+      ! that subtree. Thus parallel suites compose without nested pools, while a
+      ! serial suite can safely group ordered work inside a parallel parent.
+      !
+      ! A parallel child inside a serial parent starts a scheduling domain only
+      ! when the serial walk reaches it, then joins before the parent continues.
+      !
+      !     A (parallel scheduling domain)
+      !     ├── test p ─────────────────────────────── work item
+      !     └── B (serial boundary) ────────────────── work item
+      !         ├── test q                           runs first
+      !         └── C (parallel scheduling domain)   then starts and joins:
+      !             ├── test x ─┐
+      !             ├── test y ─┼─ concurrent work
+      !             └── test z ─┘
+      !
+      ! A may run p alongside all of B, but B completes only after q, then all
+      ! of C. The serial boundary keeps q/x/y/z out of A's scheduling domain;
+      ! C still gives x/y/z their own parallel domain.
+      !
+      ! Setting this is a claim that the direct children share NOTHING needed
+      ! during execution: no mutable fixture, directory, port, or ordering
+      ! assumption. Reporting remains in declaration order.
     //]
     var parallel: Bool = false
 

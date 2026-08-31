@@ -35,12 +35,16 @@ import harpe.test.integration.ProviderFixture
 import harpe.test.e2e.CliAgent
 import harpe.test.e2e.ModelScript
 import harpe.test.e2e.published
+import harpe.test.e2e.Driver
 
 //[ Everything one request carried, as text — for asking whether a value reached the model. //]
 private def requestText(server: ProviderFixture.Server, index: Int): String =
   json.dumps(server.recorded(index).jsonBody)
 
 def cliSuite(): Unit receives thisSuite, published = suite: "cli", () =>
+  thisSuite.parallel = true
+  thisSuite.beforeSuite = () => Driver.application("cli").build()
+
   test: "answers a question, and journals the exchange", () =>
     ProviderFixture.withResponses: [ModelScript.says("I write Jo programs.")], server =>
       CliAgent.withAgent: server.baseUrl, agent =>

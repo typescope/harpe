@@ -47,7 +47,6 @@ import harpe.test.integration.openai
 import harpe.test.integration.openaiResponses
 import harpe.test.integration.openrouter
 import harpe.test.integration.RunCodeTest
-import harpe.test.e2e.Driver
 import harpe.test.e2e.WebTest
 import harpe.test.e2e.CliTest
 
@@ -96,26 +95,17 @@ private def suites(): Unit receives framework.thisSuite, logger =
     openrouter.Tests.openrouterSuite()
     RunCodeTest.runCodeSuite()
 
-  // Parallel because these scenarios share nothing: each builds its own agent
-  // home, binds its own port, and scripts its own model. What they DO share is
-  // the driver underneath them, which `jo build` cannot produce twice at once —
-  // so it is built here, before any of them runs.
+  // Each source/published group runs in its own pool because its scenarios share
+  // nothing: every test builds its own agent home, binds its own port, and
+  // scripts its own model. Each driver suite builds its shared artifacts in its
+  // own `beforeSuite`, before any of that suite's tests start.
   suite: "e2e", () =>
-    thisSuite.parallel = true
     with e2e.published = false in suite: "source", () =>
-      thisSuite.beforeSuite = () =>
-          Driver.application("web").build()
-          Driver.application("cli").build()
-
       thisSuite.parallel = true
       WebTest.webSuite()
       CliTest.cliSuite()
 
     with e2e.published = true in suite: "published", () =>
-      thisSuite.beforeSuite = () =>
-          Driver.application("web").build()
-          Driver.application("cli").build()
-
       thisSuite.parallel = true
       WebTest.webSuite()
       CliTest.cliSuite()
