@@ -32,22 +32,3 @@ platform = "python"
 enable-ffi = true
 modules = ["harpe", "caps"]
 src = ["tests/"]
-
-# The compose drawing engine — a self-contained imaging + layout + prose library,
-# pure Jo with no dependencies. Experimental; deliberately outside the shippable
-# caps/harpe surface. Its Python backend lives in the separate pycompose module.
-[module.compose]
-kind = "lib"
-platform = "python"
-src = ["compose/"]
-compile-options = ["--test-pickling", "--check-tree"]
-
-# The cairo/HarfBuzz backend for compose, plus a gallery of examples. Its `main`
-# renders every example to PNG (and one to PDF). Depends only on compose — no
-# harpe. Needs cairocffi, uharfbuzz, cffi, pillow (and system libcairo/libfreetype).
-[module.pycompose]
-kind = "app"
-platform = "python"
-enable-ffi = true
-src = ["pycompose/"]
-modules = ["compose"]
