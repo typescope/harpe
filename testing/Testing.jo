@@ -77,9 +77,10 @@ section Testing
       !             ├── test y ─┼─ concurrent work
       !             └── test z ─┘
       !
-      ! A may run p alongside all of B, but B completes only after q, then all
-      ! of C. The serial boundary keeps q/x/y/z out of A's scheduling domain;
-      ! C still gives x/y/z their own parallel domain.
+      ! So A is free to run p while the whole of B runs. Inside B nothing
+      ! overlaps: q finishes, then x, y and z all do. Being serial is what keeps
+      ! B's four tests out of A's scheduling domain. Being parallel is what lets
+      ! x, y and z still run together once B reaches them.
       !
       ! Setting this is a claim that the direct children share NOTHING needed
       ! during execution: no mutable fixture, directory, port, or ordering
