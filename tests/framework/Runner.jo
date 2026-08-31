@@ -32,6 +32,7 @@ import jo.IO.stdout
 import harpe.ffi.os
 import harpe.ffi.builtins
 import harpe.ffi.threading
+import harpe.ffi.time
 import harpe.util.Process
 
 private class Tally
@@ -167,6 +168,7 @@ section Runner
     ! failed.
   //]
   def run(root: Testing.Suite, filter: String, lanes: Int): Bool receives stdout =
+    val started = time.monotonic()
     val tally = new Tally
     val outcomes = new OutcomeStore
 
@@ -175,7 +177,7 @@ section Runner
 
     println Style.strong("\{root.name}:")
     walk(root, "", "  ", filter, tally, outcomes, lanes, prepared = false)
-    report(tally)
+    report(tally, time.monotonic() - started)
     tally.failures.isEmpty
 
   // The root contributes no path segment, so a filter reads as `providers/openai`.
@@ -357,7 +359,7 @@ section Runner
       case nested: Testing.Suite => total = total + count(nested)
     total
 
-  private def report(tally: Tally): Unit receives stdout =
+  private def report(tally: Tally, elapsed: Float): Unit receives stdout =
     if !tally.failures.isEmpty then
       println ""
       println Style.error("failures:")
@@ -368,5 +370,6 @@ section Runner
       else Style.muted(", \{tally.skipped} skipped")
     println ""
     println: Style.success("\{tally.passed} passed") + ", " +
-      (if tally.failures.isEmpty then Style.muted(failed) else Style.error(failed)) + skipped
+      (if tally.failures.isEmpty then Style.muted(failed) else Style.error(failed)) + skipped +
+      Style.muted(" in \{builtins.round(elapsed, 2)}s")
 end
