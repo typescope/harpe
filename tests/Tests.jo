@@ -100,6 +100,7 @@ private def suites(): Unit receives framework.thisSuite, logger =
   // scripts its own model. Each driver suite builds its shared artifacts in its
   // own `beforeSuite`, before any of that suite's tests start.
   suite: "e2e", () =>
+    thisSuite.parallel = true
     with e2e.published = false in suite: "source", () =>
       thisSuite.parallel = true
       WebTest.webSuite()
