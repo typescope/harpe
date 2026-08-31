@@ -1,0 +1,66 @@
+//[ Platform.jo
+  !
+  ! The host calls this framework makes, bound directly.
+  !
+  ! There are nine of them, and every one is something any runtime provides: an
+  ! environment variable, a monotonic clock, a mutex, a thread, and three numeric
+  ! or character conversions. Harpe binds all of these already, in `harpe.ffi`,
+  ! and using those would be the shorter path — at the cost of making a test
+  ! framework depend on the agent framework it is most often used to test.
+  !
+  ! So they are declared again here, faithfully: Python's own names, Python's own
+  ! signatures. This package depends on nothing but Jo.
+//]
+
+namespace harpe.testing
+
+//[ Python's `os` module, in the part this framework uses. //]
+@py.interop
+interface OsApi
+  //[ The process environment as a string map. //]
+  @py.property
+  def environ: py.Dict
+
+  //[ An environment variable's value, or `fallback` if unset. //]
+  def getenv(name: String, fallback: String): String
+
+//[ Python's `time` module, in the part this framework uses. //]
+@py.interop
+interface TimeApi
+  //[ Seconds from an unspecified origin, never going backwards.
+    !
+    ! For measuring elapsed time, where the wall clock could jump.
+  //]
+  def monotonic(): Float
+
+//[ Python's `threading` module, in the part this framework uses. //]
+@py.interop
+interface ThreadingApi
+  //[ A mutual-exclusion lock (`acquire`/`release`). //]
+  def Lock(): py.Dynamic
+
+  //[ A thread running `target`. Call `.start()`. //]
+  def Thread(target: Any @py.keyword, daemon: Bool @py.keyword): py.Dynamic
+
+//[ Python's builtins, in the part this framework uses. //]
+@py.interop
+interface BuiltinsApi
+  //[ The character with code point `code`. //]
+  def chr(code: Int): String
+
+  //[ `x` rounded to `ndigits` decimal places. //]
+  def round(x: Float, ndigits: Int): Float
+
+  //[ `x` as an integer. //]
+  def int(x: Any): Int
+
+def os: OsApi = py.module("os").cast[OsApi]
+
+def time: TimeApi = py.module("time").cast[TimeApi]
+
+def threading: ThreadingApi = py.module("threading").cast[ThreadingApi]
+
+def builtins: BuiltinsApi = py.module("builtins").cast[BuiltinsApi]
+
+//[ A daemon thread running `target` — it dies with the process. Call `.start()`. //]
+def daemon(target: Any): py.Dynamic = threading.Thread(target = target, daemon = true)

@@ -26,14 +26,9 @@
   ! and still names no capability.
 //]
 
-namespace harpe.test.framework
+namespace harpe.testing
 
 import jo.IO.stdout
-import harpe.ffi.os
-import harpe.ffi.builtins
-import harpe.ffi.threading
-import harpe.ffi.time
-import harpe.util.Process
 
 private class Tally
   var passed: Int = 0
@@ -321,7 +316,7 @@ section Runner
 
     var started = 0
     while started < lanes && started < items.size do
-      val thread = Process.daemon(() => drain(queue, progress))
+      val thread = daemon(() => drain(queue, progress))
       thread.start()
       threads = threads + thread
       started = started + 1

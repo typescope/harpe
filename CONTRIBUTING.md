@@ -62,10 +62,11 @@ cd docs && zola serve      # `zola build` also checks internal links
 |---|---|
 | `caps/` | Capability interfaces, published as `harpe-caps`. Pure Jo, no FFI |
 | `agent/` | The framework, published as `harpe` — turn engine, models, tools, context, logging |
+| `testing/` | The test framework, published as `harpe-testing`. Depends on nothing, not even `harpe` |
 | `cli/`, `web/`, `telegram/` | The shipped applications, which are also `jo new` templates |
 | `templates/hello/` | The minimal learning agent |
 | `examples/` | Complete agents built in CI: PR review, flight booking |
-| `tests/` | The `jo run test` suite |
+| `tests/` | The `jo run test` suite, plus the agent harness that is too repo-shaped to publish |
 | `docs/` | The documentation site |
 | `compose/`, `pycompose/` | An experimental drawing engine, outside the shippable surface |
 
