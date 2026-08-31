@@ -102,6 +102,12 @@ private def suites(): Unit receives framework.thisSuite, logger =
   // so it is built here, before any of them runs.
   suite: "e2e", () =>
     thisSuite.parallel = true
-    thisSuite.beforeSuite = () => Driver.prepare()
-    WebTest.webSuite()
-    CliTest.cliSuite()
+    with e2e.published = false in suite: "source", () =>
+      thisSuite.beforeSuite = () => Driver.prepare()
+      WebTest.webSuite()
+      CliTest.cliSuite()
+
+    with e2e.published = true in suite: "published", () =>
+      thisSuite.beforeSuite = () => Driver.prepare()
+      WebTest.webSuite()
+      CliTest.cliSuite()

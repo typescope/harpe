@@ -34,12 +34,13 @@ import harpe.test.framework.checkEquals
 import harpe.test.integration.ProviderFixture
 import harpe.test.e2e.CliAgent
 import harpe.test.e2e.ModelScript
+import harpe.test.e2e.published
 
 //[ Everything one request carried, as text — for asking whether a value reached the model. //]
 private def requestText(server: ProviderFixture.Server, index: Int): String =
   json.dumps(server.recorded(index).jsonBody)
 
-def cliSuite(): Unit receives thisSuite = suite: "cli", () =>
+def cliSuite(): Unit receives thisSuite, published = suite: "cli", () =>
 
   test: "answers a question, and journals the exchange", () =>
     ProviderFixture.withResponses: [ModelScript.says("I write Jo programs.")], server =>

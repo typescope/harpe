@@ -31,6 +31,7 @@ import harpe.ffi.time
 import harpe.ffi.tempfile
 import harpe.util.File
 import harpe.util.Terminal
+import harpe.test.e2e.published
 
 section CliAgent
   //[ How long to wait for the console to draw its first prompt. //]
@@ -180,7 +181,7 @@ section CliAgent
     ! `AGENT.md` and `skills/` are the agent's real ones, so a scenario reading
     ! the system prompt or listing skills is reading what ships.
   //]
-  private def prepareHome(root: String): String =
+  private def prepareHome(root: String): String receives published =
     val home = tempfile.mkdtemp()
     File.write:
       os.path.join(home, "AGENT.md")
@@ -227,7 +228,7 @@ section CliAgent
     ! its own, and one that leaves the console in a strange state cannot take the
     ! next one with it.
   //]
-  def withAgent(modelBaseUrl: String, scenario: Session => Unit): Unit =
+  def withAgent(modelBaseUrl: String, scenario: Session => Unit): Unit receives published =
     val root = Driver.repoRoot()
     Driver.build(root, "cli")
     val app = Driver.application(root, "cli")

@@ -4,8 +4,8 @@
   ! down.
   !
   ! These suites drive the shipped `web/` driver over its own HTTP API, so what
-  ! runs here is the program a user runs — `ci/web/jo.toml` built from this
-  ! branch's `web/src/` and `agent/`, started by its own `main`. Nothing is
+  ! runs here is the program a user runs — built either against this branch's
+  ! sources or the registry package, and started by its own `main`. Nothing is
   ! reached into: the test speaks to it through a socket, exactly as the chat
   ! page does.
   !
@@ -24,6 +24,8 @@
 //]
 
 namespace harpe.test.e2e
+
+import harpe.test.e2e.published
 
 import harpe.ffi.os
 import harpe.ffi.time
@@ -61,7 +63,7 @@ section WebAgent
     ! that ship. Everything the agent WRITES is new here, so scenarios cannot see
     ! each other's sessions, and none of them touch the repo.
   //]
-  private def prepareHome(root: String, marker: String): String =
+  private def prepareHome(root: String, marker: String): String receives published =
     val home = tempfile.mkdtemp()
     val shutil = py.module("shutil")
 
@@ -179,7 +181,7 @@ section WebAgent
     ! uploads and scripted model are entirely its own, and a scenario that hangs
     ! the server cannot take the next one with it.
   //]
-  def withAgent(modelBaseUrl: String, scenario: Agent => Unit): Unit =
+  def withAgent(modelBaseUrl: String, scenario: Agent => Unit): Unit receives published =
     val root = Driver.repoRoot()
     Driver.build(root, "web")
     attempt(root, Driver.application(root, "web"), modelBaseUrl, scenario, portAttempts)
@@ -192,7 +194,7 @@ section WebAgent
     ! A fresh home each attempt rather than a reused one: it costs a millisecond,
     ! and it keeps the invariant that a scenario's agent has never seen anything.
   //]
-  private def attempt(root: String, app: String, modelBaseUrl: String, scenario: Agent => Unit, left: Int): Unit =
+  private def attempt(root: String, app: String, modelBaseUrl: String, scenario: Agent => Unit, left: Int): Unit receives published =
     val marker = "harpe-e2e-" + py.module("uuid").uuid4().hex.asString
     val home = prepareHome(root, marker)
     val port = freePort()

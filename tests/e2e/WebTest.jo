@@ -39,9 +39,10 @@ import harpe.test.e2e.WebAgent
 import harpe.test.e2e.ModelScript
 import harpe.test.e2e.Rest
 import harpe.test.e2e.Events
+import harpe.test.e2e.published
 
 //[ An agent whose model is never asked anything — for the routes that answer alone. //]
-private def withIdleAgent(scenario: WebAgent.Agent => Unit): Unit =
+private def withIdleAgent(scenario: WebAgent.Agent => Unit): Unit receives published =
   ProviderFixture.withResponses: [], server =>
     WebAgent.withAgent(server.baseUrl, scenario)
 
@@ -63,7 +64,7 @@ private def files(agent: WebAgent.Agent, session: String): py.List =
 private def requestText(server: ProviderFixture.Server, index: Int): String =
   json.dumps(server.recorded(index).jsonBody)
 
-def webSuite(): Unit receives thisSuite = suite: "web", () =>
+def webSuite(): Unit receives thisSuite, published = suite: "web", () =>
 
   test: "serves the chat page, its assets, and the agent's name", () =>
     withIdleAgent: agent =>
