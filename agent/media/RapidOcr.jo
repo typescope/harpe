@@ -1,9 +1,9 @@
 //[ RapidOcr.jo
   !
   ! A concrete `OCR` capability backed by RapidOCR — PaddleOCR's models run through
-  ! ONNX runtime. Pure pip (`rapidocr-onnxruntime`), no system binary, and stronger
-  ! than Tesseract on photos and rotated text. It resolves a relative path against its root
-  ! and reads the file directly.
+  ! ONNX runtime. Pure pip (`rapidocr`, plus the `onnxruntime` engine it runs the
+  ! models on), no system binary, and stronger than Tesseract on photos and rotated
+  ! text. It resolves a relative path against its root and reads the file directly.
   !
   ! The engine loads its models on first use and is kept for the reader's lifetime.
   ! When the package is absent, `text` answers `Err` rather than crashing.
@@ -34,11 +34,11 @@ class RapidOcr
 
   //[ Run the engine.
     !
-    ! Its result is `(lines, elapse)` with each line `[box, text, confidence]`, or
-    ! `(None, _)` when the image holds no text.
+    ! Its result carries `txts`, the recognized lines in reading order, which is
+    ! `None` when the image holds no text.
   //]
   private def recognize(path: String): String =
-    val lines = py.call(engine, path)[0]
+    val lines = py.call(engine, path).txts
 
     if py.isNone(lines) then ""
     else
@@ -47,7 +47,7 @@ class RapidOcr
       var i = 0
 
       while i < n do
-        val line = py.dynamic(py.dynamic(lines)[i])[1].asString
+        val line = py.dynamic(lines)[i].asString
         result = if i == 0 then line else result + "\n" + line
         i = i + 1
 
@@ -55,7 +55,7 @@ class RapidOcr
 
   private def engine(): py.Dynamic =
     if py.isNone(engineRef) then
-      this.engineRef = py.module("rapidocr_onnxruntime").RapidOCR()
+      this.engineRef = py.module("rapidocr").RapidOCR()
 
     engineRef
 end
