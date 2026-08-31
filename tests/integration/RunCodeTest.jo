@@ -60,6 +60,11 @@ private def execWith(
 private def exec(tool: RunCodeTool, code: String): ToolOutcome =
   execWith(tool, code, Map.empty[String, String], Interact.unattended)
 
+private def checkScrubbedEnvironment(): Unit =
+  val probed = exec(fastTool(), guest("  println 42\n")).result
+  check("host secret did not leak", probed.contains("harpe-run-sh key=[]"))
+  check("program output present", probed.contains("42"))
+
 private class ApprovalInteract(decision: Approvals.Decision)
   view Interact
 
@@ -112,14 +117,14 @@ private def guestFs(body: String): String =
 
   """ + body
 
-//[ The fixture sandbox, built once per process
+//[ Build the fixture sandbox once per process
   !
   ! The tool replays the invocation recorded by `jo build`, so the fixture must
   ! be built before any test runs it. Every test needs it and an incremental
   ! build still costs about a second, so the environment carries the memo — it
   ! is the one store that outlives a call without a top-level value.
 //]
-private def sandbox(): String =
+private def prepareSandbox(): Unit =
   val dir = fixtureSandboxDir()
   if os.getenv("HARPE_TEST_SANDBOX_BUILT", "") != dir then
     val prep = Process.runCapped:
@@ -128,10 +133,9 @@ private def sandbox(): String =
     assert: !prep.timedOut && prep.returnCode == 0,
       "failed to pre-build the sandbox fixture:\n\{prep.err}"
     os.environ.set("HARPE_TEST_SANDBOX_BUILT", dir)
-  dir
 
 private def fastTool(): RunCodeTool = RunCodeTool:
-  sandbox()
+  fixtureSandboxDir()
   approvalDeadline = 5
   buildTimeout = 120
   runTimeout = 5
@@ -168,7 +172,8 @@ private def runConcurrently(tool: RunCodeTool, n: Int): Bool =
     j = j + 1
   allOk
 
-def runCodeSuite(): Unit receives thisSuite = suite: "runCode tool", () =>
+//[ Every case that neither reads nor mutates process-global state. //]
+private def parallelCases(): Unit receives thisSuite =
   test: "reports an unbuilt sandbox instead of building or running anything", () =>
     val unbuilt = tempfile.mkdtemp()
     checkEquals:
@@ -177,6 +182,8 @@ def runCodeSuite(): Unit receives thisSuite = suite: "runCode tool", () =>
       "sandbox not built"
 
   suite: "running a program", () =>
+    thisSuite.parallel = true
+
     test: "runs a well-formed one and produces its output", () =>
       checkEquals("tag", tag(exec(fastTool(), guest("  println 42\n"))), "ran")
 
@@ -190,23 +197,16 @@ def runCodeSuite(): Unit receives thisSuite = suite: "runCode tool", () =>
     // output — no shared Task.jo or .build clobbering.
     test: "isolates concurrent runs from each other", () =>
       val concurrent = RunCodeTool:
-        sandbox()
+        fixtureSandboxDir()
         approvalDeadline = 5
         buildTimeout = 120
         runTimeout = 5
         maxConcurrent = 2
       check("no clobbering", runConcurrently(concurrent, 4))
 
-    // The guest runs with a minimal PATH-only environment, so a planted host
-    // secret comes back empty in the wrapper's marker line, and the program
-    // still runs through the wrapper.
-    test: "honours the run.sh seam and scrubs the child environment", () =>
-      os.environ.set("ANTHROPIC_API_KEY", "SECRET-should-not-leak")
-      val probed = exec(fastTool(), guest("  println 42\n")).result
-      check("host secret did not leak", probed.contains("harpe-run-sh key=[]"))
-      check("program output present", probed.contains("42"))
-
   suite: "approval over the per-run broker", () =>
+    thisSuite.parallel = true
+
     // A trusted sandbox capability can request approval. The request stays out
     // of the transcript and the decision returns to the waiting process.
     test: "returns the decision to the waiting sandbox", () =>
@@ -236,7 +236,7 @@ def runCodeSuite(): Unit receives thisSuite = suite: "runCode tool", () =>
     // interaction handler never returns.
     test: "stops a run whose handler never returns", () =>
       val watchdog = RunCodeTool:
-        sandbox()
+        fixtureSandboxDir()
         approvalDeadline = 1
         buildTimeout = 120
         runTimeout = 5
@@ -248,6 +248,8 @@ def runCodeSuite(): Unit receives thisSuite = suite: "runCode tool", () =>
       checkEquals("summary", stuck.summary.split(" · ").get(0), "approval timed out")
 
   suite: "failing programs", () =>
+    thisSuite.parallel = true
+
     test: "catches one that does not type-check, with the compiler diagnostic", () =>
       val bad = exec(fastTool(), guest("  println undefinedThing\n"))
       checkEquals("tag", tag(bad), "compile-error")
@@ -255,7 +257,7 @@ def runCodeSuite(): Unit receives thisSuite = suite: "runCode tool", () =>
 
     test: "kills an infinite loop on the host wall-clock timeout", () =>
       val quick = RunCodeTool:
-        sandbox()
+        fixtureSandboxDir()
         approvalDeadline = 5
         buildTimeout = 120
         runTimeout = 2
@@ -268,3 +270,32 @@ def runCodeSuite(): Unit receives thisSuite = suite: "runCode tool", () =>
 
           """
       checkEquals("tag", tag(spinning), "timeout")
+
+def runCodeSuite(): Unit receives thisSuite = suite: "runCode tool", () =>
+  // `jo build` writes shared output, so finish it once before the pool can
+  // construct a tool from the fixture.
+  thisSuite.beforeSuite = () => prepareSandbox()
+
+  suite: "parallel cases", () =>
+    thisSuite.parallel = true
+    parallelCases()
+
+  // Process environment is shared by every test thread, so this case runs only
+  // after the parallel group joins. Restore the developer's value even when an
+  // assertion or the tool itself fails.
+  test: "honours the run.sh seam and scrubs the child environment", () =>
+    val key = "ANTHROPIC_API_KEY"
+    val hadKey = os.environ.contains(key)
+    val previous = os.getenv(key, "")
+    os.environ.set(key, "SECRET-should-not-leak")
+
+    val attempted = py.try: checkScrubbedEnvironment()
+
+    if hadKey then os.environ.set(key, previous)
+    else
+      val _ = os.environ.pop(key)
+      pass
+
+    match attempted
+    case Ok(_) => pass
+    case Err(error) => abort error.message
