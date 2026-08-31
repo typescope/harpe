@@ -7,7 +7,7 @@ enable-ffi = true
 src = ["src/"]
 depth = 2
 
-packages = [{ name = "harpe", version = "0.8" }]
+modules = [{ id = "harpe", path = ".." }]
 
 links = [
   { from = "jo.main", to = "harpe.cli.main" },
@@ -25,12 +25,29 @@ enable-ffi = true
 src = []
 depth = 2
 
-packages = [{ name = "harpe", version = "0.8" }]
+modules = [{ id = "harpe", path = ".." }]
 
 links = [
   { from = "jo.main", to = "harpe.transcript.serve" },
 ]
 
+# This agent's own end-to-end suite, and the framework's only one. It builds the
+# agent through the manifest above — so against this branch's sources — starts it
+# as its own process, and types at it through a pseudo-terminal.
+[module.tests]
+kind = "app"
+platform = "python"
+enable-ffi = true
+src = ["tests/"]
+depth = 2
+
+modules = [{ id = "harpe", path = ".." }, { id = "testing", path = ".." }]
+
+links = [
+  { from = "jo.main", to = "harpe.cli.tests.Main.main" },
+]
+
 [commands]
 start = "jo build --spec sandbox/jo.toml guest && jo run"
 resume = "jo build --spec sandbox/jo.toml guest && jo run -- --resume"
+test = "jo run tests"

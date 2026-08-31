@@ -1,0 +1,39 @@
+//[ Tests.jo
+  !
+  ! The entry point for this agent's suite: `jo test`, or `jo run tests`.
+  !
+  ! Every scenario builds this agent through its own `jo.toml` — which resolves
+  ! the framework from `../agent/`, not from the registry — starts it as its own
+  ! process, and types at it through a pseudo-terminal against a scripted model on
+  ! localhost. Nothing reaches the network and no API key is needed.
+  !
+  ! This is the framework's only end-to-end coverage, which is why the CLI agent
+  ! stays in this repository while the other agents live in typescope/agents.
+//]
+
+namespace harpe.cli.tests.Main
+
+import jo.IO.stdout
+import harpe.logging.Logging
+import harpe.logging.logger
+import harpe.testing.Testing
+import harpe.testing.Runner
+import harpe.testing.suite
+import harpe.testing.thisSuite
+import harpe.cli.tests.CliTest
+
+def main(): Unit receives stdout =
+  Logging.withLogger(Logging.discard, () => run())
+
+private def run(): Unit receives stdout, logger =
+  val root = Testing.define("cli", () => suites())
+  val passed = Runner.run(root, Runner.filterFromArgs(), Runner.lanesFromEnv())
+  if !passed then py.module("sys").exit(1)
+
+  println ""
+  println "all cli agent tests passed"
+
+private def suites(): Unit receives thisSuite, logger =
+  suite: "e2e", () =>
+    thisSuite.parallel = true
+    CliTest.cliSuite()

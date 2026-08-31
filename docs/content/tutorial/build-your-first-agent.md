@@ -5,7 +5,7 @@ title = "Build Your First Agent"
 ## Create the project
 
 ```sh
-jo new my-agent --template typescope/harpe:hello
+jo new my-agent --template typescope/agents:hello
 cd my-agent
 pip install -r requirements.txt
 cp .env.example .env

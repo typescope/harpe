@@ -9,7 +9,7 @@ capability that offers five operations and nothing else.
 ## Create the project
 
 ```sh
-jo new my-reviewer --template typescope/harpe:pr-review
+jo new my-reviewer --template typescope/agents:pr-review
 cd my-reviewer
 pip install -r requirements.txt
 ```

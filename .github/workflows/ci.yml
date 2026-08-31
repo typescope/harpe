@@ -1,5 +1,13 @@
 name: CI
 
+# Nothing here resolves the registry. The framework is built from this branch's
+# sources, and so is the CLI agent — the one application still in this repository,
+# kept because it is the framework's only end-to-end coverage.
+#
+# That is what makes every check answerable by the pull request that breaks it.
+# The other agents live in typescope/agents, pinned to a published release, so a
+# breaking API change no longer has to be made in six places at once.
+
 on:
   push:
     branches: [main]
@@ -10,8 +18,7 @@ jobs:
   jo:
     name: Jo
     runs-on: ubuntu-latest
-    env:
-      JO_REGISTRY_URL: https://pkg.typescope.ai
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -33,63 +40,23 @@ jobs:
       - name: Verify Jo install
         run: jo --version
 
-      # Every driver, built against this branch's own caps/ and agent/ sources via
-      # the ci/*/jo.toml specs. These catch a framework change that breaks a driver on
-      # the same commit that makes it, which the package builds below cannot: those
-      # resolve the last PUBLISHED harpe, so a driver updated alongside a new API
-      # stays red there until that API ships in a release.
-      - name: Build hello agent
-        run: jo build hello --spec ci/hello/jo.toml
-
-      - name: Build hello sandbox guest
-        run: jo build sandbox-guest --spec ci/hello/jo.toml
-
-      - name: Build Telegram agent (local sources)
-        run: jo build telegram --spec ci/telegram/jo.toml
-
-      - name: Build Telegram sandbox guest (local sources)
-        run: jo build sandbox-guest --spec ci/telegram/jo.toml
-
-      - name: Build PR review agent (local sources)
-        run: jo build pr-review --spec ci/pr-review/jo.toml
-
-      - name: Build PR review sandbox guest (local sources)
-        run: jo build sandbox-guest --spec ci/pr-review/jo.toml
-
-      - name: Build flight booker agent (local sources)
-        run: jo build flight-booker --spec ci/flight-booker/jo.toml
-
-      - name: Build flight booker sandbox guest (local sources)
-        run: jo build sandbox-guest --spec ci/flight-booker/jo.toml
-
-      # The remaining drivers from their own jo.toml, resolving harpe and
-      # harpe-caps from the registry. Web and CLI get this coverage from e2e.
-      - name: Build Telegram agent
-        working-directory: telegram
-        run: jo build
-
-      - name: Build Telegram sandbox guest
-        working-directory: telegram
-        run: jo build guest --spec sandbox/jo.toml
-
-      - name: Build PR review agent
-        working-directory: examples/pr-review
-        run: jo build
-
-      - name: Build PR review sandbox guest
-        working-directory: examples/pr-review
-        run: jo build guest --spec sandbox/jo.toml
-
-      - name: Build flight book agent
-        working-directory: examples/flight-booker
-        run: jo build
-
-      - name: Build flight book sandbox guest
-        working-directory: examples/flight-booker
-        run: jo build guest --spec sandbox/jo.toml
-
       - name: Install test dependencies
         run: pip install -r requirements.txt
 
-      - name: Test agent library
+      - name: Test the framework
         run: jo run test
+
+      - name: Build the CLI agent
+        working-directory: cli
+        run: jo build agent
+
+      - name: Build the CLI sandbox guest
+        working-directory: cli
+        run: jo build --spec sandbox/jo.toml guest
+
+      # Builds the agent from its own manifest, starts it as its own process, and
+      # types at it through a pseudo-terminal against a scripted model. No network,
+      # no API key.
+      - name: Test the CLI agent end to end
+        working-directory: cli
+        run: jo run tests

@@ -9,7 +9,7 @@ of it.
 ## Create the project
 
 ```sh
-jo new my-agent --template typescope/harpe:cli
+jo new my-agent --template typescope/agents:cli
 cd my-agent
 pip install -r requirements.txt
 cp .env.example .env

@@ -8,12 +8,13 @@
   ! the ones that cross an ownership boundary: the provider suites encode a
   ! contract with a third party whose wire format can change without a line here
   ! changing, and `runCode` drives the real Jo toolchain and a real sandbox.
-  ! `e2e` holds the ones that cross a PROCESS boundary: they build a shipped
-  ! driver, run it, and drive it over its own HTTP API.
+  !
+  ! What crosses a PROCESS boundary is no longer here. The CLI agent's own suite
+  ! builds it, starts it, and types at it through a pseudo-terminal — and lives
+  ! beside the agent, in `cli/tests/`. Run it with `cd cli && jo test`.
   !
   ! Order still matters — the fast unit suites first, then the slower boundary
-  ! ones, with `runCode` last of those because it shells out to a sandbox build,
-  ! and `e2e` after all of them, since it builds and starts a whole agent.
+  ! ones, with `runCode` last of those because it shells out to a sandbox build.
   !
   ! A path filter selects a subtree — `jo run test -- unit/context`, or
   ! `jo run test -- integration/openai/chat`.
@@ -47,8 +48,6 @@ import harpe.test.integration.openai
 import harpe.test.integration.openaiResponses
 import harpe.test.integration.openrouter
 import harpe.test.integration.RunCodeTest
-import harpe.test.e2e.WebTest
-import harpe.test.e2e.CliTest
 
 // Suites that drive tools/turns need `logger` in scope. Install a no-op one for
 // the whole harness. It reaches a test wherever the runner runs it, parallel
@@ -94,19 +93,3 @@ private def suites(): Unit receives thisSuite, logger =
     openaiResponses.Tests.openaiResponsesSuite()
     openrouter.Tests.openrouterSuite()
     RunCodeTest.runCodeSuite()
-
-  // Each source/published group runs in its own pool because its scenarios share
-  // nothing: every test builds its own agent home, binds its own port, and
-  // scripts its own model. Each driver suite builds its shared artifacts in its
-  // own `beforeSuite`, before any of that suite's tests start.
-  suite: "e2e", () =>
-    thisSuite.parallel = true
-    with e2e.published = false in suite: "source", () =>
-      thisSuite.parallel = true
-      WebTest.webSuite()
-      CliTest.cliSuite()
-
-    with e2e.published = true in suite: "published", () =>
-      thisSuite.parallel = true
-      WebTest.webSuite()
-      CliTest.cliSuite()

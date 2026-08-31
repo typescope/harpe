@@ -19,21 +19,15 @@ PREV_MINOR=0.7               # the constraint being replaced
 
 ## Publication comes before the green build
 
-CI builds each driver twice: from `ci/*.toml` against local sources, and from
-the driver's own `jo.toml` against the public registry. A release that changes
-the API means the driver *sources* already need the new version, so the
-registry-resolving jobs **cannot pass until that version is published**.
+Nothing in this repository resolves the registry any more. The framework, the CLI
+agent, and both test suites all build from these sources, so a release pull
+request is green throughout — the deadlock that used to make one red before
+publication is gone with the agents that caused it.
 
-So a release pull request is red before publication and green after it. Waiting
-for green before publishing deadlocks, and publishing from a merged commit is
-therefore impossible for any release that changes the API.
-
-What replaces "publish from a merged commit" as the safety property is step 5: a
-content check proving the published artifact matches what landed on `main`.
-Between publishing and merging, **do not push another source change**. A
-published version is immutable — it may be retried with identical bytes, never
-replaced with different content — so a post-publication fix means burning the
-version and releasing the next patch instead.
+What moved is where that tension lives. The five agents in
+[typescope/agents](https://github.com/typescope/agents) are pinned to a published
+release, so they are updated *after* publication, not before it. Step 8 is that
+update.
 
 ## 1. Prepare the release pull request
 
@@ -46,41 +40,23 @@ Create a branch from the latest `origin/main`. In the pull request:
       that `harpe-testing` still declares none.
 - [ ] Add the release notes to `CHANGELOG.md`.
 - [ ] Update the version and link in the release badge in `README.md`.
-- [ ] Retarget every consuming `harpe` and `harpe-caps` constraint, with the
-      command below.
+- [ ] Confirm nothing here still pins a released version, with the check below.
 
-Consumers are every `jo.toml` except the repo root's and `ci/`'s: the
-applications, the templates, the examples, each of their `sandbox/` manifests,
-and any secondary module such as `[module.view]`. Nothing here names them
-individually, so adding a template or an example does not change this checklist.
+Consumers here are the package blocks in the root `jo.toml` and nothing else —
+`cli/` builds from source, so it carries no version to retarget. The pins that do
+move live in `typescope/agents`, and step 8 moves them.
 
-```sh
-grep -rl "version = \"$PREV_MINOR\"" --include='jo.toml' . | grep -v '^\./ci/' \
-  | xargs -r sed -i "s/version = \"$PREV_MINOR\"/version = \"$MINOR\"/g"
-```
-
-Jo package constraints use `MAJOR.MINOR`, so `0.7.0` is referenced as `0.7`. The
-pattern the command rewrites is the constraint alone — a package's own
-`version = "MAJOR.MINOR.PATCH"` in the root `jo.toml` is a different string, so
-the rewrite cannot reach it. A minor bump retargets every consumer. A patch bump
-retargets none, and the command is a harmless no-op.
-
-Confirm the constraint being replaced now matches nothing, and that the new one
-reached every consumer:
+The only `version =` lines left in this repository are the three package blocks
+in the root `jo.toml`. A constraint anywhere else means something started
+resolving the registry again, which is what this layout exists to prevent:
 
 ```sh
-grep -rn "version = \"$PREV_MINOR\"" --include='jo.toml' . | grep -v '^\./ci/'
-grep -rln "version = \"$MINOR\"" --include='jo.toml' . | grep -v '^\./ci/'
+grep -rn 'version = "' --include='jo.toml' . | grep -v '^./jo.toml'
 ```
 
-**The gate before publishing is the local-source half of CI**: every
-`jo build … --spec ci/*.toml` job, plus `jo run test`. Those prove the code is
-correct. The registry-resolving jobs are expected to fail here, and are the
-thing publication fixes.
-
-A patch release that changes no API is the one case where the driver pins can go
-in a second pull request after publication, as they resolve against the older
-published minor either way. It is not worth a separate process.
+**The gate before publishing is the `Jo` job**: `jo run test`, plus the CLI
+agent's build and its end-to-end suite. All of it builds from these sources, so
+it is green before publication and stays green after.
 
 ## 2. Build and verify the artifacts from the pull request head
 
@@ -171,10 +147,10 @@ curl --fail https://pkg.typescope.ai/harpe.jsonl | tail -1
 curl --fail https://pkg.typescope.ai/harpe-testing.jsonl | tail -1
 ```
 
-## 4. Re-run CI, then merge
+## 4. Merge
 
-Re-run the pull request's checks. The registry-resolving jobs now resolve the
-version just published, and the run should be fully green. Merge only then.
+CI here does not depend on what has been published, so its verdict has not
+changed since step 1. Merge when it is green and review is done.
 
 If review still demands a source change, the published version is spent: do not
 force the artifacts to match. Bump to the next patch, and start again at step 1.
@@ -240,3 +216,25 @@ gh release create v$VERSION \
   --title "Harpe $VERSION" \
   --notes-file /tmp/notes-v$VERSION.md
 ```
+
+## 8. Move the agents to the new release
+
+The five agents in [typescope/agents](https://github.com/typescope/agents) are
+pinned to the previous release until now. In that repository:
+
+```sh
+MINOR=${VERSION%.*}
+grep -rl "version = \"$PREV_MINOR\"" --include='jo.toml' . \
+  | xargs -r sed -i "s/version = \"$PREV_MINOR\"/version = \"$MINOR\"/g"
+```
+
+Then mirror this repository's `cli/` over it, rewriting its manifests from source
+dependencies to those same pins — it is the one agent that lives here.
+
+If the release changed an API, the agents need their sources adapted too, in the
+same pull request. Its CI builds all six against the packages just published and
+runs the suites that ship with them, so it is a real gate: `jo new` serves that
+repository's default branch, and a red build there means users are being handed
+templates that do not build.
+
+Tag it `v$VERSION` to match.

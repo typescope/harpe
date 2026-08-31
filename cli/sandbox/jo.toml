@@ -8,7 +8,7 @@ platform = "python"
 src = ["SandboxAPI.jo"]
 depth = 1
 
-packages = [{ name = "harpe-caps", version = "0.8" }]
+modules = [{ id = "caps", path = "../.." }]
 
 [module.runtime]
 kind = "lib"
@@ -17,10 +17,7 @@ enable-ffi = true
 src = ["SandboxRuntime.jo"]
 depth = 2
 
-modules = ["api"]
-packages = [
-  { name = "harpe", version = "0.8" },
-]
+modules = ["api", { id = "harpe", path = "../.." }]
 
 [module.guest]
 kind = "app"
@@ -28,8 +25,7 @@ platform = "python"
 src = ["Task.jo"]
 depth = 2
 
-modules = ["api", { id = "runtime", link = true }]
-packages = [{ name = "harpe-caps", version = "0.8" }]
+modules = ["api", { id = "runtime", link = true }, { id = "caps", path = "../.." }]
 
 links = [
   { from = "jo.main", to = "sandbox.runtime.main" },
