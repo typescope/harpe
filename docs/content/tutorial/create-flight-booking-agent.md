@@ -48,7 +48,7 @@ It has no way to know that the call pauses, and no way to skip the pause, becaus
 the request is made inside the trusted implementation in `sandbox/DuffelClient.jo`:
 
 ```jo
-val decision = approvals.request(new Approvals.Request("Confirm booking", summary))
+val decision = approvals.request("Confirm booking", summary)
 if decision is !Approvals.Approved then
   return new api.OrderConfirmation("", "", "", "", "Booking " + Approvals.wire(decision))
 ```

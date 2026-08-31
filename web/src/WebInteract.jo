@@ -31,7 +31,9 @@ import harpe.Tool
   ! line of the NDJSON response stream.
 //]
 type Sink = py.Dict => Unit
-type ApprovalHandler = (String, Approvals.Request) => Approvals.Decision
+
+//[ Approval callback: the correlation ID, the title, and the Markdown detail. //]
+type ApprovalHandler = (String, String, String) => Approvals.Decision
 
 private class WebInteract(sink: Sink, stop: py.Dynamic, approvalHandler: ApprovalHandler)
   view Interact
@@ -40,9 +42,9 @@ private class WebInteract(sink: Sink, stop: py.Dynamic, approvalHandler: Approva
 
   def pause(seconds: Float): Bool = stop.wait(seconds).asBool
 
-  def approve(request: Approvals.Request): Approvals.Decision =
+  def approve(title: String, detail: String): Approvals.Decision =
     val id = py.module("uuid").uuid4().toString
-    approvalHandler(id, request)
+    approvalHandler(id, title, detail)
 
   //[ Translate one engine event into a UI event on the stream
     !

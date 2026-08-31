@@ -20,8 +20,10 @@ import harpe.turns.TurnEvent
 //[ One turn's NDJSON sink: a call writes one JSON object to the response stream. //]
 type Sink = py.Dict => Unit
 
-//[ Approval callback: called by the engine, blocks until the user decides. //]
-type ApprovalHandler = (String, Approvals.Request) => Approvals.Decision
+//[ Approval callback: called by the engine with the correlation ID, the title,
+  ! and the Markdown detail. It blocks until the user decides.
+//]
+type ApprovalHandler = (String, String, String) => Approvals.Decision
 
 private class WebInteract(sink: Sink, stop: py.Dynamic, approvalHandler: ApprovalHandler)
   view Interact
@@ -30,9 +32,9 @@ private class WebInteract(sink: Sink, stop: py.Dynamic, approvalHandler: Approva
 
   def pause(seconds: Float): Bool = stop.wait(seconds).asBool
 
-  def approve(request: Approvals.Request): Approvals.Decision =
+  def approve(title: String, detail: String): Approvals.Decision =
     val id = py.module("uuid").uuid4().toString
-    approvalHandler(id, request)
+    approvalHandler(id, title, detail)
 
   def emit(event: TurnEvent): Unit =
     match event

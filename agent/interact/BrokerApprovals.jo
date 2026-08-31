@@ -23,12 +23,12 @@ class BrokerApprovals(path: String)
 
   view Approvals
 
-  def request(request: Approvals.Request): Approvals.Decision =
+  def request(title: String, detail: String): Approvals.Decision =
     lock.acquire()
     val frame = Frame.of(json.dumps(py.dict(
       "service" ~ "approval",
-      "title" ~ request.title,
-      "detail" ~ request.detail
+      "title" ~ title,
+      "detail" ~ detail
     )))
     val response = client.request(frame)
     lock.release()
@@ -52,5 +52,5 @@ end
 private class UnavailableApprovals
   view Approvals
 
-  def request(request: Approvals.Request): Approvals.Decision = Approvals.Cancelled
+  def request(title: String, detail: String): Approvals.Decision = Approvals.Cancelled
 end

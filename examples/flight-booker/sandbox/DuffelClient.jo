@@ -218,7 +218,7 @@ class DuffelClient(token: String, approvals: Approvals)
     // Fetch offer details to build an informative approval summary.
     val offer = getOffer(offerId)
     val summary = bookingSummary(offer, passengers, paymentAmount, paymentCurrency)
-    val decision = approvals.request(new Approvals.Request("Confirm booking", summary))
+    val decision = approvals.request("Confirm booking", summary)
     if decision is !Approvals.Approved then
       return new api.OrderConfirmation("", "", "", "", "Booking " + Approvals.wire(decision))
 

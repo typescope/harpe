@@ -32,7 +32,7 @@ import harpe.logging.Value
 import harpe.turns.TurnResult
 
 
-private class PendingApproval(id: String, request: Approvals.Request)
+private class PendingApproval(id: String, title: String, detail: String)
   val ready = threading.Event()
   var decision = ""
 end
@@ -76,7 +76,7 @@ class Session(id: String, brain: Model, tools: Toolset, context: Context)
     idle.clear()
     stop.clear()
 
-    val channel = new WebInteract(sink, stop, (aid, req) => requestApproval(aid, req, sink))
+    val channel = new WebInteract(sink, stop, (id, title, detail) => requestApproval(id, title, detail, sink))
 
     val turn = with logger = log in
       Agent.ask:
@@ -132,14 +132,19 @@ class Session(id: String, brain: Model, tools: Toolset, context: Context)
     accepted
 
   //[ Block the engine until the user approves or rejects (10-minute timeout). //]
-  private def requestApproval(id: String, request: Approvals.Request, sink: Sink): Approvals.Decision =
-    val item = new PendingApproval(id, request)
+  private def requestApproval(
+      id: String,
+      title: String,
+      detail: String,
+      sink: Sink)
+  : Approvals.Decision =
+    val item = new PendingApproval(id, title, detail)
 
     approvalLock.acquire()
     pendingApproval = Some(item)
     approvalLock.release()
 
-    sink(py.dict("type" ~ "approval", "id" ~ id, "title" ~ request.title, "detail" ~ request.detail))
+    sink(py.dict("type" ~ "approval", "id" ~ id, "title" ~ title, "detail" ~ detail))
 
     val deadline = Clock.now() + 600.0
     var decision: Approvals.Decision = Approvals.TimedOut

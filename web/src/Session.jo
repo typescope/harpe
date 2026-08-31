@@ -58,7 +58,7 @@ union SessionState = Idle | Active(request: Value)
 //]
 class Subscriber(id: Int, sink: Sink)
 
-private class PendingApproval(id: String, request: Approvals.Request)
+private class PendingApproval(id: String, title: String, detail: String)
   val ready = threading.Event()
   var decision = ""
 end
@@ -153,13 +153,13 @@ class Session(
     py.dict(
       "type" ~ "approval",
       "id" ~ item.id,
-      "title" ~ item.request.title,
-      "detail" ~ item.request.detail
+      "title" ~ item.title,
+      "detail" ~ item.detail
     )
 
   //[ Ask the connected session user and wait for an approval decision. //]
-  private def requestApproval(id: String, request: Approvals.Request): Approvals.Decision =
-    val item = new PendingApproval(id, request)
+  private def requestApproval(id: String, title: String, detail: String): Approvals.Decision =
+    val item = new PendingApproval(id, title, detail)
 
     approvalLock.acquire()
     pendingApproval = Some(item)
@@ -222,7 +222,7 @@ class Session(
     val subId = addSink(initiatorSink)
 
     val emit: Sink = obj => this.broadcast(obj)
-    val channel = new WebInteract(emit, this.stop, (id, request) => requestApproval(id, request))
+    val channel = new WebInteract(emit, this.stop, (id, title, detail) => requestApproval(id, title, detail))
 
     val turn = with logger = log in
       Agent.ask:

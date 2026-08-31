@@ -316,14 +316,15 @@ private class TelegramBot(
       chatId: String,
       senderId: String,
       id: String,
-      request: Approvals.Request)
+      title: String,
+      detail: String)
   : Approvals.Decision =
     val pending = new PendingTelegramApproval(id, chatId, senderId)
     approvalLock.acquire()
     pendingApprovals.set(id, pending)
     approvalLock.release()
 
-    match client.sendApproval(chatId, id, request.title, request.detail)
+    match client.sendApproval(chatId, id, title, detail)
     case Some(messageId) => pending.messageId = messageId
     case None =>
       approvalLock.acquire()
@@ -511,7 +512,7 @@ private class TelegramBot(
           session.runTurn:
             incoming
             client
-            (id, request) => requestApproval(chatId, incoming.senderId, id, request)
+            (id, title, detail) => requestApproval(chatId, incoming.senderId, id, title, detail)
 
         match turnRes
         case Ok(_)  => pass

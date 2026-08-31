@@ -28,11 +28,12 @@ interface Interact
 
   //[ Ask the current session user to approve an action.
     !
-    ! This is an out-of-band runtime interaction. It is not a turn event and does
-    ! not enter the model transcript. The interaction implementation owns any
-    ! correlation ID required by its user interface.
+    ! `title` is short plain text. `detail` is Markdown. This is an out-of-band
+    ! runtime interaction. It is not a turn event and does not enter the model
+    ! transcript. The interaction implementation owns any correlation ID its user
+    ! interface needs to match a decision back to the request it answers.
   //]
-  def approve(request: Approvals.Request): Approvals.Decision
+  def approve(title: String, detail: String): Approvals.Decision
 end
 
 section Interact
@@ -48,6 +49,6 @@ section Interact
     def cancelled: Bool = false
     def pause(seconds: Float): Bool = false
     def emit(event: TurnEvent): Unit = pass
-    def approve(request: Approvals.Request): Approvals.Decision = Approvals.Cancelled
+    def approve(title: String, detail: String): Approvals.Decision = Approvals.Cancelled
   end
 end
