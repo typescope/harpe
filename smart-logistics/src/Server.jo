@@ -21,8 +21,12 @@ class Server(brain: Model, home: String, databasePath: String, database: Databas
     case Http.Get("/api/rules") => Http.respondJson(py.dict("rules" ~ database.rules()))
     case Http.Get("/api/drafts") => Http.respondJson(py.dict("drafts" ~ database.drafts()))
     case Http.Get("/api/analysis") => Http.respondJson(py.dict("runs" ~ database.analyses()))
+    case Http.Get("/api/demand") => Http.respondJson(py.dict("demand" ~ database.demand(28)))
+    case Http.Get("/api/suppliers") => Http.respondJson(py.dict("suppliers" ~ database.suppliers()))
     case Http.Get("/api/skills") => Http.respondJson(py.dict("skills" ~ database.skillNames()))
     case Http.Get("/api/skills/read") => skillRead()
+    case Http.Get("/api/skills/revisions") => skillRevisions()
+    case Http.Get("/api/skills/revision") => skillRevision()
     case Http.Get("/api/drafts/export") => draftExport()
     case Http.Post("/api/products") => saveProduct()
     case Http.Post("/api/demand") => saveDemand()
@@ -69,6 +73,17 @@ class Server(brain: Model, home: String, databasePath: String, database: Databas
   private def skillRead(): py.List receives request =
     val name = query("name")
     Http.respondJson(py.dict("name" ~ name,"content" ~ database.readSkill(name)))
+
+  private def skillRevisions(): py.List receives request =
+    Http.respondJson(py.dict("revisions" ~ database.skillRevisions(query("name"))))
+
+  private def skillRevision(): py.List receives request =
+    val revision = Int.parse(query("revision")) rescue None => 0
+    val name = query("name")
+    Http.respondJson(py.dict(
+      "name" ~ name,
+      "revision" ~ revision,
+      "content" ~ database.skillRevision(name, revision)))
 
   private def saveSkill(): py.List receives request =
     val data = body()

@@ -185,7 +185,7 @@ class Database(path: String, home: String)
   def snapshot(): py.Dict =
     py.dict(
       "products" ~ products(),
-      "suppliers" ~ rows("SELECT * FROM suppliers WHERE enabled=1 ORDER BY name"),
+      "suppliers" ~ suppliers(),
       "summary" ~ rows("""
         SELECT COUNT(*) AS product_count,
           SUM(CASE WHEN p.on_hand-p.reserved+p.incoming <
@@ -205,6 +205,25 @@ class Database(path: String, home: String)
      WHERE ps.product_id = p.id
      ORDER BY ps.preferred DESC, ps.unit_price_cents LIMIT 1)
   """
+
+  def suppliers(): py.List = rows("""
+    SELECT s.*,
+      (SELECT COUNT(*) FROM product_suppliers ps WHERE ps.supplier_id = s.id)
+        AS product_count,
+      (SELECT COUNT(*) FROM product_suppliers ps
+       WHERE ps.supplier_id = s.id AND ps.preferred = 1) AS preferred_count,
+      (SELECT COUNT(*) FROM draft_orders d WHERE d.supplier_id = s.id) AS draft_count
+    FROM suppliers s ORDER BY s.name
+  """)
+
+  // Daily demand for every product, for the sparklines on the products page.
+  def demand(days: Int): py.List =
+    val safe = if days < 1 then 1 else if days > 365 then 365 else days
+    rowsWith("""
+      SELECT product_id, demand_date, quantity FROM demand_history
+      WHERE demand_date >= date('now', ?)
+      ORDER BY product_id, demand_date
+    """, py.list("-\{safe} days"))
 
   def products(): py.List =
     val result = rows("""
@@ -400,6 +419,19 @@ class Database(path: String, home: String)
     conn.close()
     File.write(os.path.join(home,"skills",slug+".md"),content)
     slug
+
+  def skillRevisions(name: String): py.List =
+    rowsWith("""
+      SELECT revision, created_at, LENGTH(content) AS size
+      FROM skill_revisions WHERE skill_name=? ORDER BY revision DESC
+    """, py.list(skillSlug(name)))
+
+  def skillRevision(name: String, revision: Int): String =
+    val found = rowsWith(
+      "SELECT content FROM skill_revisions WHERE skill_name=? AND revision=?",
+      py.list(skillSlug(name), revision))
+    if found.size == 0 then abort "no such revision"
+    found[0].cast[py.Dict].get("content").asString
 
   def deleteSkill(name: String): Bool =
     val slug = skillSlug(name)

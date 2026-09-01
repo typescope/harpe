@@ -7,7 +7,7 @@
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 
-let state = { products: [], suppliers: [], rules: [], drafts: [] };
+let state = { products: [], suppliers: [], rules: [], drafts: [], demand: {}, runs: [] };
 
 /* Helpers ------------------------------------------------------------------ */
 
@@ -55,20 +55,37 @@ $$('nav button').forEach(button => {
 /* Rendering ---------------------------------------------------------------- */
 
 async function refresh() {
-  const [snapshot, ruleData, draftData] = await Promise.all([
+  const [snapshot, ruleData, draftData, demandData, runData] = await Promise.all([
     api('/api/snapshot'),
     api('/api/rules'),
-    api('/api/drafts')
+    api('/api/drafts'),
+    api('/api/demand'),
+    api('/api/analysis')
   ]);
-  state = { ...snapshot, rules: ruleData.rules, drafts: draftData.drafts };
+  state = {
+    ...snapshot,
+    rules: ruleData.rules,
+    drafts: draftData.drafts,
+    demand: groupDemand(demandData.demand),
+    runs: runData.runs
+  };
   render();
+}
+
+// Daily rows arrive flat and ordered; the sparklines want them per product.
+function groupDemand(rows) {
+  const byProduct = {};
+  for (const row of rows) (byProduct[row.product_id] ??= []).push(row);
+  return byProduct;
 }
 
 function render() {
   renderSummary();
   renderProducts();
+  renderSuppliers();
   renderRules();
   renderDrafts();
+  renderRuns();
 }
 
 function renderSummary() {
@@ -111,10 +128,58 @@ function renderProducts() {
           ${product.on_hand} on hand · ${product.reserved} reserved
           <div class="muted">${incoming} · ${product.available} available · cap ${product.capacity}</div>
         </td>
+        <td>${demandCell(product.id)}</td>
         <td>${sources}</td>
         <td><button onclick="editProduct(${product.id})">Edit</button></td>
       </tr>`;
   }).join('');
+}
+
+function demandCell(productId) {
+  const days = state.demand[productId] ?? [];
+  if (!days.length) return '<span class="muted">No history</span>';
+  const total = days.reduce((sum, day) => sum + day.quantity, 0);
+  const average = total / days.length;
+  return `
+    ${sparkline(days.map(day => day.quantity))}
+    <div class="muted">${average.toFixed(1)}/day · ${total} total</div>`;
+}
+
+// A plain polyline: no chart library, and it scales to the tallest day.
+function sparkline(values, width = 120, height = 26) {
+  const peak = Math.max(...values, 1);
+  const step = values.length > 1 ? width / (values.length - 1) : 0;
+  const points = values
+    .map((value, index) => `${(index * step).toFixed(1)},${(height - (value / peak) * height).toFixed(1)}`)
+    .join(' ');
+  return `
+    <svg class="spark" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}"
+         role="img" aria-label="Daily demand, peak ${peak}">
+      <polyline points="${points}"></polyline>
+    </svg>`;
+}
+
+function renderSuppliers() {
+  $('#supplier-rows').innerHTML = state.suppliers.map(supplier => `
+      <tr>
+        <td><strong>${escapeHtml(supplier.name)}</strong></td>
+        <td>${escapeHtml(supplier.currency)}</td>
+        <td><span class="pill ${supplier.enabled ? 'enabled' : ''}">${supplier.enabled ? 'Active' : 'Disabled'}</span></td>
+        <td>${supplier.product_count}</td>
+        <td>${supplier.preferred_count}</td>
+        <td>${supplier.draft_count}</td>
+      </tr>`).join('');
+}
+
+function renderRuns() {
+  $('#run-list').innerHTML = state.runs.map(run => `
+      <details class="run">
+        <summary>
+          <span class="pill ${run.status === 'success' ? 'enabled' : ''}">${escapeHtml(run.status)}</span>
+          #${run.id} · ${escapeHtml(run.trigger)} · ${escapeHtml(run.started_at)}
+        </summary>
+        <pre>${escapeHtml(run.summary) || 'No report recorded.'}</pre>
+      </details>`).join('') || '<p class="muted">No analysis has been recorded yet.</p>';
 }
 
 function renderRules() {
@@ -289,16 +354,40 @@ window.readSkill = async name => {
   const skill = await api('/api/skills/read?name=' + encodeURIComponent(name));
   $('#skill-name').value = skill.name;
   $('#skill-content').value = skill.content;
+  await loadRevisions(skill.name);
+};
+
+async function loadRevisions(name) {
+  const box = $('#skill-revisions');
+  if (!name) return (box.innerHTML = '');
+  const { revisions } = await api('/api/skills/revisions?name=' + encodeURIComponent(name));
+  box.innerHTML = revisions.length
+    ? `<h3>Saved revisions</h3>${revisions.map(revision => `
+        <button class="revision" onclick="readRevision('${name}',${revision.revision})">
+          rev ${revision.revision} · ${escapeHtml(revision.created_at)}
+          <span class="muted">${revision.size} chars</span>
+        </button>`).join('')}`
+    : '<p class="muted">No saved revisions yet. Saving this skill records one.</p>';
+}
+
+// Loads an old revision into the editor for reading; saving it restores it.
+window.readRevision = async (name, revision) => {
+  const past = await api(`/api/skills/revision?name=${encodeURIComponent(name)}&revision=${revision}`);
+  $('#skill-content').value = past.content;
+  toast(`Loaded revision ${revision} — save to restore it`);
 };
 
 $('#new-skill').onclick = () => {
   $('#skill-name').value = '';
   $('#skill-content').value = '# New planning skill\n\n';
+  $('#skill-revisions').innerHTML = '';
 };
 
 $('#save-skill').onclick = async () => {
-  await post('/api/skills', { name: $('#skill-name').value, content: $('#skill-content').value });
+  const name = $('#skill-name').value;
+  await post('/api/skills', { name, content: $('#skill-content').value });
   await loadSkills();
+  await loadRevisions(name);
   toast('Skill saved');
 };
 
@@ -309,6 +398,7 @@ $('#delete-skill').onclick = async () => {
   if (!result.ok) return toast('This built-in skill cannot be deleted');
   $('#skill-name').value = '';
   $('#skill-content').value = '';
+  $('#skill-revisions').innerHTML = '';
   await loadSkills();
 };
 
