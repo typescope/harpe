@@ -110,24 +110,18 @@ function renderProducts() {
 }
 
 function renderRules() {
-  $('#rule-list').innerHTML = state.rules.map(rule => {
-    const scope = escapeHtml(rule.scope) + (rule.scope_value ? ' / ' + escapeHtml(rule.scope_value) : '');
-    return `
+  $('#rule-list').innerHTML = state.rules.map(rule => `
       <article class="card">
         <div class="card-head">
-          <div>
-            <strong>${escapeHtml(rule.name)}</strong>
-            <div class="muted">${escapeHtml(rule.kind)} · ${scope} · priority ${rule.priority}</div>
-          </div>
+          <p class="rule-text">${escapeHtml(rule.text)}</p>
           <span class="pill ${rule.enabled ? 'enabled' : ''}">${rule.enabled ? 'Active' : 'Inactive'}</span>
         </div>
-        <p>Value: <strong>${rule.value}</strong></p>
+        <div class="muted">Updated ${escapeHtml(rule.updated_at)}</div>
         <div class="actions">
           <button onclick="editRule(${rule.id})">Edit</button>
           <button class="danger" onclick="deleteRule(${rule.id})">Delete</button>
         </div>
-      </article>`;
-  }).join('') || '<p>No rules.</p>';
+      </article>`).join('') || '<p>No rules yet. Add one in plain language.</p>';
 }
 
 function renderDrafts() {
@@ -203,9 +197,8 @@ window.editRule = id => openRule(state.rules.find(rule => rule.id === id));
 
 function openRule(rule = { enabled: 1 }) {
   ruleForm.reset();
-  for (const [field, value] of Object.entries(rule)) {
-    if (ruleForm.elements[field] && field !== 'enabled') ruleForm.elements[field].value = value;
-  }
+  ruleForm.elements.id.value = rule.id ?? '';
+  ruleForm.elements.text.value = rule.text ?? '';
   ruleForm.elements.enabled.checked = !!rule.enabled;
   $('#rule-dialog').showModal();
 }
@@ -213,11 +206,11 @@ function openRule(rule = { enabled: 1 }) {
 $('#save-rule').onclick = async event => {
   event.preventDefault();
   if (!ruleForm.reportValidity()) return;
-  const data = Object.fromEntries(new FormData(ruleForm));
-  data.id = Number(data.id || 0);
-  data.value = Number(data.value);
-  data.priority = Number(data.priority);
-  data.enabled = ruleForm.elements.enabled.checked;
+  const data = {
+    id: Number(ruleForm.elements.id.value || 0),
+    text: ruleForm.elements.text.value,
+    enabled: ruleForm.elements.enabled.checked
+  };
   await post('/api/rules', data);
   $('#rule-dialog').close();
   await refresh();

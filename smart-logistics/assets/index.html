@@ -65,7 +65,7 @@
       <div class="heading">
         <div>
           <h1>Rules</h1>
-          <p>Structured policy interpreted by the planner and enforced at draft creation.</p>
+          <p>Plain-language policy. The planner reads every enabled rule on each analysis.</p>
         </div>
         <button id="new-rule">Add rule</button>
       </div>
@@ -128,26 +128,14 @@
     <form method="dialog" id="rule-form">
       <h2>Rule</h2>
       <input type="hidden" name="id">
-      <label>Name<input name="name" required></label>
-      <label>Kind
-        <select name="kind">
-          <option>safety_stock_days</option>
-          <option>maximum_line_quantity</option>
-          <option>maximum_draft_value</option>
-          <option>minimum_available_units</option>
-        </select>
+      <label>Rule text
+        <textarea name="text" rows="5" required
+          placeholder="Food keeps 7 days of cover instead of 5: a stockout there costs more than the extra holding cost."></textarea>
       </label>
-      <label>Scope
-        <select name="scope">
-          <option>global</option>
-          <option>category</option>
-          <option>product</option>
-          <option>supplier</option>
-        </select>
-      </label>
-      <label>Scope value<input name="scope_value" placeholder="Blank for global"></label>
-      <label>Value<input name="value" type="number" min="0" step="any" required></label>
-      <label>Priority<input name="priority" type="number" value="0"></label>
+      <p class="hint">
+        Write it for the planner to read. Give the reason as well as the limit — the
+        analysis report quotes rules back when they change an order.
+      </p>
       <label class="check"><input name="enabled" type="checkbox" checked> Enabled</label>
       <menu>
         <button type="button" data-close="rule-dialog">Cancel</button>

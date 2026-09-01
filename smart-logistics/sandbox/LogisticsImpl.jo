@@ -34,17 +34,12 @@ class LogisticsImpl(path: String)
 
   def rules(): List[api.Rule] =
     val conn = connect()
-    val rows = conn.execute("""
-      SELECT id, name, kind, scope, scope_value, value, priority
-      FROM rules WHERE enabled = 1
-      ORDER BY priority DESC, id
-    """).fetchall()
+    val rows = conn.execute(
+      "SELECT id, text FROM rules WHERE enabled = 1 ORDER BY id").fetchall()
     var result: List[api.Rule] = []
     for raw in py.iter(rows) do
       val r = py.dynamic(raw)
-      result = result + new api.Rule(
-        r[0].asInt, r[1].asString, r[2].asString, r[3].asString,
-        r[4].asString, r[5].asFloat, r[6].asInt)
+      result = result + new api.Rule(r[0].asInt, r[1].asString)
     conn.close()
     result
 
@@ -137,17 +132,9 @@ class LogisticsImpl(path: String)
       """, py.list(proposed.productId)).fetchone()
       if !duplicate.isNone then return rollback(conn, "\{sku} is already in an open draft")
 
-      val maxLine = applicableLimit(conn, "maximum_line_quantity", proposed.productId, p[1].asString, supplierId)
-      if maxLine > 0 && proposed.quantity > maxLine then
-        return rollback(conn, "\{sku} exceeds the maximum-line rule")
-
       val lineTotal = proposed.quantity * p[8].asInt
       total = total + lineTotal
       validated.append(py.list(proposed.productId, proposed.quantity, p[8].asInt, lineTotal))
-
-    val maxValue = applicableLimit(conn, "maximum_draft_value", 0, "", supplierId)
-    if maxValue > 0 && total > maxValue then
-      return rollback(conn, "Draft exceeds the maximum-value rule")
 
     val currency = supplier[0].asString
     val cursor = conn.execute("""
@@ -166,27 +153,6 @@ class LogisticsImpl(path: String)
     conn.commit()
     conn.close()
     new api.SaveResult(true, draftId, "Draft \{draftId} saved for administrator review")
-
-  private def applicableLimit(
-    conn: py.Dynamic,
-    kind: String,
-    productId: Int,
-    category: String,
-    supplierId: Int
-  ): Int =
-    val row = conn.execute("""
-      SELECT value FROM rules
-      WHERE enabled = 1 AND kind = ? AND (
-        scope = 'global' OR
-        (scope = 'supplier' AND scope_value = ?) OR
-        (scope = 'category' AND scope_value = ?) OR
-        (scope = 'product' AND scope_value = ?)
-      )
-      ORDER BY CASE scope WHEN 'product' THEN 4 WHEN 'category' THEN 3
-                 WHEN 'supplier' THEN 2 ELSE 1 END DESC,
-               priority DESC, value ASC LIMIT 1
-    """, py.list(kind, supplierId.toString, category, productId.toString)).fetchone()
-    if row.isNone then 0 else row[0].asInt
 
   private def failed(message: String): api.SaveResult =
     new api.SaveResult(false, 0, message)

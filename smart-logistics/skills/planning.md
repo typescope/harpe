@@ -2,7 +2,8 @@
 
 - Prefer transparent trailing-average demand over an unexplained forecast.
 - Treat `onHand - reserved + incoming` as the projected available quantity.
-- Target lead-time demand plus the most specific applicable safety-stock rule.
+- Target lead-time demand plus the cover the rules ask for. Where several rules
+  could apply to one product, the most specific one wins; say which you used.
 - Round upward to a complete case and honor the minimum order quantity.
 - Never propose more than remaining storage capacity.
 - Existing open drafts already cover demand; do not duplicate them.

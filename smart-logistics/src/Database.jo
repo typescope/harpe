@@ -40,9 +40,7 @@ class Database(path: String, home: String)
         PRIMARY KEY(product_id, demand_date)
       );
       CREATE TABLE IF NOT EXISTS rules (
-        id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
-        scope TEXT NOT NULL DEFAULT 'global', scope_value TEXT NOT NULL DEFAULT '',
-        value REAL NOT NULL CHECK(value >= 0), priority INTEGER NOT NULL DEFAULT 0,
+        id INTEGER PRIMARY KEY, text TEXT NOT NULL,
         enabled INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
@@ -70,9 +68,64 @@ class Database(path: String, home: String)
         finished_at TEXT NOT NULL DEFAULT ''
       );
     """)
+    migrateRules(conn)
     seed(conn)
     conn.commit()
     conn.close()
+
+  // Databases created before rules became free text carry the structured
+  // columns. Rewrite each stored rule as the sentence it always meant.
+  private def migrateRules(conn: py.Dynamic): Unit =
+    val columns = py.list()
+    for raw in py.iter(conn.execute("PRAGMA table_info(rules)").fetchall()) do
+      columns.append(py.dynamic(raw)[1].asString)
+    if !columns.contains("kind") then return
+
+    val legacy = conn.execute("""
+      SELECT name, kind, scope, scope_value, CAST(value AS INTEGER), enabled
+      FROM rules ORDER BY priority DESC, id
+    """).fetchall()
+    conn.executescript("""
+      ALTER TABLE rules RENAME TO rules_legacy;
+      CREATE TABLE rules (
+        id INTEGER PRIMARY KEY, text TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+    """)
+    for raw in py.iter(legacy) do
+      val r = py.dynamic(raw)
+      val sentence = ruleSentence(
+        r[0].asString, r[1].asString, r[2].asString, r[3].asString, r[4].asInt)
+      conn.execute("""
+        INSERT INTO rules(text,enabled,created_at,updated_at)
+        VALUES(?,?,datetime('now'),datetime('now'))
+      """, py.list(sentence, r[5].asInt))
+    conn.execute("DROP TABLE rules_legacy")
+
+  private def ruleSentence(
+    name: String,
+    kind: String,
+    scope: String,
+    scopeValue: String,
+    value: Int
+  ): String =
+    val target = match scope
+      case "category" => " for products in category \{scopeValue}"
+      case "product" => " for product \{scopeValue}"
+      case "supplier" => " for products from supplier \{scopeValue}"
+      case _ => ""
+    match kind
+    case "safety_stock_days" =>
+      "\{name}: cover at least \{value} days of demand beyond supplier lead time\{target}."
+    case "maximum_line_quantity" =>
+      "\{name}: never propose more than \{value} units of one product in a single draft\{target}."
+    case "maximum_draft_value" =>
+      "\{name}: keep the total value of any single draft at or below \{value} cents."
+    case "minimum_available_units" =>
+      "\{name}: keep at least \{value} available units\{target} after reserved commitments."
+    case _ =>
+      "\{name}: \{kind} \{scope} \{scopeValue} \{value}."
 
   private def seed(conn: py.Dynamic): Unit =
     val count = conn.execute("SELECT COUNT(*) FROM suppliers").fetchone()[0].asInt
@@ -121,15 +174,14 @@ class Database(path: String, home: String)
       demandRows)
 
     conn.executemany("""
-      INSERT INTO rules
-        (name,kind,scope,scope_value,value,priority,enabled,created_at,updated_at)
-      VALUES(?,?,?,?,?,?,1,datetime('now'),datetime('now'))
+      INSERT INTO rules(text,enabled,created_at,updated_at)
+      VALUES(?,1,datetime('now'),datetime('now'))
     """, py.list(
-      py.list("Default safety cover","safety_stock_days","global","",5,0),
-      py.list("Food safety cover","safety_stock_days","category","food",7,10),
-      py.list("Line quantity ceiling","maximum_line_quantity","global","",300,0),
-      py.list("Draft value ceiling","maximum_draft_value","global","",150000,0),
-      py.list("Minimum available","minimum_available_units","global","",10,0)
+      py.list("Cover at least 5 days of demand beyond supplier lead time for every product."),
+      py.list("Food keeps 7 days of cover instead of 5: the category moves fast and a stockout there is more expensive than the extra holding cost."),
+      py.list("Never propose more than 300 units of one product in a single draft, even when the arithmetic asks for more. Split it across two analyses instead."),
+      py.list("Keep the total value of any single draft at or below 150000 cents. Say so in the report when this is what limited an order."),
+      py.list("Keep at least 10 available units of every product after reserved commitments.")
     ))
 
   private def rows(sql: String): py.List = rowsWith(sql,py.list())
@@ -159,7 +211,7 @@ class Database(path: String, home: String)
       """)[0]
     )
 
-  def rules(): py.List = rows("SELECT * FROM rules ORDER BY priority DESC,id")
+  def rules(): py.List = rows("SELECT * FROM rules ORDER BY id")
 
   def drafts(): py.List =
     val result = rows("""
@@ -228,32 +280,24 @@ class Database(path: String, home: String)
     conn.close()
 
   def saveRule(body: py.Dict): Int =
-    val kind = body.get("kind", "").asString
-    val scope = body.get("scope", "").asString
-    val kinds = py.list("safety_stock_days","maximum_line_quantity","maximum_draft_value","minimum_available_units")
-    val scopes = py.list("global","category","product","supplier")
-    if !kinds.contains(kind) then abort "unsupported rule kind"
-    if !scopes.contains(scope) then abort "unsupported rule scope"
+    val text = body.get("text", "").asString.trim
+    if text == "" then abort "a rule needs text"
+    val enabled = if body.get("enabled", true).asBool then 1 else 0
     val conn = connect()
     val id = body.get("id", 0).asInt
-    val params = py.list(body.get("name", "").asString.trim, kind, scope,
-      body.get("scope_value", "").asString.trim, body.get("value", 0).asFloat,
-      body.get("priority", 0).asInt, if body.get("enabled", true).asBool then 1 else 0)
     if id == 0 then
       val cursor = conn.execute("""
-        INSERT INTO rules(name,kind,scope,scope_value,value,priority,enabled,created_at,updated_at)
-        VALUES(?,?,?,?,?,?,?,datetime('now'),datetime('now'))
-      """, params)
+        INSERT INTO rules(text,enabled,created_at,updated_at)
+        VALUES(?,?,datetime('now'),datetime('now'))
+      """, py.list(text, enabled))
       conn.commit()
       val result = cursor.lastrowid.asInt
       conn.close()
       result
     else
-      params.append(id)
       conn.execute("""
-        UPDATE rules SET name=?,kind=?,scope=?,scope_value=?,value=?,priority=?,enabled=?,
-          updated_at=datetime('now') WHERE id=?
-      """, params)
+        UPDATE rules SET text=?,enabled=?,updated_at=datetime('now') WHERE id=?
+      """, py.list(text, enabled, id))
       conn.commit()
       conn.close()
       id
