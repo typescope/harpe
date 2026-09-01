@@ -22,7 +22,7 @@ jo start
 
 Then open <http://127.0.0.1:8765>.
 
-`jo test` runs the end-to-end suite: it starts the agent as its own process and
+`jo run tests` runs the end-to-end suite: it starts the agent as its own process and
 drives it over HTTP against a scripted model, so it needs no API key and
 reaches no network.
 
