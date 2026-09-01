@@ -16,10 +16,6 @@ cp .env.example .env
 jo start
 ```
 
-Each agent's `.env.example` lists the variables it reads. The run command is
-declared in its `jo.toml` under `[commands]`: `jo start` for all of them except
-`pr-review`, which takes a PR URL and uses `jo review`.
-
 ## The agents
 
 | Template | What it shows |
