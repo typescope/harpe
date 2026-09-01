@@ -12,9 +12,9 @@ need Cloudflare credentials.
 Set the version once and paste the commands as written:
 
 ```sh
-VERSION=0.8.0
+VERSION=0.9.0
 MINOR=${VERSION%.*}          # the MAJOR.MINOR constraint consumers pin
-PREV_MINOR=0.7               # the constraint being replaced
+PREV_MINOR=0.8               # the constraint being replaced
 ```
 
 ## Publication comes before the green build

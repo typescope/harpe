@@ -1,5 +1,73 @@
 # Changelog
 
+## 0.9.0 — 2026-09-01
+
+Ninth developer-preview release. It publishes the test framework as a package of
+its own, `harpe-testing`, and moves the agent templates out to
+[typescope/agents](https://github.com/typescope/agents), leaving this repository
+the framework and one CLI agent. In the runtime it simplifies the approvals API
+and fixes how a reply the token limit cut off is read.
+
+### harpe-caps 0.9.0
+
+No changes. The capability interfaces are identical to 0.8.0. The version moves
+with `harpe` so applications can keep one constraint for both packages.
+
+### harpe 0.9.0
+
+Breaking changes:
+
+- `Approvals.Request` is removed. `Approvals.request` and `Interact.approve`
+  take `title` and `detail` directly, so a caller writes
+  `interact.approve(title, detail)` rather than wrapping two strings in a class
+  first. Custom `Interact` and `Approvals` implementations need their signatures
+  updated to match.
+
+New:
+
+- `models.anthropic(..., baseUrl = ...)` points the client at an endpoint other
+  than `https://api.anthropic.com`, which is what a gateway or a local proxy
+  needs.
+
+Fixed:
+
+- A reply the token limit cut off is no longer lost to a JSON error. OpenAI
+  Responses, OpenAI-compatible Chat Completions, and OpenRouter now test for
+  truncation before they parse tool calls, because the last call of a cut-off
+  reply carries arguments that stop mid-JSON — the very reply that branch
+  exists to handle.
+
+- A streamed Chat Completions reply is read from the accumulated snapshot
+  instead of `get_final_completion()`. That helper promises a fully parsed
+  result and so refuses a truncated one, while this adapter parses the raw
+  message itself.
+
+- A call to a tool that does not exist reports `success = false` instead of
+  passing an error message off as a successful outcome.
+
+- The optional OCR backend follows RapidOCR to the `rapidocr` package and its
+  separate `onnxruntime` engine. The old `rapidocr-onnxruntime` distribution
+  held the environment below Python 3.13.
+
+### harpe-testing 0.9.0
+
+The test framework — the suite tree, the runner, and the assertions — published
+as a package so that a project outside this repository can declare a test module
+against it. It depends on nothing, not even `harpe`. Nothing in it knows what an
+agent is. Its nine host calls are bound in its own platform module rather than
+borrowed from `harpe.ffi`, which is what keeps it free-standing.
+
+Version 0.8.0 was published without notes. Relative to it:
+
+- A suite declared `parallel = true` tells the runner its direct children may
+  run at once. The runner turns such a suite into one pool of work items, a
+  nested parallel suite flattens into the same pool, and a serial child stays a
+  single item, which is what keeps its subtree ordered. Reporting stays in
+  declaration order either way.
+
+- A suite rejects two children that share a name, so a filter naming a test
+  always selects one test.
+
 ## 0.8.0 — 2026-08-28
 
 Eighth developer-preview release. It makes streaming a first-class part of a
