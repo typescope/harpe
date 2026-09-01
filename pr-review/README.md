@@ -33,7 +33,7 @@ That builds the sandbox guest and runs one turn.
   not comment on
 - `src/` — the driver
 - `sandbox/` — the GitHub capability: `getPR`, `readFile`, `findDefinition`,
-  `submitReview`, `addComment`, `merge`
+  and draft-only `submitReview`
 - `skills/` — reference the model can read
 
 [Create a PR Review Agent](https://harpe.typescope.ai/tutorial/create-pr-review-agent/)

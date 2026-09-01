@@ -22,8 +22,6 @@ private interface Review
     event: String @py.keyword, // can be py.none
     comments: py.Dynamic @py.keyword
   ): py.Dynamic
-  def create_issue_comment(body: String): py.Dynamic
-  def merge(sha: String @py.keyword, commit_message: String @py.keyword): py.Dynamic
 end
 
 private def module: GitHub = py.module("github").cast[GitHub]
@@ -96,7 +94,6 @@ private class GithubClient
 
   //[ Submit a PR review via PyGithub.
     !
-    ! event:        "APPROVE", "REQUEST_CHANGES", or "COMMENT"
     ! commentsJson: JSON array of {path, line, body} objects (pass "[]" for none)
   //]
   def submitReview(
@@ -104,7 +101,6 @@ private class GithubClient
     repo: String,
     num: Int,
     headSha: String,
-    eventOpt: Option[String],
     body: String,
     commentsJson: String
   ): Result[String, String] =
@@ -118,39 +114,7 @@ private class GithubClient
 
     val comments = json.loads(commentsJson)
 
-    val event = eventOpt rescue None => py.none
-
-    match py.try(pr.create_review(commit, body, event, comments))
-    case Ok(_) => Ok("")
-    case Err(e) => Err(e.message)
-
-  //[ Post an issue-level comment on the PR. //]
-  def addComment(owner: String, repo: String, num: Int, body: String): Result[String, String] =
-    val pr =
-      py.try(client.get_repo(owner + "/" + repo).get_pull(num))
-      rescue Err(err) => return Err(err.message)
-
-    match py.try: pr.create_issue_comment(body)
-    case Ok(_) => Ok("")
-    case Err(e) => Err(e.message)
-
-  //[ Merge the PR using the head SHA as a guard against concurrent updates.
-    !
-    ! commitMessage: merge commit message. Pass "" to use GitHub's default.
-  //]
-  def mergePR(
-    owner: String,
-    repo: String,
-    num: Int,
-    headSha: String,
-    commitMessage: String
-  ): Result[String, String] =
-
-    val pr =
-      py.try(client.get_repo(owner + "/" + repo).get_pull(num))
-      rescue Err(err) => return Err(err.message)
-
-    match py.try(pr.merge(sha = headSha, commit_message = commitMessage))
+    match py.try(pr.create_review(commit, body, py.none, comments))
     case Ok(_) => Ok("")
     case Err(e) => Err(e.message)
 
