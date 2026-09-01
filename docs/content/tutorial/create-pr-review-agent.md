@@ -4,7 +4,7 @@ title = "Create a PR Review Agent"
 The PR review example is a complete agent that reviews a GitHub pull request and
 submits the review. It reads the diff, follows identifiers into the repository
 snapshot, and posts a verdict — all by writing Jo programs against a GitHub
-capability that offers five operations and nothing else.
+capability that offers six operations and nothing else.
 
 ## Create the project
 
