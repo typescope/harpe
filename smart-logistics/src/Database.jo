@@ -1,0 +1,338 @@
+namespace harpe.examples.smartlogistics
+
+import harpe.ffi.os
+import harpe.util.File
+
+class Database(path: String, home: String)
+  private def connect(): py.Dynamic =
+    val sqlite = py.module("sqlite3")
+    val conn = sqlite.connect(path, timeout = 10.0)
+    conn.row_factory = sqlite.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 10000")
+    conn
+
+  def initialize(): Unit =
+    File.ensureDir(os.path.dirname(path))
+    val conn = connect()
+    conn.executescript("""
+      CREATE TABLE IF NOT EXISTS suppliers (
+        id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+        currency TEXT NOT NULL DEFAULT 'CHF', enabled INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE TABLE IF NOT EXISTS products (
+        id INTEGER PRIMARY KEY, sku TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+        category TEXT NOT NULL, supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+        on_hand INTEGER NOT NULL DEFAULT 0 CHECK(on_hand >= 0),
+        reserved INTEGER NOT NULL DEFAULT 0 CHECK(reserved >= 0),
+        incoming INTEGER NOT NULL DEFAULT 0 CHECK(incoming >= 0),
+        capacity INTEGER NOT NULL CHECK(capacity > 0),
+        case_size INTEGER NOT NULL DEFAULT 1 CHECK(case_size > 0),
+        minimum_order_quantity INTEGER NOT NULL DEFAULT 1 CHECK(minimum_order_quantity > 0),
+        lead_time_days INTEGER NOT NULL DEFAULT 1 CHECK(lead_time_days >= 0),
+        unit_price_cents INTEGER NOT NULL CHECK(unit_price_cents >= 0),
+        enabled INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE TABLE IF NOT EXISTS demand_history (
+        product_id INTEGER NOT NULL REFERENCES products(id),
+        demand_date TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity >= 0),
+        PRIMARY KEY(product_id, demand_date)
+      );
+      CREATE TABLE IF NOT EXISTS rules (
+        id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'global', scope_value TEXT NOT NULL DEFAULT '',
+        value REAL NOT NULL CHECK(value >= 0), priority INTEGER NOT NULL DEFAULT 0,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS draft_orders (
+        id INTEGER PRIMARY KEY, supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+        status TEXT NOT NULL CHECK(status IN ('draft','accepted','rejected')),
+        rationale TEXT NOT NULL, total_cents INTEGER NOT NULL, currency TEXT NOT NULL,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS draft_order_lines (
+        id INTEGER PRIMARY KEY, draft_order_id INTEGER NOT NULL REFERENCES draft_orders(id),
+        product_id INTEGER NOT NULL REFERENCES products(id), quantity INTEGER NOT NULL,
+        unit_price_cents INTEGER NOT NULL, line_total_cents INTEGER NOT NULL,
+        UNIQUE(draft_order_id, product_id)
+      );
+      CREATE TABLE IF NOT EXISTS skill_revisions (
+        id INTEGER PRIMARY KEY, skill_name TEXT NOT NULL, content TEXT NOT NULL,
+        revision INTEGER NOT NULL, created_at TEXT NOT NULL,
+        UNIQUE(skill_name, revision)
+      );
+      CREATE TABLE IF NOT EXISTS analysis_runs (
+        id INTEGER PRIMARY KEY, trigger TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('running','success','failed','busy')),
+        summary TEXT NOT NULL DEFAULT '', started_at TEXT NOT NULL,
+        finished_at TEXT NOT NULL DEFAULT ''
+      );
+    """)
+    seed(conn)
+    conn.commit()
+    conn.close()
+
+  private def seed(conn: py.Dynamic): Unit =
+    val count = conn.execute("SELECT COUNT(*) FROM suppliers").fetchone()[0].asInt
+    if count > 0 then return
+
+    conn.executemany("INSERT INTO suppliers(id,name,currency) VALUES(?,?,?)", py.list(
+      py.list(1, "Alpine Foods", "CHF"),
+      py.list(2, "Rhine Packaging", "CHF"),
+      py.list(3, "Nordic Hygiene", "EUR")
+    ))
+    conn.executemany("""
+      INSERT INTO products
+        (id,sku,name,category,supplier_id,on_hand,reserved,incoming,capacity,
+         case_size,minimum_order_quantity,lead_time_days,unit_price_cents)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+    """, py.list(
+      py.list(1,"FOOD-101","Pasta 500 g","food",1,34,8,0,240,12,24,5,225),
+      py.list(2,"FOOD-102","Tomato sauce","food",1,18,6,0,180,6,12,4,315),
+      py.list(3,"FOOD-103","Rice 1 kg","food",1,110,10,24,260,12,24,6,410),
+      py.list(4,"FOOD-104","Olive oil 1 L","food",1,7,2,0,96,6,12,8,1180),
+      py.list(5,"PACK-201","Small cartons","packaging",2,420,80,0,1000,50,100,3,58),
+      py.list(6,"PACK-202","Large cartons","packaging",2,65,20,100,500,25,50,5,112),
+      py.list(7,"PACK-203","Paper tape","packaging",2,22,7,0,160,10,20,4,275),
+      py.list(8,"PACK-204","Pallet wrap","packaging",2,88,12,0,180,6,12,7,890),
+      py.list(9,"HYGI-301","Hand soap","hygiene",3,14,4,0,120,8,16,9,540),
+      py.list(10,"HYGI-302","Surface cleaner","hygiene",3,55,10,0,150,6,12,10,720),
+      py.list(11,"HYGI-303","Paper towels","hygiene",3,9,3,0,90,10,20,6,460),
+      py.list(12,"HYGI-304","Waste bags","hygiene",3,72,15,20,220,20,40,6,195)
+    ))
+
+    val datetime = py.module("datetime")
+    val today = datetime.date.today()
+    var demandRows = py.list()
+    var productId = 1
+    while productId <= 12 do
+      var age = 1
+      while age <= 28 do
+        val day = today.__sub__(datetime.timedelta(days = age))
+        val base = (productId * 3 + age * 5) % 9 + 1
+        val quantity = if productId == 4 || productId == 11 then base + 3 else base
+        demandRows.append(py.list(productId, day.isoformat(), quantity))
+        age = age + 1
+      productId = productId + 1
+    conn.executemany(
+      "INSERT INTO demand_history(product_id,demand_date,quantity) VALUES(?,?,?)",
+      demandRows)
+
+    conn.executemany("""
+      INSERT INTO rules
+        (name,kind,scope,scope_value,value,priority,enabled,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,1,datetime('now'),datetime('now'))
+    """, py.list(
+      py.list("Default safety cover","safety_stock_days","global","",5,0),
+      py.list("Food safety cover","safety_stock_days","category","food",7,10),
+      py.list("Line quantity ceiling","maximum_line_quantity","global","",300,0),
+      py.list("Draft value ceiling","maximum_draft_value","global","",150000,0),
+      py.list("Minimum available","minimum_available_units","global","",10,0)
+    ))
+
+  private def rows(sql: String): py.List = rowsWith(sql,py.list())
+
+  private def rowsWith(sql: String, params: py.List): py.List =
+    val conn = connect()
+    val result = py.list()
+    for row in py.iter(conn.execute(sql, params).fetchall()) do
+      result.append(py.module("builtins").dict(row))
+    conn.close()
+    result
+
+  def snapshot(): py.Dict =
+    py.dict(
+      "products" ~ rows("""
+        SELECT p.*, s.name AS supplier_name, s.currency,
+               (p.on_hand-p.reserved) AS available
+        FROM products p JOIN suppliers s ON s.id=p.supplier_id ORDER BY p.sku
+      """),
+      "suppliers" ~ rows("SELECT * FROM suppliers ORDER BY name"),
+      "summary" ~ rows("""
+        SELECT COUNT(*) AS product_count,
+          SUM(CASE WHEN on_hand-reserved+incoming < minimum_order_quantity THEN 1 ELSE 0 END) AS low_stock_count,
+          SUM(on_hand*unit_price_cents) AS inventory_value_cents,
+          (SELECT COUNT(*) FROM draft_orders WHERE status='draft') AS draft_count
+        FROM products WHERE enabled=1
+      """)[0]
+    )
+
+  def rules(): py.List = rows("SELECT * FROM rules ORDER BY priority DESC,id")
+
+  def drafts(): py.List =
+    val result = rows("""
+      SELECT d.*, s.name AS supplier_name FROM draft_orders d
+      JOIN suppliers s ON s.id=d.supplier_id ORDER BY d.id DESC
+    """)
+    for item in result do
+      val d = item.cast[py.Dict]
+      d.set("lines", rowsWith("""
+        SELECT l.*,p.sku,p.name FROM draft_order_lines l
+        JOIN products p ON p.id=l.product_id WHERE l.draft_order_id=? ORDER BY p.sku
+      """, py.list(d.get("id"))))
+    result
+
+  def analyses(): py.List =
+    rows("SELECT * FROM analysis_runs ORDER BY id DESC LIMIT 20")
+
+  def saveProduct(body: py.Dict): Int =
+    val conn = connect()
+    val id = body.get("id", 0).asInt
+    if id == 0 then
+      val cursor = conn.execute("""
+        INSERT INTO products(sku,name,category,supplier_id,on_hand,reserved,incoming,
+          capacity,case_size,minimum_order_quantity,lead_time_days,unit_price_cents,enabled)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+      """, productParams(body))
+      conn.commit()
+      val result = cursor.lastrowid.asInt
+      conn.close()
+      result
+    else
+      val params = productParams(body)
+      params.append(id)
+      conn.execute("""
+        UPDATE products SET sku=?,name=?,category=?,supplier_id=?,on_hand=?,reserved=?,
+          incoming=?,capacity=?,case_size=?,minimum_order_quantity=?,lead_time_days=?,
+          unit_price_cents=?,enabled=? WHERE id=?
+      """, params)
+      conn.commit()
+      conn.close()
+      id
+
+  private def productParams(body: py.Dict): py.List = py.list(
+    body.get("sku", "").asString.trim,
+    body.get("name", "").asString.trim,
+    body.get("category", "").asString.trim,
+    body.get("supplier_id", 0).asInt,
+    body.get("on_hand", 0).asInt,
+    body.get("reserved", 0).asInt,
+    body.get("incoming", 0).asInt,
+    body.get("capacity", 1).asInt,
+    body.get("case_size", 1).asInt,
+    body.get("minimum_order_quantity", 1).asInt,
+    body.get("lead_time_days", 1).asInt,
+    body.get("unit_price_cents", 0).asInt,
+    if body.get("enabled", true).asBool then 1 else 0)
+
+  def saveDemand(body: py.Dict): Unit =
+    val conn = connect()
+    conn.execute("""
+      INSERT INTO demand_history(product_id,demand_date,quantity) VALUES(?,?,?)
+      ON CONFLICT(product_id,demand_date) DO UPDATE SET quantity=excluded.quantity
+    """, py.list(body.get("product_id").asInt, body.get("demand_date").asString,
+                   body.get("quantity").asInt))
+    conn.commit()
+    conn.close()
+
+  def saveRule(body: py.Dict): Int =
+    val kind = body.get("kind", "").asString
+    val scope = body.get("scope", "").asString
+    val kinds = py.list("safety_stock_days","maximum_line_quantity","maximum_draft_value","minimum_available_units")
+    val scopes = py.list("global","category","product","supplier")
+    if !kinds.contains(kind) then abort "unsupported rule kind"
+    if !scopes.contains(scope) then abort "unsupported rule scope"
+    val conn = connect()
+    val id = body.get("id", 0).asInt
+    val params = py.list(body.get("name", "").asString.trim, kind, scope,
+      body.get("scope_value", "").asString.trim, body.get("value", 0).asFloat,
+      body.get("priority", 0).asInt, if body.get("enabled", true).asBool then 1 else 0)
+    if id == 0 then
+      val cursor = conn.execute("""
+        INSERT INTO rules(name,kind,scope,scope_value,value,priority,enabled,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,datetime('now'),datetime('now'))
+      """, params)
+      conn.commit()
+      val result = cursor.lastrowid.asInt
+      conn.close()
+      result
+    else
+      params.append(id)
+      conn.execute("""
+        UPDATE rules SET name=?,kind=?,scope=?,scope_value=?,value=?,priority=?,enabled=?,
+          updated_at=datetime('now') WHERE id=?
+      """, params)
+      conn.commit()
+      conn.close()
+      id
+
+  def deleteRule(id: Int): Unit =
+    val conn = connect()
+    conn.execute("DELETE FROM rules WHERE id=?", py.list(id))
+    conn.commit()
+    conn.close()
+
+  def setDraftStatus(id: Int, status: String): Bool =
+    if status != "accepted" && status != "rejected" then return false
+    val conn = connect()
+    val cursor = conn.execute("""
+      UPDATE draft_orders SET status=?,updated_at=datetime('now')
+      WHERE id=? AND status='draft'
+    """, py.list(status,id))
+    conn.commit()
+    val changed = cursor.rowcount.asInt == 1
+    conn.close()
+    changed
+
+  def skillNames(): py.List =
+    val result = py.list()
+    for name in py.iter(py.module("os").listdir(os.path.join(home,"skills"))) do
+      val text = name.asString
+      if text.endsWith(".md") then result.append(text.substring(0,text.size - 3))
+    py.dynamic(result).sort()
+    result
+
+  def readSkill(name: String): String =
+    val slug = skillSlug(name)
+    File.read(os.path.join(home,"skills",slug+".md"))
+
+  def saveSkill(name: String, content: String): String =
+    val slug = skillSlug(name)
+    if content.trim == "" then abort "skill content cannot be empty"
+    val conn = connect()
+    val rev = conn.execute(
+      "SELECT COALESCE(MAX(revision),0)+1 FROM skill_revisions WHERE skill_name=?",
+      py.list(slug)).fetchone()[0].asInt
+    conn.execute("""
+      INSERT INTO skill_revisions(skill_name,content,revision,created_at)
+      VALUES(?,?,?,datetime('now'))
+    """, py.list(slug,content,rev))
+    conn.commit()
+    conn.close()
+    File.write(os.path.join(home,"skills",slug+".md"),content)
+    slug
+
+  def deleteSkill(name: String): Bool =
+    val slug = skillSlug(name)
+    if slug == "planning" then return false
+    val target = os.path.join(home,"skills",slug+".md")
+    if !File.exists(target) then return false
+    py.module("os").remove(target)
+    true
+
+  private def skillSlug(name: String): String =
+    val slug = py.dynamic(name.trim).lower().asString
+    val valid = py.module("re").fullmatch("[a-z0-9]+(?:-[a-z0-9]+)*",slug)
+    if valid.isNone || slug == "api" then abort "invalid or reserved skill name"
+    slug
+
+  def beginAnalysis(trigger: String): Int =
+    val conn = connect()
+    val cursor = conn.execute("""
+      INSERT INTO analysis_runs(trigger,status,started_at) VALUES(?,'running',datetime('now'))
+    """,py.list(trigger))
+    conn.commit()
+    val id = cursor.lastrowid.asInt
+    conn.close()
+    id
+
+  def finishAnalysis(id: Int, status: String, summary: String): Unit =
+    val conn = connect()
+    conn.execute("""
+      UPDATE analysis_runs SET status=?,summary=?,finished_at=datetime('now') WHERE id=?
+    """,py.list(status,summary,id))
+    conn.commit()
+    conn.close()
+end

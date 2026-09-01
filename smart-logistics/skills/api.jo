@@ -1,0 +1,33 @@
+namespace sandbox.api
+
+class Product(
+  id: Int, sku: String, name: String, category: String,
+  supplierId: Int, supplierName: String,
+  onHand: Int, reserved: Int, incoming: Int, capacity: Int,
+  caseSize: Int, minimumOrderQuantity: Int, leadTimeDays: Int,
+  unitPriceCents: Int, currency: String)
+
+class DemandDay(date: String, quantity: Int)
+class Rule(id: Int, name: String, kind: String, scope: String,
+  scopeValue: String, value: Float, priority: Int)
+class DraftLine(productId: Int, sku: String, name: String, quantity: Int)
+class DraftOrder(id: Int, supplierId: Int, supplierName: String, status: String,
+  totalCents: Int, currency: String, rationale: String, lines: List[DraftLine])
+class ProposedLine(productId: Int, quantity: Int)
+class SaveResult(ok: Bool, draftId: Int, message: String)
+
+interface Logistics
+  def products(): List[Product]
+  def rules(): List[Rule]
+  def demandHistory(productId: Int, days: Int): List[DemandDay]
+  def openDraftOrders(): List[DraftOrder]
+  def saveDraftOrder(supplierId: Int, lines: List[ProposedLine], rationale: String): SaveResult
+end
+
+param logistics: Logistics
+
+// Example generated program:
+// namespace sandbox.guest
+// import sandbox.api.*
+// def runTask(): Unit receives IO.stdout, logistics =
+//   for product in logistics.products() do println "\{product.sku}: \{product.onHand}"

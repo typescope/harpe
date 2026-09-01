@@ -1,0 +1,70 @@
+namespace harpe.examples.smartlogistics
+
+import harpe.ffi.os
+import harpe.ffi.threading
+import harpe.util.File
+import harpe.Model
+import harpe.Agent
+import harpe.Interact
+import harpe.Approvals
+import harpe.context.FullContext
+import harpe.tools.RunCodeTool
+import harpe.tools.SkillTools
+import harpe.turns.TurnResult
+import harpe.turns.TurnEvent
+import harpe.logging.Logging
+import harpe.logging.logger
+
+class Analyzer(brain: Model, home: String, databasePath: String, database: Database)
+  private val lock = threading.Lock()
+  private val runCode = RunCodeTool(os.path.join(home,"sandbox"),approvalDeadline=60)
+
+  def run(trigger: String): py.Dict =
+    if !lock.acquire(blocking = false).asBool then
+      return py.dict("ok" ~ false,"busy" ~ true,"report" ~ "An analysis is already running.")
+
+    val runId = database.beginAnalysis(trigger)
+    val result = py.try: analyze()
+    val response = match result
+      case Ok(report) =>
+        database.finishAnalysis(runId,"success",report)
+        py.dict("ok" ~ true,"busy" ~ false,"run_id" ~ runId,"report" ~ report)
+      case Err(error) =>
+        val detail = error.message
+        database.finishAnalysis(runId,"failed",detail)
+        py.dict("ok" ~ false,"busy" ~ false,"run_id" ~ runId,"report" ~ detail)
+    lock.release()
+    response
+
+  private def analyze(): String =
+    Logging.withLogger(Logging.discard,() => ask())
+
+  private def ask(): String receives logger =
+    val context = new FullContext:
+      baseSystem = File.read(os.path.join(home,"AGENT.md"))
+      initial = []
+    val tools = SkillTools.toolset(os.path.join(home,"skills"))
+      ++ runCode.toolset(Map("SMART_LOGISTICS_DB" ~ databasePath))
+    val turn = Agent.ask:
+      "Analyze the depot now. Inspect inventory, rules, open drafts, and demand. Create only justified draft order requests and return a concise administrator report."
+      brain = brain
+      tools = tools
+      context = context
+      interact = new QuietInteract
+      maxToolRounds = 12
+      maxRetries = 2
+    match turn.result
+    case TurnResult.Success => turn.finalText
+    case TurnResult.Interrupted => abort "analysis interrupted"
+    case TurnResult.Failed(detail) => abort detail
+end
+
+private class QuietInteract
+  view Interact
+  def cancelled: Bool = false
+  def pause(seconds: Float): Bool =
+    py.module("time").sleep(py.dynamic(seconds))
+    false
+  def approve(title: String,detail: String): Approvals.Decision = Approvals.Cancelled
+  def emit(event: TurnEvent): Unit = pass
+end

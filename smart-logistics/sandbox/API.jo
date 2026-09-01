@@ -1,0 +1,68 @@
+namespace sandbox.api
+
+import jo.IO.stdout
+
+class Product(
+  id: Int,
+  sku: String,
+  name: String,
+  category: String,
+  supplierId: Int,
+  supplierName: String,
+  onHand: Int,
+  reserved: Int,
+  incoming: Int,
+  capacity: Int,
+  caseSize: Int,
+  minimumOrderQuantity: Int,
+  leadTimeDays: Int,
+  unitPriceCents: Int,
+  currency: String
+)
+
+class DemandDay(date: String, quantity: Int)
+
+class Rule(
+  id: Int,
+  name: String,
+  kind: String,
+  scope: String,
+  scopeValue: String,
+  value: Float,
+  priority: Int
+)
+
+class DraftLine(productId: Int, sku: String, name: String, quantity: Int)
+
+class DraftOrder(
+  id: Int,
+  supplierId: Int,
+  supplierName: String,
+  status: String,
+  totalCents: Int,
+  currency: String,
+  rationale: String,
+  lines: List[DraftLine]
+)
+
+class ProposedLine(productId: Int, quantity: Int)
+
+class SaveResult(ok: Bool, draftId: Int, message: String)
+
+// The complete authority granted to generated code. There is deliberately no
+// generic database, filesystem, network, rules mutation, or approval operation.
+interface Logistics
+  def products(): List[Product]
+  def rules(): List[Rule]
+  def demandHistory(productId: Int, days: Int): List[DemandDay]
+  def openDraftOrders(): List[DraftOrder]
+  def saveDraftOrder(
+    supplierId: Int,
+    lines: List[ProposedLine],
+    rationale: String
+  ): SaveResult
+end
+
+param logistics: Logistics
+
+defer def runTask(): Unit receives stdout, logistics
