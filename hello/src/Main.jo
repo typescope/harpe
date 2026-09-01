@@ -12,6 +12,7 @@ import harpe.ffi.os
 import harpe.logging.Logging
 import harpe.logging.logger
 import harpe.tools.RunCodeTool
+import harpe.tools.SkillTools
 import harpe.turns.TurnResult
 
 def main(): Unit receives stdout =
@@ -33,8 +34,9 @@ private def chat(): Unit receives stdout, logger =
     baseSystem = File.read("AGENT.md")
     initial = []
 
-  // The one tool this agent has: what the model is offered, and what runs.
-  val tools = runCode.toolset()
+  // Skills give the model Jo syntax on demand without carrying the full
+  // reference in every prompt.
+  val tools = SkillTools.toolset(os.path.abspath("skills")) ++ runCode.toolset()
 
   val data = os.path.abspath("data")
   File.ensureDir(data)

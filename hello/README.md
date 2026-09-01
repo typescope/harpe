@@ -1,7 +1,7 @@
 # hello
 
-The smallest complete Harpe agent. No sessions, no skills, no logs — the whole
-loop is in `src/Main.jo`, and `runCode` is its only tool.
+The smallest complete Harpe agent. No sessions or logs — the whole loop is in
+`src/Main.jo`. It provides `runCode` and a Jo syntax skill.
 
 ## Setup
 
@@ -26,3 +26,4 @@ It reads a line, answers it, and repeats.
 - `AGENT.md` — the system prompt
 - `src/Main.jo` — the whole agent
 - `sandbox/` — the capabilities a generated program may call
+- `skills/` — Jo syntax guidance the agent can read on demand
