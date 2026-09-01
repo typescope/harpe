@@ -1,6 +1,6 @@
 # Harpe agents
 
-Six example agents for [Harpe](https://github.com/typescope/harpe), each a
+Example agents for [Harpe](https://github.com/typescope/harpe), each a
 `jo new` template.
 
 These are demos and templates, not production software. They are written to be
@@ -43,5 +43,5 @@ jo test
 ```
 
 It is built on [`harpe-testing`](https://pkg.typescope.ai/harpe-testing.jsonl),
-which a project created with `jo new` can use as well. The other five agents
-have no tests.
+which a project created with `jo new` can use as well. The other agents have no
+tests.
