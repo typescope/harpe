@@ -1,33 +1,298 @@
-const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
-let state={products:[],suppliers:[],rules:[],drafts:[]};
-const api=async(path,options={})=>{const r=await fetch(path,{headers:{'Content-Type':'application/json'},...options});if(!r.ok)throw Error(await r.text());return r.json()};
-const post=(path,data)=>api(path,{method:'POST',body:JSON.stringify(data)});
-const money=(c,cur='CHF')=>new Intl.NumberFormat(undefined,{style:'currency',currency:cur}).format(c/100);
-const toast=t=>{const e=$('#toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2200)};
-const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// Smart Logistics — depot planner UI.
+//
+// The page is a single document with four sections; nav buttons toggle which
+// one is visible. All data lives on the server: every mutation posts, then
+// refresh() re-reads the snapshot and re-renders.
 
-$$('nav button').forEach(b=>b.onclick=()=>{$$('nav button,.page').forEach(x=>x.classList.remove('active'));b.classList.add('active');$('#'+b.dataset.page).classList.add('active');if(b.dataset.page==='skills')loadSkills()});
+const $ = selector => document.querySelector(selector);
+const $$ = selector => [...document.querySelectorAll(selector)];
 
-async function refresh(){const [snap,ruleData,draftData]=await Promise.all([api('/api/snapshot'),api('/api/rules'),api('/api/drafts')]);state={...snap,rules:ruleData.rules,drafts:draftData.drafts};render()}
-function render(){const s=state.summary;$('#summary').innerHTML=[['Products',s.product_count],['Low stock',s.low_stock_count],['Open drafts',s.draft_count],['Inventory value',money(s.inventory_value_cents)]].map(x=>`<div class="metric"><span>${x[0]}</span><strong>${x[1]}</strong></div>`).join('');
-  $('#product-rows').innerHTML=state.products.map(p=>`<tr><td><strong>${escape(p.sku)}</strong><div>${escape(p.name)}</div><div class="muted">${escape(p.category)}</div></td><td>${escape(p.supplier_name)}</td><td class="${p.available+p.incoming<p.minimum_order_quantity?'risk':''}">${p.on_hand} on hand · ${p.reserved} reserved<div class="muted">${p.incoming} incoming · ${p.available} available</div></td><td>case ${p.case_size} · min ${p.minimum_order_quantity}<div class="muted">${p.lead_time_days}d lead · cap ${p.capacity}</div></td><td>${money(p.unit_price_cents,p.currency)}</td><td><button onclick="editProduct(${p.id})">Edit</button></td></tr>`).join('');
-  $('#rule-list').innerHTML=state.rules.map(r=>`<article class="card"><div class="card-head"><div><strong>${escape(r.name)}</strong><div class="muted">${escape(r.kind)} · ${escape(r.scope)}${r.scope_value?' / '+escape(r.scope_value):''} · priority ${r.priority}</div></div><span class="pill">${r.enabled?'enabled':'disabled'}</span></div><p>Value: <strong>${r.value}</strong></p><div class="actions"><button onclick="editRule(${r.id})">Edit</button><button class="danger" onclick="deleteRule(${r.id})">Delete</button></div></article>`).join('')||'<p>No rules.</p>';
-  $('#draft-list').innerHTML=state.drafts.map(d=>`<article class="card"><div class="card-head"><div><strong>Draft #${d.id} · ${escape(d.supplier_name)}</strong><div class="muted">${escape(d.created_at)} · ${money(d.total_cents,d.currency)}</div></div><span class="pill ${d.status}">${d.status}</span></div><p>${escape(d.rationale)}</p><ul class="lines">${d.lines.map(l=>`<li>${escape(l.sku)} · ${l.quantity} × ${money(l.unit_price_cents,d.currency)}</li>`).join('')}</ul><div class="actions">${d.status==='draft'?`<button class="primary" onclick="statusDraft(${d.id},'accepted')">Accept</button><button onclick="statusDraft(${d.id},'rejected')">Reject</button>`:''}<a href="/api/drafts/export?id=${d.id}" target="_blank"><button>Export JSON</button></a></div></article>`).join('')||'<p>No draft requests yet. Run an analysis to create justified drafts.</p>';
+let state = { products: [], suppliers: [], rules: [], drafts: [] };
+
+/* Helpers ------------------------------------------------------------------ */
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options
+  });
+  if (!response.ok) throw Error(await response.text());
+  return response.json();
 }
 
-const pf=$('#product-form');$('#new-product').onclick=()=>openProduct();window.editProduct=id=>openProduct(state.products.find(x=>x.id===id));
-function openProduct(p={}){pf.reset();for(const [k,v] of Object.entries(p))if(pf.elements[k])pf.elements[k].value=v;pf.elements.supplier_id.innerHTML=state.suppliers.map(s=>`<option value="${s.id}">${escape(s.name)}</option>`).join('');if(p.supplier_id)pf.elements.supplier_id.value=p.supplier_id;$('#product-dialog').showModal()}
-$('#save-product').onclick=async e=>{e.preventDefault();if(!pf.reportValidity())return;const d=Object.fromEntries(new FormData(pf));for(const k of ['id','supplier_id','on_hand','reserved','incoming','capacity','case_size','minimum_order_quantity','lead_time_days','unit_price_cents'])d[k]=Number(d[k]||0);d.enabled=true;await post('/api/products',d);$('#product-dialog').close();await refresh();toast('Product saved')};
+const post = (path, data) => api(path, { method: 'POST', body: JSON.stringify(data) });
 
-const rf=$('#rule-form');$('#new-rule').onclick=()=>openRule();window.editRule=id=>openRule(state.rules.find(x=>x.id===id));function openRule(r={enabled:1}){rf.reset();for(const [k,v] of Object.entries(r))if(rf.elements[k]&&k!=='enabled')rf.elements[k].value=v;rf.elements.enabled.checked=!!r.enabled;$('#rule-dialog').showModal()}
-$('#save-rule').onclick=async e=>{e.preventDefault();if(!rf.reportValidity())return;const d=Object.fromEntries(new FormData(rf));d.id=Number(d.id||0);d.value=Number(d.value);d.priority=Number(d.priority);d.enabled=rf.elements.enabled.checked;await post('/api/rules',d);$('#rule-dialog').close();await refresh();toast('Rule saved')};
-window.deleteRule=async id=>{if(confirm('Delete this rule?')){await post('/api/rules/delete',{id});await refresh()}};
-window.statusDraft=async(id,status)=>{await post('/api/drafts/status',{id,status});await refresh();toast(`Draft ${status}`)};
+const money = (cents, currency = 'CHF') =>
+  new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(cents / 100);
 
-async function loadSkills(){const {skills}=await api('/api/skills');$('#skill-list').innerHTML=skills.map(n=>`<button onclick="readSkill('${n}')">${escape(n)}</button>`).join('')}
-window.readSkill=async name=>{const s=await api('/api/skills/read?name='+encodeURIComponent(name));$('#skill-name').value=s.name;$('#skill-content').value=s.content};
-$('#new-skill').onclick=()=>{$('#skill-name').value='';$('#skill-content').value='# New planning skill\n\n'};
-$('#save-skill').onclick=async()=>{await post('/api/skills',{name:$('#skill-name').value,content:$('#skill-content').value});await loadSkills();toast('Skill saved')};
-$('#delete-skill').onclick=async()=>{const name=$('#skill-name').value;if(name&&confirm(`Delete ${name}?`)){const r=await post('/api/skills/delete',{name});if(!r.ok)return toast('This built-in skill cannot be deleted');$('#skill-name').value='';$('#skill-content').value='';await loadSkills()}};
-$('#analyze').onclick=async()=>{const b=$('#analyze');b.disabled=true;b.textContent='Analyzing…';$('#report').textContent='The planner is inspecting inventory and demand…';try{const r=await post('/api/analyze',{});$('#report').textContent=r.report;await refresh()}catch(e){$('#report').textContent='Analysis failed: '+e.message}finally{b.disabled=false;b.textContent='Analyze depot'}};
-refresh().catch(e=>$('#report').textContent='Could not load depot: '+e.message);
+function toast(message) {
+  const element = $('#toast');
+  element.textContent = message;
+  element.classList.add('show');
+  setTimeout(() => element.classList.remove('show'), 2200);
+}
+
+const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => HTML_ESCAPES[c]);
+
+/* Chrome: dialogs and page navigation -------------------------------------- */
+
+// Cancel buttons are type="button" so they never submit; they just close.
+$$('[data-close]').forEach(button => {
+  button.onclick = () => $('#' + button.dataset.close).close();
+});
+
+$$('nav button').forEach(button => {
+  button.onclick = () => {
+    $$('nav button, .page').forEach(element => element.classList.remove('active'));
+    button.classList.add('active');
+    $('#' + button.dataset.page).classList.add('active');
+    if (button.dataset.page === 'skills') loadSkills();
+  };
+});
+
+/* Rendering ---------------------------------------------------------------- */
+
+async function refresh() {
+  const [snapshot, ruleData, draftData] = await Promise.all([
+    api('/api/snapshot'),
+    api('/api/rules'),
+    api('/api/drafts')
+  ]);
+  state = { ...snapshot, rules: ruleData.rules, drafts: draftData.drafts };
+  render();
+}
+
+function render() {
+  renderSummary();
+  renderProducts();
+  renderRules();
+  renderDrafts();
+}
+
+function renderSummary() {
+  const summary = state.summary;
+  const metrics = [
+    ['Products', summary.product_count],
+    ['Low stock', summary.low_stock_count],
+    ['Open drafts', summary.draft_count],
+    ['Inventory value', money(summary.inventory_value_cents)]
+  ];
+  $('#summary').innerHTML = metrics
+    .map(([label, value]) => `<div class="metric"><span>${label}</span><strong>${value}</strong></div>`)
+    .join('');
+}
+
+function renderProducts() {
+  $('#product-rows').innerHTML = state.products.map(product => {
+    const short = product.available + product.incoming < product.minimum_order_quantity;
+    return `
+      <tr>
+        <td>
+          <strong>${escapeHtml(product.sku)}</strong>
+          <div>${escapeHtml(product.name)}</div>
+          <div class="muted">${escapeHtml(product.category)}</div>
+        </td>
+        <td>${escapeHtml(product.supplier_name)}</td>
+        <td class="${short ? 'risk' : ''}">
+          ${product.on_hand} on hand · ${product.reserved} reserved
+          <div class="muted">${product.incoming} incoming · ${product.available} available</div>
+        </td>
+        <td>
+          case ${product.case_size} · min ${product.minimum_order_quantity}
+          <div class="muted">${product.lead_time_days}d lead · cap ${product.capacity}</div>
+        </td>
+        <td>${money(product.unit_price_cents, product.currency)}</td>
+        <td><button onclick="editProduct(${product.id})">Edit</button></td>
+      </tr>`;
+  }).join('');
+}
+
+function renderRules() {
+  $('#rule-list').innerHTML = state.rules.map(rule => {
+    const scope = escapeHtml(rule.scope) + (rule.scope_value ? ' / ' + escapeHtml(rule.scope_value) : '');
+    return `
+      <article class="card">
+        <div class="card-head">
+          <div>
+            <strong>${escapeHtml(rule.name)}</strong>
+            <div class="muted">${escapeHtml(rule.kind)} · ${scope} · priority ${rule.priority}</div>
+          </div>
+          <span class="pill ${rule.enabled ? 'enabled' : ''}">${rule.enabled ? 'Active' : 'Inactive'}</span>
+        </div>
+        <p>Value: <strong>${rule.value}</strong></p>
+        <div class="actions">
+          <button onclick="editRule(${rule.id})">Edit</button>
+          <button class="danger" onclick="deleteRule(${rule.id})">Delete</button>
+        </div>
+      </article>`;
+  }).join('') || '<p>No rules.</p>';
+}
+
+function renderDrafts() {
+  $('#draft-list').innerHTML = state.drafts.map(draft => {
+    const lines = draft.lines
+      .map(line => `<li>${escapeHtml(line.sku)} · ${line.quantity} × ${money(line.unit_price_cents, draft.currency)}</li>`)
+      .join('');
+    const decisions = draft.status === 'draft'
+      ? `<button class="primary" onclick="statusDraft(${draft.id},'accepted')">Accept</button>
+         <button onclick="statusDraft(${draft.id},'rejected')">Reject</button>`
+      : '';
+    return `
+      <article class="card">
+        <div class="card-head">
+          <div>
+            <strong>Draft #${draft.id} · ${escapeHtml(draft.supplier_name)}</strong>
+            <div class="muted">${escapeHtml(draft.created_at)} · ${money(draft.total_cents, draft.currency)}</div>
+          </div>
+          <span class="pill ${draft.status}">${draft.status}</span>
+        </div>
+        <p>${escapeHtml(draft.rationale)}</p>
+        <ul class="lines">${lines}</ul>
+        <div class="actions">
+          ${decisions}
+          <a href="/api/drafts/export?id=${draft.id}" target="_blank"><button>Export JSON</button></a>
+        </div>
+      </article>`;
+  }).join('') || '<p>No draft requests yet. Run an analysis to create justified drafts.</p>';
+}
+
+/* Products ----------------------------------------------------------------- */
+
+const PRODUCT_NUMBER_FIELDS = [
+  'id', 'supplier_id', 'on_hand', 'reserved', 'incoming', 'capacity',
+  'case_size', 'minimum_order_quantity', 'lead_time_days', 'unit_price_cents'
+];
+
+const productForm = $('#product-form');
+
+$('#new-product').onclick = () => openProduct();
+window.editProduct = id => openProduct(state.products.find(product => product.id === id));
+
+function openProduct(product = {}) {
+  productForm.reset();
+  for (const [field, value] of Object.entries(product)) {
+    if (productForm.elements[field]) productForm.elements[field].value = value;
+  }
+  productForm.elements.supplier_id.innerHTML = state.suppliers
+    .map(supplier => `<option value="${supplier.id}">${escapeHtml(supplier.name)}</option>`)
+    .join('');
+  if (product.supplier_id) productForm.elements.supplier_id.value = product.supplier_id;
+  $('#product-dialog').showModal();
+}
+
+$('#save-product').onclick = async event => {
+  event.preventDefault();
+  if (!productForm.reportValidity()) return;
+  const data = Object.fromEntries(new FormData(productForm));
+  for (const field of PRODUCT_NUMBER_FIELDS) data[field] = Number(data[field] || 0);
+  data.enabled = true;
+  await post('/api/products', data);
+  $('#product-dialog').close();
+  await refresh();
+  toast('Product saved');
+};
+
+/* Rules -------------------------------------------------------------------- */
+
+const ruleForm = $('#rule-form');
+
+$('#new-rule').onclick = () => openRule();
+window.editRule = id => openRule(state.rules.find(rule => rule.id === id));
+
+function openRule(rule = { enabled: 1 }) {
+  ruleForm.reset();
+  for (const [field, value] of Object.entries(rule)) {
+    if (ruleForm.elements[field] && field !== 'enabled') ruleForm.elements[field].value = value;
+  }
+  ruleForm.elements.enabled.checked = !!rule.enabled;
+  $('#rule-dialog').showModal();
+}
+
+$('#save-rule').onclick = async event => {
+  event.preventDefault();
+  if (!ruleForm.reportValidity()) return;
+  const data = Object.fromEntries(new FormData(ruleForm));
+  data.id = Number(data.id || 0);
+  data.value = Number(data.value);
+  data.priority = Number(data.priority);
+  data.enabled = ruleForm.elements.enabled.checked;
+  await post('/api/rules', data);
+  $('#rule-dialog').close();
+  await refresh();
+  toast('Rule saved');
+};
+
+window.deleteRule = async id => {
+  if (!confirm('Delete this rule?')) return;
+  await post('/api/rules/delete', { id });
+  await refresh();
+};
+
+/* Draft requests ----------------------------------------------------------- */
+
+window.statusDraft = async (id, status) => {
+  await post('/api/drafts/status', { id, status });
+  await refresh();
+  toast(`Draft ${status}`);
+};
+
+/* Skills ------------------------------------------------------------------- */
+
+async function loadSkills() {
+  const { skills } = await api('/api/skills');
+  $('#skill-list').innerHTML = skills
+    .map(name => `<button onclick="readSkill('${name}')">${escapeHtml(name)}</button>`)
+    .join('');
+}
+
+window.readSkill = async name => {
+  const skill = await api('/api/skills/read?name=' + encodeURIComponent(name));
+  $('#skill-name').value = skill.name;
+  $('#skill-content').value = skill.content;
+};
+
+$('#new-skill').onclick = () => {
+  $('#skill-name').value = '';
+  $('#skill-content').value = '# New planning skill\n\n';
+};
+
+$('#save-skill').onclick = async () => {
+  await post('/api/skills', { name: $('#skill-name').value, content: $('#skill-content').value });
+  await loadSkills();
+  toast('Skill saved');
+};
+
+$('#delete-skill').onclick = async () => {
+  const name = $('#skill-name').value;
+  if (!name || !confirm(`Delete ${name}?`)) return;
+  const result = await post('/api/skills/delete', { name });
+  if (!result.ok) return toast('This built-in skill cannot be deleted');
+  $('#skill-name').value = '';
+  $('#skill-content').value = '';
+  await loadSkills();
+};
+
+/* Analysis ----------------------------------------------------------------- */
+
+$('#analyze').onclick = async () => {
+  const button = $('#analyze');
+  button.disabled = true;
+  button.textContent = 'Analyzing…';
+  $('#report').textContent = 'The planner is inspecting inventory and demand…';
+  try {
+    const result = await post('/api/analyze', {});
+    $('#report').textContent = result.report;
+    await refresh();
+  } catch (error) {
+    $('#report').textContent = 'Analysis failed: ' + error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Analyze depot';
+  }
+};
+
+refresh().catch(error => {
+  $('#report').textContent = 'Could not load depot: ' + error.message;
+});

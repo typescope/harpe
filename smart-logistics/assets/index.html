@@ -7,39 +7,155 @@
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
+
   <header>
-    <div><span class="mark">SL</span><strong>Smart Logistics</strong><small>Local depot planner</small></div>
+    <div>
+      <span class="mark">SL</span>
+      <strong>Smart Logistics</strong>
+      <small>Local depot planner</small>
+    </div>
     <button id="analyze" class="primary">Analyze depot</button>
   </header>
+
   <nav>
     <button data-page="products" class="active">Products</button>
     <button data-page="drafts">Draft requests</button>
     <button data-page="rules">Rules</button>
     <button data-page="skills">Skills</button>
   </nav>
+
   <main>
     <section id="products" class="page active">
       <div id="summary" class="summary"></div>
-      <div class="heading"><div><h1>Products</h1><p>Stock, commitments, and supplier terms.</p></div><button id="new-product">Add product</button></div>
-      <div class="table-wrap"><table><thead><tr><th>SKU / product</th><th>Supplier</th><th>Stock position</th><th>Terms</th><th>Unit price</th><th></th></tr></thead><tbody id="product-rows"></tbody></table></div>
+      <div class="heading">
+        <div>
+          <h1>Products</h1>
+          <p>Stock, commitments, and supplier terms.</p>
+        </div>
+        <button id="new-product">Add product</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>SKU / product</th>
+              <th>Supplier</th>
+              <th>Stock position</th>
+              <th>Terms</th>
+              <th>Unit price</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="product-rows"></tbody>
+        </table>
+      </div>
     </section>
+
     <section id="drafts" class="page">
-      <div class="heading"><div><h1>Draft order requests</h1><p>Human review is required. Accepting does not contact a supplier.</p></div></div>
+      <div class="heading">
+        <div>
+          <h1>Draft order requests</h1>
+          <p>Human review is required. Accepting does not contact a supplier.</p>
+        </div>
+      </div>
       <div id="draft-list" class="cards"></div>
     </section>
+
     <section id="rules" class="page">
-      <div class="heading"><div><h1>Rules</h1><p>Structured policy interpreted by the planner and enforced at draft creation.</p></div><button id="new-rule">Add rule</button></div>
+      <div class="heading">
+        <div>
+          <h1>Rules</h1>
+          <p>Structured policy interpreted by the planner and enforced at draft creation.</p>
+        </div>
+        <button id="new-rule">Add rule</button>
+      </div>
       <div id="rule-list" class="cards"></div>
     </section>
+
     <section id="skills" class="page">
-      <div class="heading"><div><h1>Skills</h1><p>Markdown planning guidance loaded on the next analysis turn.</p></div><button id="new-skill">Add skill</button></div>
-      <div class="skill-layout"><aside id="skill-list"></aside><div class="editor"><label>Name<input id="skill-name" placeholder="cold-chain"></label><label>Markdown<textarea id="skill-content" rows="22"></textarea></label><div><button id="save-skill" class="primary">Save skill</button><button id="delete-skill" class="danger">Delete</button></div></div></div>
+      <div class="heading">
+        <div>
+          <h1>Skills</h1>
+          <p>Markdown planning guidance loaded on the next analysis turn.</p>
+        </div>
+        <button id="new-skill">Add skill</button>
+      </div>
+      <div class="skill-layout">
+        <aside id="skill-list"></aside>
+        <div class="editor">
+          <label>Name<input id="skill-name" placeholder="cold-chain"></label>
+          <label>Markdown<textarea id="skill-content" rows="22"></textarea></label>
+          <div>
+            <button id="save-skill" class="primary">Save skill</button>
+            <button id="delete-skill" class="danger">Delete</button>
+          </div>
+        </div>
+      </div>
     </section>
-    <section class="analysis"><h2>Latest analysis</h2><pre id="report">No analysis run in this browser yet.</pre></section>
+
+    <section class="analysis">
+      <h2>Latest analysis</h2>
+      <pre id="report">No analysis run in this browser yet.</pre>
+    </section>
   </main>
 
-  <dialog id="product-dialog"><form method="dialog" id="product-form"><h2>Product</h2><input type="hidden" name="id"><div class="grid"><label>SKU<input name="sku" required></label><label>Name<input name="name" required></label><label>Category<input name="category" required></label><label>Supplier<select name="supplier_id"></select></label><label>On hand<input name="on_hand" type="number" min="0" required></label><label>Reserved<input name="reserved" type="number" min="0" required></label><label>Incoming<input name="incoming" type="number" min="0" required></label><label>Capacity<input name="capacity" type="number" min="1" required></label><label>Case size<input name="case_size" type="number" min="1" required></label><label>Minimum order<input name="minimum_order_quantity" type="number" min="1" required></label><label>Lead time, days<input name="lead_time_days" type="number" min="0" required></label><label>Unit price, cents<input name="unit_price_cents" type="number" min="0" required></label></div><menu><button value="cancel">Cancel</button><button value="default" class="primary" id="save-product">Save</button></menu></form></dialog>
-  <dialog id="rule-dialog"><form method="dialog" id="rule-form"><h2>Rule</h2><input type="hidden" name="id"><label>Name<input name="name" required></label><label>Kind<select name="kind"><option>safety_stock_days</option><option>maximum_line_quantity</option><option>maximum_draft_value</option><option>minimum_available_units</option></select></label><label>Scope<select name="scope"><option>global</option><option>category</option><option>product</option><option>supplier</option></select></label><label>Scope value<input name="scope_value" placeholder="Blank for global"></label><label>Value<input name="value" type="number" min="0" step="any" required></label><label>Priority<input name="priority" type="number" value="0"></label><label class="check"><input name="enabled" type="checkbox" checked> Enabled</label><menu><button value="cancel">Cancel</button><button value="default" class="primary" id="save-rule">Save</button></menu></form></dialog>
+  <dialog id="product-dialog">
+    <form method="dialog" id="product-form">
+      <h2>Product</h2>
+      <input type="hidden" name="id">
+      <div class="grid">
+        <label>SKU<input name="sku" required></label>
+        <label>Name<input name="name" required></label>
+        <label>Category<input name="category" required></label>
+        <label>Supplier<select name="supplier_id"></select></label>
+        <label>On hand<input name="on_hand" type="number" min="0" required></label>
+        <label>Reserved<input name="reserved" type="number" min="0" required></label>
+        <label>Incoming<input name="incoming" type="number" min="0" required></label>
+        <label>Capacity<input name="capacity" type="number" min="1" required></label>
+        <label>Case size<input name="case_size" type="number" min="1" required></label>
+        <label>Minimum order<input name="minimum_order_quantity" type="number" min="1" required></label>
+        <label>Lead time, days<input name="lead_time_days" type="number" min="0" required></label>
+        <label>Unit price, cents<input name="unit_price_cents" type="number" min="0" required></label>
+      </div>
+      <menu>
+        <button type="button" data-close="product-dialog">Cancel</button>
+        <button value="default" class="primary" id="save-product">Save</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="rule-dialog">
+    <form method="dialog" id="rule-form">
+      <h2>Rule</h2>
+      <input type="hidden" name="id">
+      <label>Name<input name="name" required></label>
+      <label>Kind
+        <select name="kind">
+          <option>safety_stock_days</option>
+          <option>maximum_line_quantity</option>
+          <option>maximum_draft_value</option>
+          <option>minimum_available_units</option>
+        </select>
+      </label>
+      <label>Scope
+        <select name="scope">
+          <option>global</option>
+          <option>category</option>
+          <option>product</option>
+          <option>supplier</option>
+        </select>
+      </label>
+      <label>Scope value<input name="scope_value" placeholder="Blank for global"></label>
+      <label>Value<input name="value" type="number" min="0" step="any" required></label>
+      <label>Priority<input name="priority" type="number" value="0"></label>
+      <label class="check"><input name="enabled" type="checkbox" checked> Enabled</label>
+      <menu>
+        <button type="button" data-close="rule-dialog">Cancel</button>
+        <button value="default" class="primary" id="save-rule">Save</button>
+      </menu>
+    </form>
+  </dialog>
+
   <div id="toast"></div>
   <script src="/app.js"></script>
 </body>
