@@ -49,7 +49,7 @@ interface GitHub
   def getPR(): PRInfo
   def readFile(path: String, start: Int = 0, ends: Int = -1): String
   def findDefinition(identifier: String): List[DefinitionMatch]
-  def submitReview(body: String, comments: List[LineComment]): Unit receives stdout
+  def saveDraftReview(body: String, comments: List[LineComment]): Unit receives stdout
 end
 ```
 
@@ -65,7 +65,7 @@ def runTask(): Unit receives stdout, github =
   for diff in pr.diffs do
     println "\{diff.status} | \{diff.path} (+\{diff.additions} -\{diff.deletions})"
 
-  github.submitReview("Draft review summary", [])
+  github.saveDraftReview("Draft review summary", [])
 ```
 
 The guest module in `sandbox/jo.toml` depends only on `api` and the pure `caps`
@@ -87,10 +87,16 @@ with api.github = ghImpl in
 ## Draft-only is the boundary
 
 `AGENT.md` instructs the agent to submit reviews as **pending** drafts, and the
-capability enforces that policy. `submitReview` has no verdict argument; its
+capability enforces that policy. `saveDraftReview` has no verdict argument; its
 trusted implementation always omits GitHub's event field, which saves a draft.
 Publishing, standalone comments, and merging are absent from `interface GitHub`,
 so a model-written program that attempts any of them does not compile.
+
+This is a typical example of **REST API surface narrowing**, and a strong point
+of Jo's capability model. The trusted runtime can integrate with GitHub's broad
+REST API, while the generated program sees a smaller typed interface containing
+only the operations appropriate for its role. Authority is reduced structurally,
+not by asking the model to avoid dangerous endpoints.
 
 To add a publishing operation, widen the interface and protect the effect inside
 the trusted implementation with [human approval](/concepts/approvals/). The
