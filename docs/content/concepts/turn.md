@@ -93,7 +93,9 @@ private class LiveInteract(render: String => Unit)
   private var provisional: String = ""
 
   def cancelled: Bool = false
-  def pause(seconds: Float): Bool = false
+  def pause(seconds: Float): Bool =
+    py.module("time").sleep(seconds)
+    false
 
   def emit(event: TurnEvent): Unit =
     match event
