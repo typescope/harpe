@@ -24,7 +24,6 @@ class Database(path: String, home: String)
       CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY, sku TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
         category TEXT NOT NULL,
-        on_hand INTEGER NOT NULL DEFAULT 0 CHECK(on_hand >= 0),
         reserved INTEGER NOT NULL DEFAULT 0 CHECK(reserved >= 0),
         incoming INTEGER NOT NULL DEFAULT 0 CHECK(incoming >= 0),
         incoming_eta TEXT NOT NULL DEFAULT '',
@@ -47,11 +46,27 @@ class Database(path: String, home: String)
       );
       CREATE INDEX IF NOT EXISTS product_suppliers_supplier
         ON product_suppliers(supplier_id);
-      CREATE TABLE IF NOT EXISTS demand_history (
+      -- Every unit that entered or left the depot. Stock on hand is the sum of
+      -- this ledger, never a number somebody typed, and demand history is the
+      -- issue rows rolled up by day.
+      CREATE TABLE IF NOT EXISTS stock_movements (
+        id INTEGER PRIMARY KEY,
         product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-        demand_date TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity >= 0),
-        PRIMARY KEY(product_id, demand_date)
+        kind TEXT NOT NULL CHECK(kind IN ('receipt','issue','adjustment')),
+        quantity INTEGER NOT NULL CHECK(quantity != 0),
+        occurred_at TEXT NOT NULL,
+        reference TEXT NOT NULL DEFAULT '',
+        note TEXT NOT NULL DEFAULT '',
+        CHECK((kind = 'receipt' AND quantity > 0)
+           OR (kind = 'issue' AND quantity < 0)
+           OR kind = 'adjustment')
       );
+      CREATE INDEX IF NOT EXISTS stock_movements_product
+        ON stock_movements(product_id, occurred_at);
+      CREATE VIEW IF NOT EXISTS product_stock AS
+        SELECT p.id AS product_id, COALESCE(SUM(m.quantity),0) AS on_hand
+        FROM products p LEFT JOIN stock_movements m ON m.product_id = p.id
+        GROUP BY p.id;
       CREATE TABLE IF NOT EXISTS rules (
         id INTEGER PRIMARY KEY, text TEXT NOT NULL,
         enabled INTEGER NOT NULL DEFAULT 1,
@@ -105,21 +120,21 @@ class Database(path: String, home: String)
     ))
     conn.executemany("""
       INSERT INTO products
-        (id,sku,name,category,on_hand,reserved,incoming,incoming_eta,capacity)
-      VALUES(?,?,?,?,?,?,?,?,?)
+        (id,sku,name,category,reserved,incoming,incoming_eta,capacity)
+      VALUES(?,?,?,?,?,?,?,?)
     """, py.list(
-      py.list(1,"FOOD-101","Pasta 500 g","food",34,8,0,"",240),
-      py.list(2,"FOOD-102","Tomato sauce","food",18,6,0,"",180),
-      py.list(3,"FOOD-103","Rice 1 kg","food",110,10,24,inDays(3),260),
-      py.list(4,"FOOD-104","Olive oil 1 L","food",7,2,0,"",96),
-      py.list(5,"PACK-201","Small cartons","packaging",420,80,0,"",1000),
-      py.list(6,"PACK-202","Large cartons","packaging",65,20,100,inDays(5),500),
-      py.list(7,"PACK-203","Paper tape","packaging",22,7,0,"",160),
-      py.list(8,"PACK-204","Pallet wrap","packaging",88,12,0,"",180),
-      py.list(9,"HYGI-301","Hand soap","hygiene",14,4,0,"",120),
-      py.list(10,"HYGI-302","Surface cleaner","hygiene",55,10,0,"",150),
-      py.list(11,"HYGI-303","Paper towels","hygiene",9,3,0,"",90),
-      py.list(12,"HYGI-304","Waste bags","hygiene",72,15,20,inDays(2),220)
+      py.list(1,"FOOD-101","Pasta 500 g","food",8,0,"",240),
+      py.list(2,"FOOD-102","Tomato sauce","food",6,0,"",180),
+      py.list(3,"FOOD-103","Rice 1 kg","food",10,24,inDays(3),260),
+      py.list(4,"FOOD-104","Olive oil 1 L","food",2,0,"",96),
+      py.list(5,"PACK-201","Small cartons","packaging",80,0,"",1000),
+      py.list(6,"PACK-202","Large cartons","packaging",20,100,inDays(5),500),
+      py.list(7,"PACK-203","Paper tape","packaging",7,0,"",160),
+      py.list(8,"PACK-204","Pallet wrap","packaging",12,0,"",180),
+      py.list(9,"HYGI-301","Hand soap","hygiene",4,0,"",120),
+      py.list(10,"HYGI-302","Surface cleaner","hygiene",10,0,"",150),
+      py.list(11,"HYGI-303","Paper towels","hygiene",3,0,"",90),
+      py.list(12,"HYGI-304","Waste bags","hygiene",15,20,inDays(2),220)
     ))
 
     // Preferred source first, then any alternate. Alternates are dearer and
@@ -144,22 +159,7 @@ class Database(path: String, home: String)
       py.list(12,3,195,6,20,40,1)
     ))
 
-    val datetime = py.module("datetime")
-    val today = datetime.date.today()
-    var demandRows = py.list()
-    var productId = 1
-    while productId <= 12 do
-      var age = 1
-      while age <= 28 do
-        val day = today.__sub__(datetime.timedelta(days = age))
-        val base = (productId * 3 + age * 5) % 9 + 1
-        val quantity = if productId == 4 || productId == 11 then base + 3 else base
-        demandRows.append(py.list(productId, day.isoformat(), quantity))
-        age = age + 1
-      productId = productId + 1
-    conn.executemany(
-      "INSERT INTO demand_history(product_id,demand_date,quantity) VALUES(?,?,?)",
-      demandRows)
+    seedMovements(conn)
 
     conn.executemany("""
       INSERT INTO rules(text,enabled,created_at,updated_at)
@@ -171,6 +171,42 @@ class Database(path: String, home: String)
       py.list("Keep the total value of any single draft at or below 150000 cents. Say so in the report when this is what limited an order."),
       py.list("Keep at least 10 available units of every product after reserved commitments.")
     ))
+
+  // Four weeks of issues per product, an opening receipt sized so that the
+  // ledger settles on the intended stock level, and a mid-period restock for a
+  // few products so the movement list shows more than one kind of row.
+  private def seedMovements(conn: py.Dynamic): Unit =
+    val datetime = py.module("datetime")
+    val today = datetime.date.today()
+    val targets = py.list(34,18,110,7,420,65,22,88,14,55,9,72)
+    val restocks = py.dict(3 ~ 60, 6 ~ 40, 12 ~ 80)
+    var movements = py.list()
+    var productId = 1
+    while productId <= 12 do
+      var issued = 0
+      var age = 28
+      while age >= 1 do
+        val day = today.__sub__(datetime.timedelta(days = age))
+        val base = (productId * 3 + age * 5) % 9 + 1
+        val quantity = if productId == 4 || productId == 11 then base + 3 else base
+        issued = issued + quantity
+        movements.append(py.list(productId, "issue", 0 - quantity,
+          "\{day.isoformat().asString} 09:00:00", "SO-\{productId}\{age}", ""))
+        age = age - 1
+      val restock = restocks.get(productId, 0).asInt
+      if restock > 0 then
+        val day = today.__sub__(datetime.timedelta(days = 10))
+        movements.append(py.list(productId, "receipt", restock,
+          "\{day.isoformat().asString} 07:30:00", "GRN-\{productId}", "supplier delivery"))
+      val opening = targets[productId - 1].asInt + issued - restock
+      val start = today.__sub__(datetime.timedelta(days = 29))
+      movements.append(py.list(productId, "receipt", opening,
+        "\{start.isoformat().asString} 08:00:00", "OPENING", "opening balance"))
+      productId = productId + 1
+    conn.executemany("""
+      INSERT INTO stock_movements(product_id,kind,quantity,occurred_at,reference,note)
+      VALUES(?,?,?,?,?,?)
+    """, movements)
 
   private def rows(sql: String): py.List = rowsWith(sql,py.list())
 
@@ -188,13 +224,14 @@ class Database(path: String, home: String)
       "suppliers" ~ suppliers(),
       "summary" ~ rows("""
         SELECT COUNT(*) AS product_count,
-          SUM(CASE WHEN p.on_hand-p.reserved+p.incoming <
+          SUM(CASE WHEN st.on_hand-p.reserved+p.incoming <
                 (SELECT MIN(ps.minimum_order_quantity) FROM product_suppliers ps
                  WHERE ps.product_id = p.id)
               THEN 1 ELSE 0 END) AS low_stock_count,
-          SUM(p.on_hand * COALESCE(\{preferredPrice},0)) AS inventory_value_cents,
+          SUM(st.on_hand * COALESCE(\{preferredPrice},0)) AS inventory_value_cents,
           (SELECT COUNT(*) FROM draft_orders WHERE status='draft') AS draft_count
-        FROM products p WHERE p.enabled=1
+        FROM products p JOIN product_stock st ON st.product_id = p.id
+        WHERE p.enabled=1
       """)[0]
     )
 
@@ -216,19 +253,94 @@ class Database(path: String, home: String)
     FROM suppliers s ORDER BY s.name
   """)
 
-  // Daily demand for every product, for the sparklines on the products page.
+  // Daily demand for every product: the issue rows, rolled up by day.
   def demand(days: Int): py.List =
     val safe = if days < 1 then 1 else if days > 365 then 365 else days
     rowsWith("""
-      SELECT product_id, demand_date, quantity FROM demand_history
-      WHERE demand_date >= date('now', ?)
+      SELECT product_id, date(occurred_at) AS demand_date, SUM(-quantity) AS quantity
+      FROM stock_movements
+      WHERE kind = 'issue' AND date(occurred_at) >= date('now', ?)
+      GROUP BY product_id, date(occurred_at)
       ORDER BY product_id, demand_date
     """, py.list("-\{safe} days"))
 
+  def movements(productId: Int, limit: Int): py.List =
+    val safe = if limit < 1 then 1 else if limit > 500 then 500 else limit
+    if productId == 0 then
+      rowsWith("""
+        SELECT m.*, p.sku, p.name FROM stock_movements m
+        JOIN products p ON p.id = m.product_id
+        ORDER BY m.occurred_at DESC, m.id DESC LIMIT ?
+      """, py.list(safe))
+    else
+      rowsWith("""
+        SELECT m.*, p.sku, p.name FROM stock_movements m
+        JOIN products p ON p.id = m.product_id
+        WHERE m.product_id = ?
+        ORDER BY m.occurred_at DESC, m.id DESC LIMIT ?
+      """, py.list(productId, safe))
+
+  // The one way stock changes. Receipts add, issues subtract, adjustments do
+  // either, and the ledger may never go negative or past storage capacity.
+  def recordMovement(body: py.Dict): Int =
+    val productId = body.get("product_id", 0).asInt
+    val kind = body.get("kind", "").asString
+    val amount = body.get("quantity", 0).asInt
+    if kind != "receipt" && kind != "issue" && kind != "adjustment" then
+      abort "unknown movement kind"
+    if amount == 0 then abort "a movement needs a quantity"
+    val signed = if kind == "issue" then 0 - magnitude(amount)
+      else if kind == "receipt" then magnitude(amount)
+      else amount
+    val conn = connect()
+    conn.execute("BEGIN IMMEDIATE")
+    val outcome = py.try: writeMovement(conn, productId, kind, signed, body)
+    match outcome
+    case Ok(id) =>
+      conn.commit()
+      conn.close()
+      id
+    case Err(error) =>
+      conn.rollback()
+      conn.close()
+      abort error.message
+
+  private def magnitude(value: Int): Int = if value < 0 then 0 - value else value
+
+  private def writeMovement(
+    conn: py.Dynamic,
+    productId: Int,
+    kind: String,
+    signed: Int,
+    body: py.Dict
+  ): Int =
+    val product = conn.execute(
+      "SELECT capacity FROM products WHERE id = ? AND enabled = 1",
+      py.list(productId)).fetchone()
+    if product.isNone then abort "unknown or disabled product"
+    val capacity = product[0].asInt
+    val balance = conn.execute(
+      "SELECT COALESCE(SUM(quantity),0) FROM stock_movements WHERE product_id = ?",
+      py.list(productId)).fetchone()[0].asInt
+    val after = balance + signed
+    if after < 0 then
+      abort "only \{balance} in stock, so that movement cannot be recorded"
+    if after > capacity then
+      abort "that movement would exceed the storage capacity of \{capacity}"
+    val cursor = conn.execute("""
+      INSERT INTO stock_movements(product_id,kind,quantity,occurred_at,reference,note)
+      VALUES(?,?,?,COALESCE(NULLIF(?,''),datetime('now')),?,?)
+    """, py.list(productId, kind, signed,
+      body.get("occurred_at", "").asString.trim,
+      body.get("reference", "").asString.trim,
+      body.get("note", "").asString.trim))
+    cursor.lastrowid.asInt
+
   def products(): py.List =
     val result = rows("""
-      SELECT p.*, (p.on_hand - p.reserved) AS available
-      FROM products p ORDER BY p.sku
+      SELECT p.*, st.on_hand, (st.on_hand - p.reserved) AS available
+      FROM products p JOIN product_stock st ON st.product_id = p.id
+      ORDER BY p.sku
     """)
     for item in result do
       val product = item.cast[py.Dict]
@@ -281,15 +393,24 @@ class Database(path: String, home: String)
     val id = if given == 0 then
       val cursor = conn.execute("""
         INSERT INTO products
-          (sku,name,category,on_hand,reserved,incoming,incoming_eta,capacity,enabled)
-        VALUES(?,?,?,?,?,?,?,?,?)
+          (sku,name,category,reserved,incoming,incoming_eta,capacity,enabled)
+        VALUES(?,?,?,?,?,?,?,?)
       """, productParams(body))
-      cursor.lastrowid.asInt
+      val created = cursor.lastrowid.asInt
+      // Stock only ever arrives through the ledger, opening balances included.
+      val opening = body.get("opening_stock", 0).asInt
+      if opening > 0 then
+        conn.execute("""
+          INSERT INTO stock_movements
+            (product_id,kind,quantity,occurred_at,reference,note)
+          VALUES(?,'receipt',?,datetime('now'),'OPENING','opening balance')
+        """, py.list(created, opening))
+      created
     else
       val params = productParams(body)
       params.append(given)
       conn.execute("""
-        UPDATE products SET sku=?,name=?,category=?,on_hand=?,reserved=?,
+        UPDATE products SET sku=?,name=?,category=?,reserved=?,
           incoming=?,incoming_eta=?,capacity=?,enabled=? WHERE id=?
       """, params)
       given
@@ -334,22 +455,11 @@ class Database(path: String, home: String)
     body.get("sku", "").asString.trim,
     body.get("name", "").asString.trim,
     body.get("category", "").asString.trim,
-    body.get("on_hand", 0).asInt,
     body.get("reserved", 0).asInt,
     body.get("incoming", 0).asInt,
     body.get("incoming_eta", "").asString.trim,
     body.get("capacity", 1).asInt,
     if body.get("enabled", true).asBool then 1 else 0)
-
-  def saveDemand(body: py.Dict): Unit =
-    val conn = connect()
-    conn.execute("""
-      INSERT INTO demand_history(product_id,demand_date,quantity) VALUES(?,?,?)
-      ON CONFLICT(product_id,demand_date) DO UPDATE SET quantity=excluded.quantity
-    """, py.list(body.get("product_id").asInt, body.get("demand_date").asString,
-                   body.get("quantity").asInt))
-    conn.commit()
-    conn.close()
 
   def saveRule(body: py.Dict): Int =
     val text = body.get("text", "").asString.trim

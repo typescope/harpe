@@ -22,6 +22,7 @@ class Server(brain: Model, home: String, databasePath: String, database: Databas
     case Http.Get("/api/drafts") => Http.respondJson(py.dict("drafts" ~ database.drafts()))
     case Http.Get("/api/analysis") => Http.respondJson(py.dict("runs" ~ database.analyses()))
     case Http.Get("/api/demand") => Http.respondJson(py.dict("demand" ~ database.demand(28)))
+    case Http.Get("/api/movements") => movements()
     case Http.Get("/api/suppliers") => Http.respondJson(py.dict("suppliers" ~ database.suppliers()))
     case Http.Get("/api/skills") => Http.respondJson(py.dict("skills" ~ database.skillNames()))
     case Http.Get("/api/skills/read") => skillRead()
@@ -29,7 +30,7 @@ class Server(brain: Model, home: String, databasePath: String, database: Databas
     case Http.Get("/api/skills/revision") => skillRevision()
     case Http.Get("/api/drafts/export") => draftExport()
     case Http.Post("/api/products") => saveProduct()
-    case Http.Post("/api/demand") => saveDemand()
+    case Http.Post("/api/movements") => recordMovement()
     case Http.Post("/api/rules") => saveRule()
     case Http.Post("/api/rules/delete") => deleteRule()
     case Http.Post("/api/skills") => saveSkill()
@@ -58,9 +59,13 @@ class Server(brain: Model, home: String, databasePath: String, database: Databas
     val id = database.saveProduct(body())
     ok(py.dict("id" ~ id))
 
-  private def saveDemand(): py.List receives request =
-    database.saveDemand(body())
-    okEmpty()
+  private def movements(): py.List receives request =
+    val productId = Int.parse(query("product_id")) rescue None => 0
+    Http.respondJson(py.dict("movements" ~ database.movements(productId, 100)))
+
+  private def recordMovement(): py.List receives request =
+    val id = database.recordMovement(body())
+    ok(py.dict("id" ~ id))
 
   private def saveRule(): py.List receives request =
     val id = database.saveRule(body())

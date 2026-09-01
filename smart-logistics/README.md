@@ -29,9 +29,9 @@ SQLite, defined in `src/Database.jo` and stored in `data/logistics.db`.
 | Table | Holds |
 | --- | --- |
 | `suppliers` | Supplier name and trading currency. |
-| `products` | Item master and the current stock snapshot. |
+| `products` | Item master, reservations and expected arrivals. |
 | `product_suppliers` | Terms for one product-supplier pair. |
-| `demand_history` | Units shipped per product per day. |
+| `stock_movements` | Every receipt, issue and adjustment. |
 | `rules` | Administrator policy, in plain language. |
 | `draft_orders`, `draft_order_lines` | Proposed orders awaiting review. |
 | `skill_revisions` | Version history of the editable planning skills. |
@@ -57,10 +57,29 @@ CREATE TABLE product_suppliers (
 
 The planner defaults to `preferred`; a rule can send it elsewhere, and
 `saveDraftOrder` takes the chosen pair's terms and snapshots its price onto the
-line. Rules themselves are text and only text, so nothing machine-checks them:
-validation covers physical facts only—sourcing, case size, minimum order
-quantity, storage capacity, duplicate lines—and the administrator reviewing each
-draft is the gate on policy.
+line.
 
-The schema stays deliberately small for a demo: stock is a snapshot rather than a
-movement ledger, and there are no locations, bins, or units of measure.
+Stock on hand is never stored. Each shipment out, delivery in and count
+correction is a row in `stock_movements`, and the balance is their sum:
+
+```sql
+CREATE VIEW product_stock AS
+  SELECT p.id AS product_id, COALESCE(SUM(m.quantity), 0) AS on_hand
+  FROM products p LEFT JOIN stock_movements m ON m.product_id = p.id
+  GROUP BY p.id;
+```
+
+So every stock figure can be traced to the movements that produced it, and
+demand history is the `issue` rows rolled up by day rather than a number
+somebody typed. Movements are refused if they would drive stock below zero or
+past storage capacity. `reserved` and `incoming` stay columns on `products`:
+they are commitments and expectations, not movements.
+
+Rules are text and only text, so nothing machine-checks them: validation covers
+physical facts only—sourcing, case size, minimum order quantity, storage
+capacity, duplicate lines—and the administrator reviewing each draft is the gate
+on policy.
+
+The schema stays deliberately small for a demo: there are no locations, bins, or
+units of measure, and nothing tracks cost or valuation beyond the purchase price
+on each draft line.

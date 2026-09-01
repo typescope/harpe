@@ -20,6 +20,7 @@
   <nav>
     <button data-page="products" class="active">Products</button>
     <button data-page="suppliers">Suppliers</button>
+    <button data-page="movements">Movements</button>
     <button data-page="drafts">Draft requests</button>
     <button data-page="rules">Rules</button>
     <button data-page="skills">Skills</button>
@@ -43,6 +44,7 @@
               <th>Stock position</th>
               <th>Demand, 28 days</th>
               <th>Sources</th>
+              <th></th>
               <th></th>
             </tr>
           </thead>
@@ -71,6 +73,31 @@
             </tr>
           </thead>
           <tbody id="supplier-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="movements" class="page">
+      <div class="heading">
+        <div>
+          <h1>Stock movements</h1>
+          <p>Every unit in or out. Stock on hand is the sum of this ledger.</p>
+        </div>
+        <button id="new-movement">Record movement</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Product</th>
+              <th>Kind</th>
+              <th>Quantity</th>
+              <th>Reference</th>
+              <th>Note</th>
+            </tr>
+          </thead>
+          <tbody id="movement-rows"></tbody>
         </table>
       </div>
     </section>
@@ -134,11 +161,12 @@
         <label>Name<input name="name" required></label>
         <label>Category<input name="category" required></label>
         <label>Storage capacity<input name="capacity" type="number" min="1" required></label>
-        <label>On hand<input name="on_hand" type="number" min="0" required></label>
         <label>Reserved<input name="reserved" type="number" min="0" required></label>
         <label>Incoming<input name="incoming" type="number" min="0" required></label>
         <label>Incoming arrives<input name="incoming_eta" type="date"></label>
+        <label id="opening-field">Opening stock<input name="opening_stock" type="number" min="0" value="0"></label>
       </div>
+      <p class="hint" id="stock-hint"></p>
 
       <h3>Sources</h3>
       <p class="hint">
@@ -152,6 +180,35 @@
       <menu>
         <button type="button" data-close="product-dialog">Cancel</button>
         <button value="default" class="primary" id="save-product">Save</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="movement-dialog">
+    <form method="dialog" id="movement-form">
+      <h2>Record movement</h2>
+      <input type="hidden" name="product_id">
+      <p class="hint" id="movement-product"></p>
+      <div class="grid">
+        <label>Kind
+          <select name="kind">
+            <option value="issue">Issue — shipped out</option>
+            <option value="receipt">Receipt — arrived</option>
+            <option value="adjustment">Adjustment — count correction</option>
+          </select>
+        </label>
+        <label>Quantity<input name="quantity" type="number" required></label>
+        <label>Reference<input name="reference" placeholder="SO-1042, delivery note"></label>
+        <label>When<input name="occurred_at" type="datetime-local"></label>
+      </div>
+      <label>Note<input name="note" placeholder="Optional"></label>
+      <p class="hint">
+        Issues and receipts are entered as positive quantities. An adjustment may
+        be negative, and is how a stock count correction is recorded.
+      </p>
+      <menu>
+        <button type="button" data-close="movement-dialog">Cancel</button>
+        <button value="default" class="primary" id="save-movement">Record</button>
       </menu>
     </form>
   </dialog>

@@ -7,7 +7,7 @@
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 
-let state = { products: [], suppliers: [], rules: [], drafts: [], demand: {}, runs: [] };
+let state = { products: [], suppliers: [], rules: [], drafts: [], demand: {}, runs: [], movements: [] };
 
 /* Helpers ------------------------------------------------------------------ */
 
@@ -55,19 +55,21 @@ $$('nav button').forEach(button => {
 /* Rendering ---------------------------------------------------------------- */
 
 async function refresh() {
-  const [snapshot, ruleData, draftData, demandData, runData] = await Promise.all([
+  const [snapshot, ruleData, draftData, demandData, runData, movementData] = await Promise.all([
     api('/api/snapshot'),
     api('/api/rules'),
     api('/api/drafts'),
     api('/api/demand'),
-    api('/api/analysis')
+    api('/api/analysis'),
+    api('/api/movements')
   ]);
   state = {
     ...snapshot,
     rules: ruleData.rules,
     drafts: draftData.drafts,
     demand: groupDemand(demandData.demand),
-    runs: runData.runs
+    runs: runData.runs,
+    movements: movementData.movements
   };
   render();
 }
@@ -83,6 +85,7 @@ function render() {
   renderSummary();
   renderProducts();
   renderSuppliers();
+  renderMovements();
   renderRules();
   renderDrafts();
   renderRuns();
@@ -130,6 +133,7 @@ function renderProducts() {
         </td>
         <td>${demandCell(product.id)}</td>
         <td>${sources}</td>
+        <td><button onclick="openMovement(${product.id})">Movement</button></td>
         <td><button onclick="editProduct(${product.id})">Edit</button></td>
       </tr>`;
   }).join('');
@@ -157,6 +161,20 @@ function sparkline(values, width = 120, height = 26) {
          role="img" aria-label="Daily demand, peak ${peak}">
       <polyline points="${points}"></polyline>
     </svg>`;
+}
+
+const MOVEMENT_LABELS = { receipt: 'Receipt', issue: 'Issue', adjustment: 'Adjustment' };
+
+function renderMovements() {
+  $('#movement-rows').innerHTML = state.movements.map(movement => `
+      <tr>
+        <td class="muted">${escapeHtml(movement.occurred_at)}</td>
+        <td><strong>${escapeHtml(movement.sku)}</strong><div class="muted">${escapeHtml(movement.name)}</div></td>
+        <td>${MOVEMENT_LABELS[movement.kind] ?? escapeHtml(movement.kind)}</td>
+        <td class="${movement.quantity < 0 ? 'out' : 'in'}">${movement.quantity > 0 ? '+' : ''}${movement.quantity}</td>
+        <td>${escapeHtml(movement.reference)}</td>
+        <td class="muted">${escapeHtml(movement.note)}</td>
+      </tr>`).join('') || '<tr><td colspan="6" class="muted">No movements recorded yet.</td></tr>';
 }
 
 function renderSuppliers() {
@@ -227,7 +245,7 @@ function renderDrafts() {
 
 /* Products ----------------------------------------------------------------- */
 
-const PRODUCT_NUMBER_FIELDS = ['on_hand', 'reserved', 'incoming', 'capacity'];
+const PRODUCT_NUMBER_FIELDS = ['reserved', 'incoming', 'capacity'];
 
 const productForm = $('#product-form');
 
@@ -240,6 +258,12 @@ function openProduct(product = {}) {
     if (productForm.elements[field]) productForm.elements[field].value = value;
   }
   renderSourceRows(product.sources ?? []);
+  // Stock on an existing product is the ledger's answer, so it is shown, not typed.
+  const existing = Boolean(product.id);
+  $('#opening-field').hidden = existing;
+  $('#stock-hint').textContent = existing
+    ? `${product.on_hand} on hand, from the stock ledger. Record a movement to change it.`
+    : 'Opening stock is recorded as a receipt in the stock ledger.';
   $('#product-dialog').showModal();
 }
 
@@ -289,13 +313,49 @@ $('#save-product').onclick = async event => {
     return toast('Minimum order must be a whole number of cases');
   }
   const data = Object.fromEntries(new FormData(productForm));
-  for (const field of ['id', ...PRODUCT_NUMBER_FIELDS]) data[field] = Number(data[field] || 0);
+  for (const field of ['id', 'opening_stock', ...PRODUCT_NUMBER_FIELDS]) {
+    data[field] = Number(data[field] || 0);
+  }
   data.enabled = true;
   data.sources = sources;
   await post('/api/products', data);
   $('#product-dialog').close();
   await refresh();
   toast('Product saved');
+};
+
+/* Stock movements ---------------------------------------------------------- */
+
+const movementForm = $('#movement-form');
+
+$('#new-movement').onclick = () => openMovement(state.products[0]?.id);
+
+window.openMovement = productId => {
+  const product = state.products.find(candidate => candidate.id === productId);
+  if (!product) return toast('Add a product first');
+  movementForm.reset();
+  movementForm.elements.product_id.value = product.id;
+  $('#movement-product').textContent =
+    `${product.sku} · ${product.name} — ${product.on_hand} on hand, capacity ${product.capacity}`;
+  $('#movement-dialog').showModal();
+};
+
+$('#save-movement').onclick = async event => {
+  event.preventDefault();
+  if (!movementForm.reportValidity()) return;
+  const data = Object.fromEntries(new FormData(movementForm));
+  data.product_id = Number(data.product_id);
+  data.quantity = Number(data.quantity);
+  // datetime-local gives "2026-09-02T14:30"; SQLite wants a space and seconds.
+  data.occurred_at = data.occurred_at ? data.occurred_at.replace('T', ' ') + ':00' : '';
+  try {
+    await post('/api/movements', data);
+  } catch (error) {
+    return toast('Rejected: the ledger cannot go negative or past capacity');
+  }
+  $('#movement-dialog').close();
+  await refresh();
+  toast('Movement recorded');
 };
 
 /* Rules -------------------------------------------------------------------- */

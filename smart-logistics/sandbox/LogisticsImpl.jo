@@ -14,8 +14,10 @@ class LogisticsImpl(path: String)
   def products(): List[api.Product] =
     val conn = connect()
     val rows = conn.execute("""
-      SELECT id, sku, name, category, on_hand, reserved, incoming, incoming_eta, capacity
-      FROM products WHERE enabled = 1 ORDER BY sku
+      SELECT p.id, p.sku, p.name, p.category, st.on_hand, p.reserved,
+             p.incoming, p.incoming_eta, p.capacity
+      FROM products p JOIN product_stock st ON st.product_id = p.id
+      WHERE p.enabled = 1 ORDER BY p.sku
     """).fetchall()
     var result: List[api.Product] = []
     for raw in py.iter(rows) do
@@ -59,8 +61,10 @@ class LogisticsImpl(path: String)
     val safeDays = if days < 1 then 1 else if days > 365 then 365 else days
     val conn = connect()
     val rows = conn.execute("""
-      SELECT demand_date, quantity FROM demand_history
-      WHERE product_id = ? AND demand_date >= date('now', ?)
+      SELECT date(occurred_at) AS demand_date, SUM(-quantity) AS quantity
+      FROM stock_movements
+      WHERE product_id = ? AND kind = 'issue' AND date(occurred_at) >= date('now', ?)
+      GROUP BY date(occurred_at)
       ORDER BY demand_date
     """, py.list(productId, "-" + safeDays.toString + " days")).fetchall()
     var result: List[api.DemandDay] = []
@@ -124,8 +128,9 @@ class LogisticsImpl(path: String)
         return rollback(conn, "Quantity must be positive for product \{proposed.productId}")
 
       val row = conn.execute("""
-        SELECT sku, on_hand, incoming, capacity
-        FROM products WHERE id = ? AND enabled = 1
+        SELECT p.sku, st.on_hand, p.incoming, p.capacity
+        FROM products p JOIN product_stock st ON st.product_id = p.id
+        WHERE p.id = ? AND p.enabled = 1
       """, py.list(proposed.productId)).fetchone()
       if row.isNone then return rollback(conn, "Unknown or disabled product \{proposed.productId}")
       val p = py.dynamic(row)
