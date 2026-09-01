@@ -30,18 +30,3 @@ declared in its `jo.toml` under `[commands]`: `jo start` for all of them except
 | `telegram` | Bot sessions, sender authorization, attachments |
 | `pr-review` | A capability scoped to one external API |
 | `flight-booker` | Human approval before an irreversible action |
-
-## Tests
-
-`web` ships an end-to-end suite. It builds the agent, starts it as its own
-process, and drives it over HTTP against a scripted model, so it needs no API
-key and reaches no network.
-
-```sh
-cd web
-jo test
-```
-
-It is built on [`harpe-testing`](https://pkg.typescope.ai/harpe-testing.jsonl),
-which a project created with `jo new` can use as well. The other agents have no
-tests.
