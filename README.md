@@ -3,8 +3,6 @@
 Example agents for [Harpe](https://github.com/typescope/harpe), each a
 `jo new` template.
 
-These are demos and templates, not production software.
-
 ## Getting started
 
 ```sh
@@ -16,6 +14,8 @@ jo start
 ```
 
 ## The agents
+
+*These are demos and templates, not production software.*
 
 | Template | What it shows |
 |---|---|
