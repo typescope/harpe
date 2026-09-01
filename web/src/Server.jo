@@ -199,6 +199,7 @@ class ChatServer(brain: Model, name: String, home: String)
     val body = Http.readJson()
     val text = body.get("text", "").asString
     val reqId = body.get("session", "").asString
+    val requestedId = sanitizeName(reqId)
     val attachmentItems = body.get("attachments", py.list()).cast[py.List]
 
     val headers = py.list(
@@ -211,13 +212,16 @@ class ChatServer(brain: Model, name: String, home: String)
 
     // A turn needs either text or at least one attachment (an attachments-only
     // message — "here, look at this file" — is valid).
-    if text.trim == "" && attachmentItems.size == 0 then
+    if reqId != "" && requestedId != reqId then
+      sink(py.dict("type" ~ "error", "detail" ~ "invalid session"))
+
+    else if text.trim == "" && attachmentItems.size == 0 then
       sink(py.dict("type" ~ "error", "detail" ~ "empty message"))
 
     else
       evictIdle()
       val minted = reqId == ""
-      val session = if minted then createSession() else openSession(reqId)
+      val session = if minted then createSession() else openSession(requestedId)
 
       if minted then sink(py.dict("type" ~ "session", "id" ~ session.id))
 
@@ -637,13 +641,17 @@ class ChatServer(brain: Model, name: String, home: String)
   private def handleUpload(): py.List receives request, appHome =
     val body = Http.readJson()
     val reqId = body.get("session", "").asString
+    val requestedId = sanitizeName(reqId)
     val name = sanitizeName(body.get("name", "").asString)
 
-    if name == "" then
+    if reqId != "" && requestedId != reqId then
+      Http.respondJson: py.dict("error" ~ "invalid session")
+
+    else if name == "" then
       Http.respondJson: py.dict("error" ~ "invalid filename")
 
     else
-      val session = if reqId == "" then createSession() else openSession(reqId)
+      val session = if reqId == "" then createSession() else openSession(requestedId)
       val dir = Session.dataDir(session.id)
       val data = py.module("base64").b64decode(body.get("data", "").asString)
       val size = builtins.len(data)
