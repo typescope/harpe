@@ -5,6 +5,11 @@ through the capability in `sandbox/API.jo`, so the model never sees the token.
 Reviews are submitted as pending drafts by default, so nothing publishes until
 you approve it in GitHub.
 
+This is a typical example of REST API surface narrowing, and a strong point of
+Jo's capability model: the trusted implementation can use GitHub's broader API,
+while model-written programs receive only four typed operations, with the sole
+write restricted to saving a draft.
+
 ## Setup
 
 ```sh
@@ -33,7 +38,7 @@ That builds the sandbox guest and runs one turn.
   not comment on
 - `src/` — the driver
 - `sandbox/` — the GitHub capability: `getPR`, `readFile`, `findDefinition`,
-  and draft-only `submitReview`
+  and draft-only `saveDraftReview`
 - `skills/` — reference the model can read
 
 [Create a PR Review Agent](https://harpe.typescope.ai/tutorial/create-pr-review-agent/)

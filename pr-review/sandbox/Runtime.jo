@@ -166,10 +166,10 @@ class GithubImpl
     results
 
   //[ Save a pending draft review through the GitHub API. //]
-  def submitReview(body: String, comments: List[api.LineComment]): Unit receives stdout =
+  def saveDraftReview(body: String, comments: List[api.LineComment]): Unit receives stdout =
     val PR(owner, repo, num) = pr
     val commentsJson = buildCommentsJson(comments)
-    match client.submitReview(owner, repo, num, prInfo.headSha, body, commentsJson)
+    match client.saveDraftReview(owner, repo, num, prInfo.headSha, body, commentsJson)
     case Ok(_)    =>
       println "✓ Review submitted"
       println "ACTION_COMPLETED"
