@@ -30,7 +30,7 @@
       <div class="heading">
         <div>
           <h1>Products</h1>
-          <p>Stock, commitments, and supplier terms.</p>
+          <p>Stock position, and where each product can be sourced.</p>
         </div>
         <button id="new-product">Add product</button>
       </div>
@@ -39,10 +39,8 @@
           <thead>
             <tr>
               <th>SKU / product</th>
-              <th>Supplier</th>
               <th>Stock position</th>
-              <th>Terms</th>
-              <th>Unit price</th>
+              <th>Sources</th>
               <th></th>
             </tr>
           </thead>
@@ -107,16 +105,22 @@
         <label>SKU<input name="sku" required></label>
         <label>Name<input name="name" required></label>
         <label>Category<input name="category" required></label>
-        <label>Supplier<select name="supplier_id"></select></label>
+        <label>Storage capacity<input name="capacity" type="number" min="1" required></label>
         <label>On hand<input name="on_hand" type="number" min="0" required></label>
         <label>Reserved<input name="reserved" type="number" min="0" required></label>
         <label>Incoming<input name="incoming" type="number" min="0" required></label>
-        <label>Capacity<input name="capacity" type="number" min="1" required></label>
-        <label>Case size<input name="case_size" type="number" min="1" required></label>
-        <label>Minimum order<input name="minimum_order_quantity" type="number" min="1" required></label>
-        <label>Lead time, days<input name="lead_time_days" type="number" min="0" required></label>
-        <label>Unit price, cents<input name="unit_price_cents" type="number" min="0" required></label>
+        <label>Incoming arrives<input name="incoming_eta" type="date"></label>
       </div>
+
+      <h3>Sources</h3>
+      <p class="hint">
+        Price, lead time and pack sizes are agreed per supplier, so they live here
+        rather than on the product. The preferred source is the planner's default;
+        a written rule can send it elsewhere.
+      </p>
+      <div id="source-rows"></div>
+      <button type="button" id="add-source">Add source</button>
+
       <menu>
         <button type="button" data-close="product-dialog">Cancel</button>
         <button value="default" class="primary" id="save-product">Save</button>

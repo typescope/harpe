@@ -2,22 +2,29 @@ namespace sandbox.api
 
 import jo.IO.stdout
 
+// One way to buy a product: the terms of a product-supplier relationship.
+class Source(
+  supplierId: Int,
+  supplierName: String,
+  currency: String,
+  unitPriceCents: Int,
+  leadTimeDays: Int,
+  caseSize: Int,
+  minimumOrderQuantity: Int,
+  preferred: Bool
+)
+
 class Product(
   id: Int,
   sku: String,
   name: String,
   category: String,
-  supplierId: Int,
-  supplierName: String,
   onHand: Int,
   reserved: Int,
   incoming: Int,
+  incomingEta: String,
   capacity: Int,
-  caseSize: Int,
-  minimumOrderQuantity: Int,
-  leadTimeDays: Int,
-  unitPriceCents: Int,
-  currency: String
+  sources: List[Source]
 )
 
 class DemandDay(date: String, quantity: Int)

@@ -86,7 +86,20 @@ function renderSummary() {
 
 function renderProducts() {
   $('#product-rows').innerHTML = state.products.map(product => {
-    const short = product.available + product.incoming < product.minimum_order_quantity;
+    const cheapestMoq = Math.min(...product.sources.map(source => source.minimum_order_quantity), Infinity);
+    const short = product.available + product.incoming < cheapestMoq;
+    const incoming = product.incoming
+      ? `${product.incoming} incoming${product.incoming_eta ? ' · due ' + escapeHtml(product.incoming_eta) : ''}`
+      : 'none incoming';
+    const sources = product.sources.map(source => `
+      <div class="source">
+        <span>${escapeHtml(source.supplier_name)}</span>
+        ${source.preferred ? '<span class="tag">preferred</span>' : ''}
+        <span class="muted">
+          ${money(source.unit_price_cents, source.currency)} ·
+          ${source.lead_time_days}d lead · case ${source.case_size} · min ${source.minimum_order_quantity}
+        </span>
+      </div>`).join('') || '<div class="muted">No supplier — cannot be ordered.</div>';
     return `
       <tr>
         <td>
@@ -94,16 +107,11 @@ function renderProducts() {
           <div>${escapeHtml(product.name)}</div>
           <div class="muted">${escapeHtml(product.category)}</div>
         </td>
-        <td>${escapeHtml(product.supplier_name)}</td>
         <td class="${short ? 'risk' : ''}">
           ${product.on_hand} on hand · ${product.reserved} reserved
-          <div class="muted">${product.incoming} incoming · ${product.available} available</div>
+          <div class="muted">${incoming} · ${product.available} available · cap ${product.capacity}</div>
         </td>
-        <td>
-          case ${product.case_size} · min ${product.minimum_order_quantity}
-          <div class="muted">${product.lead_time_days}d lead · cap ${product.capacity}</div>
-        </td>
-        <td>${money(product.unit_price_cents, product.currency)}</td>
+        <td>${sources}</td>
         <td><button onclick="editProduct(${product.id})">Edit</button></td>
       </tr>`;
   }).join('');
@@ -154,10 +162,7 @@ function renderDrafts() {
 
 /* Products ----------------------------------------------------------------- */
 
-const PRODUCT_NUMBER_FIELDS = [
-  'id', 'supplier_id', 'on_hand', 'reserved', 'incoming', 'capacity',
-  'case_size', 'minimum_order_quantity', 'lead_time_days', 'unit_price_cents'
-];
+const PRODUCT_NUMBER_FIELDS = ['on_hand', 'reserved', 'incoming', 'capacity'];
 
 const productForm = $('#product-form');
 
@@ -169,19 +174,59 @@ function openProduct(product = {}) {
   for (const [field, value] of Object.entries(product)) {
     if (productForm.elements[field]) productForm.elements[field].value = value;
   }
-  productForm.elements.supplier_id.innerHTML = state.suppliers
-    .map(supplier => `<option value="${supplier.id}">${escapeHtml(supplier.name)}</option>`)
-    .join('');
-  if (product.supplier_id) productForm.elements.supplier_id.value = product.supplier_id;
+  renderSourceRows(product.sources ?? []);
   $('#product-dialog').showModal();
+}
+
+// Sourcing rows are built by hand rather than named form fields: the set is
+// variable, and only the rows on screen when Save is pressed are submitted.
+function renderSourceRows(sources) {
+  const rows = sources.length ? sources : [{ preferred: 1 }];
+  $('#source-rows').innerHTML = rows.map(sourceRow).join('');
+}
+
+function sourceRow(source) {
+  const options = state.suppliers
+    .map(supplier => `<option value="${supplier.id}"${supplier.id === source.supplier_id ? ' selected' : ''}>${escapeHtml(supplier.name)}</option>`)
+    .join('');
+  return `
+    <div class="source-row">
+      <select data-source="supplier_id">${options}</select>
+      <label>Price, cents<input data-source="unit_price_cents" type="number" min="0" value="${source.unit_price_cents ?? 0}"></label>
+      <label>Lead days<input data-source="lead_time_days" type="number" min="0" value="${source.lead_time_days ?? 1}"></label>
+      <label>Case<input data-source="case_size" type="number" min="1" value="${source.case_size ?? 1}"></label>
+      <label>Min order<input data-source="minimum_order_quantity" type="number" min="1" value="${source.minimum_order_quantity ?? 1}"></label>
+      <label class="check"><input type="radio" name="preferred" ${source.preferred ? 'checked' : ''}> Preferred</label>
+      <button type="button" class="danger" onclick="this.closest('.source-row').remove()">Remove</button>
+    </div>`;
+}
+
+$('#add-source').onclick = () => {
+  $('#source-rows').insertAdjacentHTML('beforeend', sourceRow({}));
+};
+
+function collectSources() {
+  return [...$$('#source-rows .source-row')].map(row => {
+    const source = { preferred: row.querySelector('input[type=radio]').checked };
+    row.querySelectorAll('[data-source]').forEach(field => {
+      source[field.dataset.source] = Number(field.value || 0);
+    });
+    return source;
+  });
 }
 
 $('#save-product').onclick = async event => {
   event.preventDefault();
   if (!productForm.reportValidity()) return;
+  const sources = collectSources();
+  if (!sources.length) return toast('A product needs at least one supplier');
+  if (sources.some(source => source.minimum_order_quantity % source.case_size !== 0)) {
+    return toast('Minimum order must be a whole number of cases');
+  }
   const data = Object.fromEntries(new FormData(productForm));
-  for (const field of PRODUCT_NUMBER_FIELDS) data[field] = Number(data[field] || 0);
+  for (const field of ['id', ...PRODUCT_NUMBER_FIELDS]) data[field] = Number(data[field] || 0);
   data.enabled = true;
+  data.sources = sources;
   await post('/api/products', data);
   $('#product-dialog').close();
   await refresh();

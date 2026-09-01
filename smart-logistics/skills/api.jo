@@ -1,11 +1,15 @@
 namespace sandbox.api
 
+class Source(
+  supplierId: Int, supplierName: String, currency: String,
+  unitPriceCents: Int, leadTimeDays: Int,
+  caseSize: Int, minimumOrderQuantity: Int, preferred: Bool)
+
+// incomingEta is "" when nothing is in transit.
 class Product(
   id: Int, sku: String, name: String, category: String,
-  supplierId: Int, supplierName: String,
-  onHand: Int, reserved: Int, incoming: Int, capacity: Int,
-  caseSize: Int, minimumOrderQuantity: Int, leadTimeDays: Int,
-  unitPriceCents: Int, currency: String)
+  onHand: Int, reserved: Int, incoming: Int, incomingEta: String,
+  capacity: Int, sources: List[Source])
 
 class DemandDay(date: String, quantity: Int)
 class Rule(id: Int, text: String)

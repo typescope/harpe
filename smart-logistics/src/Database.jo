@@ -89,6 +89,10 @@ class Database(path: String, home: String)
     conn.commit()
     conn.close()
 
+  private def inDays(days: Int): String =
+    val datetime = py.module("datetime")
+    datetime.date.today().__add__(datetime.timedelta(days = days)).isoformat().asString
+
   private def seed(conn: py.Dynamic): Unit =
     val count = conn.execute("SELECT COUNT(*) FROM suppliers").fetchone()[0].asInt
     if count > 0 then return
@@ -96,26 +100,48 @@ class Database(path: String, home: String)
     conn.executemany("INSERT INTO suppliers(id,name,currency) VALUES(?,?,?)", py.list(
       py.list(1, "Alpine Foods", "CHF"),
       py.list(2, "Rhine Packaging", "CHF"),
-      py.list(3, "Nordic Hygiene", "EUR")
+      py.list(3, "Nordic Hygiene", "EUR"),
+      py.list(4, "Helvetia Wholesale", "CHF")
     ))
     conn.executemany("""
       INSERT INTO products
-        (id,sku,name,category,supplier_id,on_hand,reserved,incoming,capacity,
-         case_size,minimum_order_quantity,lead_time_days,unit_price_cents)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+        (id,sku,name,category,on_hand,reserved,incoming,incoming_eta,capacity)
+      VALUES(?,?,?,?,?,?,?,?,?)
     """, py.list(
-      py.list(1,"FOOD-101","Pasta 500 g","food",1,34,8,0,240,12,24,5,225),
-      py.list(2,"FOOD-102","Tomato sauce","food",1,18,6,0,180,6,12,4,315),
-      py.list(3,"FOOD-103","Rice 1 kg","food",1,110,10,24,260,12,24,6,410),
-      py.list(4,"FOOD-104","Olive oil 1 L","food",1,7,2,0,96,6,12,8,1180),
-      py.list(5,"PACK-201","Small cartons","packaging",2,420,80,0,1000,50,100,3,58),
-      py.list(6,"PACK-202","Large cartons","packaging",2,65,20,100,500,25,50,5,112),
-      py.list(7,"PACK-203","Paper tape","packaging",2,22,7,0,160,10,20,4,275),
-      py.list(8,"PACK-204","Pallet wrap","packaging",2,88,12,0,180,6,12,7,890),
-      py.list(9,"HYGI-301","Hand soap","hygiene",3,14,4,0,120,8,16,9,540),
-      py.list(10,"HYGI-302","Surface cleaner","hygiene",3,55,10,0,150,6,12,10,720),
-      py.list(11,"HYGI-303","Paper towels","hygiene",3,9,3,0,90,10,20,6,460),
-      py.list(12,"HYGI-304","Waste bags","hygiene",3,72,15,20,220,20,40,6,195)
+      py.list(1,"FOOD-101","Pasta 500 g","food",34,8,0,"",240),
+      py.list(2,"FOOD-102","Tomato sauce","food",18,6,0,"",180),
+      py.list(3,"FOOD-103","Rice 1 kg","food",110,10,24,inDays(3),260),
+      py.list(4,"FOOD-104","Olive oil 1 L","food",7,2,0,"",96),
+      py.list(5,"PACK-201","Small cartons","packaging",420,80,0,"",1000),
+      py.list(6,"PACK-202","Large cartons","packaging",65,20,100,inDays(5),500),
+      py.list(7,"PACK-203","Paper tape","packaging",22,7,0,"",160),
+      py.list(8,"PACK-204","Pallet wrap","packaging",88,12,0,"",180),
+      py.list(9,"HYGI-301","Hand soap","hygiene",14,4,0,"",120),
+      py.list(10,"HYGI-302","Surface cleaner","hygiene",55,10,0,"",150),
+      py.list(11,"HYGI-303","Paper towels","hygiene",9,3,0,"",90),
+      py.list(12,"HYGI-304","Waste bags","hygiene",72,15,20,inDays(2),220)
+    ))
+
+    // Preferred source first, then any alternate. Alternates are dearer and
+    // faster, which is what gives a written sourcing rule something to decide.
+    conn.executemany("""
+      INSERT INTO product_suppliers
+        (product_id,supplier_id,unit_price_cents,lead_time_days,
+         case_size,minimum_order_quantity,preferred)
+      VALUES(?,?,?,?,?,?,?)
+    """, py.list(
+      py.list(1,1,225,5,12,24,1),   py.list(1,4,239,2,12,24,0),
+      py.list(2,1,315,4,6,12,1),
+      py.list(3,1,410,6,12,24,1),
+      py.list(4,1,1180,8,6,12,1),   py.list(4,4,1245,3,6,12,0),
+      py.list(5,2,58,3,50,100,1),   py.list(5,4,61,2,50,100,0),
+      py.list(6,2,112,5,25,50,1),   py.list(6,4,118,3,25,50,0),
+      py.list(7,2,275,4,10,20,1),
+      py.list(8,2,890,7,6,12,1),
+      py.list(9,3,540,9,8,16,1),    py.list(9,4,565,4,8,16,0),
+      py.list(10,3,720,10,6,12,1),
+      py.list(11,3,460,6,10,20,1),  py.list(11,4,470,3,10,20,0),
+      py.list(12,3,195,6,20,40,1)
     ))
 
     val datetime = py.module("datetime")
@@ -158,20 +184,42 @@ class Database(path: String, home: String)
 
   def snapshot(): py.Dict =
     py.dict(
-      "products" ~ rows("""
-        SELECT p.*, s.name AS supplier_name, s.currency,
-               (p.on_hand-p.reserved) AS available
-        FROM products p JOIN suppliers s ON s.id=p.supplier_id ORDER BY p.sku
-      """),
-      "suppliers" ~ rows("SELECT * FROM suppliers ORDER BY name"),
+      "products" ~ products(),
+      "suppliers" ~ rows("SELECT * FROM suppliers WHERE enabled=1 ORDER BY name"),
       "summary" ~ rows("""
         SELECT COUNT(*) AS product_count,
-          SUM(CASE WHEN on_hand-reserved+incoming < minimum_order_quantity THEN 1 ELSE 0 END) AS low_stock_count,
-          SUM(on_hand*unit_price_cents) AS inventory_value_cents,
+          SUM(CASE WHEN p.on_hand-p.reserved+p.incoming <
+                (SELECT MIN(ps.minimum_order_quantity) FROM product_suppliers ps
+                 WHERE ps.product_id = p.id)
+              THEN 1 ELSE 0 END) AS low_stock_count,
+          SUM(p.on_hand * COALESCE(\{preferredPrice},0)) AS inventory_value_cents,
           (SELECT COUNT(*) FROM draft_orders WHERE status='draft') AS draft_count
-        FROM products WHERE enabled=1
+        FROM products p WHERE p.enabled=1
       """)[0]
     )
+
+  // Inventory is valued at the preferred source's price. There are no receipts
+  // to average, so this is a stated proxy rather than a costing method.
+  private val preferredPrice = """
+    (SELECT ps.unit_price_cents FROM product_suppliers ps
+     WHERE ps.product_id = p.id
+     ORDER BY ps.preferred DESC, ps.unit_price_cents LIMIT 1)
+  """
+
+  def products(): py.List =
+    val result = rows("""
+      SELECT p.*, (p.on_hand - p.reserved) AS available
+      FROM products p ORDER BY p.sku
+    """)
+    for item in result do
+      val product = item.cast[py.Dict]
+      product.set("sources", rowsWith("""
+        SELECT ps.*, s.name AS supplier_name, s.currency
+        FROM product_suppliers ps JOIN suppliers s ON s.id = ps.supplier_id
+        WHERE ps.product_id = ?
+        ORDER BY ps.preferred DESC, ps.unit_price_cents
+      """, py.list(product.get("id"))))
+    result
 
   def rules(): py.List = rows("SELECT * FROM rules ORDER BY id")
 
@@ -192,43 +240,86 @@ class Database(path: String, home: String)
     rows("SELECT * FROM analysis_runs ORDER BY id DESC LIMIT 20")
 
   def saveProduct(body: py.Dict): Int =
+    val sources = body.get("sources", py.list()).cast[py.List]
+    if sources.size == 0 then abort "a product needs at least one supplier"
     val conn = connect()
-    val id = body.get("id", 0).asInt
-    if id == 0 then
-      val cursor = conn.execute("""
-        INSERT INTO products(sku,name,category,supplier_id,on_hand,reserved,incoming,
-          capacity,case_size,minimum_order_quantity,lead_time_days,unit_price_cents,enabled)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-      """, productParams(body))
-      conn.commit()
-      val result = cursor.lastrowid.asInt
-      conn.close()
-      result
-    else
-      val params = productParams(body)
-      params.append(id)
-      conn.execute("""
-        UPDATE products SET sku=?,name=?,category=?,supplier_id=?,on_hand=?,reserved=?,
-          incoming=?,capacity=?,case_size=?,minimum_order_quantity=?,lead_time_days=?,
-          unit_price_cents=?,enabled=? WHERE id=?
-      """, params)
+    conn.execute("BEGIN IMMEDIATE")
+    // Master row and sourcing rows move together, and a rejected write must not
+    // leave the write lock behind for the next request.
+    val outcome = py.try: writeProduct(conn, body, sources)
+    match outcome
+    case Ok(id) =>
       conn.commit()
       conn.close()
       id
+    case Err(error) =>
+      conn.rollback()
+      conn.close()
+      abort error.message
+
+  private def writeProduct(conn: py.Dynamic, body: py.Dict, sources: py.List): Int =
+    val given = body.get("id", 0).asInt
+    val id = if given == 0 then
+      val cursor = conn.execute("""
+        INSERT INTO products
+          (sku,name,category,on_hand,reserved,incoming,incoming_eta,capacity,enabled)
+        VALUES(?,?,?,?,?,?,?,?,?)
+      """, productParams(body))
+      cursor.lastrowid.asInt
+    else
+      val params = productParams(body)
+      params.append(given)
+      conn.execute("""
+        UPDATE products SET sku=?,name=?,category=?,on_hand=?,reserved=?,
+          incoming=?,incoming_eta=?,capacity=?,enabled=? WHERE id=?
+      """, params)
+      given
+    replaceSources(conn, id, sources)
+    id
+
+  // The submitted set is authoritative: sourcing rows the administrator removed
+  // are gone, and exactly one row is left marked preferred.
+  private def replaceSources(conn: py.Dynamic, productId: Int, sources: py.List): Unit =
+    conn.execute("DELETE FROM product_suppliers WHERE product_id=?", py.list(productId))
+    var preferredSeen = false
+    for raw in py.iter(sources) do
+      val source = raw.cast[py.Dict]
+      val caseSize = source.get("case_size", 1).asInt
+      val minimum = source.get("minimum_order_quantity", 1).asInt
+      if caseSize < 1 then abort "case size must be at least 1"
+      if minimum % caseSize != 0 then
+        abort "minimum order quantity must be a whole number of cases"
+      val wanted = source.get("preferred", false).asBool
+      val preferred = if wanted && !preferredSeen then 1 else 0
+      if preferred == 1 then preferredSeen = true
+      conn.execute("""
+        INSERT INTO product_suppliers
+          (product_id,supplier_id,unit_price_cents,lead_time_days,
+           case_size,minimum_order_quantity,preferred)
+        VALUES(?,?,?,?,?,?,?)
+      """, py.list(productId,
+        source.get("supplier_id", 0).asInt,
+        source.get("unit_price_cents", 0).asInt,
+        source.get("lead_time_days", 1).asInt,
+        caseSize,
+        minimum,
+        preferred))
+    if !preferredSeen then
+      conn.execute("""
+        UPDATE product_suppliers SET preferred=1
+        WHERE rowid = (SELECT rowid FROM product_suppliers
+                       WHERE product_id=? ORDER BY unit_price_cents LIMIT 1)
+      """, py.list(productId))
 
   private def productParams(body: py.Dict): py.List = py.list(
     body.get("sku", "").asString.trim,
     body.get("name", "").asString.trim,
     body.get("category", "").asString.trim,
-    body.get("supplier_id", 0).asInt,
     body.get("on_hand", 0).asInt,
     body.get("reserved", 0).asInt,
     body.get("incoming", 0).asInt,
+    body.get("incoming_eta", "").asString.trim,
     body.get("capacity", 1).asInt,
-    body.get("case_size", 1).asInt,
-    body.get("minimum_order_quantity", 1).asInt,
-    body.get("lead_time_days", 1).asInt,
-    body.get("unit_price_cents", 0).asInt,
     if body.get("enabled", true).asBool then 1 else 0)
 
   def saveDemand(body: py.Dict): Unit =

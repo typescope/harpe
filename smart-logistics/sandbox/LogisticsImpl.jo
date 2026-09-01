@@ -14,22 +14,34 @@ class LogisticsImpl(path: String)
   def products(): List[api.Product] =
     val conn = connect()
     val rows = conn.execute("""
-      SELECT p.id, p.sku, p.name, p.category, p.supplier_id, s.name,
-             p.on_hand, p.reserved, p.incoming, p.capacity, p.case_size,
-             p.minimum_order_quantity, p.lead_time_days, p.unit_price_cents,
-             s.currency
-      FROM products p JOIN suppliers s ON s.id = p.supplier_id
-      WHERE p.enabled = 1 AND s.enabled = 1 ORDER BY p.sku
+      SELECT id, sku, name, category, on_hand, reserved, incoming, incoming_eta, capacity
+      FROM products WHERE enabled = 1 ORDER BY sku
     """).fetchall()
     var result: List[api.Product] = []
     for raw in py.iter(rows) do
-      val r = py.dynamic(raw)
+      val p = py.dynamic(raw)
+      val id = p[0].asInt
       result = result + new api.Product(
-        r[0].asInt, r[1].asString, r[2].asString, r[3].asString,
-        r[4].asInt, r[5].asString, r[6].asInt, r[7].asInt,
-        r[8].asInt, r[9].asInt, r[10].asInt, r[11].asInt,
-        r[12].asInt, r[13].asInt, r[14].asString)
+        id, p[1].asString, p[2].asString, p[3].asString,
+        p[4].asInt, p[5].asInt, p[6].asInt, p[7].asString, p[8].asInt,
+        sourcesFor(conn, id))
     conn.close()
+    result
+
+  private def sourcesFor(conn: py.Dynamic, productId: Int): List[api.Source] =
+    val rows = conn.execute("""
+      SELECT ps.supplier_id, s.name, s.currency, ps.unit_price_cents,
+             ps.lead_time_days, ps.case_size, ps.minimum_order_quantity, ps.preferred
+      FROM product_suppliers ps JOIN suppliers s ON s.id = ps.supplier_id
+      WHERE ps.product_id = ? AND s.enabled = 1
+      ORDER BY ps.preferred DESC, ps.unit_price_cents
+    """, py.list(productId)).fetchall()
+    var result: List[api.Source] = []
+    for raw in py.iter(rows) do
+      val r = py.dynamic(raw)
+      result = result + new api.Source(
+        r[0].asInt, r[1].asString, r[2].asString, r[3].asInt,
+        r[4].asInt, r[5].asInt, r[6].asInt, r[7].asInt == 1)
     result
 
   def rules(): List[api.Rule] =
@@ -112,17 +124,24 @@ class LogisticsImpl(path: String)
         return rollback(conn, "Quantity must be positive for product \{proposed.productId}")
 
       val row = conn.execute("""
-        SELECT sku, category, supplier_id, on_hand, incoming, capacity, case_size,
-               minimum_order_quantity, unit_price_cents
+        SELECT sku, on_hand, incoming, capacity
         FROM products WHERE id = ? AND enabled = 1
       """, py.list(proposed.productId)).fetchone()
       if row.isNone then return rollback(conn, "Unknown or disabled product \{proposed.productId}")
       val p = py.dynamic(row)
       val sku = p[0].asString
-      if p[2].asInt != supplierId then return rollback(conn, "\{sku} belongs to another supplier")
-      if proposed.quantity < p[7].asInt then return rollback(conn, "\{sku} is below its minimum order quantity")
-      if proposed.quantity % p[6].asInt != 0 then return rollback(conn, "\{sku} quantity must be a multiple of its case size")
-      if p[3].asInt + p[4].asInt + proposed.quantity > p[5].asInt then
+
+      // Terms come from the chosen source, so an unsourced pair is not orderable.
+      val terms = conn.execute("""
+        SELECT case_size, minimum_order_quantity, unit_price_cents
+        FROM product_suppliers WHERE product_id = ? AND supplier_id = ?
+      """, py.list(proposed.productId, supplierId)).fetchone()
+      if terms.isNone then
+        return rollback(conn, "\{sku} is not sourced from this supplier")
+      val t = py.dynamic(terms)
+      if proposed.quantity < t[1].asInt then return rollback(conn, "\{sku} is below the minimum order quantity for this supplier")
+      if proposed.quantity % t[0].asInt != 0 then return rollback(conn, "\{sku} quantity must be a multiple of this supplier's case size")
+      if p[1].asInt + p[2].asInt + proposed.quantity > p[3].asInt then
         return rollback(conn, "\{sku} would exceed storage capacity")
 
       val duplicate = conn.execute("""
@@ -132,9 +151,10 @@ class LogisticsImpl(path: String)
       """, py.list(proposed.productId)).fetchone()
       if !duplicate.isNone then return rollback(conn, "\{sku} is already in an open draft")
 
-      val lineTotal = proposed.quantity * p[8].asInt
+      val unitPrice = t[2].asInt
+      val lineTotal = proposed.quantity * unitPrice
       total = total + lineTotal
-      validated.append(py.list(proposed.productId, proposed.quantity, p[8].asInt, lineTotal))
+      validated.append(py.list(proposed.productId, proposed.quantity, unitPrice, lineTotal))
 
     val currency = supplier[0].asString
     val cursor = conn.execute("""
