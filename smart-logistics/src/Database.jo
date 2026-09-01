@@ -23,19 +23,32 @@ class Database(path: String, home: String)
       );
       CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY, sku TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
-        category TEXT NOT NULL, supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+        category TEXT NOT NULL,
         on_hand INTEGER NOT NULL DEFAULT 0 CHECK(on_hand >= 0),
         reserved INTEGER NOT NULL DEFAULT 0 CHECK(reserved >= 0),
         incoming INTEGER NOT NULL DEFAULT 0 CHECK(incoming >= 0),
+        incoming_eta TEXT NOT NULL DEFAULT '',
         capacity INTEGER NOT NULL CHECK(capacity > 0),
-        case_size INTEGER NOT NULL DEFAULT 1 CHECK(case_size > 0),
-        minimum_order_quantity INTEGER NOT NULL DEFAULT 1 CHECK(minimum_order_quantity > 0),
-        lead_time_days INTEGER NOT NULL DEFAULT 1 CHECK(lead_time_days >= 0),
-        unit_price_cents INTEGER NOT NULL CHECK(unit_price_cents >= 0),
         enabled INTEGER NOT NULL DEFAULT 1
       );
+      -- Price, lead time and pack sizes are terms of one product-supplier
+      -- relationship, not properties of the product. A product can be sourced
+      -- from several suppliers; exactly one of them is the preferred source.
+      CREATE TABLE IF NOT EXISTS product_suppliers (
+        product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+        unit_price_cents INTEGER NOT NULL CHECK(unit_price_cents >= 0),
+        lead_time_days INTEGER NOT NULL DEFAULT 1 CHECK(lead_time_days >= 0),
+        case_size INTEGER NOT NULL DEFAULT 1 CHECK(case_size > 0),
+        minimum_order_quantity INTEGER NOT NULL DEFAULT 1 CHECK(minimum_order_quantity > 0),
+        preferred INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(product_id, supplier_id),
+        CHECK(minimum_order_quantity % case_size = 0)
+      );
+      CREATE INDEX IF NOT EXISTS product_suppliers_supplier
+        ON product_suppliers(supplier_id);
       CREATE TABLE IF NOT EXISTS demand_history (
-        product_id INTEGER NOT NULL REFERENCES products(id),
+        product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
         demand_date TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity >= 0),
         PRIMARY KEY(product_id, demand_date)
       );
@@ -51,11 +64,15 @@ class Database(path: String, home: String)
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS draft_order_lines (
-        id INTEGER PRIMARY KEY, draft_order_id INTEGER NOT NULL REFERENCES draft_orders(id),
-        product_id INTEGER NOT NULL REFERENCES products(id), quantity INTEGER NOT NULL,
+        id INTEGER PRIMARY KEY,
+        draft_order_id INTEGER NOT NULL REFERENCES draft_orders(id) ON DELETE CASCADE,
+        product_id INTEGER NOT NULL REFERENCES products(id),
+        quantity INTEGER NOT NULL CHECK(quantity > 0),
         unit_price_cents INTEGER NOT NULL, line_total_cents INTEGER NOT NULL,
         UNIQUE(draft_order_id, product_id)
       );
+      CREATE INDEX IF NOT EXISTS draft_order_lines_product
+        ON draft_order_lines(product_id);
       CREATE TABLE IF NOT EXISTS skill_revisions (
         id INTEGER PRIMARY KEY, skill_name TEXT NOT NULL, content TEXT NOT NULL,
         revision INTEGER NOT NULL, created_at TEXT NOT NULL,
@@ -68,64 +85,9 @@ class Database(path: String, home: String)
         finished_at TEXT NOT NULL DEFAULT ''
       );
     """)
-    migrateRules(conn)
     seed(conn)
     conn.commit()
     conn.close()
-
-  // Databases created before rules became free text carry the structured
-  // columns. Rewrite each stored rule as the sentence it always meant.
-  private def migrateRules(conn: py.Dynamic): Unit =
-    val columns = py.list()
-    for raw in py.iter(conn.execute("PRAGMA table_info(rules)").fetchall()) do
-      columns.append(py.dynamic(raw)[1].asString)
-    if !columns.contains("kind") then return
-
-    val legacy = conn.execute("""
-      SELECT name, kind, scope, scope_value, CAST(value AS INTEGER), enabled
-      FROM rules ORDER BY priority DESC, id
-    """).fetchall()
-    conn.executescript("""
-      ALTER TABLE rules RENAME TO rules_legacy;
-      CREATE TABLE rules (
-        id INTEGER PRIMARY KEY, text TEXT NOT NULL,
-        enabled INTEGER NOT NULL DEFAULT 1,
-        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-      );
-    """)
-    for raw in py.iter(legacy) do
-      val r = py.dynamic(raw)
-      val sentence = ruleSentence(
-        r[0].asString, r[1].asString, r[2].asString, r[3].asString, r[4].asInt)
-      conn.execute("""
-        INSERT INTO rules(text,enabled,created_at,updated_at)
-        VALUES(?,?,datetime('now'),datetime('now'))
-      """, py.list(sentence, r[5].asInt))
-    conn.execute("DROP TABLE rules_legacy")
-
-  private def ruleSentence(
-    name: String,
-    kind: String,
-    scope: String,
-    scopeValue: String,
-    value: Int
-  ): String =
-    val target = match scope
-      case "category" => " for products in category \{scopeValue}"
-      case "product" => " for product \{scopeValue}"
-      case "supplier" => " for products from supplier \{scopeValue}"
-      case _ => ""
-    match kind
-    case "safety_stock_days" =>
-      "\{name}: cover at least \{value} days of demand beyond supplier lead time\{target}."
-    case "maximum_line_quantity" =>
-      "\{name}: never propose more than \{value} units of one product in a single draft\{target}."
-    case "maximum_draft_value" =>
-      "\{name}: keep the total value of any single draft at or below \{value} cents."
-    case "minimum_available_units" =>
-      "\{name}: keep at least \{value} available units\{target} after reserved commitments."
-    case _ =>
-      "\{name}: \{kind} \{scope} \{scopeValue} \{value}."
 
   private def seed(conn: py.Dynamic): Unit =
     val count = conn.execute("SELECT COUNT(*) FROM suppliers").fetchone()[0].asInt
