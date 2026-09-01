@@ -1,36 +1,22 @@
 //[ Testing.jo
   !
-  ! The test tree and the channel that collects it. A scenario file declares its
-  ! cases with `test` and `suite` from anywhere that `receives thisSuite`, and
-  ! `Testing.define` is the one place that provides the channel: it installs a
-  ! fresh root for the duration of a declaration block and hands back the tree
-  ! for `Runner` to walk.
+  ! Test specification APIs.
+  !
+  ! Tests form a tree-like structure where the leaves are individual tests and
+  ! internal nodes are called suites.
+  !
+  ! A suite may be declared to be sequential (default) or parallel. A parallel
+  ! suite tells the test runner that its direct children can in parallel.
   !
   ! Declaring and running are deliberately separate phases. A test body is a
   ! plain `() => Unit` that captures whatever context it needs at the point it is
   ! written, so this file never names a capability and never has to grow one as
   ! scenarios start needing new ones.
-  !
-  ! The corollary is that `define` must be called INSIDE the scopes its bodies
-  ! need. `with logger = Logging.discard in Testing.define(...)` captures a
-  ! logger. Wrapping the `Runner.run` call instead captures nothing, because by
-  ! then every body has already closed over the ambient scope.
-  !
-  ! That same separation is what lets a suite run concurrently. Declaration is
-  ! always serial and always on this thread, so a tree is built once and read
-  ! many times, and the runner is free to dispatch the bodies it finds however
-  ! it likes. A suite says only whether its tests hold common state, by setting
-  ! `thisSuite.parallel` in its own body — true of `e2e`, because every scenario
-  ! builds its own agent, its own home and its own scripted model.
 //]
 
 namespace harpe.testing
 
-//[ The suite being declared into
-  !
-  ! Provided by `Testing.define`, and rebound by `suite` for the extent of a
-  ! nested block. Picked up by scenario files via `receives thisSuite`.
-//]
+//[ The suite for the current context  //]
 param thisSuite: Testing.Suite
 
 //[ Declare one test in the enclosing suite. //]
@@ -44,62 +30,54 @@ def suite(name: String, content: () => Unit receives thisSuite): Unit receives t
   thisSuite.addSuite(nested)
 
 section Testing
-  //[ A leaf: a name, and the work that proves it. //]
+  //[ An individual test //]
   class Test(name: String, run: () => Unit)
 
-  //[ A node: a name, and its children in declaration order
+  //[ A suite contains a list of suites or tests
     !
     ! Tests and nested suites share one list so the report reads in the order the
-    ! scenario file declares them, rather than hoisting either kind.
+    ! scenario file declares them.
   //]
   class Suite(name: String)
     var children: List[Suite | Test] = []
     private var childNames: Set[String] = Set.empty[String]
 
-    //[ May this suite's structurally independent work run concurrently?
+    //[ May this suite's direct children run in parallel?
       !
-      ! Set from inside the suite's own body — `thisSuite.parallel = true`. The
-      ! runner traverses parallel child suites into the same scheduling domain:
-      ! each test it reaches is one work item. A serial child suite is a boundary
-      ! and becomes one atomic work item, preserving the order of everything in
-      ! that subtree. Thus parallel suites compose without nested pools, while a
-      ! serial suite can safely group ordered work inside a parallel parent.
+      ! The setting `parallel = true` tells the test runner that the direct
+      ! children of the suite may safely run in parallel. Usually, it implies
+      ! there are no shared mutable fixture, directory, port, or ordering
+      ! assumption. Reporting stays in declaration order either way.
       !
-      ! A parallel child inside a serial parent starts a scheduling domain only
-      ! when the serial walk reaches it, then joins before the parent continues.
+      ! The runner turns such a suite into one pool of work items. A parallel
+      ! child suite is recursively flattened into the same pool, so its tests
+      ! compete for the same workers. A serial child suite becomes a single
+      ! item instead, which is what keeps its subtree in order.
       !
-      !     A (parallel scheduling domain)
-      !     ├── test p ─────────────────────────────── work item
-      !     └── B (serial boundary) ────────────────── work item
-      !         ├── test q                           runs first
-      !         └── C (parallel scheduling domain)   then starts and joins:
-      !             ├── test x ─┐
-      !             ├── test y ─┼─ concurrent work
-      !             └── test z ─┘
+      !     A (parallel: one pool)
+      !     ├── test p ───────────────────────────── item
+      !     └── B (serial) ───────────────────────── item
+      !         ├── test q
+      !         └── C (parallel: its own pool)
+      !             ├── test x
+      !             ├── test y
+      !             └── test z
       !
-      ! So A is free to run p while the whole of B runs. Inside B nothing
-      ! overlaps: q finishes, then x, y and z all do. Being serial is what keeps
-      ! B's four tests out of A's scheduling domain. Being parallel is what lets
-      ! x, y and z still run together once B reaches them.
+      ! - A: p and B run in parallel
+      ! - B: q and C run sequentially
+      ! - C: x, y and z run in parallel
       !
-      ! Setting this is a claim that the direct children share NOTHING needed
-      ! during execution: no mutable fixture, directory, port, or ordering
-      ! assumption. Reporting remains in declaration order.
+      ! C is the one shape that nests pools, since a parallel suite under a
+      ! serial one starts its own. That inner pool counts workers from scratch,
+      ! so a tree like this can have more tests in flight than the worker count
+      ! asks for.
     //]
     var parallel: Bool = false
 
     //[ Work to do once before any of this suite's tests
       !
-      ! Set from inside the suite's own body — `thisSuite.beforeSuite = () =>
-      ! ...`. For what its tests all need and none of them should do twice:
-      ! `e2e` builds its drivers here, because `jo build` is not safe to run
-      ! twice at one output directory and its scenarios may run at once.
-      !
       ! A runner is expected to skip it when the filter selected nothing under
       ! this suite, so a `-- unit` run pays for nothing under `e2e`.
-      !
-      ! NOT a way to build a fixture for the tests to share: it hands back
-      ! nothing, and a test still gets its state from where it is written.
     //]
     var beforeSuite: () => Unit = () => pass
 
