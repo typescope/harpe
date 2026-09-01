@@ -94,7 +94,7 @@ pip install -r requirements.txt
 jo run test
 ```
 
-Harpe requires Jo 0.12 or newer. See [CONTRIBUTING.md](CONTRIBUTING.md) to
+Harpe requires Jo 0.13 or newer. See [CONTRIBUTING.md](CONTRIBUTING.md) to
 contribute and [SECURITY.md](SECURITY.md) to report a vulnerability.
 
 ## License

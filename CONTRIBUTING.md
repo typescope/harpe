@@ -6,7 +6,7 @@ engine, and the published package APIs are still stabilizing.
 
 ## Building from Source
 
-**Prerequisites:** [Jo](https://jo-lang.org/) 0.12 or newer, and Python 3.10 or
+**Prerequisites:** [Jo](https://jo-lang.org/) 0.13 or newer, and Python 3.10 or
 newer.
 
 ```sh
