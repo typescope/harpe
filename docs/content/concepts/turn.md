@@ -33,6 +33,34 @@ the messages it produced. While the turn is running, `Interact` reports live
 progress such as streamed text, tool execution, and retries. Your application
 decides which updates to show and how to store or present the completed turn.
 
+## Tool call scheduling
+
+A model may request several tools in one reply. How those calls run is your
+application's choice, passed to `Agent.ask` as a `ToolCallExecutor`:
+
+```jo
+val turn = Agent.ask:
+  message
+  tools = tools
+  executor = ToolCallExecutor.parallel(4)
+```
+
+`ToolCallExecutor.sequential` is the default. It runs one call at a time, in the
+order the model asked, which is the only policy that is safe for every toolset.
+
+`ToolCallExecutor.parallel(maxConcurrent)` runs up to `maxConcurrent` calls at
+once. Results still come back in call order, so the model always sees them
+paired with the calls it made. Use it when your handlers are independent and
+spend their time waiting — a page fetch, a sandbox run, a sub-agent turn.
+
+Choosing the parallel policy is a promise about your own code. Your handlers
+must tolerate running at the same time, and so must the `Interact` you pass in.
+Harpe calls `emit` from several threads under this policy, and two handlers can
+reach `approve` at once with only one user to answer them. Serializing that
+belongs in your `Interact`, where the knowledge of how your interface behaves
+already lives. Logging needs no such care, because Harpe installs a serializing
+logger for you.
+
 ## Interaction contract
 
 `Interact` connects an active turn to your application's user interface. Harpe

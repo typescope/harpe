@@ -39,6 +39,8 @@ my-agent/
   AGENT.md
   src/
     Main.jo
+  skills/
+    jo-syntax.md
   sandbox/
     jo.toml
     SandboxAPI.jo
@@ -56,11 +58,12 @@ val brain = Model.default()
 // The context is the one piece that must outlive a turn: it carries the
 // conversation from one turn to the next.
 val context = new FullContext:
-  baseSystem = file.read("AGENT.md")
+  baseSystem = File.read("AGENT.md")
   initial = []
 
-// The one tool this agent has: what the model is offered, and what runs.
-val tools = runCode.toolset()
+// Skills give the model Jo syntax on demand without carrying the full
+// reference in every prompt.
+val tools = SkillTools.toolset(os.path.abspath("skills")) ++ runCode.toolset()
 ```
 
 There is no `Agent` object to build — these are just values, and a turn is the

@@ -1,0 +1,204 @@
+//[ ExecutorTest.jo
+  !
+  ! Unit tests for the two `ToolCallExecutor` policies.
+  !
+  ! Order is asserted for both, because the model pairs results to calls by
+  ! position and a parallel round finishes in whatever order it likes.
+  !
+  ! Concurrency itself is asserted with a barrier rather than a stopwatch: every
+  ! handler waits for the others to arrive, so the round completes only if the
+  ! calls really do overlap, and the sequential policy fails the same test for
+  ! the same reason. No timing, nothing flaky.
+//]
+
+namespace harpe.test.unit.ExecutorTest
+
+import harpe.*
+import harpe.Tool.*
+import harpe.tools.ToolCallExecutor
+import harpe.turns.TurnEvent
+import harpe.logging.logger
+import harpe.logging.Logger
+import harpe.logging.Entry
+import harpe.ffi.threading
+import harpe.testing.thisSuite
+import harpe.testing.suite
+import harpe.testing.test
+import harpe.testing.checkEquals
+
+private def threadingMod: py.Dynamic = py.module("threading")
+private def timeMod: py.Dynamic = py.module("time")
+
+// A channel that observes nothing and cancels nothing — the executor's own
+// behaviour is what is under test here.
+private class Quiet
+  view Interact
+
+  def cancelled: Bool = false
+  def pause(seconds: Float): Bool = false
+  def emit(event: TurnEvent): Unit = pass
+  def approve(title: String, detail: String): Approvals.Decision = Approvals.Cancelled
+end
+
+private class NamedTool(toolName: String)
+  view Tool
+
+  def name: String = toolName
+  def description: String = "test tool"
+  def params: List[ToolParam] = []
+end
+
+// One call per name, ids fixed so a result can be traced back to its call.
+private def callsFor(names: List[String]): List[ToolCall] =
+  var calls: List[ToolCall] = []
+  var i = 0
+  for name in names do
+    calls = calls + ToolCall("id\{i}", name, ToolInput(py.dict()))
+    i = i + 1
+  calls
+
+// One name wired to `body`. Its own function because a lambda built inside a
+// loop closes over the loop's variable, not over the value it had that pass —
+// so every tool would answer with the last name. A call gives each closure a
+// binding of its own.
+private def entry(name: String, body: String => String): Toolset =
+  Toolset.of:
+    new NamedTool(name)
+    (i: ToolInput, c: Interact) => new ToolOutcome(body(name), "ran · \{name}", attachments = [])
+
+// Every name wired to the same body, which answers with the name it was called by.
+private def wiring(names: List[String], body: String => String): Toolset =
+  var out = Toolset.empty
+  for name in names do out = out ++ entry(name, body)
+  out
+
+// A tool that records one entry, so the context stamped around a call is
+// observable. Its own wiring because the plain bodies take no logger.
+private def probeEntry(name: String): Toolset =
+  Toolset.of:
+    new NamedTool(name)
+    (i: ToolInput, c: Interact) =>
+      logger.log("probe")
+      new ToolOutcome(name, "ran · \{name}", attachments = [])
+
+// Captures the tool-call context each record was stamped with. Locked, because
+// nothing wraps it in a `SerialLogger` here.
+private class Capture
+  view Logger
+
+  private val lock = threading.Lock()
+  var seen: List[String] = []
+
+  def logEntry(entry: Entry): Unit =
+    lock.acquire()
+    val fields = Entry.toDict(entry)
+    val stamp = fields.get("toolCall", py.dict()).cast[py.Dict]
+    seen = seen + "\{entry.category}@\{stamp.get("tool", "-").asString}#\{stamp.get("id", "-").asString}"
+    lock.release()
+
+  def close(): Unit = pass
+end
+
+private def contentsOf(results: List[ToolResult]): String =
+  results.map(result => result.content).join(",")
+
+private def okOf(results: List[ToolResult]): String =
+  results.map(result => if result.success then "ok" else "no").join(",")
+
+private def three(): List[String] = ["a", "b", "c"]
+
+// A body that answers immediately.
+private def plain(): String => String = name => name
+
+// A body that finishes only once every caller has arrived. `wait` raises when
+// the barrier breaks (nobody else came within the timeout), and `runSafely`
+// turns that into a failed result — which is exactly what the sequential policy
+// is expected to produce here.
+private def meeting(barrier: py.Dynamic): String => String =
+  name =>
+    barrier.wait(1.0)
+    name
+
+// A body that records how many callers were inside it at once.
+private def crowd(state: Peak): String => String =
+  name =>
+    state.enter()
+    timeMod.sleep(0.05)
+    state.leave()
+    name
+
+private class Peak
+  private val lock = threading.Lock()
+  var inside: Int = 0
+  var most: Int = 0
+
+  def enter(): Unit =
+    lock.acquire()
+    inside = inside + 1
+    if inside > most then most = inside
+    lock.release()
+
+  def leave(): Unit =
+    lock.acquire()
+    inside = inside - 1
+    lock.release()
+end
+
+def executorSuite(): Unit receives thisSuite, logger = suite: "tool call executor", () =>
+  suite: "results", () =>
+    test: "sequential answers every call in call order", () =>
+      checkEquals:
+        "sequential order"
+        contentsOf(ToolCallExecutor.sequential.run(callsFor(three()), wiring(three(), plain()), new Quiet))
+        "a,b,c"
+
+    test: "parallel answers every call in call order", () =>
+      checkEquals:
+        "parallel order"
+        contentsOf(ToolCallExecutor.parallel().run(callsFor(three()), wiring(three(), plain()), new Quiet))
+        "a,b,c"
+
+    test: "a name nothing is wired to comes back refused, in place", () =>
+      val calls = callsFor(["a", "nope", "c"])
+      val results = ToolCallExecutor.parallel().run(calls, wiring(three(), plain()), new Quiet)
+      checkEquals("unknown tool in place", okOf(results), "ok,no,ok")
+
+  suite: "concurrency", () =>
+    test: "parallel runs the round's calls at the same time", () =>
+      val barrier = threadingMod.Barrier(3)
+      checkEquals:
+        "all three met"
+        contentsOf(ToolCallExecutor.parallel().run(callsFor(three()), wiring(three(), meeting(barrier)), new Quiet))
+        "a,b,c"
+
+    test: "sequential does not, and the same round fails", () =>
+      val barrier = threadingMod.Barrier(3)
+      checkEquals:
+        "nobody met"
+        okOf(ToolCallExecutor.sequential.run(callsFor(three()), wiring(three(), meeting(barrier)), new Quiet))
+        "no,no,no"
+
+    test: "parallel never exceeds its bound", () =>
+      val names = ["a", "b", "c", "d"]
+      val state = new Peak
+      val _ = ToolCallExecutor.parallel(2).run(callsFor(names), wiring(names, crowd(state)), new Quiet)
+      checkEquals("peak concurrency", "\{state.most}", "2")
+
+    test: "records carry the call they came from, not just the tool", () =>
+      // The same tool, twice in one reply — the case where a name identifies
+      // nothing and only the call id tells the two apart.
+      val capture = new Capture
+      val _ =
+        with logger = capture in
+          ToolCallExecutor.parallel().run(callsFor(["a", "a"]), probeEntry("a"), new Quiet)
+
+      checkEquals:
+        "stamped call ids"
+        capture.seen.sortBy(entry => entry).join(",")
+        "probe@a#id0,probe@a#id1"
+
+    test: "a single call is not worth a thread, and still answers", () =>
+      checkEquals:
+        "one call"
+        contentsOf(ToolCallExecutor.parallel().run(callsFor(["a"]), wiring(three(), plain()), new Quiet))
+        "a"

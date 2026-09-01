@@ -1,0 +1,207 @@
+//[ ToolCallExecutor.jo
+  !
+  ! How a round's tool calls are run: one at a time, or several at once.
+  !
+  ! A model may ask for several tools in one reply, and it usually does so
+  ! because it believes they are independent. Believing is not knowing — a model
+  ! will also batch a write and the read that follows it — so which policy
+  ! applies is the DRIVER's decision, not the engine's and not the model's. It
+  ! is an interface for the same reason `Context` and `Transcript` are: the
+  ! engine has no opinion worth encoding here, and an application that knows its
+  ! own tools can supply one.
+  !
+  ! `sequential` is the default because it is the only policy that is safe for
+  ! every toolset. Under it a handler runs alone, which is what every handler
+  ! written before this file assumed.
+  !
+  ! WHAT A DRIVER TAKES ON BY CHOOSING `parallel`. Its handlers must tolerate
+  ! running at once, and so must the `Interact` they are handed — `emit` is
+  ! called from several threads, and `approve` may be reached by two of them
+  ! with one human and one terminal between them. Serializing that is a lock in
+  ! the driver's own `Interact`, which is where the knowledge of how its user
+  ! interface behaves already lives. The engine cannot serialize it on the
+  ! driver's behalf without also deciding what a queued approval prompt should
+  ! look like.
+  !
+  ! `logger` is safe either way: `Logging.withLogger` installs a `SerialLogger`,
+  ! so records from concurrent handlers never interleave.
+//]
+
+namespace harpe.tools
+
+import harpe.*
+import harpe.Tool.*
+import harpe.turns.TurnEvent
+import harpe.logging.logger
+import harpe.logging.Logging
+import harpe.util.Process
+import harpe.ffi.threading
+
+//[ The policy for running one round's tool calls
+  !
+  ! Results come back in CALL order under every policy, whatever order the calls
+  ! finished in, because that is the order the model asked in and the order the
+  ! provider pairs them by.
+  !
+  ! Cancellation is cooperative and checked per call: an executor stops starting
+  ! new work once `interact.cancelled` is set, and returns what it has. The
+  ! engine discards a cancelled round's results anyway — it is the turn that is
+  ! being abandoned, not just the round — so a short list is not a loss.
+//]
+interface ToolCallExecutor
+  def run(calls: List[ToolCall], tools: Toolset, interact: Interact): List[ToolResult] receives logger
+end
+
+section ToolCallExecutor
+  //[ One call at a time, in order — the default, and safe for every toolset. //]
+  def sequential: ToolCallExecutor = new SequentialExecutor
+
+  //[ Up to `maxConcurrent` calls at once
+    !
+    ! For toolsets whose handlers are I/O-bound and independent — a page fetch, a
+    ! sandbox run, a sub-agent turn. Read the note above on what a driver takes
+    ! on by choosing it.
+    !
+    ! The bound is not a detail: each concurrent handler may make its own
+    ! provider calls, and an unbounded fan-out answers a rate limiter rather than
+    ! the question.
+  //]
+  def parallel(maxConcurrent: Int = 4): ToolCallExecutor = new ParallelExecutor(maxConcurrent)
+
+  //[ Run one call: announce it, dispatch it, announce how it ended
+    !
+    ! Shared by both policies, so a tool call means the same thing and emits the
+    ! same events however it was scheduled.
+    !
+    ! A name nothing is wired to is answered, not raised: the model invented it
+    ! and can correct itself when it reads why it failed.
+  //]
+  private def runOne(call: ToolCall, tools: Toolset, interact: Interact): ToolResult receives logger =
+    val toolName = call.name
+    interact.emit: TurnEvent.ToolCallStarted(toolName)
+
+    // Everything the handler records is stamped with the call it belongs to.
+    // The model may ask for the SAME tool twice in one reply, so the name does
+    // not identify a call and the id does. Stamped here rather than in the
+    // parallel policy alone: a handler may run work on threads of its own under
+    // either, and a record should mean the same thing however it was scheduled.
+    val outcome =
+      Logging.withContext:
+        callContextKey
+        Map("id" ~ call.id, "tool" ~ toolName)
+        () => dispatch(call, tools, interact)
+
+    interact.emit: TurnEvent.ToolCallEnded(toolName, outcome.summary)
+
+    new ToolResult(call.id, outcome.result, outcome.attachments, outcome.success)
+
+  //[ The reserved sub-record key for the tool call a record was produced under.
+    !
+    ! Distinct from any key an application picks for its own ambient context, so
+    ! the two nest rather than overwrite one another.
+  //]
+  private def callContextKey: String = "toolCall"
+
+  //[ Answer one call: the wired handler, or a refusal for a name nothing answers. //]
+  private def dispatch(call: ToolCall, tools: Toolset, interact: Interact): ToolOutcome receives logger =
+    val toolName = call.name
+
+    if tools.contains(toolName) then
+      runSafely(toolName, tools.handler(toolName), call.input, interact)
+    else
+      new ToolOutcome:
+        "Unknown tool: \{toolName}"
+        "unknown tool · \{toolName}"
+        attachments = []
+        success = false
+
+  //[ One call at a time, stopping as soon as cancellation is seen. //]
+  private class SequentialExecutor
+    view ToolCallExecutor
+
+    def run(calls: List[ToolCall], tools: Toolset, interact: Interact): List[ToolResult] receives logger =
+      var results: List[ToolResult] = []
+
+      for call in calls do
+        if interact.cancelled then break
+        results = results + runOne(call, tools, interact)
+
+      results
+  end
+
+  //[ One thread per call, `maxConcurrent` of them running at a time
+    !
+    ! A single call is run inline. Spending a thread to wait for one handler buys
+    ! nothing, and it keeps the common round — a model calling one tool — exactly
+    ! as it was before this policy existed.
+  //]
+  private class ParallelExecutor(maxConcurrent: Int)
+    view ToolCallExecutor
+
+    def run(calls: List[ToolCall], tools: Toolset, interact: Interact): List[ToolResult] receives logger =
+      if calls.size <= 1 then return sequential.run(calls, tools, interact)
+
+      val gate = threading.Semaphore(maxConcurrent)
+
+      // The logger is taken as a value here and re-installed inside each thread.
+      // A thread body is handed to the host as a plain callable, so it carries no
+      // ambient scope of its own — it gets the channel this round was run with.
+      val channel = logger
+
+      var slots: List[Slot] = []
+      for call in calls do slots = slots + new Slot(call)
+
+      // Start every thread before joining any, or this is a slow way to be
+      // sequential. The semaphore, not the loop, is what bounds the work.
+      var running: List[py.Dynamic] = []
+      for slot in slots do
+        val thread = Process.daemon(() => with logger = channel in fill(slot, gate, tools, interact))
+        thread.start()
+        running = running + thread
+
+      for thread in running do thread.join()
+
+      var results: List[ToolResult] = []
+      for slot in slots do
+        match slot.result
+        case Some(result) => results = results + result
+        case None         => pass
+
+      results
+  end
+
+  //[ Run one call into its slot, holding a permit for the duration
+    !
+    ! The permit is released on every path, including a raising `emit`, so one
+    ! broken handler cannot strand the whole round behind an exhausted
+    ! semaphore. The handler's own failures are already contained by `runSafely`.
+  //]
+  private def fill(slot: Slot, gate: py.Dynamic, tools: Toolset, interact: Interact): Unit receives logger =
+    gate.acquire()
+
+    val attempted = py.try(attempt(slot, tools, interact))
+
+    gate.release()
+
+    match attempted
+    case Ok(result) => slot.result = result
+    case Err(error) =>
+      slot.result = Some(new ToolResult(
+        slot.call.id,
+        "The tool '\{slot.call.name}' could not be run: \{error.message}",
+        Tool.NoAttachments,
+        success = false))
+
+  //[ Run the call unless cancellation beat it to the start
+    !
+    ! Its own function so the result type is written once, where both branches
+    ! can be seen — `py.try` takes an expression, not a block.
+  //]
+  private def attempt(slot: Slot, tools: Toolset, interact: Interact): Option[ToolResult] receives logger =
+    if interact.cancelled then None else Some(runOne(slot.call, tools, interact))
+
+  //[ One call and the result the thread running it writes back. //]
+  private class Slot(call: ToolCall)
+    var result: Option[ToolResult] = None
+  end
+end

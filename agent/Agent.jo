@@ -26,6 +26,7 @@ import harpe.Model
 import harpe.Model.*
 import harpe.Tool
 import harpe.Tool.*
+import harpe.tools.ToolCallExecutor
 
 section Agent
   //[ No files sent with the question — the default for `ask`'s `attachments`. //]
@@ -74,6 +75,12 @@ section Agent
     ! because all three answer "how much may this turn spend", and a caller
     ! should not have to build a second `Model` to change one of them.
     !
+    ! `executor` is how one round's calls are scheduled. The default runs them
+    ! one at a time, which is the only policy safe for every toolset. A driver
+    ! whose handlers tolerate running at once — and whose `Interact` serializes
+    ! its own approvals — passes `ToolCallExecutor.parallel()` instead. Results
+    ! come back in call order under either.
+    !
     ! `tools` is both halves at once: the specs the model is offered and the
     ! code that answers each call, wired together by name. A handler closes over
     ! whatever typed context the driver built it with — in practice one toolset
@@ -90,6 +97,7 @@ section Agent
       interact: Interact = Interact.unattended,
       context: Context = Context.noHistory,
       transcript: Transcript = Transcript.NoTranscript,
+      executor: ToolCallExecutor = ToolCallExecutor.sequential,
       maxToolRounds: Int = 50,
       maxRetries: Int = 4,
       maxOutputTokens: Int = 8192)
@@ -156,33 +164,12 @@ section Agent
           if reply.text.trim != "" then
             interact.emit: TurnEvent.AssistantMessage(reply.text.trim)
 
-          var toolResults: List[ToolResult] = []
-          var cancelled = false
+          // How these are scheduled — one at a time, or several at once — is the
+          // driver's policy, not the engine's. Whatever it chooses, the results
+          // come back in call order, and a round abandoned midway returns short.
+          val toolResults = executor.run(reply.calls, tools, interact)
 
-          for call in reply.calls do
-            if interact.cancelled then
-              cancelled = true
-              break
-
-            val toolName = call.name
-            interact.emit: TurnEvent.ToolCallStarted(toolName)
-
-            val outcome =
-              if tools.contains(toolName) then
-                runSafely(toolName, tools.handler(toolName), call.input, interact)
-              else
-                ToolOutcome:
-                  "Unknown tool: \{toolName}"
-                  "unknown tool · \{toolName}"
-                  attachments = []
-                  success = false
-
-            interact.emit: TurnEvent.ToolCallEnded(toolName, outcome.summary)
-
-            toolResults = toolResults + ToolResult(call.id, outcome.result, outcome.attachments, outcome.success)
-          end
-
-          if cancelled || interact.cancelled then
+          if interact.cancelled then
             context.abortTurn()
             result = TurnResult.Interrupted
             transcript.interrupted()
