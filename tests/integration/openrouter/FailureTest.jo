@@ -4,10 +4,10 @@ namespace harpe.test.integration.openrouter.FailureTest
 
 import harpe.models.openrouter
 import harpe.logging.logger
-import harpe.test.framework.testing
-import harpe.test.framework.suite
-import harpe.test.framework.test
-import harpe.test.framework.check
+import harpe.testing.thisSuite
+import harpe.testing.suite
+import harpe.testing.test
+import harpe.testing.check
 import harpe.test.integration.ProviderFixture
 import harpe.test.integration.ModelDriver
 
@@ -22,7 +22,7 @@ private def error(status: String, message: String): ProviderFixture.Response =
       {"error":{"message":"\{message}","type":"test_error","code":"test"}}
       """
 
-def failureSuite(): Unit receives testing, logger = suite: "failure", () =>
+def failureSuite(): Unit receives thisSuite, logger = suite: "failure", () =>
   test: "429 reports the Retry-After delay", () =>
     val limited = new ProviderFixture.Response:
       "429 Too Many Requests"

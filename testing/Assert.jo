@@ -1,0 +1,16 @@
+//[ Assert.jo
+  !
+  ! The assertions a test body fails with. They say only what was expected — the
+  ! runner supplies which test was running and where it sits in the tree, so a
+  ! label here names the property, not the scenario.
+//]
+
+namespace harpe.testing
+
+//[ Fail the enclosing test with `label` unless `cond` holds. //]
+def check(label: String, cond: Bool): Unit =
+  assert: cond, label
+
+//[ Fail the enclosing test unless `actual` equals `expected`, quoting both. //]
+def checkEquals(label: String, actual: String, expected: String): Unit =
+  assert: actual == expected, "\{label}: expected [\{expected}] but got [\{actual}]"

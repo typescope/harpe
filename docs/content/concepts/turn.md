@@ -44,7 +44,7 @@ interface Interact
   def cancelled: Bool
   def pause(seconds: Float): Bool
   def emit(event: TurnEvent): Unit
-  def approve(request: Approvals.Request): Approvals.Decision
+  def approve(title: String, detail: String): Approvals.Decision
 end
 ```
 
@@ -107,7 +107,7 @@ private class LiveInteract(render: String => Unit)
 
     case _ => pass
 
-  def approve(request: Approvals.Request): Approvals.Decision =
+  def approve(title: String, detail: String): Approvals.Decision =
     Approvals.Cancelled
 end
 ```

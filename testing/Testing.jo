@@ -1,0 +1,107 @@
+//[ Testing.jo
+  !
+  ! Test specification APIs.
+  !
+  ! Tests form a tree-like structure where the leaves are individual tests and
+  ! internal nodes are suites.
+  !
+  ! A suite may be declared to be sequential (default) or parallel. A parallel
+  ! suite tells the test runner that its direct children can in parallel.
+  !
+  ! Declaring and running are deliberately separate phases. A test body is a
+  ! plain `() => Unit` that captures whatever context it needs at the point of
+  ! its definition.
+//]
+
+namespace harpe.testing
+
+//[ The suite for the current context  //]
+param thisSuite: Testing.Suite
+
+//[ Declare one test in the enclosing suite. //]
+def test(name: String, body: () => Unit): Unit receives thisSuite =
+  thisSuite.addTest(name, body)
+
+//[ Declare a nested suite, collecting `content` into it. //]
+def suite(name: String, content: () => Unit receives thisSuite): Unit receives thisSuite =
+  val nested = new Testing.Suite(name)
+  with thisSuite = nested in content()
+  thisSuite.addSuite(nested)
+
+section Testing
+  //[ An individual test //]
+  class Test(name: String, run: () => Unit)
+
+  //[ A suite contains a list of suites or tests
+    !
+    ! Tests and nested suites share one list so the report reads in the order the
+    ! scenario file declares them.
+  //]
+  class Suite(name: String)
+    var children: List[Suite | Test] = []
+    private var childNames: Set[String] = Set.empty[String]
+
+    //[ May this suite's direct children run in parallel?
+      !
+      ! The setting `parallel = true` tells the test runner that the direct
+      ! children of the suite may safely run in parallel. Usually, it implies
+      ! there are no shared mutable fixture, directory, port, or ordering
+      ! assumption. Reporting stays in declaration order either way.
+      !
+      ! The runner turns such a suite into one pool of work items. A parallel
+      ! child suite is recursively flattened into the same pool, so its tests
+      ! compete for the same workers. A serial child suite becomes a single
+      ! item instead, which is what keeps its subtree in order.
+      !
+      !     A (parallel: one pool)
+      !     ├── test p ───────────────────────────── item
+      !     └── B (serial) ───────────────────────── item
+      !         ├── test q
+      !         └── C (parallel: its own pool)
+      !             ├── test x
+      !             ├── test y
+      !             └── test z
+      !
+      ! - A: p and B run in parallel
+      ! - B: q and C run sequentially
+      ! - C: x, y and z run in parallel
+      !
+      ! C is the one shape that nests pools, since a parallel suite under a
+      ! serial one starts its own. That inner pool counts workers from scratch,
+      ! so a tree like this can have more tests in flight than the worker count
+      ! asks for.
+    //]
+    var parallel: Bool = false
+
+    //[ Work to do once before any of this suite's tests
+      !
+      ! A runner is expected to skip it when the filter selected nothing under
+      ! this suite, so a `-- unit` run pays for nothing under `e2e`.
+    //]
+    var beforeSuite: () => Unit = () => pass
+
+    def addTest(name: String, run: () => Unit): Unit =
+      requireAvailable(name)
+      children = children + new Test(name, run)
+
+    def addSuite(child: Suite): Unit =
+      requireAvailable(child.name)
+      children = children + child
+
+    private def requireAvailable(childName: String): Unit =
+      if childNames.contains(childName) then
+        abort: "duplicate child name '\{childName}' in suite '\{name}'"
+      childNames = childNames + childName
+
+  end
+
+  //[ Build a root suite from a declaration block
+    !
+    ! The root's `name` titles the report. It contributes no path segment, so a
+    ! filter starts at the first nested suite.
+  //]
+  def define(name: String, content: () => Unit receives thisSuite): Suite =
+    val root = new Suite(name)
+    with thisSuite = root in content()
+    root
+end

@@ -4,10 +4,10 @@ namespace harpe.test.integration.openaiResponses.FailureTest
 
 import harpe.models.openai
 import harpe.logging.logger
-import harpe.test.framework.testing
-import harpe.test.framework.suite
-import harpe.test.framework.test
-import harpe.test.framework.check
+import harpe.testing.thisSuite
+import harpe.testing.suite
+import harpe.testing.test
+import harpe.testing.check
 import harpe.test.integration.ProviderFixture
 import harpe.test.integration.ModelDriver
 
@@ -33,7 +33,7 @@ private def rateLimited(): ProviderFixture.Response = new ProviderFixture.Respon
 private def model(server: ProviderFixture.Server) =
   openai("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
 
-def failureSuite(): Unit receives testing, logger = suite: "failure", () =>
+def failureSuite(): Unit receives thisSuite, logger = suite: "failure", () =>
   test: "429 reports the Retry-After delay", () =>
     ProviderFixture.withResponses: [rateLimited()], server =>
       val turn = ModelDriver.start(model(server), prompt = "Say hello.")

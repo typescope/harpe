@@ -15,10 +15,10 @@ import harpe.ffi.tempfile
 import harpe.util.File
 import harpe.ffi.os
 
-import harpe.test.framework.testing
-import harpe.test.framework.suite
-import harpe.test.framework.test
-import harpe.test.framework.check
+import harpe.testing.thisSuite
+import harpe.testing.suite
+import harpe.testing.test
+import harpe.testing.check
 
 private def isSize(s: Image.Size, w: Int, h: Int): Bool = s.width == w && s.height == h
 
@@ -123,7 +123,7 @@ private def withMedia(
     wordReader = new DocxReader(dir)
   in body(FileSystemImpl.local(dir), dir)
 
-def processorSuite(): Unit receives testing = suite: "media processors", () =>
+def processorSuite(): Unit receives thisSuite = suite: "media processors", () =>
   suite: "word", () =>
     test: "rejects a file that is not a document", () =>
       withMedia: (fs, dir) =>
@@ -295,7 +295,7 @@ def processorSuite(): Unit receives testing = suite: "media processors", () =>
 
     test: "rapidocr reads real text when its package is installed", () =>
       withMedia: (fs, dir) =>
-        if !hasModule("rapidocr_onnxruntime") then check("not installed", true)
+        if !hasModule("rapidocr") then check("not installed", true)
         else
           makeImage(os.path.join(dir, "pic.png"), 30, 20)
           makeTextImage(os.path.join(dir, "text.png"))

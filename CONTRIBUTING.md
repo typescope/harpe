@@ -30,25 +30,24 @@ jo run test -- e2e           # the shipped agents, built and run as their own pr
 jo run test -- e2e/cli       # just one of them
 ```
 
-An `e2e` suite builds a shipped application through its `ci/` spec, starts it as
-its own process, and drives it the way a user would — the web agent over its
-HTTP API, the CLI agent by typing at a pseudo-terminal — against a scripted
-model server, with no network and no API key. Programs the agent writes are
-compiled by the real toolchain and run in the real sandbox. A scenario that
-fails leaves its temporary agent home in place and quotes what the agent had
-printed, both named in the failure.
-
-Each shipped application builds against the sources in this branch through a
-spec in `ci/`, which is what CI does:
+The `e2e` suite lives beside the agent it drives, in `cli/tests/`, and runs from
+there. It builds the agent through its own `jo.toml` — against this branch's
+sources — starts it as its own process, and types at it through a
+pseudo-terminal against a scripted model, with no network and no API key.
+Programs the agent writes are compiled by the real toolchain and run in the real
+sandbox. A scenario that fails leaves its temporary agent home in place and
+quotes what the agent had printed, both named in the failure.
 
 ```sh
-jo build cli --spec ci/cli.toml            # also: hello, web, telegram
-jo build sandbox-guest --spec ci/cli.toml
+cd cli && jo test
 ```
 
-Building from an application's own `jo.toml` instead resolves `harpe` and
-`harpe-caps` from the public registry, so it tests the last published release
-rather than your working tree.
+Nothing in this repository resolves the package registry: the framework, the CLI
+agent, and both suites all build from these sources, so every check is answerable
+by the pull request that breaks it. The other five agents live in
+[typescope/agents](https://github.com/typescope/agents), pinned to a published
+release — which is what lets an API change land here without being made in six
+places at once.
 
 The documentation site is [Zola](https://www.getzola.org/):
 
@@ -62,10 +61,9 @@ cd docs && zola serve      # `zola build` also checks internal links
 |---|---|
 | `caps/` | Capability interfaces, published as `harpe-caps`. Pure Jo, no FFI |
 | `agent/` | The framework, published as `harpe` — turn engine, models, tools, context, logging |
-| `cli/`, `web/`, `telegram/` | The shipped applications, which are also `jo new` templates |
-| `templates/hello/` | The minimal learning agent |
-| `examples/` | Complete agents built in CI: PR review, flight booking |
-| `tests/` | The `jo run test` suite |
+| `testing/` | The test framework, published as `harpe-testing`. Depends on nothing, not even `harpe` |
+| `cli/` | The CLI agent and its own end-to-end suite — the framework's only one |
+| `tests/` | The `jo run test` suite: unit and integration |
 | `docs/` | The documentation site |
 | `compose/`, `pycompose/` | An experimental drawing engine, outside the shippable surface |
 

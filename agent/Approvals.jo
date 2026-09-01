@@ -6,24 +6,20 @@
 
 namespace harpe
 
-import harpe.Approvals.Request
 import harpe.Approvals.Decision
 
-//[ Instant approval available to trusted sandbox capability implementations. //]
+//[ Instant approval available to trusted sandbox capability implementations.
+  !
+  ! `title` is short plain text. `detail` is Markdown rendered by the driver.
+//]
 interface Approvals
-  def request(request: Request): Decision
+  def request(title: String, detail: String): Decision
 end
 
 //[ The sandbox runtime binds one implementation for the lifetime of the program. //]
 param approvals: Approvals
 
 section Approvals
-  //[ The human-readable approval request.
-    !
-    ! `title` is short plain text. `detail` is Markdown rendered by the driver.
-  //]
-  class Request(title: String, detail: String)
-
   //[ The result returned to the waiting sandboxed program. //]
   union Decision = Approved | Rejected | TimedOut | Cancelled
 

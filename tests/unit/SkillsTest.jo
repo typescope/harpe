@@ -20,10 +20,10 @@ import harpe.tools.*
 import harpe.Tool.*
 import harpe.logging.Logging
 import harpe.logging.logger
-import harpe.test.framework.testing
-import harpe.test.framework.suite
-import harpe.test.framework.test
-import harpe.test.framework.check
+import harpe.testing.thisSuite
+import harpe.testing.suite
+import harpe.testing.test
+import harpe.testing.check
 
 // A no-op logger for the tool run. These tests assert on results, not logs.
 private def listSkills(dir: String): String =
@@ -62,7 +62,7 @@ private def withSkills(body: (String, String) => Unit): Unit =
 
   body(skillsDir, tmp)
 
-def skillsSuite(): Unit receives testing = suite: "skill tools", () =>
+def skillsSuite(): Unit receives thisSuite = suite: "skill tools", () =>
   test: "lists nested files, names carrying their sub-directory path", () =>
     withSkills: (skills, tmp) =>
       check:

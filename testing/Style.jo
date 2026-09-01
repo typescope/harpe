@@ -1,0 +1,27 @@
+//[ Style.jo
+  !
+  ! Terminal colour for the test report. The palette matches `harpe.cli.Style`
+  ! by eye rather than by reference: this package depends on nothing, so it
+  ! cannot reach a CLI application's palette even though it agrees with it.
+  !
+  ! Colour is presentation only and disappears when output is redirected, the
+  ! terminal is dumb, or NO_COLOR is present, so a CI log stays free of escapes.
+//]
+
+namespace harpe.testing
+
+section Style
+  private def enabled(): Bool =
+    py.module("sys").stdout.isatty().asBool &&
+    os.getenv("TERM", "") != "dumb" &&
+    !os.environ.contains("NO_COLOR")
+
+  private def paint(code: String, text: String): String =
+    if enabled() then builtins.chr(27) + "[" + code + "m" + text + builtins.chr(27) + "[0m"
+    else text
+
+  def success(text: String): String = paint("38;5;114", text)
+  def error(text: String): String = paint("1;38;5;203", text)
+  def muted(text: String): String = paint("38;5;245", text)
+  def strong(text: String): String = paint("1", text)
+end

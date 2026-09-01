@@ -26,9 +26,32 @@ modules = ["caps"]
 name = "harpe"
 version = "0.8.0"
 
+# The test framework, published as `harpe-testing`: the suite tree, the runner,
+# and the assertions.
+#
+# It depends on nothing — not even `harpe`. Nothing in it knows what an agent is:
+# the harness that builds and drives one lives in `tests/e2e/`, and the provider
+# fixture in `tests/integration/`, because both are shaped by this repository's
+# own layout. The nine host calls it makes are bound in `testing/Platform.jo`
+# rather than borrowed from `harpe.ffi`, which is what keeps it free-standing.
+#
+# It is a package rather than part of `tests/` so that a project outside this
+# repository can declare a test module against it. Nothing elsewhere can reach
+# into `tests/`.
+[module.testing]
+kind = "lib"
+platform = "python"
+enable-ffi = true
+src = ["testing/"]
+compile-options = ["--test-pickling", "--check-tree"]
+
+[module.testing.package]
+name = "harpe-testing"
+version = "0.8.0"
+
 [module.test]
 kind = "app"
 platform = "python"
 enable-ffi = true
-modules = ["harpe", "caps"]
+modules = ["harpe", "caps", "testing"]
 src = ["tests/"]

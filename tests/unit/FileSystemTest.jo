@@ -13,10 +13,10 @@ import harpe.caps.*
 import harpe.ffi.tempfile
 import harpe.util.File
 import harpe.ffi.os
-import harpe.test.framework.testing
-import harpe.test.framework.suite
-import harpe.test.framework.test
-import harpe.test.framework.check
+import harpe.testing.thisSuite
+import harpe.testing.suite
+import harpe.testing.test
+import harpe.testing.check
 
 private def isOk[T, E](result: Result[T, E]): Bool =
   match result
@@ -57,7 +57,7 @@ private def withFs(body: (FileSystem, String) => Unit): Unit =
   File.write(os.path.join(dir, "sub", "a.txt"), "hi")
   body(FileSystemImpl.local(dir), dir)
 
-def fileSystemSuite(): Unit receives testing = suite: "media filesystem", () =>
+def fileSystemSuite(): Unit receives thisSuite = suite: "media filesystem", () =>
   suite: "paths", () =>
     test: "rejects paths that leave the root", () =>
       withFs: (fs, dir) =>

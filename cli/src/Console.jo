@@ -200,9 +200,9 @@ private section Console
     def emit(event: TurnEvent): Unit =
       if !cancelled then console.display(event)
 
-    def approve(request: Approvals.Request): Approvals.Decision =
+    def approve(title: String, detail: String): Approvals.Decision =
       with IO.stdout = console.out in
-        Console.askApproval(console, interrupt, active, approvalActive, request)
+        Console.askApproval(console, interrupt, active, approvalActive, title, detail)
   end
 
   private def askApproval(
@@ -210,17 +210,18 @@ private section Console
       interrupt: py.Dynamic,
       active: py.Dynamic,
       approvalActive: py.Dynamic,
-      request: Approvals.Request)
+      title: String,
+      detail: String)
   : Approvals.Decision receives stdout =
     console.stopProgress()
     approvalActive.set()
 
     println ""
     println("  " + Style.warning("Approval required"))
-    println("  " + Style.strong(request.title))
-    if request.detail.trim != "" then
+    println("  " + Style.strong(title))
+    if detail.trim != "" then
       println ""
-      println(Markdown.toTerminal(request.detail))
+      println(Markdown.toTerminal(detail))
     println ""
     sys.stdout.write("  " + Style.muted("Approve? [y/N] "))
     sys.stdout.flush()

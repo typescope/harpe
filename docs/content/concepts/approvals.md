@@ -32,11 +32,11 @@ before a consequential operation:
 
 ```jo
 def transfer(input: Transfer, interact: Interact): ToolOutcome =
-  val request = Approvals.Request:
+  val decision = interact.approve:
     "Transfer funds"
     "Transfer **CHF \{input.amount}** to **\{input.recipient}**."
 
-  match interact.approve(request)
+  match decision
   case Approvals.Approved =>
     executeTransfer(input)
 
@@ -76,11 +76,11 @@ class PaymentsImpl(approvals: Approvals)
   view Payments
 
   def transfer(input: Transfer): Result[Receipt, String] =
-    val request = Approvals.Request:
+    val decision = approvals.request:
       "Transfer funds"
       "Transfer **CHF \{input.amount}** to **\{input.recipient}**."
 
-    match approvals.request(request)
+    match decision
     case Approvals.Approved =>
       executeTransfer(input)
     case Approvals.Rejected =>
@@ -97,8 +97,8 @@ approval check or approve the request. Those decisions stay in the trusted
 runtime on the other side of the [capability boundary](/concepts/sandbox/).
 
 The sandbox runtime connects `Approvals` to the `runCode` broker. The broker
-assigns the request ID and forwards the request to `Interact`. If generated code
-runs without a broker, approval returns `Approvals.Cancelled`.
+forwards the title and detail to `Interact`. If generated code runs without a
+broker, approval returns `Approvals.Cancelled`.
 
 ## The two approval interfaces
 
@@ -106,19 +106,22 @@ Tools and code-mode capabilities enter the flow through different interfaces:
 
 ```jo
 interface Interact
-  def approve(request: Approvals.Request): Approvals.Decision
+  def approve(title: String, detail: String): Approvals.Decision
 end
 
 interface Approvals
-  def request(request: Approvals.Request): Approvals.Decision
+  def request(title: String, detail: String): Approvals.Decision
 end
 ```
 
-`Interact.approve` belongs to the active turn. The application implements it to
-show a request to the user and wait for a decision. An interaction that needs a
-correlation ID for its user interface creates that ID internally.
-`Approvals.request` belongs to the sandbox runtime. Its broker adapts a
-capability request to the active interaction.
+Both take the request as its two fields, a title and a Markdown detail, and
+neither carries an ID. `Interact.approve` belongs to the active turn: the
+application implements it to show a request to the user and wait for a decision.
+An interface that answers out of band — a browser tab posting a decision back, a
+Telegram callback button — needs a correlation ID to match that decision to the
+request it answers, and mints one of its own. `Approvals.request` belongs to the
+sandbox runtime. Its broker adapts a capability request to the active
+interaction.
 
 Approval remains outside the model conversation in both paths. It does not
 consume model context or appear in the transcript when a conversation is

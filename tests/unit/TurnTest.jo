@@ -23,10 +23,10 @@ import harpe.Tool.*
 import harpe.logging.logger
 import harpe.logging.Logger
 import harpe.logging.Entry
-import harpe.test.framework.testing
-import harpe.test.framework.suite
-import harpe.test.framework.test
-import harpe.test.framework.checkEquals
+import harpe.testing.thisSuite
+import harpe.testing.suite
+import harpe.testing.test
+import harpe.testing.checkEquals
 
 
 // A reply carrying only text (no tool calls).
@@ -147,7 +147,7 @@ private class TestInteract(state: State)
     state.pausedFor = seconds
     state.pauseNow
 
-  def approve(request: Approvals.Request): Approvals.Decision = Approvals.Cancelled
+  def approve(title: String, detail: String): Approvals.Decision = Approvals.Cancelled
 end
 
 private class State(cancelled: Bool, pause: Bool)
@@ -182,7 +182,7 @@ private def tools(): List[TestTool] = [echoTool()]
 
 private def live(): State = State(cancelled = false, pause = false)
 
-def turnSuite(): Unit receives testing, logger = suite: "turn engine", () =>
+def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
   suite: "ending a turn", () =>
     test: "a plain text reply ends it immediately", () =>
       checkEquals:

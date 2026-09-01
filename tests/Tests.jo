@@ -8,12 +8,13 @@
   ! the ones that cross an ownership boundary: the provider suites encode a
   ! contract with a third party whose wire format can change without a line here
   ! changing, and `runCode` drives the real Jo toolchain and a real sandbox.
-  ! `e2e` holds the ones that cross a PROCESS boundary: they build a shipped
-  ! driver, run it, and drive it over its own HTTP API.
+  !
+  ! What crosses a PROCESS boundary is no longer here. The CLI agent's own suite
+  ! builds it, starts it, and types at it through a pseudo-terminal — and lives
+  ! beside the agent, in `cli/tests/`. Run it with `cd cli && jo test`.
   !
   ! Order still matters — the fast unit suites first, then the slower boundary
-  ! ones, with `runCode` last of those because it shells out to a sandbox build,
-  ! and `e2e` after all of them, since it builds and starts a whole agent.
+  ! ones, with `runCode` last of those because it shells out to a sandbox build.
   !
   ! A path filter selects a subtree — `jo run test -- unit/context`, or
   ! `jo run test -- integration/openai/chat`.
@@ -25,9 +26,10 @@ import jo.IO.stdout
 import harpe.logging.Logging
 import harpe.logging.logger
 import harpe.Interact
-import harpe.test.framework.Testing
-import harpe.test.framework.Runner
-import harpe.test.framework.suite
+import harpe.testing.Testing
+import harpe.testing.Runner
+import harpe.testing.suite
+import harpe.testing.thisSuite
 import harpe.test.unit.SocketTest
 import harpe.test.unit.BrokerTest
 import harpe.test.unit.FileSystemValidationTest
@@ -46,12 +48,12 @@ import harpe.test.integration.openai
 import harpe.test.integration.openaiResponses
 import harpe.test.integration.openrouter
 import harpe.test.integration.RunCodeTest
-import harpe.test.e2e.WebTest
-import harpe.test.e2e.CliTest
 
 // Suites that drive tools/turns need `logger` in scope. Install a no-op one for
-// the whole harness (RunCodeTest self-provides on its worker threads, since
-// context params do not cross thread boundaries).
+// the whole harness. It reaches a test wherever the runner runs it, parallel
+// suites included: `define` below declares every body inside this scope, and a
+// body carries what it captured. (RunCodeTest still self-provides, because the
+// threads IT spawns are built inside a call that never discharged the effect.)
 def main(): Unit receives stdout =
   with logger = Logging.discard in run()
 
@@ -60,14 +62,16 @@ private def run(): Unit receives stdout, logger =
   // it is declared in — so this call has to sit inside `with logger`, not around
   // the `Runner.run` below it.
   val declared = Testing.define: "harpe", () => suites()
+  val filter = Runner.filterFromArgs()
 
   // The runner has already printed what failed and where, so exit on that rather
   // than aborting and burying the report under a host traceback.
-  if !Runner.run(declared, Runner.filterFromArgs()) then py.module("sys").exit(1)
+  val ok = Runner.run(declared, filter, Runner.lanesFromEnv())
+  if !ok then py.module("sys").exit(1)
   println ""
   println "all harpe tests passed"
 
-private def suites(): Unit receives framework.testing, logger =
+private def suites(): Unit receives thisSuite, logger =
   suite: "unit", () =>
     SocketTest.socketSuite()
     BrokerTest.brokerSuite()
@@ -89,7 +93,3 @@ private def suites(): Unit receives framework.testing, logger =
     openaiResponses.Tests.openaiResponsesSuite()
     openrouter.Tests.openrouterSuite()
     RunCodeTest.runCodeSuite()
-
-  suite: "e2e", () =>
-    WebTest.webSuite()
-    CliTest.cliSuite()
