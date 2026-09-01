@@ -3,8 +3,7 @@
 Example agents for [Harpe](https://github.com/typescope/harpe), each a
 `jo new` template.
 
-These are demos and templates, not production software. They are written to be
-read and copied. Review anything you keep from them, and expect to change it.
+These are demos and templates, not production software.
 
 ## Getting started
 
