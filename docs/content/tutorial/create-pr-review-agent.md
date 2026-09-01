@@ -1,10 +1,16 @@
 +++
 title = "Create a PR Review Agent"
 +++
-The PR review example is a complete agent that reviews a GitHub pull request and
-submits the review. It reads the diff, follows identifiers into the repository
-snapshot, and saves a pending draft — all by writing Jo programs against a
-GitHub capability that offers four operations and nothing else.
+The PR review example demonstrates **REST API surface narrowing**, a strong
+point of Jo's capability model. A conventional process sandbox can block or
+allow network access, but cannot naturally grant selected operations from one
+REST API while making its sibling endpoints uncallable. Here the trusted
+runtime can use GitHub's broader API, while model-written programs receive four
+typed operations and nothing else.
+
+The complete agent reviews one GitHub pull request: it reads the diff, follows
+identifiers into the repository snapshot, and saves a pending draft for manual
+verification. It cannot publish, post a standalone comment, or merge.
 
 ## Create the project
 
@@ -92,11 +98,8 @@ trusted implementation always omits GitHub's event field, which saves a draft.
 Publishing, standalone comments, and merging are absent from `interface GitHub`,
 so a model-written program that attempts any of them does not compile.
 
-This is a typical example of **REST API surface narrowing**, and a strong point
-of Jo's capability model. The trusted runtime can integrate with GitHub's broad
-REST API, while the generated program sees a smaller typed interface containing
-only the operations appropriate for its role. Authority is reduced structurally,
-not by asking the model to avoid dangerous endpoints.
+Authority is reduced structurally, not by asking the model to avoid dangerous
+endpoints.
 
 To add a publishing operation, widen the interface and protect the effect inside
 the trusted implementation with [human approval](/concepts/approvals/). The
