@@ -1,8 +1,12 @@
 # Harpe agents
 
-Ready-to-run agents for [Harpe](https://github.com/typescope/harpe), each a
-`jo new` template. Every one is a complete project: sources, sandbox, prompt,
-requirements, and — where it has them — its own tests.
+Six example agents for [Harpe](https://github.com/typescope/harpe), each a
+`jo new` template.
+
+These are demos and templates, not production software. They are written to be
+read and copied. Review anything you keep from them, and expect to change it.
+
+## Getting started
 
 ```sh
 jo new my-agent --template typescope/agents:web
@@ -12,49 +16,51 @@ cp .env.example .env
 jo start
 ```
 
-Each agent's `.env.example` documents the variables it needs.
+Each agent's `.env.example` lists the variables it reads. The run command is
+declared in its `jo.toml` under `[commands]`: `jo start` for all of them except
+`pr-review`, which takes a PR URL and uses `jo review`.
 
 ## The agents
 
-| Template | Kind | Includes |
+| Template | Kind | What it shows |
 |---|---|---|
-| `hello` | start here | The smallest complete agent. No sessions, no skills, no tests — you can read the whole loop in `src/Main.jo` |
+| `hello` | start here | The smallest complete agent. The whole loop is in `src/Main.jo` |
 | `cli` | channel | Terminal history, progress, cancellation, resumable sessions, logs |
 | `web` | channel | Browser sessions, streaming, uploads, downloadable files |
-| `telegram` | channel | Bot sessions, sender authorization, attachments, Telegram rendering |
-| `pr-review` | pattern | Reviews a GitHub PR through a capability scoped to one external API |
-| `flight-booker` | pattern | Books a flight, with human approval before the irreversible step |
+| `telegram` | channel | Bot sessions, sender authorization, attachments |
+| `pr-review` | pattern | A capability scoped to one external API |
+| `flight-booker` | pattern | Human approval before an irreversible action |
 
-The **channel** agents differ only in how a person reaches them; pick the one
-that matches where your users are. The **pattern** agents are worked examples —
-read them for the shape, rather than starting from them.
+The channel agents differ in how a person reaches them. The pattern agents show
+one technique each.
 
 ## Tests
 
-An agent that ships tests runs them from its own directory, against a scripted
-model on localhost. No API key, and nothing reaches the network.
+`web` ships an end-to-end suite. It builds the agent, starts it as its own
+process, and drives it over HTTP against a scripted model, so it needs no API
+key and reaches no network.
 
 ```sh
 cd web
 jo test
 ```
 
-They are built on [`harpe-testing`](https://pkg.typescope.ai/harpe-testing.jsonl),
-so they keep working in a project created with `jo new` — a starting point for
-your own, rather than something to delete.
+It is built on [`harpe-testing`](https://pkg.typescope.ai/harpe-testing.jsonl),
+which a project created with `jo new` can use as well. The other five agents
+have no tests.
 
 ## Versions
 
-Every agent here pins a published `harpe` release, so this repository is always
-buildable as it stands. It moves one release at a time: a new `harpe` is
-published first, then the agents are updated to it here. Tags match the `harpe`
-release they were built against.
+Every agent pins a published `harpe` release, so this repository builds as it
+stands. A new `harpe` is published first, then the agents are updated to it
+here. Tags match the `harpe` release they were built against.
 
 ## Where things live
 
-The framework itself — the turn engine, capabilities, models, tools — is in
-[typescope/harpe](https://github.com/typescope/harpe), along with the
-documentation and the `cli` agent, which doubles as that repository's end-to-end
-test subject and is mirrored here at each release.
+The framework — the turn engine, capabilities, models, tools — and the
+documentation are in
+[typescope/harpe](https://github.com/typescope/harpe). The `cli` agent lives
+there too, as that repository's end-to-end test subject, and is mirrored here at
+each release.
 
 Issues about the framework belong upstream. Issues about an agent belong here.
