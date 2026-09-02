@@ -124,10 +124,12 @@ section Tool
 
   //[ Tool parameter
     !
-    ! One input parameter of a tool: its name, type, human description, and
-    ! whether it is required.
+    ! One input parameter of a tool: its name, type, and human description.
+    !
+    ! EVERY PARAMETER IS REQUIRED, by design. Optionality buys a human caller
+    ! ergonomics a model has no use for, and explicit is better.
   //]
-  class ToolParam(name: String, paramType: ParamType, description: String, required: Bool)
+  class ToolParam(name: String, paramType: ParamType, description: String)
 
   //[ A tool call the model wants to make
     !
@@ -151,9 +153,13 @@ section Tool
     !
     ! Typed access to the arguments the model supplied for a tool call, so
     ! handlers read `input.string("code")` instead of poking a raw py.Dict.
+    !
+    ! Every declared parameter is required (see `ToolParam`), so a missing key
+    ! means a malformed call rather than a choice the model made. Each accessor
+    ! falls back to its type's zero so one does not take the turn down.
   //]
   class ToolInput(raw: py.Dict)
-    //[ The string argument under `key`, or `""` if the model omitted it
+    //[ The string argument under `key`, or `""` if the key is missing
       !
       ! The indexing form of `string`, so a route reads as one line:
       ! `i => runBash(i["command"])`.
@@ -161,16 +167,9 @@ section Tool
     def get(key: String): String = string(key)
 
     def string(name: String): String = raw.get(name, "").asString
-    def stringOr(name: String, fallback: String): String = raw.get(name, fallback).asString
-
-    def int(name: String): Int = intOr(name, 0)
-    def intOr(name: String, fallback: Int): Int = raw.get(name, fallback).asInt
-
-    def bool(name: String): Bool = boolOr(name, false)
-    def boolOr(name: String, fallback: Bool): Bool = raw.get(name, fallback).asBool
-
-    def num(name: String): Float = numOr(name, 0.0)
-    def numOr(name: String, fallback: Float): Float = raw.get(name, fallback).asFloat
+    def int(name: String): Int = raw.get(name, 0).asInt
+    def bool(name: String): Bool = raw.get(name, false).asBool
+    def num(name: String): Float = raw.get(name, 0.0).asFloat
   end
 
 
@@ -211,21 +210,21 @@ section Tool
         attachments = []
         success = false
 
-  //[ A required string parameter — the common case when defining a tool. //]
+  //[ A string parameter — the common case when defining a tool. //]
   def strParam(name: String, description: String): ToolParam =
-    new ToolParam(name, StrParam, description, true)
+    new ToolParam(name, StrParam, description)
 
-  //[ A required integer parameter. //]
+  //[ An integer parameter. //]
   def intParam(name: String, description: String): ToolParam =
-    new ToolParam(name, IntParam, description, true)
+    new ToolParam(name, IntParam, description)
 
-  //[ A required boolean parameter. //]
+  //[ A boolean parameter. //]
   def boolParam(name: String, description: String): ToolParam =
-    new ToolParam(name, BoolParam, description, true)
+    new ToolParam(name, BoolParam, description)
 
-  //[ A required number (float) parameter. //]
+  //[ A number (float) parameter. //]
   def numParam(name: String, description: String): ToolParam =
-    new ToolParam(name, NumParam, description, true)
+    new ToolParam(name, NumParam, description)
 
   //[ Bound a tool result's text to at most `maxChars`
     !

@@ -52,7 +52,9 @@ boolParam(name, description)   // boolean
 numParam(name, description)    // number
 ```
 
-These constructors create required parameters.
+Every parameter is required — explicit is better, and a model has no use for the
+ergonomics an optional argument buys a human caller. Give a parameter that does
+not always apply a documented value meaning "not applicable" instead.
 
 ## Implement the operation
 
@@ -115,8 +117,9 @@ input.bool("verbose")
 input.num("threshold")
 ```
 
-If a key is absent, these accessors return the type's zero value. Accessors such
-as `input.intOr("count", 10)` let you choose an explicit fallback.
+If a key is absent, these accessors return the type's zero value. Since every
+parameter is required, that happens only for a malformed call, and the zero
+keeps one from taking the turn down.
 
 Every handler receives an `Interact` as its second argument. This weather tool
 does not need it, so the handler names it `_`. A tool can use it when it needs to
