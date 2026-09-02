@@ -17,12 +17,12 @@ For each agent action step, the model writes a Jo program. Harpe compiles it as 
 untrusted guest against capability interfaces chosen by the application.
 Trusted implementations retain credentials, tenant scope, and validation.
 
-The capability interfaces define the guest's authority:
+The capability interface scopes the guest's authority:
 
 - broad authority can be attenuated into narrow domain operations, such as a
   read-only, tenant-scoped query
-- the compiler checks direct and transitive capability use
 - undeclared capabilities, FFI, and ambient host access are unavailable
+- the compiler checks direct and transitive capability usage
 
 ## Why let the agent write code?
 
@@ -38,8 +38,8 @@ common text and JSON action formats in its benchmarks. Anthropic
 tool-schema overhead, compose operations, and process intermediate data outside
 the model context.
 
-Harpe takes a specific position on the security consequence: generated code is
-useful, but broad authority is the wrong security model. Its authority should be
+Harpe takes a specific position on the security consequence: LLM generated code is
+useful and effective, but ambient authority is the wrong model for it. Its granted authority should be
 explicit, narrow, and mechanically checked.
 
 ## When Harpe fits
@@ -48,11 +48,10 @@ Use Harpe when an agent has a defined role, known integrations, and authority
 that should be narrow and reviewable. If the task requires broad, changing
 access to a development environment, use a code agent instead.
 
-The boundary has a cost. You must design capability interfaces and provide
-trustworthy implementations. That work is justified when authority is part of
-the product, not an incidental deployment detail.
+The choice has a cost. You must design capability interfaces and provide
+trustworthy implementations. The work is justified when provable and high-risk aversion authority control is uncompromisable for the product.
 
-The compiler proves which capabilities generated code can use. It does not
+The compiler verifies which capabilities generated code can use. It does not
 prove that an allowed action is correct, cheap, or desirable. Consequential
 operations may still need approval.
 

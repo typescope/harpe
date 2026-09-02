@@ -43,7 +43,7 @@ are absent from its compilation environment.
 
 The trusted application implements `Calendar` and keeps credentials, tenant
 scope, retries, and validation behind the interface. Capability requirements
-are tracked through nested calls, so generated code cannot hide authority in a
+are tracked through nested calls, so generated code cannot abuse authority in a
 helper.
 
 The result is:
@@ -51,14 +51,14 @@ The result is:
 - **least authority:** grant only the operations this agent needs
 - **fine-grained confinement:** scope access to one tenant, directory, or API
 - **auditable boundaries:** review typed interfaces in version control
-- **failure before side effects:** invalid authority becomes a compiler error
-- **safe composition:** use normal programming constructs without granting a
+- **fail before run:** invalid authority becomes a compiler error
+- **safe composition:** use typed programming without granting a
   general-purpose shell
 
 ## Compile-time and runtime defenses
 
 The compiler proves authority, not intent. A permitted program can still choose
-the wrong calendar slot. Use narrow interfaces and human approval for
+the wrong calendar slot. With native support for approval flow, it's effortless to add human approval for
 consequential operations.
 
 Runtime sandboxes remain useful for resource limits and for defense in depth.
