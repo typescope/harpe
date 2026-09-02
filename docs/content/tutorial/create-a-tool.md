@@ -49,7 +49,7 @@ Harpe provides five parameter constructors:
 strParam(name, description)      // string
 intParam(name, description)      // integer
 boolParam(name, description)     // boolean
-numParam(name, description)      // number
+floatParam(name, description)    // number
 strListParam(name, description)  // list of strings
 ```
 
@@ -116,7 +116,7 @@ are available for every parameter type:
 input.string("city")
 input.int("count")
 input.bool("verbose")
-input.num("threshold")
+input.float("threshold")
 input.strings("tags")
 ```
 

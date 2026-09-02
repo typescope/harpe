@@ -109,7 +109,7 @@ section Tool
     ! The JSON-schema type of a tool input parameter, modeled in Jo so tool
     ! authors never hand-write JSON schema.
   //]
-  union ParamType = StrParam | IntParam | BoolParam | NumParam | StrListParam
+  union ParamType = StrParam | IntParam | BoolParam | FloatParam | StrListParam
     //[ This type as a JSON-schema fragment.
       !
       ! A fragment rather than a type string because an array is not one: it
@@ -121,7 +121,7 @@ section Tool
       case StrParam     => py.dict("type" ~ "string")
       case IntParam     => py.dict("type" ~ "integer")
       case BoolParam    => py.dict("type" ~ "boolean")
-      case NumParam     => py.dict("type" ~ "number")
+      case FloatParam   => py.dict("type" ~ "number")
       case StrListParam => py.dict("type" ~ "array", "items" ~ py.dict("type" ~ "string"))
 
   //[ Tool parameter
@@ -179,7 +179,7 @@ section Tool
     def string(name: String): String = raw.get(name, "").asString
     def int(name: String): Int = raw.get(name, 0).asInt
     def bool(name: String): Bool = raw.get(name, false).asBool
-    def num(name: String): Float = raw.get(name, 0.0).asFloat
+    def float(name: String): Float = raw.get(name, 0.0).asFloat
 
     //[ The list-of-strings argument under `name`, or `[]` if the key is missing. //]
     def strings(name: String): List[String] =
@@ -238,9 +238,9 @@ section Tool
   def boolParam(name: String, description: String): ToolParam =
     new ToolParam(name, BoolParam, description)
 
-  //[ A number (float) parameter. //]
-  def numParam(name: String, description: String): ToolParam =
-    new ToolParam(name, NumParam, description)
+  //[ A float parameter. //]
+  def floatParam(name: String, description: String): ToolParam =
+    new ToolParam(name, FloatParam, description)
 
   //[ A string-list parameter, read back with `ToolInput.strings`. //]
   def strListParam(name: String, description: String): ToolParam =

@@ -41,7 +41,7 @@ def toolSuite(): Unit receives thisSuite, logger = suite: "tool layer", () =>
       check("string", full.string("s") == "hi")
       check("int", full.int("n") == 42)
       check("bool", full.bool("b") == true)
-      check("num", full.num("f") == 3.5)
+      check("float", full.float("f") == 3.5)
       check("indexing", full["s"] == "hi")
 
     test: "reads a list-of-strings argument", () =>
@@ -54,7 +54,7 @@ def toolSuite(): Unit receives thisSuite, logger = suite: "tool layer", () =>
       check("string", empty.string("x") == "")
       check("int", empty.int("x") == 0)
       check("bool", empty.bool("x") == false)
-      check("num", empty.num("x") == 0.0)
+      check("float", empty.float("x") == 0.0)
       check("strings", empty.strings("x").size == 0)
       check("indexing", empty["x"] == "")
 
@@ -63,11 +63,11 @@ def toolSuite(): Unit receives thisSuite, logger = suite: "tool layer", () =>
       val sp = strParam("a", "d")
       val ip = intParam("a", "d")
       val bp = boolParam("a", "d")
-      val np = numParam("a", "d")
+      val fp = floatParam("a", "d")
       check("strParam", sp.paramType is StrParam)
       check("intParam", ip.paramType is IntParam)
       check("boolParam", bp.paramType is BoolParam)
-      check("numParam", np.paramType is NumParam)
+      check("floatParam", fp.paramType is FloatParam)
       check("strListParam", strListParam("a", "d").paramType is StrListParam)
 
     test: "a scalar renders as a typed, described property", () =>
