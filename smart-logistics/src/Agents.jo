@@ -57,7 +57,7 @@ class Watcher(brain: Model, home: String, databasePath: String, database: Databa
     Logging.withLogger: audit(home, "watch"), () =>
       turn:
         brain
-        File.read(os.path.join(home, "WATCH.md"))
+        File.read(os.path.join(home, "prompts", "watch.md"))
         "Check the depot now and record the warnings that hold."
         SkillTools.toolset(os.path.join(home, "skills", "watch"))
           ++ runCode.toolset(guestEnv)
@@ -107,7 +107,7 @@ class Planner(brain: Model, home: String, databasePath: String, database: Databa
     Logging.withLogger: audit(home, "plan"), () =>
       turn:
         brain
-        File.read(os.path.join(home, "PLAN.md"))
+        File.read(os.path.join(home, "prompts", "plan.md"))
         request(note)
         SkillTools.toolset(os.path.join(home, "skills", "plan"))
           ++ runCode.toolset(Map("SMART_LOGISTICS_DB" ~ databasePath))

@@ -139,7 +139,7 @@ out of scope.
 
 ## Layout
 
-- `WATCH.md`, `PLAN.md` — the two system prompts
+- `prompts/` — the two system prompts, one per agent
 - `src/` — the server, the database, and both agents
 - `sandbox/watch/`, `sandbox/plan/` — one capability each, sharing `sandbox/shared/`
 - `skills/watch/`, `skills/plan/` — reference each agent can read
