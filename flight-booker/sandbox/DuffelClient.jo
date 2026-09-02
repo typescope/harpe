@@ -37,8 +37,9 @@ class DuffelClient(token: String, approvals: Approvals)
 
   //[ One Duffel API call — POST or GET, with an optional JSON body
     !
-    ! Returns the parsed JSON dict. On any network or HTTP error, returns a
-    ! synthetic `{errors: [{title: "..."}]}` dict so callers handle one shape.
+    ! Returns the parsed JSON dict. On HTTP errors (4xx/5xx) urllib raises
+    ! HTTPError whose body is Duffel's standard `{errors, meta}` JSON, so we
+    ! read and decode it the same way as a success response.
   //]
   private def apiCall(method: String, path: String, body: Option[py.Dict]): py.Dict =
     val url = duffelBase + path
@@ -52,23 +53,12 @@ class DuffelClient(token: String, approvals: Approvals)
       headers = makeHeaders()
       method  = method
 
-    match py.try(urllibReq.urlopen(req, timeout = 30.0))
-    case Ok(resp) =>
-      json.loads(resp.read().decode().asString).cast[py.Dict]
+    val rawResp =
+      match py.try(urllibReq.urlopen(req, timeout = 30.0))
+      case Ok(resp) => resp.read().decode().asString
+      case Err(e)   => py.dynamic(e).read().decode().asString
 
-    case Err(e) =>
-      // Surface HTTP errors (4xx/5xx): urllib raises HTTPError, which has a
-      // `read()` method on its body. Try to parse Duffel's error JSON; fall
-      // back to the exception message.
-      val errMsg = py.dynamic(e.message)
-      val body =
-        match py.try(errMsg.read().decode())
-        case Ok(raw) =>
-          match py.try(json.loads(raw.asString).cast[py.Dict])
-          case Ok(parsed) => parsed
-          case Err(_)     => py.dict("errors" ~  raw.asString)
-        case Err(_) => py.dict("errors" ~ e.message)
-      body
+    json.loads(rawResp).cast[py.Dict]
 
   //[ Parse a raw Duffel offer dict into an api.FlightOffer //]
   private def parseOffer(offer: py.Dict): api.FlightOffer =
@@ -146,7 +136,6 @@ class DuffelClient(token: String, approvals: Approvals)
     val reqResp = apiCall("POST", "/air/offer_requests", Some(reqBody))
     if reqResp.contains("errors") then
       val err = firstError(reqResp)
-      println("searchFlights: offer request failed — " + err)
       return new api.SearchResult("", [])
 
     val requestId = reqResp["data"]["id"].asString
@@ -159,7 +148,6 @@ class DuffelClient(token: String, approvals: Approvals)
     )
     if offersResp.contains("errors") then
       val err = firstError(offersResp)
-      println("searchFlights: list offers failed — " + err)
       return new api.SearchResult(requestId, [])
 
     val offerList = offersResp["data"].cast[py.List]
@@ -262,6 +250,6 @@ class DuffelClient(token: String, approvals: Approvals)
   //[ Extract the first error title from a Duffel error response //]
   private def firstError(resp: py.Dict): String =
     val errs = resp.get("errors").cast[py.List]
-    if errs.size > 0 then errs.get(0).cast[py.Dict].get("title", "unknown error").asString
+    if errs.size > 0 then errs.get(0).cast[py.Dict].get("message", "unknown error").asString
     else "unknown error"
 end
