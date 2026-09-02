@@ -362,6 +362,27 @@ def webSuite(): Unit receives thisSuite = suite: "web", () =>
       check("mints no session for it", !Events.has(events, "session"))
       check("leaves the picker empty", Rest.get(agent, "/api/sessions").text.contains("[]"))
 
+  test: "refuses session ids that can escape the session directories", () =>
+    withIdleAgent: agent =>
+      val events = Rest.events:
+        agent
+        "/api/message"
+        py.dict("session" ~ "../outside", "text" ~ "hello")
+      checkEquals:
+        "rejects traversal in a message session"
+        Events.first(events, "error").get("detail", "").asString
+        "invalid session"
+
+      val upload = Rest.postJson:
+        agent
+        "/api/upload"
+        py.dict:
+          "session" ~ "/tmp/outside"
+          "name" ~ "note.txt"
+          "mime" ~ "text/plain"
+          "data" ~ Rest.base64("no")
+      checkEquals("rejects an absolute upload session", upload.field("error"), "invalid session")
+
   test: "deletes a session, its journal, and its files", () =>
     ProviderFixture.withResponses: [ModelScript.says("Noted.")], server =>
       WebAgent.withAgent: server.baseUrl, agent =>

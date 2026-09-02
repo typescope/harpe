@@ -72,17 +72,21 @@ class Server(brain: Model, home: String, sandboxEnv: Map[String, String])
     val body = Http.readJson()
     val text = body.get("text", "").asString
     val reqId = body.get("session", "").asString
+    val requestedId = sanitizeSessionId(reqId)
 
     val write = Http.beginStream("application/x-ndjson")
     val sink: Sink = (obj: py.Dict) =>
       py.call(write, py.dynamic(json.dumps(obj) + "\n").encode())
 
-    if text.trim == "" then
+    if reqId != "" && requestedId != reqId then
+      sink(py.dict("type" ~ "error", "detail" ~ "invalid session"))
+
+    else if text.trim == "" then
       sink(py.dict("type" ~ "error", "detail" ~ "empty message"))
 
     else
       evictIdle()
-      val session = if reqId == "" then createSession() else resumeSession(reqId)
+      val session = if reqId == "" then createSession() else resumeSession(requestedId)
 
       // Always emit the session id first. On the first message the browser mints
       // it. On subsequent messages it confirms the id the browser already has.
@@ -98,10 +102,11 @@ class Server(brain: Model, home: String, sandboxEnv: Map[String, String])
   //[ Request cancellation of the session's running turn. //]
   private def handleStop(): py.List receives request =
     val body = Http.readJson()
-    val id = body.get("session", "").asString
+    val requested = body.get("session", "").asString
+    val id = sanitizeSessionId(requested)
 
     registryLock.acquire()
-    if registry.contains(id) then registry.get(id).cast[Session].requestStop()
+    if id == requested && registry.contains(id) then registry.get(id).cast[Session].requestStop()
     registryLock.release()
 
     Http.respondJson(py.dict("ok" ~ true))
@@ -109,13 +114,14 @@ class Server(brain: Model, home: String, sandboxEnv: Map[String, String])
   //[ Resolve the pending booking approval for a session. //]
   private def handleApproval(): py.List receives request =
     val body = Http.readJson()
-    val sessionId = body.get("session", "").asString
+    val requested = body.get("session", "").asString
+    val sessionId = sanitizeSessionId(requested)
     val approvalId = body.get("id", "").asString
     val decision = body.get("decision", "").asString
 
     registryLock.acquire()
     val found: Option[Session] =
-      if registry.contains(sessionId) then Some(registry.get(sessionId).cast[Session])
+      if sessionId == requested && registry.contains(sessionId) then Some(registry.get(sessionId).cast[Session])
       else None
     registryLock.release()
 
@@ -124,6 +130,11 @@ class Server(brain: Model, home: String, sandboxEnv: Map[String, String])
       case None          => false
 
     Http.respondJson(py.dict("ok" ~ accepted))
+
+  //[ Accept only a bare session name, never a path supplied by the client. //]
+  private def sanitizeSessionId(raw: String): String =
+    val base = os.path.basename(raw.replace("\\", "/"))
+    if base == "" || base == "." || base == ".." then "" else base
 
   //[ Build the toolset for a session: skills + runCode (with Duffel env) + bonus tools. //]
   private def sessionTools(): Toolset =

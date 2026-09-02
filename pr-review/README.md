@@ -1,9 +1,15 @@
 # pr-review
 
-Reviews one GitHub pull request and submits the review. It reaches GitHub only
-through the capability in `sandbox/API.jo`, so the model never sees the token.
-Reviews are submitted as pending drafts by default, so nothing publishes until
-you approve it in GitHub.
+This agent demonstrates **REST API surface narrowing**, a strong point of Jo's
+capability model. A conventional process sandbox can block or allow network
+access, but cannot naturally grant selected operations from one REST API while
+making its sibling endpoints uncallable. Here the trusted implementation can
+use GitHub's broader API, while model-written programs receive only four typed
+operations, with the sole write restricted to saving a pending draft.
+
+The agent reviews one GitHub pull request and saves the draft for manual
+verification. It reaches GitHub only through the capability in `sandbox/API.jo`,
+so the model never sees the token and cannot publish, comment, or merge.
 
 ## Setup
 
@@ -33,7 +39,7 @@ That builds the sandbox guest and runs one turn.
   not comment on
 - `src/` — the driver
 - `sandbox/` — the GitHub capability: `getPR`, `readFile`, `findDefinition`,
-  `submitReview`, `addComment`, `merge`
+  and draft-only `saveDraftReview`
 - `skills/` — reference the model can read
 
 [Create a PR Review Agent](https://harpe.typescope.ai/tutorial/create-pr-review-agent/)

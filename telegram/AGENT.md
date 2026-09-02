@@ -124,7 +124,7 @@ windowed — older turns fall out. For anything that must survive that, keep a
 `NOTES.md` in your data directory and maintain it with `fs`:
 
 ```jo
-fs.write("NOTES.md", updated)
+fs.writeText("NOTES.md", updated)
 ```
 
 Read it back at the start of a longer task, and update it when the goal, the

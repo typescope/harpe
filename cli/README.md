@@ -11,9 +11,9 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-In `.env`, set `MODEL` and one provider key: `ANTHROPIC_API_KEY` or
-`OPENAI_API_KEY`. Set `OPENAI_BASE_URL` to reach another Responses-API
-endpoint.
+In `.env`, set `MODEL` and one provider key: `ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, or `OPENROUTER_API_KEY`. Set `OPENAI_BASE_URL` to reach
+another Responses-API endpoint.
 
 ## Running
 

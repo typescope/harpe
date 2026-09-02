@@ -34,14 +34,14 @@ The `data/` directory holds files the user shares with you. Your program reaches
 it through capabilities received by `runTask` — declare the ones you use:
 
 ```Jo
-def runTask(): Unit receives IO.stdout, fs, pdfReader, excelReader, wordReader, excelWriter, wordWriter, image, ocr, graphics
+def runTask(): Unit receives IO.stdout, fs, pdfReader, excelReader, wordReader, image, ocr
 ```
 
 (declare the ones you use; `fs`'s document opens also need their backend param —
 `openPDF` needs `pdfReader`, `openWorkbook` needs `excelReader`, `openWord` needs
 `wordReader`)
 
-- `fs: FileSystem` — the read-only tree. Use relative paths such as
+- `fs: FileSystem` — the confined file system. Use relative paths such as
   `"letter.pdf"` or `"docs/report.pdf"`. `fs.list("")` (sorted entries with
   `.path`/`.isDirectory`), `fs.stat(p)` (size, modified time), `fs.readText(p)`
   for a small file; for a big one `fs.openTextFile(p)` then `lines` / `head(n)` /
@@ -55,33 +55,10 @@ def runTask(): Unit receives IO.stdout, fs, pdfReader, excelReader, wordReader, 
   - `fs.openWord(p)` → an open .docx: `paragraphCount`, `outline` (headings with
     paragraph positions), `paragraphs(start, count)` (a paragraph window).
 
-  Close every open file, document, and workbook when done.
-- `excelWriter` / `wordWriter` — produce or transform documents in `data/`:
-  `create()` for a new one, `edit(p)` to load an existing one; build
-  (`addSheet`/`appendRow`; `addHeading`/`addParagraph`) then `save(target)` —
-  saving to a new path transforms without touching the source.
+  Write text files with `fs.writeText(path, content)`. Close every open file,
+  document, and workbook when done.
 - `image: Image` — `dimensions(p)`, `metadata(p)`, `resize`, `crop`, `convert`.
 - `ocr: OCR` — `text(p)` reads the text out of an image.
-- `graphics: Graphics` — draw a raster image (diagram, chart, thumbnail).
-  `create(w, h, Some(color))` (or `None` for a transparent background) returns a
-  `Canvas` you paint on: `fill(region)` / `fillStroke(region)` over a closed
-  `Region` (`Region.rect`/`roundRect`/`circle`), `stroke(outline)` over an open
-  `Trace` (`Trace.from(x,y).lineTo(...).curveTo(...)`) or a closed `Region`,
-  `textAt(x, baseline, text)`, `imageAt(src, x, y, w)`, then `save(target)` — the
-  target is a relative path, e.g. `"chart.png"`. Drawing state
-  is the ambient `DrawingContext` params (`fillColor`, `strokeColor`,
-  `textColor`, `lineWidth`, `alpha`, `font`, `transform`), changed by rebinding:
-  `with DrawingContext.fillColor = c in canvas.fill(region)`. Font/image facts
-  are on `graphics`: `stringWidth(text)`, `fontAscent`/`fontDescent`,
-  `imageSize(p)`. Coordinates are pixels, top-left origin.
-  For paragraphs, flow wrapped text into regions:
-  `with flow = Flow(canvas, [Rect(x, y, w, h), ...]) in flow.paragraph(text)`
-  fills the rects in order (two rects = two columns; a paragraph splits across
-  them), `flow.space(h)` adds a gap, `flow.overflowed` tells you if it did not
-  fit. Alignment is the `Typesetting.align` param (`Align.left`/`right`/
-  `center`/`justify`), font/color the ambient `DrawingContext`. Distinct
-  regions with distinct styling (a title band, then columns) are just separate
-  flows over separate rect lists. (`import harpe.caps.drawing.*`.)
 
 ## Looking at an image or PDF directly
 
@@ -131,7 +108,7 @@ windowed — older turns fall out. For anything that must survive that, keep a
 `NOTES.md` in your data directory and maintain it with `fs`:
 
 ```jo
-fs.write("NOTES.md", updated)
+fs.writeText("NOTES.md", updated)
 ```
 
 Read it back at the start of a longer task, and update it when the goal, the

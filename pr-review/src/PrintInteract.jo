@@ -38,7 +38,9 @@ private class PrintInteract(out: String => Unit)
 
   def cancelled: Bool = false
 
-  def pause(seconds: Float): Bool = false
+  def pause(seconds: Float): Bool =
+    py.module("time").sleep(seconds)
+    false
 
   def approve(title: String, detail: String): Approvals.Decision =
     Approvals.Cancelled

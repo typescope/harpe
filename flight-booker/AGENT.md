@@ -95,9 +95,10 @@ def runTask(): Unit receives IO.stdout, duffel =
     val stops = slice.segments.size - 1
     val stopLabel = if stops == 0 then "direct" else "\{stops} stop(s)"
     val seg = slice.segments.get(0)
+    val lastSeg = slice.segments.get(slice.segments.size - 1)
     val carrier = seg.carrierName + " " + seg.flightNumber
     println "\{i}. \{carrier} — \{stopLabel}"
-    println "   \{slice.origin} \{slice.departingAt} → \{slice.destination} \{slice.arrivingAt} (\{slice.duration})"
+    println "   \{slice.origin} \{seg.departingAt} → \{slice.destination} \{lastSeg.arrivingAt} (\{slice.duration})"
     println "   \{offer.totalAmount} \{offer.currency}"
     println "   id:\{offer.id}"
     println ""

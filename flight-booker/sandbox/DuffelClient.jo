@@ -169,9 +169,7 @@ class DuffelClient(token: String, approvals: Approvals)
   //[ Build a human-readable booking summary for the approval card //]
   private def bookingSummary(
       offer: api.OfferDetail,
-      passengers: List[api.PassengerInfo],
-      paymentAmount: String,
-      paymentCurrency: String): String =
+      passengers: List[api.PassengerInfo]): String =
     var lines: List[String] = []
 
     for slice in offer.slices do
@@ -188,8 +186,32 @@ class DuffelClient(token: String, approvals: Approvals)
     for p in passengers do
       paxNames = paxNames + (p.givenName + " " + p.familyName)
     lines = lines + "Passenger(s): " + paxNames.join(",")
-    lines = lines + "Total: \{paymentAmount} \{paymentCurrency}"
+    lines = lines + "Total: \{offer.totalAmount} \{offer.currency}"
     lines.join("\n")
+
+  //[ Validate the model-supplied order against the authoritative offer before
+    ! asking the user to approve it. Empty string means valid.
+  //]
+  private def orderError(
+      offer: api.OfferDetail,
+      passengers: List[api.PassengerInfo],
+      paymentAmount: String,
+      paymentCurrency: String): String =
+    if offer.id == "" then return "Offer not found"
+    if paymentAmount != offer.totalAmount || paymentCurrency != offer.currency then
+      return "Payment does not match the selected offer"
+    if passengers.size != offer.passengerIds.size then
+      return "Passenger count does not match the selected offer"
+
+    var i = 0
+    while i < passengers.size do
+      val passenger = passengers.get(i)
+      if passenger.id != offer.passengerIds.get(i) then
+        return "Passenger IDs do not match the selected offer"
+      if passenger.givenName.trim == "" || passenger.familyName.trim == "" then
+        return "Passenger names are required"
+      i = i + 1
+    ""
 
   //[ Book a flight with mock balance payment (test mode)
     !
@@ -203,9 +225,13 @@ class DuffelClient(token: String, approvals: Approvals)
     paymentAmount: String,
     paymentCurrency: String
   ): api.OrderConfirmation =
-    // Fetch offer details to build an informative approval summary.
+    // Fetch and validate authoritative offer details before showing an approval.
     val offer = getOffer(offerId)
-    val summary = bookingSummary(offer, passengers, paymentAmount, paymentCurrency)
+    val validationError = orderError(offer, passengers, paymentAmount, paymentCurrency)
+    if validationError != "" then
+      return new api.OrderConfirmation("", "", "", "", validationError)
+
+    val summary = bookingSummary(offer, passengers)
     val decision = approvals.request("Confirm booking", summary)
     if decision is !Approvals.Approved then
       return new api.OrderConfirmation("", "", "", "", "Booking " + Approvals.wire(decision))
@@ -228,8 +254,8 @@ class DuffelClient(token: String, approvals: Approvals)
       "passengers"      ~ paxList,
       "payments"        ~ py.list(py.dict(
         "type"     ~ "balance",
-        "amount"   ~ paymentAmount,
-        "currency" ~ paymentCurrency
+        "amount"   ~ offer.totalAmount,
+        "currency" ~ offer.currency
       )),
       "type"            ~ "instant"
     ))

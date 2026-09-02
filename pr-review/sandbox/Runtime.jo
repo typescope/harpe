@@ -165,43 +165,16 @@ class GithubImpl
     end
     results
 
-  //[ Write operations — call the real GitHub API //]
-  def submitReview(verdict: api.ReviewVerdict, body: String, comments: List[api.LineComment]): Unit receives stdout =
+  //[ Save a pending draft review through the GitHub API. //]
+  def saveDraftReview(body: String, comments: List[api.LineComment]): Unit receives stdout =
     val PR(owner, repo, num) = pr
-    val event: Option[String] = match verdict
-      case api.Approve        => Some("APPROVE")
-      case api.RequestChanges => Some("REQUEST_CHANGES")
-      case api.CommentOnly    => Some("COMMENT")
-      case api.Pending        => None
-
     val commentsJson = buildCommentsJson(comments)
-    match client.submitReview(owner, repo, num, prInfo.headSha, event, body, commentsJson)
+    match client.saveDraftReview(owner, repo, num, prInfo.headSha, body, commentsJson)
     case Ok(_)    =>
       println "✓ Review submitted"
       println "ACTION_COMPLETED"
 
     case Err(msg) =>
       println ("✗ submit review failed: " + msg)
-
-  def addComment(body: String): Unit receives stdout =
-    val PR(owner, repo, num) = pr
-    match client.addComment(owner, repo, num, body)
-    case Ok(_)    =>
-      println "✓ Comment posted"
-      println "ACTION_COMPLETED"
-
-    case Err(msg) =>
-      println ("✗ addComment failed: " + msg)
-
-  def merge(commitMessage: String): Unit receives stdout =
-    val PR(owner, repo, num) = pr
-
-    match client.mergePR(owner, repo, num, prInfo.headSha, commitMessage)
-    case Ok(_)    =>
-      println "✓ PR merged"
-      println "ACTION_COMPLETED"
-
-    case Err(msg) =>
-      println ("✗ merge PR failed: " + msg)
 
 end

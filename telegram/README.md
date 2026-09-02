@@ -20,7 +20,8 @@ In `.env`:
   sender, not chat. A bot is publicly reachable and this agent runs code, so
   access is closed by default: while this is empty, every message is rejected.
   DM the bot once and it replies with your user id.
-- `MODEL` and one provider key: `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`
+- `MODEL` and one provider key: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or
+  `OPENROUTER_API_KEY`
 
 ## Running
 
