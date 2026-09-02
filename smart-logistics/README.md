@@ -1,9 +1,24 @@
 # Smart Logistics
 
-A local web-based depot planner and a concrete demonstration of REST API surface
-narrowing with Jo's capability model. Generated code can inspect logistics data
-and create validated drafts, but it has no operation for approving or submitting
-orders—and no raw database, filesystem, or network access.
+A local depot planner, and a demonstration of what happens when you let people
+write policy as sentences instead of filling in threshold fields.
+
+Two agents share one depot and one list of checks. Neither can buy anything.
+
+```
+interface Watch                     interface Plan
+  products()                          products()
+  demandHistory(id, days)             demandHistory(id, days)
+  checks()                            checks()
+  saveWarning(...)                    saveDraftOrder(...)
+```
+
+The **watcher** runs unattended on a schedule, so the only thing it can create
+is a note for a person to read. The **planner** runs when a person asks and
+everything it produces is reviewed by a person, so it gets one write, and that
+write produces a draft. Neither can approve an order, send one to a supplier,
+change a check, or reach a database, file, or network — those are not operations
+they have. `sandbox/watch/API.jo` and `sandbox/plan/API.jo` are the whole of it.
 
 ## Run
 
@@ -14,85 +29,119 @@ cp .env.example .env
 jo start
 ```
 
-Open <http://127.0.0.1:8766>. The first run creates `data/logistics.db` with demo
-products, demand, rules, and suppliers. `ANALYSIS_INTERVAL_MINUTES=0` keeps the
-scheduler off; set a positive value to enable periodic analysis.
+Open <http://127.0.0.1:8766>. The first run creates `data/logistics.db` with a
+depot that is already in trouble.
 
-The application has no login and is designed for a local administrator machine.
-It refuses non-loopback binding unless `ALLOW_UNSAFE_REMOTE=true` is explicitly
-set. That override is unsafe on an untrusted network.
+`WATCH_INTERVAL_MINUTES=0` keeps the schedule off; **Check now** runs the
+watcher by hand. The app has no login, and refuses to bind anywhere but loopback
+unless `ALLOW_UNSAFE_REMOTE=true` is set — which is unsafe on an untrusted
+network.
+
+## What to try
+
+The page opens on the problem, in plain words:
+
+> **4 products will run out before a delivery could arrive.**
+
+Hand soap is the worst: 2 days of cover, and Nordic Hygiene takes 9 days to
+deliver. Press **Plan orders** and you get a draft from Nordic.
+
+Now go to **Checks** and add a sentence:
+
+> Nordic shuts down for two weeks over Christmas — don't order from them if it
+> won't arrive first.
+
+Press **Plan orders** again. The line moves to Helvetia Wholesale, and the
+quantity drops, because Helvetia delivers in 4 days rather than 9 and less stock
+is needed to cover a shorter wait. The report says which check did it.
+
+That check is not a field in any planning system. No schema change, no code, no
+redeploy — a sentence changed the plan.
+
+Accept the draft and the shortfall is covered; the next check clears the
+warning.
+
+## Checks and skills
+
+**Checks** are what this depot does — prose, in the database, revisioned, edited
+constantly. One list, read by both agents:
+
+> The watcher checks today's stock. The planner proposes orders that pass the checks.
+
+| Check | The watcher | The planner |
+| --- | --- | --- |
+| "Food keeps 7 days of cover" | warns when food drops below | orders enough to reach it |
+| "Nordic shuts down over Christmas" | warns if an order would land in the gap | sources elsewhere |
+| "Never more than 300 units in one order" | — | caps the line, and says so |
+| "Don't warn about packaging above 3 days" | stays quiet | — |
+
+**Skills** are how to work an order out — method, the same for any depot, rarely
+edited. They live in `skills/plan/` and are editable while the app runs, with
+every save recorded as a revision.
+
+The test for which is which: *would another depot answer differently?*
+
+## What is checked, and by whom
+
+A check is real, but a **model** applies it and a **human** confirms it.
+
+The runtime enforces physical facts only — who supplies what, that supplier's
+case size, storage capacity, duplicate lines, products already drafted — and it
+enforces those no matter what any check says. Nothing machine-checks the prose,
+which is why every draft goes to a person.
+
+`tests/` proves both halves without an API key: guest programs that reach past
+their capability fail to compile, and the runtime refuses every draft the
+physical facts forbid.
+
+```sh
+jo run tests
+```
 
 ## Data model
 
-SQLite, defined in `src/Database.jo` and stored in `data/logistics.db`.
+SQLite, defined in `src/Database.jo`.
 
 | Table | Holds |
 | --- | --- |
-| `suppliers` | Supplier name and trading currency. |
-| `products` | Item master, reservations and expected arrivals. |
-| `product_suppliers` | Terms for one product-supplier pair. |
+| `suppliers`, `products` | The item master, and who sells it. |
+| `product_suppliers` | Price, lead time and case size, per pair. |
 | `stock_movements` | Every receipt, issue and adjustment. |
-| `rules` | Administrator policy, in plain language. |
-| `draft_orders`, `draft_order_lines` | Proposed orders awaiting review. |
-| `skill_revisions` | Version history of the editable planning skills. |
-| `analysis_runs` | One row per analysis, with its report. |
+| `checks` | What the administrator wrote. |
+| `warnings` | What the watcher is currently saying. |
+| `draft_orders`, `draft_order_lines` | Proposals awaiting review. |
+| `runs`, `skill_revisions` | What each agent did, and how the method changed. |
 
-Commercial terms sit on the product-supplier pair rather than on the product,
-because the same item is often sourced from several suppliers at different
-prices, lead times and pack sizes:
-
-```sql
-CREATE TABLE product_suppliers (
-  product_id  INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-  supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
-  unit_price_cents INTEGER NOT NULL CHECK(unit_price_cents >= 0),
-  lead_time_days   INTEGER NOT NULL DEFAULT 1 CHECK(lead_time_days >= 0),
-  case_size        INTEGER NOT NULL DEFAULT 1 CHECK(case_size > 0),
-  minimum_order_quantity INTEGER NOT NULL DEFAULT 1 CHECK(minimum_order_quantity > 0),
-  preferred INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY(product_id, supplier_id),
-  CHECK(minimum_order_quantity % case_size = 0)
-);
-```
-
-The planner defaults to `preferred`; a rule can send it elsewhere, and
-`saveDraftOrder` takes the chosen pair's terms and snapshots its price onto the
-line.
-
-Stock on hand is never stored. Each shipment out, delivery in and count
-correction is a row in `stock_movements`, and the balance is their sum:
+Stock on hand is never stored. Every movement in or out is a row, and the
+balance is their sum, so any figure traces to what produced it:
 
 ```sql
 CREATE VIEW product_stock AS
-  SELECT p.id AS product_id, COALESCE(SUM(m.quantity), 0) AS on_hand
+  SELECT p.id AS product_id, COALESCE(SUM(m.quantity),0) AS on_hand
   FROM products p LEFT JOIN stock_movements m ON m.product_id = p.id
   GROUP BY p.id;
 ```
 
-So every stock figure can be traced to the movements that produced it, and
-demand history is the `issue` rows rolled up by day rather than a number
-somebody typed. Movements are refused if they would drive stock below zero or
-past storage capacity.
+One number decides whether a product is in trouble — how long what we have plus
+what is on order will last at the current rate of sale — and `product_position`
+derives it once, so the watcher, the planner and the page can never disagree
+about it. The arithmetic is SQL; the judgment is the model's.
 
-Stock on order is derived the same way, from the orders themselves. An accepted
-draft is what "incoming" means, and receiving it posts one receipt per line
-tagged with the order, which closes the loop from proposal to stock:
+Commercial terms sit on the product-supplier pair rather than on the product,
+because the same item is often sourced from several suppliers at different
+prices, lead times and pack sizes. That is what gives a written sourcing check
+something to decide.
 
-```
-draft --accept--> accepted --receive--> receipt movements + status 'received'
-                     |
-                     +--> product_incoming.incoming / .incoming_eta
-```
+The schema stays deliberately small: no locations, no bins, no units of measure,
+and nothing tracks cost beyond the purchase price on a draft line. Accepting an
+order means "on order" and the demo stops there — receiving goods into stock is
+out of scope.
 
-`reserved` is the one number still typed in. It is not a movement—the goods are
-on the shelf but promised—and deriving it would mean modelling customer orders,
-which this demo does not do.
+## Layout
 
-Rules are text and only text, so nothing machine-checks them: validation covers
-physical facts only—sourcing, case size, minimum order quantity, storage
-capacity, duplicate lines—and the administrator reviewing each draft is the gate
-on policy.
-
-The schema stays deliberately small for a demo: there are no locations, bins, or
-units of measure, and nothing tracks cost or valuation beyond the purchase price
-on each draft line.
+- `WATCH.md`, `PLAN.md` — the two system prompts
+- `src/` — the server, the database, and both agents
+- `sandbox/watch/`, `sandbox/plan/` — one capability each, sharing `sandbox/shared/`
+- `skills/watch/`, `skills/plan/` — reference each agent can read
+- `assets/` — the page
+- `tests/` — the boundary, and the validator
