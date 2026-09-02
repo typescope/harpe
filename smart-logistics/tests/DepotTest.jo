@@ -1,0 +1,100 @@
+//[ DepotTest.jo
+  !
+  ! The database, and the one number the whole app is arranged around.
+//]
+
+namespace harpe.examples.smartlogistics.tests.DepotTest
+
+import harpe.ffi.os
+import harpe.testing.test
+import harpe.testing.thisSuite
+import harpe.testing.check
+import harpe.logging.logger
+import harpe.examples.smartlogistics.Database
+
+//[ A freshly seeded depot in a directory of its own. //]
+def freshDepot(): Database =
+  val root = py.module("tempfile").mkdtemp(prefix = "sl-db-").asString
+  val database = new Database(os.path.join(root, "logistics.db"), os.path.abspath("."))
+  database.initialize()
+  database
+
+private def product(database: Database, sku: String): py.Dict =
+  var found = py.dict()
+  for item in database.products() do
+    if item.cast[py.Dict].get("sku").asString == sku then found = item.cast[py.Dict]
+  found
+
+def depotSuite(): Unit receives thisSuite, logger =
+  test: "the seed opens on a depot in trouble", () =>
+    val database = freshDepot()
+    val summary = database.snapshot().get("summary").cast[py.Dict]
+    check("twelve products", summary.get("product_count").asInt == 12)
+    check("four run out before a delivery could arrive",
+      summary.get("at_risk_count").asInt == 4)
+    check("one draft is already open", summary.get("open_drafts").asInt == 1)
+    check("nothing has been checked yet", summary.get("last_checked").asString == "")
+
+  test: "days of cover is stock plus what is on order, at the rate of sale", () =>
+    val database = freshDepot()
+    val soap = product(database, "HYGI-301")
+    check("14 on hand", soap.get("on_hand").asInt == 14)
+    check("5 a day", soap.get("sells_per_day").asFloat == 5.0)
+    check("two days of cover", soap.get("days_of_cover").asInt == 2)
+    check("a nine day wait for the preferred source",
+      soap.get("lead_time_days").asInt == 9)
+
+  test: "trouble sorts to the top", () =>
+    val database = freshDepot()
+    val first = database.products()[0].cast[py.Dict]
+    check("the shortest cover comes first", first.get("sku").asString == "HYGI-301")
+
+  //[ The loop the demo closes on screen: approving an order covers the
+    ! shortfall that prompted it.
+  //]
+  test: "accepting a draft counts as on order and lifts cover", () =>
+    val database = freshDepot()
+    val before = product(database, "HYGI-303")
+    check("three days before", before.get("days_of_cover").asInt == 3)
+    check("nothing on order before", before.get("on_order").asInt == 0)
+
+    var draftId = 0
+    for item in database.drafts() do
+      val draft = item.cast[py.Dict]
+      if draft.get("status").asString == "draft" then draftId = draft.get("id").asInt
+    check("accepted", database.setDraftStatus(draftId, "accepted"))
+
+    val after = product(database, "HYGI-303")
+    check("40 on order", after.get("on_order").asInt == 40)
+    check("nine days after", after.get("days_of_cover").asInt == 9)
+    check("one fewer at risk",
+      database.snapshot().get("summary").cast[py.Dict].get("at_risk_count").asInt == 3)
+    check("an accepted order cannot be accepted again",
+      !database.setDraftStatus(draftId, "rejected"))
+
+  test: "the ledger refuses to go negative or past capacity", () =>
+    val database = freshDepot()
+    val soap = product(database, "HYGI-301")
+    val id = soap.get("id").asInt
+
+    val tooMany = py.try: database.recordMovement(
+      py.dict("product_id" ~ id, "kind" ~ "issue", "quantity" ~ 9999))
+    check("cannot issue more than is there", tooMany.isErr)
+
+    val tooBig = py.try: database.recordMovement(
+      py.dict("product_id" ~ id, "kind" ~ "receipt", "quantity" ~ 9999))
+    check("cannot receive past capacity", tooBig.isErr)
+
+    val fine = database.recordMovement(
+      py.dict("product_id" ~ id, "kind" ~ "receipt", "quantity" ~ 8))
+    check("a movement that fits is recorded", fine > 0)
+    check("and the ledger says so", product(database, "HYGI-301").get("on_hand").asInt == 22)
+
+  test: "checks are text, and both agents read the same list", () =>
+    val database = freshDepot()
+    check("four seeded checks", database.checks().size == 4)
+    val id = database.saveCheck(py.dict(
+      "text" ~ "Nordic shuts down over Christmas.", "enabled" ~ true))
+    check("added", database.checks().size == 5)
+    database.deleteCheck(id)
+    check("removed", database.checks().size == 4)
