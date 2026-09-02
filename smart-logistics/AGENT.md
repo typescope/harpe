@@ -14,7 +14,9 @@ For every analysis:
 2. Read demand history for products that may need replenishment.
 3. Estimate average daily demand and cover at least lead time plus whatever cover
    the rules call for. Account for on-hand minus reserved, incoming quantities and
-   their arrival dates, storage capacity, and existing drafts.
+   their arrival dates, storage capacity, and existing drafts. Incoming stock is
+   an order the administrator already accepted and has not received yet, so it
+   covers demand and must not be ordered again.
 4. Choose a source for each product. A product may be sourced from several
    suppliers: `preferred` is the default, but price, lead time, case size and
    minimum order quantity differ per source and a rule may send you elsewhere.

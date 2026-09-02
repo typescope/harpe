@@ -72,8 +72,21 @@ CREATE VIEW product_stock AS
 So every stock figure can be traced to the movements that produced it, and
 demand history is the `issue` rows rolled up by day rather than a number
 somebody typed. Movements are refused if they would drive stock below zero or
-past storage capacity. `reserved` and `incoming` stay columns on `products`:
-they are commitments and expectations, not movements.
+past storage capacity.
+
+Stock on order is derived the same way, from the orders themselves. An accepted
+draft is what "incoming" means, and receiving it posts one receipt per line
+tagged with the order, which closes the loop from proposal to stock:
+
+```
+draft --accept--> accepted --receive--> receipt movements + status 'received'
+                     |
+                     +--> product_incoming.incoming / .incoming_eta
+```
+
+`reserved` is the one number still typed in. It is not a movement—the goods are
+on the shelf but promised—and deriving it would mean modelling customer orders,
+which this demo does not do.
 
 Rules are text and only text, so nothing machine-checks them: validation covers
 physical facts only—sourcing, case size, minimum order quantity, storage

@@ -15,8 +15,10 @@ class LogisticsImpl(path: String)
     val conn = connect()
     val rows = conn.execute("""
       SELECT p.id, p.sku, p.name, p.category, st.on_hand, p.reserved,
-             p.incoming, p.incoming_eta, p.capacity
-      FROM products p JOIN product_stock st ON st.product_id = p.id
+             inc.incoming, inc.incoming_eta, p.capacity
+      FROM products p
+      JOIN product_stock st ON st.product_id = p.id
+      JOIN product_incoming inc ON inc.product_id = p.id
       WHERE p.enabled = 1 ORDER BY p.sku
     """).fetchall()
     var result: List[api.Product] = []
@@ -128,8 +130,10 @@ class LogisticsImpl(path: String)
         return rollback(conn, "Quantity must be positive for product \{proposed.productId}")
 
       val row = conn.execute("""
-        SELECT p.sku, st.on_hand, p.incoming, p.capacity
-        FROM products p JOIN product_stock st ON st.product_id = p.id
+        SELECT p.sku, st.on_hand, inc.incoming, p.capacity
+        FROM products p
+        JOIN product_stock st ON st.product_id = p.id
+        JOIN product_incoming inc ON inc.product_id = p.id
         WHERE p.id = ? AND p.enabled = 1
       """, py.list(proposed.productId)).fetchone()
       if row.isNone then return rollback(conn, "Unknown or disabled product \{proposed.productId}")

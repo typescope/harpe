@@ -25,8 +25,6 @@ class Database(path: String, home: String)
         id INTEGER PRIMARY KEY, sku TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
         category TEXT NOT NULL,
         reserved INTEGER NOT NULL DEFAULT 0 CHECK(reserved >= 0),
-        incoming INTEGER NOT NULL DEFAULT 0 CHECK(incoming >= 0),
-        incoming_eta TEXT NOT NULL DEFAULT '',
         capacity INTEGER NOT NULL CHECK(capacity > 0),
         enabled INTEGER NOT NULL DEFAULT 1
       );
@@ -55,6 +53,7 @@ class Database(path: String, home: String)
         kind TEXT NOT NULL CHECK(kind IN ('receipt','issue','adjustment')),
         quantity INTEGER NOT NULL CHECK(quantity != 0),
         occurred_at TEXT NOT NULL,
+        draft_order_id INTEGER REFERENCES draft_orders(id),
         reference TEXT NOT NULL DEFAULT '',
         note TEXT NOT NULL DEFAULT '',
         CHECK((kind = 'receipt' AND quantity > 0)
@@ -67,6 +66,23 @@ class Database(path: String, home: String)
         SELECT p.id AS product_id, COALESCE(SUM(m.quantity),0) AS on_hand
         FROM products p LEFT JOIN stock_movements m ON m.product_id = p.id
         GROUP BY p.id;
+      -- What is on order: the lines of accepted drafts that have not been
+      -- received yet, due on the accepted date plus that supplier's lead time.
+      CREATE VIEW IF NOT EXISTS product_incoming AS
+        SELECT p.id AS product_id,
+          COALESCE((SELECT SUM(l.quantity) FROM draft_order_lines l
+                    JOIN draft_orders d ON d.id = l.draft_order_id
+                    WHERE l.product_id = p.id AND d.status = 'accepted'),0)
+            AS incoming,
+          COALESCE((SELECT MIN(date(d.updated_at,
+                                   '+' || COALESCE(ps.lead_time_days,0) || ' days'))
+                    FROM draft_order_lines l
+                    JOIN draft_orders d ON d.id = l.draft_order_id
+                    LEFT JOIN product_suppliers ps
+                      ON ps.product_id = l.product_id AND ps.supplier_id = d.supplier_id
+                    WHERE l.product_id = p.id AND d.status = 'accepted'),'')
+            AS incoming_eta
+        FROM products p;
       CREATE TABLE IF NOT EXISTS rules (
         id INTEGER PRIMARY KEY, text TEXT NOT NULL,
         enabled INTEGER NOT NULL DEFAULT 1,
@@ -74,7 +90,7 @@ class Database(path: String, home: String)
       );
       CREATE TABLE IF NOT EXISTS draft_orders (
         id INTEGER PRIMARY KEY, supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
-        status TEXT NOT NULL CHECK(status IN ('draft','accepted','rejected')),
+        status TEXT NOT NULL CHECK(status IN ('draft','accepted','rejected','received')),
         rationale TEXT NOT NULL, total_cents INTEGER NOT NULL, currency TEXT NOT NULL,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
@@ -104,10 +120,6 @@ class Database(path: String, home: String)
     conn.commit()
     conn.close()
 
-  private def inDays(days: Int): String =
-    val datetime = py.module("datetime")
-    datetime.date.today().__add__(datetime.timedelta(days = days)).isoformat().asString
-
   private def seed(conn: py.Dynamic): Unit =
     val count = conn.execute("SELECT COUNT(*) FROM suppliers").fetchone()[0].asInt
     if count > 0 then return
@@ -119,22 +131,21 @@ class Database(path: String, home: String)
       py.list(4, "Helvetia Wholesale", "CHF")
     ))
     conn.executemany("""
-      INSERT INTO products
-        (id,sku,name,category,reserved,incoming,incoming_eta,capacity)
-      VALUES(?,?,?,?,?,?,?,?)
+      INSERT INTO products (id,sku,name,category,reserved,capacity)
+      VALUES(?,?,?,?,?,?)
     """, py.list(
-      py.list(1,"FOOD-101","Pasta 500 g","food",8,0,"",240),
-      py.list(2,"FOOD-102","Tomato sauce","food",6,0,"",180),
-      py.list(3,"FOOD-103","Rice 1 kg","food",10,24,inDays(3),260),
-      py.list(4,"FOOD-104","Olive oil 1 L","food",2,0,"",96),
-      py.list(5,"PACK-201","Small cartons","packaging",80,0,"",1000),
-      py.list(6,"PACK-202","Large cartons","packaging",20,100,inDays(5),500),
-      py.list(7,"PACK-203","Paper tape","packaging",7,0,"",160),
-      py.list(8,"PACK-204","Pallet wrap","packaging",12,0,"",180),
-      py.list(9,"HYGI-301","Hand soap","hygiene",4,0,"",120),
-      py.list(10,"HYGI-302","Surface cleaner","hygiene",10,0,"",150),
-      py.list(11,"HYGI-303","Paper towels","hygiene",3,0,"",90),
-      py.list(12,"HYGI-304","Waste bags","hygiene",15,20,inDays(2),220)
+      py.list(1,"FOOD-101","Pasta 500 g","food",8,240),
+      py.list(2,"FOOD-102","Tomato sauce","food",6,180),
+      py.list(3,"FOOD-103","Rice 1 kg","food",10,260),
+      py.list(4,"FOOD-104","Olive oil 1 L","food",2,96),
+      py.list(5,"PACK-201","Small cartons","packaging",80,1000),
+      py.list(6,"PACK-202","Large cartons","packaging",20,500),
+      py.list(7,"PACK-203","Paper tape","packaging",7,160),
+      py.list(8,"PACK-204","Pallet wrap","packaging",12,180),
+      py.list(9,"HYGI-301","Hand soap","hygiene",4,120),
+      py.list(10,"HYGI-302","Surface cleaner","hygiene",10,150),
+      py.list(11,"HYGI-303","Paper towels","hygiene",3,90),
+      py.list(12,"HYGI-304","Waste bags","hygiene",15,220)
     ))
 
     // Preferred source first, then any alternate. Alternates are dearer and
@@ -160,6 +171,7 @@ class Database(path: String, home: String)
     ))
 
     seedMovements(conn)
+    seedAcceptedOrders(conn)
 
     conn.executemany("""
       INSERT INTO rules(text,enabled,created_at,updated_at)
@@ -171,6 +183,33 @@ class Database(path: String, home: String)
       py.list("Keep the total value of any single draft at or below 150000 cents. Say so in the report when this is what limited an order."),
       py.list("Keep at least 10 available units of every product after reserved commitments.")
     ))
+
+  // Stock already on order: accepted orders waiting to be received, which is
+  // where the products page gets its incoming quantities and dates.
+  private def seedAcceptedOrders(conn: py.Dynamic): Unit =
+    val orders = py.list(
+      py.list(1, 3, 24, 410, "Reorder after the September cover review."),
+      py.list(2, 6, 100, 112, "Carton stock below a week of cover."),
+      py.list(3, 12, 20, 195, "Routine top-up before the weekend.")
+    )
+    for raw in py.iter(orders) do
+      val order = py.dynamic(raw)
+      val supplierId = order[0].asInt
+      val productId = order[1].asInt
+      val quantity = order[2].asInt
+      val price = order[3].asInt
+      val cursor = conn.execute("""
+        INSERT INTO draft_orders
+          (supplier_id,status,rationale,total_cents,currency,created_at,updated_at)
+        SELECT ?, 'accepted', ?, ?, s.currency, datetime('now','-2 days'),
+               datetime('now','-2 days')
+        FROM suppliers s WHERE s.id = ?
+      """, py.list(supplierId, order[4].asString, quantity * price, supplierId))
+      conn.execute("""
+        INSERT INTO draft_order_lines
+          (draft_order_id,product_id,quantity,unit_price_cents,line_total_cents)
+        VALUES(?,?,?,?,?)
+      """, py.list(cursor.lastrowid.asInt, productId, quantity, price, quantity * price))
 
   // Four weeks of issues per product, an opening receipt sized so that the
   // ledger settles on the intended stock level, and a mid-period restock for a
@@ -224,13 +263,15 @@ class Database(path: String, home: String)
       "suppliers" ~ suppliers(),
       "summary" ~ rows("""
         SELECT COUNT(*) AS product_count,
-          SUM(CASE WHEN st.on_hand-p.reserved+p.incoming <
+          SUM(CASE WHEN st.on_hand-p.reserved+inc.incoming <
                 (SELECT MIN(ps.minimum_order_quantity) FROM product_suppliers ps
                  WHERE ps.product_id = p.id)
               THEN 1 ELSE 0 END) AS low_stock_count,
           SUM(st.on_hand * COALESCE(\{preferredPrice},0)) AS inventory_value_cents,
           (SELECT COUNT(*) FROM draft_orders WHERE status='draft') AS draft_count
-        FROM products p JOIN product_stock st ON st.product_id = p.id
+        FROM products p
+        JOIN product_stock st ON st.product_id = p.id
+        JOIN product_incoming inc ON inc.product_id = p.id
         WHERE p.enabled=1
       """)[0]
     )
@@ -330,6 +371,7 @@ class Database(path: String, home: String)
     val cursor = conn.execute("""
       INSERT INTO stock_movements(product_id,kind,quantity,occurred_at,reference,note)
       VALUES(?,?,?,COALESCE(NULLIF(?,''),datetime('now')),?,?)
+
     """, py.list(productId, kind, signed,
       body.get("occurred_at", "").asString.trim,
       body.get("reference", "").asString.trim,
@@ -338,8 +380,11 @@ class Database(path: String, home: String)
 
   def products(): py.List =
     val result = rows("""
-      SELECT p.*, st.on_hand, (st.on_hand - p.reserved) AS available
-      FROM products p JOIN product_stock st ON st.product_id = p.id
+      SELECT p.*, st.on_hand, inc.incoming, inc.incoming_eta,
+             (st.on_hand - p.reserved) AS available
+      FROM products p
+      JOIN product_stock st ON st.product_id = p.id
+      JOIN product_incoming inc ON inc.product_id = p.id
       ORDER BY p.sku
     """)
     for item in result do
@@ -393,8 +438,8 @@ class Database(path: String, home: String)
     val id = if given == 0 then
       val cursor = conn.execute("""
         INSERT INTO products
-          (sku,name,category,reserved,incoming,incoming_eta,capacity,enabled)
-        VALUES(?,?,?,?,?,?,?,?)
+          (sku,name,category,reserved,capacity,enabled)
+        VALUES(?,?,?,?,?,?)
       """, productParams(body))
       val created = cursor.lastrowid.asInt
       // Stock only ever arrives through the ledger, opening balances included.
@@ -411,7 +456,7 @@ class Database(path: String, home: String)
       params.append(given)
       conn.execute("""
         UPDATE products SET sku=?,name=?,category=?,reserved=?,
-          incoming=?,incoming_eta=?,capacity=?,enabled=? WHERE id=?
+          capacity=?,enabled=? WHERE id=?
       """, params)
       given
     replaceSources(conn, id, sources)
@@ -456,8 +501,6 @@ class Database(path: String, home: String)
     body.get("name", "").asString.trim,
     body.get("category", "").asString.trim,
     body.get("reserved", 0).asInt,
-    body.get("incoming", 0).asInt,
-    body.get("incoming_eta", "").asString.trim,
     body.get("capacity", 1).asInt,
     if body.get("enabled", true).asBool then 1 else 0)
 
@@ -489,6 +532,52 @@ class Database(path: String, home: String)
     conn.execute("DELETE FROM rules WHERE id=?", py.list(id))
     conn.commit()
     conn.close()
+
+  // Receiving is the only path from an accepted order to stock on hand: one
+  // receipt per line, tagged with the order, and the order is then closed.
+  def receiveDraft(id: Int): Bool =
+    val conn = connect()
+    conn.execute("BEGIN IMMEDIATE")
+    val outcome = py.try: writeReceipt(conn, id)
+    match outcome
+    case Ok(received) =>
+      conn.commit()
+      conn.close()
+      received
+    case Err(error) =>
+      conn.rollback()
+      conn.close()
+      abort error.message
+
+  private def writeReceipt(conn: py.Dynamic, id: Int): Bool =
+    val order = conn.execute(
+      "SELECT status FROM draft_orders WHERE id = ?", py.list(id)).fetchone()
+    if order.isNone then return false
+    if order[0].asString != "accepted" then
+      abort "only an accepted order can be received"
+    val lines = conn.execute("""
+      SELECT l.product_id, l.quantity, p.sku, p.capacity
+      FROM draft_order_lines l JOIN products p ON p.id = l.product_id
+      WHERE l.draft_order_id = ?
+    """, py.list(id)).fetchall()
+    for raw in py.iter(lines) do
+      val line = py.dynamic(raw)
+      val productId = line[0].asInt
+      val quantity = line[1].asInt
+      val balance = conn.execute(
+        "SELECT COALESCE(SUM(quantity),0) FROM stock_movements WHERE product_id = ?",
+        py.list(productId)).fetchone()[0].asInt
+      if balance + quantity > line[3].asInt then
+        abort "\{line[2].asString} would exceed storage capacity on receipt"
+      conn.execute("""
+        INSERT INTO stock_movements
+          (product_id,kind,quantity,occurred_at,draft_order_id,reference,note)
+        VALUES(?,'receipt',?,datetime('now'),?,?,'received against order')
+      """, py.list(productId, quantity, id, "PO-\{id}"))
+    conn.execute("""
+      UPDATE draft_orders SET status='received',updated_at=datetime('now') WHERE id=?
+    """, py.list(id))
+    true
 
   def setDraftStatus(id: Int, status: String): Bool =
     if status != "accepted" && status != "rejected" then return false

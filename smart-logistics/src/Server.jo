@@ -36,6 +36,7 @@ class Server(brain: Model, home: String, databasePath: String, database: Databas
     case Http.Post("/api/skills") => saveSkill()
     case Http.Post("/api/skills/delete") => deleteSkill()
     case Http.Post("/api/drafts/status") => draftStatus()
+    case Http.Post("/api/drafts/receive") => draftReceive()
     case Http.Post("/api/analyze") => Http.respondJson(analyzer.run("manual"))
     case _ => Http.respond("404 Not Found","application/json","{\"error\":\"not found\"}")
 
@@ -103,6 +104,10 @@ class Server(brain: Model, home: String, databasePath: String, database: Databas
     val data = body()
     val changed = database.setDraftStatus(data.get("id").asInt,data.get("status").asString)
     Http.respondJson(py.dict("ok" ~ changed))
+
+  private def draftReceive(): py.List receives request =
+    val received = database.receiveDraft(body().get("id").asInt)
+    Http.respondJson(py.dict("ok" ~ received))
 
   private def draftExport(): py.List receives request =
     val requested = query("id")

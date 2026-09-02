@@ -109,8 +109,8 @@ function renderProducts() {
     const cheapestMoq = Math.min(...product.sources.map(source => source.minimum_order_quantity), Infinity);
     const short = product.available + product.incoming < cheapestMoq;
     const incoming = product.incoming
-      ? `${product.incoming} incoming${product.incoming_eta ? ' · due ' + escapeHtml(product.incoming_eta) : ''}`
-      : 'none incoming';
+      ? `${product.incoming} on order${product.incoming_eta ? ' · due ' + escapeHtml(product.incoming_eta) : ''}`
+      : 'none on order';
     const sources = product.sources.map(source => `
       <div class="source">
         <span>${escapeHtml(source.supplier_name)}</span>
@@ -223,7 +223,9 @@ function renderDrafts() {
     const decisions = draft.status === 'draft'
       ? `<button class="primary" onclick="statusDraft(${draft.id},'accepted')">Accept</button>
          <button onclick="statusDraft(${draft.id},'rejected')">Reject</button>`
-      : '';
+      : draft.status === 'accepted'
+        ? `<button class="primary" onclick="receiveDraft(${draft.id})">Receive</button>`
+        : '';
     return `
       <article class="card">
         <div class="card-head">
@@ -245,7 +247,7 @@ function renderDrafts() {
 
 /* Products ----------------------------------------------------------------- */
 
-const PRODUCT_NUMBER_FIELDS = ['reserved', 'incoming', 'capacity'];
+const PRODUCT_NUMBER_FIELDS = ['reserved', 'capacity'];
 
 const productForm = $('#product-form');
 
@@ -262,7 +264,8 @@ function openProduct(product = {}) {
   const existing = Boolean(product.id);
   $('#opening-field').hidden = existing;
   $('#stock-hint').textContent = existing
-    ? `${product.on_hand} on hand, from the stock ledger. Record a movement to change it.`
+    ? `${product.on_hand} on hand from the stock ledger, ${product.incoming} on order. `
+      + 'Record a movement to change stock; receive an accepted order to clear what is on order.'
     : 'Opening stock is recorded as a receipt in the stock ledger.';
   $('#product-dialog').showModal();
 }
@@ -394,6 +397,17 @@ window.deleteRule = async id => {
 };
 
 /* Draft requests ----------------------------------------------------------- */
+
+// Receiving posts one receipt per line, so stock and the order close together.
+window.receiveDraft = async id => {
+  try {
+    await post('/api/drafts/receive', { id });
+  } catch (error) {
+    return toast('Could not receive: it would exceed storage capacity');
+  }
+  await refresh();
+  toast(`Order ${id} received into stock`);
+};
 
 window.statusDraft = async (id, status) => {
   await post('/api/drafts/status', { id, status });
