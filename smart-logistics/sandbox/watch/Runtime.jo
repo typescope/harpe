@@ -8,9 +8,10 @@ import sandbox.api
 def main(): Unit receives stdout =
   val path = os.getenv("SMART_LOGISTICS_DB", "")
   if path == "" then abort "sandbox: SMART_LOGISTICS_DB is not set"
+  val runId = Int.parse(os.getenv("SMART_LOGISTICS_RUN", "0")) rescue None => 0
 
   Logging.withLogger: auditLogger(), () =>
-    with api.logistics = new LogisticsImpl(path) in api.runTask()
+    with api.watch = new WatchImpl(new Depot(path), runId) in api.runTask()
 
 private def auditLogger(): Logger =
   val path = os.getenv("HARPE_AUDIT_LOG", "")

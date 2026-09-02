@@ -1,0 +1,130 @@
+namespace sandbox.runtime
+
+import sandbox.api
+
+//[ The planner's capability, implemented by trusted host-side code.
+  !
+  ! `saveDraftOrder` is the hard enforcement point. It revalidates every proposed
+  ! line against the database and writes only a draft. Prices, totals, currency
+  ! and status are taken from trusted records — the caller cannot supply them.
+  !
+  ! What it enforces is PHYSICAL FACTS only: who supplies what, that supplier's
+  ! case size, storage capacity, duplicate lines. The checks are prose and nothing
+  ! here machine-checks them; the administrator reviewing the draft is that gate.
+//]
+class PlanImpl(depot: Depot)
+  view api.Plan
+
+  def products(): List[api.Product] = depot.products()
+  def checks(): List[api.Check] = depot.checks()
+  def demandHistory(productId: Int, days: Int): List[api.DemandDay] =
+    depot.demandHistory(productId, days)
+
+  def openDraftOrders(): List[api.DraftOrder] =
+    val conn = depot.connect()
+    val orders = conn.execute("""
+      SELECT d.id, d.supplier_id, s.name, d.total_cents, d.currency, d.rationale
+      FROM draft_orders d JOIN suppliers s ON s.id = d.supplier_id
+      WHERE d.status = 'draft' ORDER BY d.id
+    """).fetchall()
+    var result: List[api.DraftOrder] = []
+    for raw in py.iter(orders) do
+      val r = py.dynamic(raw)
+      val lineRows = conn.execute("""
+        SELECT l.product_id, p.sku, p.name, l.quantity
+        FROM draft_order_lines l JOIN products p ON p.id = l.product_id
+        WHERE l.draft_order_id = ? ORDER BY p.sku
+      """, py.list(r[0].asInt)).fetchall()
+      var lines: List[api.DraftLine] = []
+      for lineRaw in py.iter(lineRows) do
+        val line = py.dynamic(lineRaw)
+        lines = lines + new api.DraftLine(
+          line[0].asInt, line[1].asString, line[2].asString, line[3].asInt)
+      result = result + new api.DraftOrder(
+        r[0].asInt, r[1].asInt, r[2].asString,
+        r[3].asInt, r[4].asString, r[5].asString, lines)
+    conn.close()
+    result
+
+  def saveDraftOrder(
+    supplierId: Int,
+    lines: List[api.ProposedLine],
+    rationale: String
+  ): api.SaveResult =
+    if lines.size == 0 then return depot.failed("A draft needs at least one line")
+    if rationale.trim == "" then return depot.failed("A rationale is required")
+
+    val conn = depot.connect()
+    conn.execute("BEGIN IMMEDIATE")
+    val supplier = conn.execute(
+      "SELECT currency FROM suppliers WHERE id = ? AND enabled = 1",
+      py.list(supplierId)).fetchone()
+    if supplier.isNone then return depot.rollback(conn, "Unknown or disabled supplier")
+
+    var seen: List[Int] = []
+    var total = 0
+    var validated = py.list()
+
+    for proposed in lines do
+      if seen.contains(proposed.productId) then
+        return depot.rollback(conn, "Duplicate product line: \{proposed.productId}")
+      seen = seen + proposed.productId
+      if proposed.quantity <= 0 then
+        return depot.rollback(conn, "Quantity must be positive for product \{proposed.productId}")
+
+      val row = conn.execute("""
+        SELECT p.sku, pos.on_hand, pos.on_order, p.capacity
+        FROM products p
+        JOIN product_position pos ON pos.product_id = p.id
+        WHERE p.id = ? AND p.enabled = 1
+      """, py.list(proposed.productId)).fetchone()
+      if row.isNone then
+        return depot.rollback(conn, "Unknown or disabled product \{proposed.productId}")
+      val p = py.dynamic(row)
+      val sku = p[0].asString
+
+      // Terms come from the chosen source, so an unsourced pair is not orderable.
+      val terms = conn.execute("""
+        SELECT case_size, unit_price_cents
+        FROM product_suppliers WHERE product_id = ? AND supplier_id = ?
+      """, py.list(proposed.productId, supplierId)).fetchone()
+      if terms.isNone then
+        return depot.rollback(conn, "\{sku} is not sourced from this supplier")
+      val t = py.dynamic(terms)
+      if proposed.quantity % t[0].asInt != 0 then
+        return depot.rollback(conn,
+          "\{sku} must be ordered in whole cases of \{t[0].asInt} from this supplier")
+      if p[1].asInt + p[2].asInt + proposed.quantity > p[3].asInt then
+        return depot.rollback(conn, "\{sku} would exceed storage capacity")
+
+      val duplicate = conn.execute("""
+        SELECT 1 FROM draft_order_lines l
+        JOIN draft_orders d ON d.id = l.draft_order_id
+        WHERE l.product_id = ? AND d.status = 'draft' LIMIT 1
+      """, py.list(proposed.productId)).fetchone()
+      if !duplicate.isNone then
+        return depot.rollback(conn, "\{sku} is already in an open draft")
+
+      val unitPrice = t[1].asInt
+      val lineTotal = proposed.quantity * unitPrice
+      total = total + lineTotal
+      validated.append(py.list(proposed.productId, proposed.quantity, unitPrice, lineTotal))
+
+    val currency = supplier[0].asString
+    val cursor = conn.execute("""
+      INSERT INTO draft_orders
+        (supplier_id, status, rationale, total_cents, currency, created_at, updated_at)
+      VALUES (?, 'draft', ?, ?, ?, datetime('now'), datetime('now'))
+    """, py.list(supplierId, rationale.trim, total, currency))
+    val draftId = cursor.lastrowid.asInt
+    for raw in py.iter(validated) do
+      val line = py.dynamic(raw)
+      conn.execute("""
+        INSERT INTO draft_order_lines
+          (draft_order_id, product_id, quantity, unit_price_cents, line_total_cents)
+        VALUES (?, ?, ?, ?, ?)
+      """, py.list(draftId, line[0], line[1], line[2], line[3]))
+    conn.commit()
+    conn.close()
+    new api.SaveResult(true, draftId, "Draft \{draftId} saved for administrator review")
+end

@@ -1,0 +1,47 @@
+namespace sandbox.api
+
+//[ What both agents can see about the depot.
+  !
+  ! `daysOfCover` is the number that matters: how long the stock on hand plus
+  ! whatever is on order will last at the current rate of sale. 999 means the
+  ! product has not moved recently, so cover is not meaningful.
+//]
+class Product(
+  id: Int,
+  sku: String,
+  name: String,
+  category: String,
+  onHand: Int,
+  onOrder: Int,
+  sellsPerDay: Float,
+  daysOfCover: Int,
+  leadTimeDays: Int,
+  capacity: Int,
+  sources: List[Source]
+)
+
+//[ One way to buy a product: the terms of a product-supplier relationship.
+  ! The same item is often sourced from several suppliers at different prices,
+  ! lead times and pack sizes.
+//]
+class Source(
+  supplierId: Int,
+  supplierName: String,
+  currency: String,
+  unitPriceCents: Int,
+  leadTimeDays: Int,
+  caseSize: Int,
+  preferred: Bool
+)
+
+class DemandDay(date: String, quantity: Int)
+
+//[ A check is what the depot's administrator wrote, in their own words.
+  !
+  ! Nothing machine-checks these. The watcher applies them to today's stock; the
+  ! planner proposes orders that pass them. The runtime enforces physical facts
+  ! only — case sizes, capacity, who supplies what — no matter what a check says.
+//]
+class Check(id: Int, text: String)
+
+class SaveResult(ok: Bool, id: Int, message: String)
