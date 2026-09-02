@@ -32,14 +32,14 @@ private def start(): Unit receives stdout, appHome =
 
   val port = Int.parse(os.getenv("PORT","8766")) rescue None => 8766
   val server = new Server(Model.default(),appHome,databasePath,database)
-  server.startScheduler(os.getenv("ANALYSIS_INTERVAL_MINUTES","0"))
+  server.startWatching(os.getenv("WATCH_INTERVAL_MINUTES","0"))
   val httpd = Http.server: host,port,() => server.route()
 
   println """
     Smart Logistics · local depot planner
 
     Live at http://\{host}:\{port}
-    Generated code can create drafts, never approve or submit orders.
+    The watcher can only raise warnings. The planner can only draft orders.
     Ctrl-C to stop
   """
   Process.shutdownOnSigint("\nSmart Logistics stopped.")
