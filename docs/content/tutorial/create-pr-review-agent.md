@@ -1,10 +1,16 @@
 +++
 title = "Create a PR Review Agent"
 +++
-The PR review example is a complete agent that reviews a GitHub pull request and
-submits the review. It reads the diff, follows identifiers into the repository
-snapshot, and posts a verdict — all by writing Jo programs against a GitHub
-capability that offers five operations and nothing else.
+The PR review example demonstrates **REST API surface narrowing**, a strong
+point of Jo's capability model. A conventional process sandbox can block or
+allow network access, but cannot naturally grant selected operations from one
+REST API while making its sibling endpoints uncallable. Here the trusted
+runtime can use GitHub's broader API, while model-written programs receive four
+typed operations and nothing else.
+
+The complete agent reviews one GitHub pull request: it reads the diff, follows
+identifiers into the repository snapshot, and saves a pending draft for manual
+verification. It cannot publish, post a standalone comment, or merge.
 
 ## Create the project
 
@@ -38,7 +44,7 @@ jo review -- https://github.com/owner/repo/pull/123
 
 `jo review` builds the sandbox guest and then runs a single turn. The agent
 prints each tool call as it works, so you can watch it fetch the PR, compile a
-program, and submit its verdict.
+program, and save its draft review.
 
 ## The capability is the review surface
 
@@ -49,9 +55,7 @@ interface GitHub
   def getPR(): PRInfo
   def readFile(path: String, start: Int = 0, ends: Int = -1): String
   def findDefinition(identifier: String): List[DefinitionMatch]
-  def submitReview(verdict: ReviewVerdict, body: String, comments: List[LineComment]): Unit receives stdout
-  def addComment(body: String): Unit receives stdout
-  def merge(commitMessage: String): Unit receives stdout
+  def saveDraftReview(body: String, comments: List[LineComment]): Unit receives stdout
 end
 ```
 
@@ -66,6 +70,8 @@ def runTask(): Unit receives stdout, github =
   val pr = github.getPR()
   for diff in pr.diffs do
     println "\{diff.status} | \{diff.path} (+\{diff.additions} -\{diff.deletions})"
+
+  github.saveDraftReview("Draft review summary", [])
 ```
 
 The guest module in `sandbox/jo.toml` depends only on `api` and the pure `caps`
@@ -84,26 +90,24 @@ with api.github = ghImpl in
   api.runTask()
 ```
 
-## Prompt policy is not the boundary
+## Draft-only is the boundary
 
-`AGENT.md` instructs the agent to submit reviews as **pending** drafts so a human
-verifies them before they publish. That instruction is a policy the model
-follows, not a constraint the compiler enforces — `submitReview` accepts
-`Approve` and `RequestChanges`, and `merge` is granted outright.
+`AGENT.md` instructs the agent to submit reviews as **pending** drafts, and the
+capability enforces that policy. `saveDraftReview` has no verdict argument; its
+trusted implementation always omits GitHub's event field, which saves a draft.
+Publishing, standalone comments, and merging are absent from `interface GitHub`,
+so a model-written program that attempts any of them does not compile.
 
-The distinction matters, and the example is a good place to practice it. To make
-the policy structural rather than advisory, change the interface instead of the
-prompt:
+Authority is reduced structurally, not by asking the model to avoid dangerous
+endpoints.
 
-- Delete `merge` from `interface GitHub`. Programs calling it stop compiling.
-- Narrow `submitReview` to accept only `Pending`, so publishing stays a human
-  action.
-- Or keep the operation and require
-  [human approval](/concepts/approvals/) inside `GithubImpl`, which performs the
-  effect only after `Approvals.Approved`.
+To add a publishing operation, widen the interface and protect the effect inside
+the trusted implementation with [human approval](/concepts/approvals/). The
+implementation should perform it only after `Approvals.Approved`; adding an
+instruction to the prompt alone would not create a boundary.
 
-The [flight booking agent](/tutorial/create-flight-booking-agent/) takes the
-third route for placing orders.
+The [flight booking agent](/tutorial/create-flight-booking-agent/) demonstrates
+that approval pattern for placing orders.
 
 ## What to customize
 
@@ -119,15 +123,15 @@ my-reviewer/
     Runtime.jo           # binds the implementation to the capability
     Task.jo              # the guest entry point runCode overwrites each turn
   skills/
-    api.jo               # capability reference the model reads on demand
+    api.jo               # symlink to sandbox/API.jo; read on demand
     jo-syntax.md         # Jo syntax reference
 ```
 
 - Edit `AGENT.md` to change what the review flags and how it is worded.
 - Edit `sandbox/API.jo` to change what the agent may do at all, then update
   `GithubImpl` in `sandbox/Runtime.jo` to implement it.
-- Edit `skills/api.jo` so the model's reference matches the interface. The agent
-  reads it with `skillsRead` rather than carrying it in every prompt.
+- `skills/api.jo` links to `sandbox/API.jo`, so the model reads the exact contract
+  with `skillsRead` rather than carrying it in every prompt.
 - Edit `src/Main.jo` to change the model, the tool budget, or the environment
   granted to the guest. The PR URL and token reach the sandbox as an ordinary
   argument:

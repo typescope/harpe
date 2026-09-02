@@ -67,6 +67,8 @@ my-agent/
     SandboxAPI.jo
     SandboxRuntime.jo
     Task.jo
+  skills/
+    jo-syntax.md
 ```
 
 - Edit `AGENT.md` to define the agent.
