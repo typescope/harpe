@@ -41,7 +41,7 @@ def runTask(): Unit receives IO.stdout, fs, pdfReader, excelReader, wordReader, 
 `openPDF` needs `pdfReader`, `openWorkbook` needs `excelReader`, `openWord` needs
 `wordReader`)
 
-- `fs: FileSystem` — the confined data tree. Use relative paths such as
+- `fs: FileSystem` — the confined file system. Use relative paths such as
   `"letter.pdf"` or `"docs/report.pdf"`. `fs.list("")` (sorted entries with
   `.path`/`.isDirectory`), `fs.stat(p)` (size, modified time), `fs.readText(p)`
   for a small file; for a big one `fs.openTextFile(p)` then `lines` / `head(n)` /
