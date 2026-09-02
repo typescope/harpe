@@ -1,9 +1,9 @@
 //[ ToolTest.jo
   !
   ! Unit tests for the tool layer (`harpe.tools`): the typed `ToolInput`
-  ! accessors and their zero fallbacks, the parameter constructors, and
-  ! `runSafely` — the backstop that turns a throwing tool into an error
-  ! `ToolOutcome` instead of letting it crash a turn.
+  ! accessors and their zero fallbacks, the parameter constructors and the
+  ! schema they render, and `runSafely` — the backstop that turns a throwing
+  ! tool into an error `ToolOutcome` instead of letting it crash a turn.
 //]
 
 namespace harpe.test.unit.ToolTest
@@ -44,12 +44,18 @@ def toolSuite(): Unit receives thisSuite, logger = suite: "tool layer", () =>
       check("num", full.num("f") == 3.5)
       check("indexing", full["s"] == "hi")
 
+    test: "reads a list-of-strings argument", () =>
+      val tags = ToolInput(py.dict("tags" ~ py.list("a", "b"))).strings("tags")
+      check("size", tags.size == 2)
+      check("order", tags[0] == "a" && tags[1] == "b")
+
     test: "falls back to the type's zero when a key is missing", () =>
       val empty = ToolInput(py.dict())
       check("string", empty.string("x") == "")
       check("int", empty.int("x") == 0)
       check("bool", empty.bool("x") == false)
       check("num", empty.num("x") == 0.0)
+      check("strings", empty.strings("x").size == 0)
       check("indexing", empty["x"] == "")
 
   suite: "parameters", () =>
@@ -62,6 +68,18 @@ def toolSuite(): Unit receives thisSuite, logger = suite: "tool layer", () =>
       check("intParam", ip.paramType is IntParam)
       check("boolParam", bp.paramType is BoolParam)
       check("numParam", np.paramType is NumParam)
+      check("strListParam", strListParam("a", "d").paramType is StrListParam)
+
+    test: "a scalar renders as a typed, described property", () =>
+      val s = strParam("city", "the city").schema
+      check("type", s.get("type").asString == "string")
+      check("description", s.get("description").asString == "the city")
+
+    test: "a string list renders with the items schema its elements need", () =>
+      val s = strListParam("tags", "the tags").schema
+      check("type", s.get("type").asString == "array")
+      check("items", s.get("items").cast[py.Dict].get("type").asString == "string")
+      check("description", s.get("description").asString == "the tags")
 
   suite: "runSafely", () =>
     test: "passes a normal outcome through unchanged", () =>

@@ -23,7 +23,7 @@ private section CompatibleChat
     val properties = py.dict()
     val required = py.list()
     for p in t.params do
-      properties.set(p.name, py.dict("type" ~ p.paramType.jsonType, "description" ~ p.description))
+      properties.set(p.name, p.schema)
       required.append(p.name)
 
     val parameters = py.dict("type" ~ "object", "properties" ~ properties, "required" ~ required)
