@@ -91,13 +91,13 @@ The main framework categories are:
 - **`harpe.tools.runCode`** — one per program the agent runs: `code`, `compiled`,
   `compileSeconds`, and — depending on the outcome — `runSeconds`, `exitCode`,
   `output`, or a `compileError`.
-- **`harpe.model`** — one per attempt at asking the model, whatever came back.
-  `provider`, `model`, and `outcome` are always present, so a request that failed
-  is as attributable as one that succeeded. `outcome` selects the rest: `replied`
-  adds `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`, and
-  is your token-usage feed for billing and auditing. `failed` adds `error`, the
-  HTTP `status` (0 when the request never reached the server), and `retryable`,
-  the classification the engine acted on.
+- **`harpe.model.replied`** — one per attempt that came back with a reply:
+  `provider`, `model`, `inputTokens`, `outputTokens`, `cacheReadTokens`,
+  `cacheWriteTokens`. This is your token-usage feed for billing and auditing.
+- **`harpe.model.failed`** — one per attempt that did not: the same `provider`
+  and `model`, so a failed request is as attributable as a successful one, plus
+  `error`, the HTTP `status` (0 when the request never reached the server), and
+  `retryable`, the classification the engine acted on.
 
   `inputTokens` is the total input the provider processed, cached tokens
   included, and means the same thing on every provider — the adapters normalize
@@ -106,11 +106,14 @@ The main framework categories are:
   them and the base rate to the remainder. Both read 0 when a provider reports no
   cache detail, which is indistinguishable here from a provider that cached
   nothing. See [Prompt Caching](/guides/prompt-caching/).
-- **`harpe.model.retry`** / **`harpe.model.gaveUp`** — what the engine DECIDED
+- **`harpe.model.retried`** / **`harpe.model.gaveUp`** — what the engine DECIDED
   about a failed attempt, as distinct from the attempt itself. A retry carries
   `attempt` and `retryInSeconds`, a give-up carries `retries` (0 when the failure
-  was never retryable). The failure they respond to is the `harpe.model` record
-  just before them.
+  was never retryable). The failure they respond to is the `harpe.model.failed`
+  record just before them.
+
+`startswith("harpe.model")` reads the whole story of talking to a model — what
+was attempted, and what the engine decided about it.
 - **`harpe.tools.skills`** — reads and searches performed through the skill
   tools.
 - **`harpe.turn.*`** — conversation records written when the application uses a

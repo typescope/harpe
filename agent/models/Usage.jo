@@ -1,13 +1,14 @@
 //[ Usage.jo
   !
-  ! One `harpe.model` record per attempt at asking the model, whatever came back.
+  ! One record per attempt at asking the model: `harpe.model.replied` when one
+  ! came back, `harpe.model.failed` when none did.
   !
-  ! ONE ATTEMPT, ONE RECORD, EMITTED WHERE THE FACTS ARE. `provider` and `model`
-  ! identify every record, so a request that failed is as attributable as one
-  ! that succeeded — `outcome` selects the rest. The provider emits both, being
-  ! the only party that knows which model it was talking to. What the ENGINE
-  ! knows — that it will retry, that it has given up — is its own decision and
-  ! its own record (`harpe.model.retry`, `harpe.model.gaveUp`).
+  ! EMITTED WHERE THE FACTS ARE. `provider` and `model` identify both, so a
+  ! request that failed is as attributable as one that succeeded, and
+  ! `startswith("harpe.model")` reads the whole story. The provider writes them,
+  ! being the only party that knows which model it was talking to. What the
+  ! ENGINE knows — that it will retry, that it has given up — is its own
+  ! decision under its own name (`harpe.model.retried`, `harpe.model.gaveUp`).
   !
   ! Because a model reads the `logger` at reply time (not when it was built),
   ! every record is stamped with the turn's session context automatically.
@@ -18,8 +19,11 @@ namespace harpe.models
 import harpe.logging.logger
 import harpe.ffi.builtins
 
-//[ The category every model attempt is recorded under. //]
-private[harpe] def modelCategory: String = "harpe.model"
+//[ One attempt that came back with a reply. //]
+private[harpe] def repliedCategory: String = "harpe.model.replied"
+
+//[ One attempt the provider refused or could not complete. //]
+private[harpe] def failedCategory: String = "harpe.model.failed"
 
 //[ Record an attempt that came back with a reply.
   !
@@ -41,10 +45,9 @@ private[harpe] def logReplied(
     cacheReadTokens: Int, cacheWriteTokens: Int)
 : Unit receives logger =
   logger.log:
-    modelCategory
+    repliedCategory
     "provider"         ~ provider
     "model"            ~ model
-    "outcome"          ~ "replied"
     "inputTokens"      ~ inputTokens
     "outputTokens"     ~ outputTokens
     "cacheReadTokens"  ~ cacheReadTokens
@@ -61,11 +64,10 @@ private[harpe] def logFailed(
     provider: String, model: String, error: String, status: Int, retryable: Bool)
 : Unit receives logger =
   logger.error:
-    modelCategory
+    failedCategory
     error
     "provider"  ~ provider
     "model"     ~ model
-    "outcome"   ~ "failed"
     "status"    ~ status
     "retryable" ~ retryable
 

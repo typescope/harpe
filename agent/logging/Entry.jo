@@ -26,12 +26,17 @@ import harpe.util.File
 //[ A log record: when it happened (`time`), its `category`, and named `fields`.
   !
   ! CATEGORY CONVENTION. A category is a stable, dotted, reverse-namespaced
-  ! identifier for the KIND of record — like a logger name, e.g.
-  ! `"harpe.tools.runCode"` (namespace + producer). Namespacing keeps the OPEN set
-  ! collision-free (a third-party tool won't clash with a framework one) and lets
-  ! a consumer filter a whole subtree —
-  ! `jq 'select(.category | startswith("harpe.tools"))'`. Entries sharing a
-  ! category share field shape, so it doubles as the record's schema tag.
+  ! identifier for the KIND of record, and its LAST segment names WHAT HAPPENED:
+  ! `harpe.turn.started`, `harpe.model.failed`. Everything before that segment is
+  ! a filter unit, so a consumer reads one subtree with
+  ! `jq 'select(.category | startswith("harpe.model"))'` — every record about
+  ! talking to a model, whatever the outcome — and the open set stays
+  ! collision-free (a third-party tool cannot clash with a framework one).
+  !
+  ! ONE CATEGORY, ONE FIELD SHAPE. The category is the record's schema tag, so
+  ! two records carrying different fields are two events and take two names. A
+  ! discriminator field standing in for that — an `outcome`, a `phase` — means
+  ! the name stopped one segment short.
   !
   ! Each producer owns its category and defines it once as a named constant (see
   ! `runCode`'s `runCodeCategory`). Derive it from the producer's namespace, but

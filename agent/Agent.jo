@@ -230,14 +230,14 @@ section Agent
 
   //[ The engine's own categories for how it handled a model request
     !
-    ! NOT the request itself: that is one `harpe.model` record per attempt,
-    ! written by the provider, which is the only party that knows which model
-    ! was asked (see `harpe.models.logFailed`). What is left here is the
+    ! NOT the attempt itself: that is `harpe.model.replied` or
+    ! `harpe.model.failed`, written by the provider, which is the only party
+    ! that knows which model was asked. What is left here is the
     ! decision the loop took about a failure it was handed — retry, or stop —
     ! and neither is a fact about the request. Reading the two categories in
     ! order gives the whole story: what was attempted, then what was decided.
   //]
-  private def retryCategory: String  = "harpe.model.retry"
+  private def retryCategory: String  = "harpe.model.retried"
   private def gaveUpCategory: String = "harpe.model.gaveUp"
 
   //[ Exponential backoff between retries: 1s, 2s, 4s, … capped at 30s.  //]
