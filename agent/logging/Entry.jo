@@ -26,10 +26,10 @@ import harpe.util.File
 //[ A log record: when it happened (`time`), the `event` it is, and named `fields`.
   !
   ! EVENT CONVENTION. A record IS an event, and `event` is its name: a stable,
-  ! dotted, reverse-namespaced identifier whose LAST segment says WHAT HAPPENED —
-  ! `harpe.turn.started`, `harpe.models.failed`. Everything before that segment is
-  ! a filter unit, so a consumer reads one subtree with
-  ! `jq 'select(.event | startswith("harpe.models"))'` — every record about
+  ! dotted identifier whose LAST segment says WHAT HAPPENED —
+  ! `harpe.turn.started`, `harpe.model.failed`. Everything before it names the
+  ! SUBJECT the event is about, so a consumer reads one subtree with
+  ! `jq 'select(.event | startswith("harpe.model"))'` — every record about
   ! talking to a model, whatever the outcome — and the open set stays
   ! collision-free (a third-party tool cannot clash with a framework one).
   !
@@ -39,14 +39,13 @@ import harpe.util.File
   ! the name stopped one segment short.
   !
   ! Each producer owns its event names and defines each once as a named constant
-  ! (see `runCode`'s `runCodeEvent`). DERIVE THE PREFIX FROM THE PRODUCER'S
-  ! NAMESPACE — `harpe.models` writes `harpe.models.failed` — so the open set
-  ! stays collision-free without anyone inventing a scheme. Where a producer's
-  ! namespace names nothing useful, the prefix follows the SUBJECT instead: the
-  ! turn engine sits in the bare root `harpe`, and writes `harpe.models.retried`
-  ! for what it decided about a model request.
+  ! (see `runCode`'s `runCodeEvent`). The prefix names the subject, NOT the
+  ! namespace the code happens to sit in — the turn engine is in the bare root
+  ! `harpe` and the journal in `harpe.transcript`, and both write about subjects
+  ! of their own. That is what makes the next line possible: a subject outlives a
+  ! package layout.
   !
-  ! Then keep the name STABLE: downstream consumers filter on it, so it is a data
+  ! Keep the name STABLE: downstream consumers filter on it, so it is a data
   ! contract — not something to re-tie to the code on every refactor.
   !
   ! SEVERITY CONVENTION (optional). Most records are pure data — the outcome lives
@@ -55,7 +54,7 @@ import harpe.util.File
   ! reserved field key — `"info"`, `"warning"`, or `"error"` — whose value is that
   ! message. The `Logger.info` / `warn` / `error` helpers write it:
   !
-  !     logger.warn("harpe.models.retried", "rate limited, retrying", "attempt" ~ 3)
+  !     logger.warn("harpe.model.retried", "rate limited, retrying", "attempt" ~ 3)
   !
   ! The three keys are reserved for this and mutually exclusive (structured context
   ! goes in other fields — note `runCode` uses `"compileError"`, not `"error"`).

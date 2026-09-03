@@ -1,14 +1,14 @@
 //[ Usage.jo
   !
-  ! One record per attempt at asking the model: `harpe.models.replied` when one
-  ! came back, `harpe.models.failed` when none did.
+  ! One record per attempt at asking the model: `harpe.model.replied` when one
+  ! came back, `harpe.model.failed` when none did.
   !
   ! EMITTED WHERE THE FACTS ARE. `provider` and `model` identify both, so a
   ! request that failed is as attributable as one that succeeded, and
-  ! `startswith("harpe.models")` reads the whole story. The provider writes them,
+  ! `startswith("harpe.model")` reads the whole story. The provider writes them,
   ! being the only party that knows which model it was talking to. What the
   ! ENGINE knows — that it will retry, that it has given up — is its own
-  ! decision under its own name (`harpe.models.retried`, `harpe.models.gaveUp`).
+  ! decision under its own name (`harpe.model.retried`, `harpe.model.gaveUp`).
   !
   ! Because a model reads the `logger` at reply time (not when it was built),
   ! every record is stamped with the turn's session context automatically.
@@ -20,10 +20,10 @@ import harpe.logging.logger
 import harpe.ffi.builtins
 
 //[ One attempt that came back with a reply. //]
-private[harpe] def repliedEvent: String = "harpe.models.replied"
+private[harpe] def repliedEvent: String = "harpe.model.replied"
 
 //[ One attempt the provider refused or could not complete. //]
-private[harpe] def failedEvent: String = "harpe.models.failed"
+private[harpe] def failedEvent: String = "harpe.model.failed"
 
 //[ Record an attempt that came back with a reply.
   !

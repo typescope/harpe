@@ -50,7 +50,7 @@ end
 - `time` records when the event occurred as epoch seconds. A JSONL logger writes
   it as an RFC 3339 UTC timestamp.
 - `event` is a stable dotted name for what happened, such as
-  `harpe.models.replied` or `myagent.tools.weather.called`.
+  `harpe.model.replied` or `myagent.tools.weather.called`.
 - `fields` contains the facts specific to that event.
 
 `IntVal` and `BoolVal` are implementation adapters. At the call site, integers
@@ -92,10 +92,10 @@ The main framework events are:
 - **`harpe.tools.runCode`** — one per program the agent runs: `code`, `compiled`,
   `compileSeconds`, and — depending on the outcome — `runSeconds`, `exitCode`,
   `output`, or a `compileError`.
-- **`harpe.models.replied`** — one per attempt that came back with a reply:
+- **`harpe.model.replied`** — one per attempt that came back with a reply:
   `provider`, `model`, `inputTokens`, `outputTokens`, `cacheReadTokens`,
   `cacheWriteTokens`. This is your token-usage feed for billing and auditing.
-- **`harpe.models.failed`** — one per attempt that did not: the same `provider`
+- **`harpe.model.failed`** — one per attempt that did not: the same `provider`
   and `model`, so a failed request is as attributable as a successful one, plus
   `error`, the HTTP `status` (0 when the request never reached the server), and
   `retryable`, the classification the engine acted on.
@@ -107,13 +107,13 @@ The main framework events are:
   them and the base rate to the remainder. Both read 0 when a provider reports no
   cache detail, which is indistinguishable here from a provider that cached
   nothing. See [Prompt Caching](/guides/prompt-caching/).
-- **`harpe.models.retried`** / **`harpe.models.gaveUp`** — what the engine DECIDED
+- **`harpe.model.retried`** / **`harpe.model.gaveUp`** — what the engine DECIDED
   about a failed attempt, as distinct from the attempt itself. A retry carries
   `attempt` and `retryInSeconds`, a give-up carries `retries` (0 when the failure
-  was never retryable). The failure they respond to is the `harpe.models.failed`
+  was never retryable). The failure they respond to is the `harpe.model.failed`
   record just before them.
 
-`startswith("harpe.models")` reads the whole story of talking to a model — what
+`startswith("harpe.model")` reads the whole story of talking to a model — what
 was attempted, and what the engine decided about it.
 - **`harpe.tools.skills`** — reads and searches performed through the skill
   tools.
@@ -200,7 +200,7 @@ same fields and event names. A few `jq` starting points:
 
 ```sh
 # token usage in one session
-jq -s 'map(select(.event=="harpe.models.replied"))
+jq -s 'map(select(.event=="harpe.model.replied"))
        | {inTokens: (map(.inputTokens) | add),
           outTokens: (map(.outputTokens) | add)}' logs/sessions/<session>.jsonl
 
@@ -268,7 +268,7 @@ Every entry the meter sees carries a stable `event`. When the application uses
 `Logging.withContext`, the configured context appears as a nested field in
 `entry.fields`. Together, these identify the event shape and the session a
 shared destination should attribute it to.
-For billing, the `harpe.models.replied` events give you `inputTokens`/`outputTokens` per
+For billing, the `harpe.model.replied` events give you `inputTokens`/`outputTokens` per
 call already — apply your price table to turn them into cost.
 
 **Charge for a new thing → log a new event.** Anything else you want to meter

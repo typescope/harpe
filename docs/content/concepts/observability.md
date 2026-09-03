@@ -76,7 +76,7 @@ jq -c 'select(.event|startswith("harpe.turn.request","harpe.turn.response"))' se
 jq -c 'select(.event=="harpe.tools.runCode") | {compiled, exitCode, runSeconds}' session.jsonl
 
 # token spend for the session
-jq -s 'map(select(.event=="harpe.models.replied")) | {calls: length, input: (map(.inputTokens)|add), output: (map(.outputTokens)|add)}' session.jsonl
+jq -s 'map(select(.event=="harpe.model.replied")) | {calls: length, input: (map(.inputTokens)|add), output: (map(.outputTokens)|add)}' session.jsonl
 
 # anything that went wrong
 jq -c 'select(has("error") or has("warning"))' session.jsonl
