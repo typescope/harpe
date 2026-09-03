@@ -29,6 +29,10 @@ cp .env.example .env
 jo start
 ```
 
+OpenRouter works too, but needs both `OPENROUTER_API_KEY` and `MODEL` — it
+has no default model id. A key alone stops with
+`Error: MODEL is required when OPENROUTER_API_KEY is set.`
+
 Open <http://127.0.0.1:8766>. The first run creates `data/logistics.db` with a
 depot that is already in trouble.
 
