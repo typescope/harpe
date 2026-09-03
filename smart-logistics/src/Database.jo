@@ -13,9 +13,21 @@ class Database(path: String, home: String)
     conn.execute("PRAGMA busy_timeout = 10000")
     conn
 
+  //[ The shape this file expects. `initialize` builds it outright on an empty
+    ! database and migrates an existing one up to it; anything older is upgraded
+    ! in place, once, on the way past.
+  //]
+  private val schemaVersion = 1
+
   def initialize(): Unit =
     File.ensureDir(os.path.dirname(path))
     val conn = connect()
+    // A database that predates a numbered schema has no draft_orders table only
+    // when it is genuinely empty, so this distinguishes "build it" from
+    // "upgrade it" before the script below makes them look alike.
+    val fresh = conn.execute("""
+      SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='draft_orders'
+    """).fetchone()[0].asInt == 0
     conn.executescript("""
       CREATE TABLE IF NOT EXISTS suppliers (
         id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
@@ -58,7 +70,12 @@ class Database(path: String, home: String)
       );
       CREATE INDEX IF NOT EXISTS stock_movements_product
         ON stock_movements(product_id, occurred_at);
-      CREATE VIEW IF NOT EXISTS product_stock AS
+      -- Views hold no data, so they are rebuilt from this file on every start.
+      -- A view created by an older version of the app can then never survive
+      -- into a newer one and quietly answer with the old arithmetic.
+      DROP VIEW IF EXISTS product_position;
+      DROP VIEW IF EXISTS product_stock;
+      CREATE VIEW product_stock AS
         SELECT p.id AS product_id, COALESCE(SUM(m.quantity),0) AS on_hand
         FROM products p LEFT JOIN stock_movements m ON m.product_id = p.id
         GROUP BY p.id;
@@ -66,7 +83,7 @@ class Database(path: String, home: String)
       -- have plus what is on order will last at the current rate of sale.
       -- Everything the app and both agents show is derived here, once, so the
       -- watcher and the planner can never disagree about it.
-      CREATE VIEW IF NOT EXISTS product_position AS
+      CREATE VIEW product_position AS
         SELECT p.id AS product_id,
           st.on_hand AS on_hand,
           COALESCE(oo.on_order,0) AS on_order,
@@ -77,10 +94,15 @@ class Database(path: String, home: String)
           COALESCE(src.lead_time_days,0) AS lead_time_days
         FROM products p
         JOIN product_stock st ON st.product_id = p.id
-        LEFT JOIN (SELECT l.product_id, SUM(l.quantity) AS on_order
+        -- What is on order is what was ordered and has NOT yet arrived. A
+        -- received unit is in the ledger, in on_hand; counting it here as well
+        -- would say the depot holds it twice, and cover would climb for ever.
+        LEFT JOIN (SELECT l.product_id,
+                          SUM(l.quantity - l.received_quantity) AS on_order
                    FROM draft_order_lines l
                    JOIN draft_orders d ON d.id = l.draft_order_id
-                   WHERE d.status = 'accepted' GROUP BY l.product_id) oo
+                   WHERE d.status IN ('ordered','part_received')
+                   GROUP BY l.product_id) oo
           ON oo.product_id = p.id
         LEFT JOIN (SELECT product_id, SUM(-quantity)/28.0 AS per_day
                    FROM stock_movements
@@ -112,22 +134,13 @@ class Database(path: String, home: String)
         last_run_id INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX IF NOT EXISTS warnings_open ON warnings(resolved_at, product_id);
-      CREATE TABLE IF NOT EXISTS draft_orders (
-        id INTEGER PRIMARY KEY, supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
-        status TEXT NOT NULL CHECK(status IN ('draft','accepted','rejected')),
-        rationale TEXT NOT NULL, total_cents INTEGER NOT NULL, currency TEXT NOT NULL,
-        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS draft_order_lines (
-        id INTEGER PRIMARY KEY,
-        draft_order_id INTEGER NOT NULL REFERENCES draft_orders(id) ON DELETE CASCADE,
-        product_id INTEGER NOT NULL REFERENCES products(id),
-        quantity INTEGER NOT NULL CHECK(quantity > 0),
-        unit_price_cents INTEGER NOT NULL, line_total_cents INTEGER NOT NULL,
-        UNIQUE(draft_order_id, product_id)
-      );
+      \{ordersDdl("draft_orders")}
+      \{orderLinesDdl("draft_order_lines")}
       CREATE INDEX IF NOT EXISTS draft_order_lines_product
         ON draft_order_lines(product_id);
+      \{receiptsDdl("order_receipts")}
+      CREATE INDEX IF NOT EXISTS order_receipts_order
+        ON order_receipts(draft_order_id, line_id);
       CREATE TABLE IF NOT EXISTS skill_revisions (
         id INTEGER PRIMARY KEY, skill_name TEXT NOT NULL, content TEXT NOT NULL,
         revision INTEGER NOT NULL, created_at TEXT NOT NULL,
@@ -143,6 +156,8 @@ class Database(path: String, home: String)
         finished_at TEXT NOT NULL DEFAULT ''
       );
     """)
+    if fresh then conn.execute("PRAGMA user_version = \{schemaVersion}")
+    else migrate(conn)
     seed(conn)
     // A run is executed by this process, so none can outlive it. Anything left
     // 'running' belongs to a process that is gone — without this the row stays
@@ -155,6 +170,156 @@ class Database(path: String, home: String)
     """)
     conn.commit()
     conn.close()
+
+  //[ An order, from proposal to closed.
+    !
+    ! `draft` is what the planner produces and all it can produce. A person
+    ! moves it to `ordered` or `rejected`; from there only a delivery moves it
+    ! on, to `part_received` and then `received`. `cancelled` is the way an
+    ! order that will never arrive stops counting towards cover.
+    !
+    ! The table is named for the draft it starts as, and keeps that name because
+    ! renaming it would break every draft that already exists.
+    !
+    ! Parameterised by table name so a migration can build an identical copy
+    ! under another name — the schema is written once, here, and a migrated
+    ! database and a fresh one cannot end up differing.
+  //]
+  private def ordersDdl(table: String): String = """
+      CREATE TABLE IF NOT EXISTS \{table} (
+        id INTEGER PRIMARY KEY, supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+        status TEXT NOT NULL CHECK(status IN
+          ('draft','rejected','ordered','part_received','received','cancelled')),
+        rationale TEXT NOT NULL, total_cents INTEGER NOT NULL, currency TEXT NOT NULL,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        -- When the last line of it is due, worked out from the lead times in
+        -- force at the moment it was ordered. Recomputing it later from current
+        -- terms would let a supplier's new lead time rewrite what we were
+        -- promised, and an order would stop being late by being re-read.
+        expected_at TEXT NOT NULL DEFAULT '',
+        ordered_at TEXT NOT NULL DEFAULT '',
+        closed_at TEXT NOT NULL DEFAULT ''
+      );
+  """
+
+  private def orderLinesDdl(table: String): String = """
+      CREATE TABLE IF NOT EXISTS \{table} (
+        id INTEGER PRIMARY KEY,
+        draft_order_id INTEGER NOT NULL REFERENCES draft_orders(id) ON DELETE CASCADE,
+        product_id INTEGER NOT NULL REFERENCES products(id),
+        quantity INTEGER NOT NULL CHECK(quantity > 0),
+        received_quantity INTEGER NOT NULL DEFAULT 0,
+        unit_price_cents INTEGER NOT NULL, line_total_cents INTEGER NOT NULL,
+        UNIQUE(draft_order_id, product_id),
+        -- Everything the depot believes about cover rests on this subtraction,
+        -- so the database itself refuses a receipt that would make it lie.
+        CHECK(received_quantity >= 0 AND received_quantity <= quantity)
+      );
+  """
+
+  //[ One delivery of one line, and the ledger row it produced.
+    !
+    ! Keeping `movement_id` means a figure on the page traces back through the
+    ! receipt to the exact movement that changed the balance, rather than the
+    ! two records agreeing only by convention.
+  //]
+  private def receiptsDdl(table: String): String = """
+      CREATE TABLE IF NOT EXISTS \{table} (
+        id INTEGER PRIMARY KEY,
+        draft_order_id INTEGER NOT NULL REFERENCES draft_orders(id) ON DELETE CASCADE,
+        line_id INTEGER NOT NULL REFERENCES draft_order_lines(id) ON DELETE CASCADE,
+        product_id INTEGER NOT NULL REFERENCES products(id),
+        quantity INTEGER NOT NULL CHECK(quantity > 0),
+        movement_id INTEGER NOT NULL REFERENCES stock_movements(id),
+        received_at TEXT NOT NULL, note TEXT NOT NULL DEFAULT ''
+      );
+  """
+
+  //[ Bring an existing database up to `schemaVersion`.
+    !
+    ! Each step is written once and runs at most once, in order, inside one
+    ! transaction, so a database either arrives at the new shape or stays
+    ! exactly as it was.
+  //]
+  private def migrate(conn: py.Dynamic): Unit =
+    val version = conn.execute("PRAGMA user_version").fetchone()[0].asInt
+    if version >= schemaVersion then return
+    // Rebuilding a table means dropping the one its children point at, which
+    // foreign keys will not allow mid-flight, and the rename must not rewrite
+    // the references that already name it. Both are pragmas, and neither takes
+    // effect inside a transaction, so they are set before it opens.
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("PRAGMA legacy_alter_table = ON")
+    conn.execute("BEGIN IMMEDIATE")
+    val outcome = py.try: upgrade(conn, version)
+    // Whatever happened, this connection goes back to enforcing keys normally,
+    // and the next one opened is unaffected either way.
+    match outcome
+    case Ok(_) => conn.commit()
+    case Err(error) =>
+      conn.rollback()
+      conn.execute("PRAGMA foreign_keys = ON")
+      conn.execute("PRAGMA legacy_alter_table = OFF")
+      abort "the database could not be upgraded: \{error.message}"
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA legacy_alter_table = OFF")
+
+  //[ The steps themselves, and the proof they left the database sound.
+    !
+    ! Rebuilding a table drops the one its children point at, so the references
+    ! are checked before any of it is committed — an upgrade that broke them
+    ! must not be the version that survives.
+  //]
+  private def upgrade(conn: py.Dynamic, version: Int): Unit =
+    applyMigrations(conn, version)
+    val broken = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if py.dynamic(broken).__len__().asInt != 0 then
+      abort "it would have left dangling references"
+    conn.execute("PRAGMA user_version = \{schemaVersion}")
+
+  private def applyMigrations(conn: py.Dynamic, version: Int): Unit =
+    if version < 1 then addReceiving(conn)
+
+  //[ Version 1 — orders gain a life after acceptance.
+    !
+    ! Before this, `accepted` was the end of an order and its quantity counted
+    ! towards cover for ever. It becomes `ordered`, which is a state a delivery
+    ! can move it out of. Nothing that was received before now exists to be
+    ! recorded, so every line starts at nothing received — which is what the
+    ! old rows meant.
+  //]
+  private def addReceiving(conn: py.Dynamic): Unit =
+    val steps = [
+      ordersDdl("orders_next"),
+      """
+        INSERT INTO orders_next
+          (id,supplier_id,status,rationale,total_cents,currency,
+           created_at,updated_at,expected_at,ordered_at,closed_at)
+        SELECT id, supplier_id,
+          CASE status WHEN 'accepted' THEN 'ordered' ELSE status END,
+          rationale, total_cents, currency, created_at, updated_at, '',
+          CASE status WHEN 'accepted' THEN updated_at ELSE '' END,
+          CASE status WHEN 'rejected' THEN updated_at ELSE '' END
+        FROM draft_orders
+      """,
+      "DROP TABLE draft_orders",
+      "ALTER TABLE orders_next RENAME TO draft_orders",
+      orderLinesDdl("order_lines_next"),
+      """
+        INSERT INTO order_lines_next
+          (id,draft_order_id,product_id,quantity,received_quantity,
+           unit_price_cents,line_total_cents)
+        SELECT id, draft_order_id, product_id, quantity, 0,
+               unit_price_cents, line_total_cents
+        FROM draft_order_lines
+      """,
+      "DROP TABLE draft_order_lines",
+      "ALTER TABLE order_lines_next RENAME TO draft_order_lines",
+      "CREATE INDEX IF NOT EXISTS draft_order_lines_product ON draft_order_lines(product_id)",
+      receiptsDdl("order_receipts"),
+      "CREATE INDEX IF NOT EXISTS order_receipts_order ON order_receipts(draft_order_id, line_id)"
+    ]
+    for statement in steps do conn.execute(statement)
 
   //[ Twelve products, four suppliers, four weeks of ledger.
     !
@@ -213,11 +378,11 @@ class Database(path: String, home: String)
 
     seedMovements(conn)
 
-    // Already on order: accepted, so it counts towards cover and must not be
-    // ordered again. And one draft somebody left open, so the planner has a
-    // reason to skip a product that genuinely is short.
-    order(conn, "accepted", 2, 6, 100, 112, "Carton stock below a week of cover.")
-    order(conn, "accepted", 3, 12, 20, 195, "Routine top-up before the weekend.")
+    // Already on order and still in transit, so it counts towards cover and
+    // must not be ordered again. And one draft somebody left open, so the
+    // planner has a reason to skip a product that genuinely is short.
+    order(conn, "ordered", 2, 6, 100, 112, "Carton stock below a week of cover.")
+    order(conn, "ordered", 3, 12, 20, 195, "Routine top-up before the weekend.")
     order(conn, "draft", 3, 11, 40, 460, "Paper towels are down to three days.")
 
     conn.executemany("""
@@ -230,16 +395,28 @@ class Database(path: String, home: String)
       py.list("Don't warn about packaging unless it is under 3 days of cover. We can get cartons and tape same-day if we have to.")
     ))
 
+  //[ A seeded order, placed two days ago. One that is already `ordered` is
+    ! due on the supplier's lead time counted from then, so the depot opens with
+    ! deliveries genuinely in transit rather than with dates left blank.
+  //]
   private def order(
     conn: py.Dynamic, status: String, supplierId: Int,
     productId: Int, quantity: Int, price: Int, rationale: String
   ): Unit =
     val cursor = conn.execute("""
       INSERT INTO draft_orders
-        (supplier_id,status,rationale,total_cents,currency,created_at,updated_at)
-      SELECT ?, ?, ?, ?, s.currency, datetime('now','-2 days'), datetime('now','-2 days')
+        (supplier_id,status,rationale,total_cents,currency,created_at,updated_at,
+         expected_at,ordered_at)
+      SELECT ?, ?, ?, ?, s.currency, datetime('now','-2 days'), datetime('now','-2 days'),
+        CASE WHEN ? = 'ordered' THEN
+          (SELECT date('now','-2 days','+' || ps.lead_time_days || ' days')
+           FROM product_suppliers ps
+           WHERE ps.product_id = ? AND ps.supplier_id = s.id)
+        ELSE '' END,
+        CASE WHEN ? = 'ordered' THEN datetime('now','-2 days') ELSE '' END
       FROM suppliers s WHERE s.id = ?
-    """, py.list(supplierId, status, rationale, quantity * price, supplierId))
+    """, py.list(supplierId, status, rationale, quantity * price,
+                 status, productId, status, supplierId))
     conn.execute("""
       INSERT INTO draft_order_lines
         (draft_order_id,product_id,quantity,unit_price_cents,line_total_cents)
@@ -321,6 +498,12 @@ class Database(path: String, home: String)
             AS at_risk_count,
           (SELECT COUNT(*) FROM warnings WHERE resolved_at = '') AS open_warnings,
           (SELECT COUNT(*) FROM draft_orders WHERE status = 'draft') AS open_drafts,
+          (SELECT COUNT(*) FROM draft_orders
+           WHERE status IN ('ordered','part_received')) AS outstanding_orders,
+          (SELECT COUNT(*) FROM draft_orders
+           WHERE status IN ('ordered','part_received')
+             AND expected_at != '' AND date(expected_at) < date('now'))
+            AS overdue_orders,
           (SELECT COALESCE(MAX(finished_at),'') FROM runs
            WHERE kind = 'watch' AND status = 'success') AS last_checked
       """)[0]
@@ -560,29 +743,179 @@ class Database(path: String, home: String)
       WHERE resolved_at = '' AND last_run_id != ?
     """, py.list(runId)))
 
+  //[ Every order, whatever state it reached, with what is still owed on each
+    ! line and every delivery already booked against it.
+  //]
   def drafts(): py.List =
     val result = rows("""
-      SELECT d.*, s.name AS supplier_name FROM draft_orders d
+      SELECT d.*, s.name AS supplier_name,
+        (d.status IN ('ordered','part_received')) AS outstanding,
+        (d.status IN ('ordered','part_received') AND d.expected_at != ''
+           AND date(d.expected_at) < date('now')) AS overdue
+      FROM draft_orders d
       JOIN suppliers s ON s.id = d.supplier_id ORDER BY d.id DESC
     """)
     for item in result do
       val d = item.cast[py.Dict]
       d.set("lines", rowsWith("""
-        SELECT l.*, p.sku, p.name FROM draft_order_lines l
+        SELECT l.*, p.sku, p.name,
+               l.quantity - l.received_quantity AS outstanding_quantity
+        FROM draft_order_lines l
         JOIN products p ON p.id = l.product_id
         WHERE l.draft_order_id = ? ORDER BY p.sku
       """, py.list(d.get("id"))))
+      d.set("receipts", rowsWith("""
+        SELECT r.*, p.sku, p.name FROM order_receipts r
+        JOIN products p ON p.id = r.product_id
+        WHERE r.draft_order_id = ? ORDER BY r.received_at, r.id
+      """, py.list(d.get("id"))))
     result
 
-  //[ A draft becomes an order or it does not. Accepting means "on order": it
-    ! counts towards cover, so the warning that prompted it stops holding.
+  //[ Move one order along its life, by hand.
+    !
+    ! Only the transitions a person makes are here. `part_received` and
+    ! `received` are not among them: an order arrives because goods arrived, so
+    ! those are reached by recording a delivery and by nothing else.
+    !
+    ! `accepted` is the word the page has always used for placing an order, and
+    ! it still works; the state it now writes is `ordered`, because an order
+    ! half-delivered is no longer meaningfully "accepted".
   //]
   def setDraftStatus(id: Int, status: String): Bool =
-    if status != "accepted" && status != "rejected" then return false
+    val wanted = if status == "accepted" then "ordered" else status
+    if wanted == "ordered" then place(id)
+    else if wanted == "rejected" then close(id, "rejected", "'draft'")
+    // Cancelling leaves what already arrived in the ledger and stops the rest
+    // counting towards cover — which the outstanding sum does on its own, as
+    // soon as the order is no longer in an outstanding state.
+    else if wanted == "cancelled" then close(id, "cancelled", "'ordered','part_received'")
+    else false
+
+  //[ Placing an order fixes what we were promised: the longest lead time on it,
+    ! read once, from the terms in force now.
+  //]
+  private def place(id: Int): Bool =
     inTransaction(conn => execute(conn, """
-      UPDATE draft_orders SET status=?,updated_at=datetime('now')
+      UPDATE draft_orders SET status='ordered', updated_at=datetime('now'),
+        ordered_at=datetime('now'),
+        expected_at=COALESCE((
+          SELECT date('now','+' || MAX(ps.lead_time_days) || ' days')
+          FROM draft_order_lines l
+          JOIN product_suppliers ps ON ps.product_id = l.product_id
+                                   AND ps.supplier_id = draft_orders.supplier_id
+          WHERE l.draft_order_id = draft_orders.id), date('now'))
       WHERE id=? AND status='draft'
+    """, py.list(id))) == 1
+
+  //[ `allowed` is the SQL list of states this transition may leave, written
+    ! literally at the call site because it is fixed there, never user input.
+  //]
+  private def close(id: Int, status: String, allowed: String): Bool =
+    inTransaction(conn => execute(conn, """
+      UPDATE draft_orders SET status=?,updated_at=datetime('now'),
+        closed_at=datetime('now')
+      WHERE id=? AND status IN (\{allowed})
     """, py.list(status, id))) == 1
+
+  //[ Booking a delivery in. This is the only thing that moves an order out of
+    ! the outstanding set, and the only place ordered stock becomes real stock.
+    !
+    ! Every unit received is written to the ledger as an ordinary receipt, past
+    ! the same guards as one keyed in by hand, and linked to the line it
+    ! settles. Nothing sets a balance; the balance is still the sum of the
+    ! ledger, and now the ledger holds the delivery too.
+    !
+    ! Returns how many units were booked.
+  //]
+  def receiveOrder(body: py.Dict): Int =
+    val orderId = body.get("order_id", 0).asInt
+    val lines = body.get("lines", py.list()).cast[py.List]
+    if lines.size == 0 then abort "a delivery needs at least one line"
+    inTransaction(conn => writeReceipt(conn, orderId, lines, body))
+
+  private def writeReceipt(
+    conn: py.Dynamic, orderId: Int, lines: py.List, body: py.Dict
+  ): Int =
+    val order = conn.execute(
+      "SELECT status FROM draft_orders WHERE id = ?", py.list(orderId)).fetchone()
+    if order.isNone then abort "unknown order"
+    val status = order[0].asString
+    if status != "ordered" && status != "part_received" then
+      abort "order \{orderId} is \{status}, so nothing can be received against it"
+
+    val occurredAt = body.get("occurred_at", "").asString.trim
+    val note = body.get("note", "").asString.trim
+    var seen: List[Int] = []
+    var total = 0
+    for raw in py.iter(lines) do
+      val line = raw.cast[py.Dict]
+      val lineId = line.get("line_id", 0).asInt
+      val quantity = line.get("quantity", 0).asInt
+      if quantity <= 0 then abort "a delivered line needs a positive quantity"
+      // Two rows for one line would each be checked against the same
+      // outstanding figure, and together could overshoot it.
+      if seen.contains(lineId) then
+        abort "line \{lineId} appears twice in one delivery"
+      seen = seen + lineId
+      total = total + receiveLine(conn, orderId, lineId, quantity, occurredAt, note)
+    settle(conn, orderId)
+    total
+
+  private def receiveLine(
+    conn: py.Dynamic, orderId: Int, lineId: Int, quantity: Int,
+    occurredAt: String, note: String
+  ): Int =
+    val row = conn.execute("""
+      SELECT product_id, quantity - received_quantity
+      FROM draft_order_lines WHERE id = ? AND draft_order_id = ?
+    """, py.list(lineId, orderId)).fetchone()
+    if row.isNone then abort "line \{lineId} is not on order \{orderId}"
+    val productId = row[0].asInt
+    val outstanding = row[1].asInt
+    if outstanding <= 0 then abort "that line has already been delivered in full"
+    // A supplier really can send more than was ordered, but this order cannot
+    // absorb it: what is outstanding would go negative and cover would read
+    // low for ever after. The excess is stock that arrived against no line, so
+    // it belongs in the ledger as its own receipt.
+    if quantity > outstanding then
+      val excess = "only \{outstanding} of that line is still outstanding; "
+        + "record anything over that as a separate receipt"
+      abort excess
+
+    val movementId = writeMovement(conn, productId, "receipt", quantity, py.dict(
+      "occurred_at" ~ occurredAt,
+      "reference" ~ "PO-\{orderId}",
+      "note" ~ note))
+    conn.execute("""
+      UPDATE draft_order_lines SET received_quantity = received_quantity + ?
+      WHERE id = ?
+    """, py.list(quantity, lineId))
+    conn.execute("""
+      INSERT INTO order_receipts
+        (draft_order_id,line_id,product_id,quantity,movement_id,received_at,note)
+      VALUES(?,?,?,?,?,COALESCE(NULLIF(?,''),datetime('now')),?)
+    """, py.list(orderId, lineId, productId, quantity, movementId, occurredAt, note))
+    quantity
+
+  //[ An order is received once every line is, and part-received until then.
+    ! What is still owed keeps counting towards cover, because it is still
+    ! coming.
+  //]
+  private def settle(conn: py.Dynamic, orderId: Int): Unit =
+    val remaining = conn.execute("""
+      SELECT COALESCE(SUM(quantity - received_quantity),0)
+      FROM draft_order_lines WHERE draft_order_id = ?
+    """, py.list(orderId)).fetchone()[0].asInt
+    if remaining == 0 then
+      conn.execute("""
+        UPDATE draft_orders SET status='received', updated_at=datetime('now'),
+          closed_at=datetime('now') WHERE id=?
+      """, py.list(orderId))
+    else
+      conn.execute("""
+        UPDATE draft_orders SET status='part_received', updated_at=datetime('now')
+        WHERE id=?
+      """, py.list(orderId))
 
   def runs(): py.List = rows("SELECT * FROM runs ORDER BY id DESC LIMIT 20")
 

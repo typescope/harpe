@@ -129,17 +129,18 @@ def runTask(): Unit receives IO.stdout, plan =
       printed.contains("second time: FOOD-104 is already in an open draft"))
 
     // What the guest wrote is a draft, and the orders the administrator had
-    // already accepted are exactly as many as before. Nothing generated code
-    // can call moves an order out of 'draft'.
+    // already placed are exactly as many as before. Nothing generated code can
+    // call moves an order out of 'draft' — not onto a supplier, and not into
+    // stock.
     var newest = py.dict()
-    var accepted = 0
+    var placed = 0
     for item in database.drafts() do
       val order = item.cast[py.Dict]
-      if order.get("status").asString == "accepted" then accepted = accepted + 1
+      if order.get("status").asString == "ordered" then placed = placed + 1
       if newest.size == 0 then newest = order
     check("what the guest wrote is a draft",
       newest.get("status").asString == "draft")
-    check("and it did not accept anything on its way past", accepted == 2)
+    check("and it ordered nothing on its way past", placed == 2)
 
   test: "the watcher can only leave a note, and refreshes it rather than repeat it", () =>
     val root = Sandbox.prepare(py.module("os").path.abspath(".").asString)

@@ -12,7 +12,8 @@ Never say an order was placed. A saved draft is a proposal awaiting review.
 `products()` gives you `daysOfCover`, `leadTimeDays`, `onHand`, `onOrder` and
 `sellsPerDay` — the arithmetic is already done. Cover the wait: lead-time demand
 plus whatever cover the checks ask for. `onOrder` is stock the administrator has
-already accepted, so it counts and must not be ordered again.
+already ordered and that has not arrived yet, so it counts and must not be
+ordered again. What has arrived is no longer on order — it is in `onHand`.
 
 Each product may be sourced from several suppliers. `preferred` is the default,
 but price, lead time and case size differ per source, and a check may send you

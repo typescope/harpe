@@ -20,6 +20,7 @@ let state = {
 const ui = {
   page: 'stock',
   confirm: null,          // { act, id, status } — an irreversible action, asked once
+  receive: null,          // { id, amounts, note } — a delivery being counted in
   openRuns: new Set(),
   showDecided: false,
   movementFilter: 0,
@@ -33,8 +34,20 @@ async function api(path, options = {}) {
     headers: { 'Content-Type': 'application/json' },
     ...options
   });
-  if (!response.ok) throw Error(await response.text());
+  if (!response.ok) throw Error(await refusal(response));
   return response.json();
+}
+
+// A refused write says why, as JSON. Anything else that goes wrong does not,
+// and there is nothing useful to quote from it — so the reader is told that
+// plainly rather than shown a page of server text.
+async function refusal(response) {
+  const body = await response.text();
+  try {
+    const reason = JSON.parse(body).error;
+    if (reason) return reason;
+  } catch { /* not a refusal we can read */ }
+  return 'the depot could not complete that';
 }
 
 const post = (path, data) => api(path, { method: 'POST', body: JSON.stringify(data) });
@@ -105,7 +118,18 @@ function risk(product) {
   return { tone: 'fine', label: 'covered' };
 }
 const atRisk = () => state.products.filter(p => p.enabled && risk(p).tone === 'critical');
-const pendingDrafts = () => state.drafts.filter(draft => draft.status === 'draft');
+// Where an order is in its life. Outstanding means the supplier still owes us
+// something on it, which is exactly what counts towards cover.
+const OUTSTANDING = ['ordered', 'part_received'];
+const pendingDrafts = () => state.drafts.filter(order => order.status === 'draft');
+const inTransit = () => state.drafts.filter(order => OUTSTANDING.includes(order.status));
+const closedOrders = () => state.drafts.filter(
+  order => order.status !== 'draft' && !OUTSTANDING.includes(order.status));
+
+const STATUS_LABEL = {
+  ordered: 'on order', part_received: 'part delivered',
+  received: 'delivered', rejected: 'rejected', cancelled: 'cancelled'
+};
 
 /* Routing ------------------------------------------------------------------ */
 
@@ -307,66 +331,175 @@ const CONFIRM_COPY = {
   rejected: {
     question: 'Reject this order? The draft is closed for good.',
     verb: 'Reject order'
+  },
+  cancelled: {
+    question: 'Cancel this order? Anything already delivered stays in stock; the rest stops counting towards cover.',
+    verb: 'Cancel order'
   }
 };
 
-function draftCard(draft) {
-  const settled = draft.status !== 'draft';
-  const asking = ui.confirm && ui.confirm.act === 'draft' && ui.confirm.id === draft.id;
-  const lines = draft.lines.map(line => `
-    <li>
-      <span>${escapeHtml(line.sku)} — ${escapeHtml(line.name)}</span>
-      <span class="qty">${line.quantity} × ${money(line.unit_price_cents, draft.currency)}</span>
-    </li>`).join('');
+const lineHtml = (order, line) => `
+  <li>
+    <span>${escapeHtml(line.sku)} — ${escapeHtml(line.name)}</span>
+    <span class="qty">${line.quantity} × ${money(line.unit_price_cents, order.currency)}</span>
+  </li>`;
 
-  // While the question is on screen it is the only thing to answer: the buttons
-  // that raised it step aside rather than sitting above their own confirmation.
-  const decide = settled || asking ? '' : `
-    <button class="primary" data-act="ask" data-scope="draft" data-id="${draft.id}" data-status="accepted">Accept</button>
-    <button data-act="ask" data-scope="draft" data-id="${draft.id}" data-status="rejected">Reject</button>`;
+// On an order that is out with a supplier, the quantity that matters is what
+// has not turned up yet — so the line says what has arrived of what was asked.
+const transitLineHtml = line => `
+  <li>
+    <span>${escapeHtml(line.sku)} — ${escapeHtml(line.name)}</span>
+    <span class="qty ${line.outstanding_quantity ? '' : 'done'}">
+      ${line.received_quantity} of ${line.quantity} delivered
+    </span>
+  </li>`;
 
-  const copy = asking ? CONFIRM_COPY[ui.confirm.status] : null;
-  const confirm = asking ? `
+const confirmHtml = (order, scope) => {
+  const asking = ui.confirm && ui.confirm.act === scope && ui.confirm.id === order.id;
+  if (!asking) return '';
+  const copy = CONFIRM_COPY[ui.confirm.status];
+  return `
     <div class="confirm">
       <p>${escapeHtml(copy.question)}</p>
-      <button class="primary" data-act="draft-status" data-id="${draft.id}" data-status="${ui.confirm.status}">${copy.verb}</button>
+      <button class="primary" data-act="draft-status" data-id="${order.id}" data-status="${ui.confirm.status}">${copy.verb}</button>
       <button data-act="cancel-ask">Cancel</button>
-    </div>` : '';
+    </div>`;
+};
+
+const cardHead = (order, pill) => `
+  <div class="card-head">
+    <div>
+      <strong>#${order.id} · ${escapeHtml(order.supplier_name)}</strong>
+      <div class="muted">${timeHtml(order.created_at)} · ${money(order.total_cents, order.currency)}</div>
+    </div>
+    ${pill}
+  </div>`;
+
+/* A proposal, waiting for a person ----------------------------------------- */
+
+function draftCard(order) {
+  const asking = ui.confirm && ui.confirm.act === 'draft' && ui.confirm.id === order.id;
+  // While the question is on screen it is the only thing to answer: the buttons
+  // that raised it step aside rather than sitting above their own confirmation.
+  const decide = asking ? '' : `
+    <button class="primary" data-act="ask" data-scope="draft" data-id="${order.id}" data-status="accepted">Accept</button>
+    <button data-act="ask" data-scope="draft" data-id="${order.id}" data-status="rejected">Reject</button>`;
 
   return `
-    <article class="card ${settled ? 'settled' : ''}">
-      <div class="card-head">
-        <div>
-          <strong>#${draft.id} · ${escapeHtml(draft.supplier_name)}</strong>
-          <div class="muted">${timeHtml(draft.created_at)} · ${money(draft.total_cents, draft.currency)}</div>
-        </div>
-        ${settled ? `<span class="pill ${escapeHtml(draft.status)}">${escapeHtml(draft.status)}</span>` : ''}
-      </div>
-      <p>${escapeHtml(draft.rationale)}</p>
-      <ul class="lines">${lines}</ul>
+    <article class="card">
+      ${cardHead(order, '')}
+      <p>${escapeHtml(order.rationale)}</p>
+      <ul class="lines">${order.lines.map(line => lineHtml(order, line)).join('')}</ul>
       <div class="actions">
         ${decide}
-        <button data-act="export" data-id="${draft.id}">View as JSON</button>
+        <button data-act="export" data-id="${order.id}">View as JSON</button>
       </div>
-      ${confirm}
+      ${confirmHtml(order, 'draft')}
+    </article>`;
+}
+
+/* Placed, and not yet here -------------------------------------------------- */
+
+// When it is due, and whether that has already passed. An order placed before
+// this app recorded due dates has none, and says so rather than inventing one.
+function dueHtml(order) {
+  if (!order.expected_at) return '<span class="muted">no delivery date recorded</span>';
+  const days = Math.round((stamp(order.expected_at + ' 00:00:00') - Date.now()) / 86400000);
+  if (order.overdue) return `<span class="late">late — due ${plural(Math.abs(days), 'day')} ago</span>`;
+  if (days <= 0) return '<span class="due">due today</span>';
+  return `<span class="due">due in ${plural(days, 'day')}</span>`;
+}
+
+function transitCard(order) {
+  const receiving = ui.receive && ui.receive.id === order.id;
+  const asking = ui.confirm && ui.confirm.act === 'transit' && ui.confirm.id === order.id;
+  const actions = receiving || asking ? '' : `
+    <button class="primary" data-act="open-receive" data-id="${order.id}">Record delivery</button>
+    <button data-act="ask" data-scope="transit" data-id="${order.id}" data-status="cancelled">Cancel order</button>
+    <button data-act="export" data-id="${order.id}">View as JSON</button>`;
+
+  return `
+    <article class="card ${order.overdue ? 'overdue' : ''}">
+      ${cardHead(order, `<span class="pill ${escapeHtml(order.status)}">${STATUS_LABEL[order.status]}</span>`)}
+      <p class="due-line">${dueHtml(order)}</p>
+      <ul class="lines">${order.lines.map(transitLineHtml).join('')}</ul>
+      <div class="actions">${actions}</div>
+      ${receiving ? receiveForm(order) : ''}
+      ${confirmHtml(order, 'transit')}
+    </article>`;
+}
+
+// Counting a delivery in. Every outstanding line is offered, filled in with
+// what is still owed, because a delivery that matches the order is the common
+// case and should need no typing at all. What the reader types is kept in `ui`
+// so a refresh underneath them does not empty the boxes.
+function receiveForm(order) {
+  const owed = order.lines.filter(line => line.outstanding_quantity > 0);
+  const rows = owed.map(line => `
+    <label class="receive-row">
+      <span class="receive-name">${escapeHtml(line.sku)} — ${escapeHtml(line.name)}</span>
+      <input type="number" min="0" max="${line.outstanding_quantity}" step="1"
+             data-receive-line="${line.id}" aria-label="Delivered of ${escapeHtml(line.sku)}"
+             value="${escapeHtml(ui.receive.amounts[line.id] ?? line.outstanding_quantity)}">
+      <span class="muted">of ${line.outstanding_quantity} owed</span>
+    </label>`).join('');
+
+  return `
+    <div class="confirm receive">
+      <p>What arrived? Anything short of the full amount stays on order.</p>
+      ${rows}
+      <label class="receive-row">
+        <span class="receive-name">Note</span>
+        <input type="text" data-receive-note placeholder="Delivery note, damage, anything worth keeping"
+               aria-label="Note" value="${escapeHtml(ui.receive.note)}">
+      </label>
+      <p id="receive-error" class="form-error" hidden></p>
+      <div class="actions">
+        <button class="primary" data-act="receive" data-id="${order.id}">Book into stock</button>
+        <button data-act="cancel-receive">Cancel</button>
+      </div>
+    </div>`;
+}
+
+/* Done with, one way or another --------------------------------------------- */
+
+function closedCard(order) {
+  const delivered = order.receipts.reduce((total, receipt) => total + receipt.quantity, 0);
+  return `
+    <article class="card settled">
+      ${cardHead(order, `<span class="pill ${escapeHtml(order.status)}">${STATUS_LABEL[order.status]}</span>`)}
+      <ul class="lines">${order.lines.map(transitLineHtml).join('')}</ul>
+      <div class="actions">
+        ${delivered ? `<span class="muted">${plural(delivered, 'unit')} went into stock</span>` : ''}
+        <button data-act="export" data-id="${order.id}">View as JSON</button>
+      </div>
     </article>`;
 }
 
 function renderDrafts() {
   const waiting = pendingDrafts();
-  const decided = state.drafts.filter(draft => draft.status !== 'draft');
+  const coming = inTransit();
+  const closed = closedOrders();
 
   $('#waiting-title').textContent = waiting.length
     ? `Waiting for you (${waiting.length})` : 'Waiting for you';
   $('#draft-list').innerHTML = waiting.map(draftCard).join('')
     || '<p class="empty">Nothing waiting. Press <b>Plan orders</b> to prepare some.</p>';
 
-  $('#decided').innerHTML = decided.length ? `
+  const late = coming.filter(order => order.overdue).length;
+  $('#in-transit').innerHTML = coming.length ? `
     <h2 class="group-title">
-      Already decided (${decided.length})
+      On order (${coming.length})
+      ${late ? `<span class="late">${late} late</span>` : ''}
+    </h2>
+    <div class="cards">${coming.map(transitCard).join('')}</div>` : '';
+
+  $('#decided').innerHTML = closed.length ? `
+    <h2 class="group-title">
+      Closed (${closed.length})
       <button class="ghost" data-act="toggle-decided">${ui.showDecided ? 'Hide' : 'Show'}</button>
     </h2>
-    ${ui.showDecided ? `<div class="cards">${decided.map(draftCard).join('')}</div>` : ''}` : '';
+    ${ui.showDecided ? `<div class="cards">${closed.map(closedCard).join('')}</div>` : ''}` : '';
 }
 
 /* Checks ------------------------------------------------------------------- */
@@ -1031,15 +1164,16 @@ document.addEventListener('click', async event => {
 
   if (act === 'ask') {
     ui.confirm = { act: scope, id: Number(id), status };
-    if (scope === 'draft') renderDrafts(); else renderChecks();
+    ui.receive = null;
+    if (scope === 'check') renderChecks(); else renderDrafts();
     // The question replaces the button that asked it, so the keyboard follows.
     return $('.confirm .primary')?.focus();
   }
   if (act === 'cancel-ask') {
-    const wasDraft = ui.confirm && ui.confirm.act === 'draft';
+    const wasCheck = ui.confirm && ui.confirm.act === 'check';
     ui.confirm = null;
     clearError('#skill-error');
-    return wasDraft ? renderDrafts() : (renderChecks(), undefined);
+    return wasCheck ? (renderChecks(), undefined) : renderDrafts();
   }
 
   if (act === 'read-skill') {
@@ -1091,9 +1225,48 @@ document.addEventListener('click', async event => {
     ui.confirm = null;
     const result = await post('/api/drafts/status', { id: Number(id), status });
     await refresh();
-    return toast(result.ok
-      ? `Order #${id} ${status}${status === 'accepted' ? ' — now counted as on order' : ''}`
-      : 'That order is no longer a draft');
+    if (!result.ok) return toast('That order has already moved on');
+    return toast(status === 'accepted'
+      ? `Order #${id} accepted — now counted as on order until it arrives`
+      : `Order #${id} ${status}`);
+  }
+  if (act === 'open-receive') {
+    ui.confirm = null;
+    ui.receive = { id: Number(id), amounts: {}, note: '' };
+    renderDrafts();
+    return $('.receive input')?.focus();
+  }
+  if (act === 'cancel-receive') {
+    ui.receive = null;
+    return renderDrafts();
+  }
+  if (act === 'receive') {
+    const order = byId(state.drafts, id);
+    // An empty box means none of that line arrived, which is a normal thing for
+    // a delivery to say — so it is left out rather than sent as a zero.
+    const lines = order.lines
+      .filter(line => line.outstanding_quantity > 0)
+      .map(line => ({
+        line_id: line.id,
+        quantity: Number(ui.receive.amounts[line.id] ?? line.outstanding_quantity)
+      }))
+      .filter(line => line.quantity > 0);
+    if (!lines.length) {
+      return showError('#receive-error', 'Nothing to book in — say how much arrived.');
+    }
+    let result;
+    try {
+      result = await post('/api/orders/receive',
+        { order_id: order.id, lines, note: ui.receive.note });
+    } catch (error) {
+      return showError('#receive-error', 'Refused: ' + error.message);
+    }
+    ui.receive = null;
+    await refresh();
+    const now = byId(state.drafts, order.id);
+    return toast(now && now.status === 'received'
+      ? `${plural(result.received, 'unit')} booked in — order #${order.id} is complete`
+      : `${plural(result.received, 'unit')} booked in — the rest is still on order`);
   }
   if (act === 'export') {
     const data = await api(`/api/drafts/export?id=${Number(id)}`);
@@ -1101,6 +1274,16 @@ document.addEventListener('click', async event => {
     $('#export-text').value = JSON.stringify(data.orders, null, 2);
     return $('#export-dialog').showModal();
   }
+});
+
+// What is typed into a delivery is kept in `ui`, not read off the boxes at the
+// end: a run finishing underneath the reader re-renders the page, and their
+// half-counted delivery has to survive that.
+document.addEventListener('input', event => {
+  if (!ui.receive) return;
+  const line = event.target.closest('[data-receive-line]');
+  if (line) ui.receive.amounts[line.dataset.receiveLine] = line.value;
+  else if (event.target.closest('[data-receive-note]')) ui.receive.note = event.target.value;
 });
 
 // Loading a past revision replaces the editor, which is the point; it only asks

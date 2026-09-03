@@ -63,7 +63,9 @@ That check is not a field in any planning system. No schema change, no code, no
 redeploy — a sentence changed the plan.
 
 Accept the draft and the shortfall is covered; the next check clears the
-warning.
+warning. The order moves to **On order** with the date it is due, and when the
+delivery turns up, **Record delivery** counts it in — in full, or short, with
+the rest left on order until it follows.
 
 ## Checks and skills
 
@@ -104,7 +106,10 @@ jo run tests
 
 ## Data model
 
-SQLite, defined in `src/Database.jo`.
+SQLite, defined in `src/Database.jo`. The file carries a `user_version`, and an
+existing database is migrated up to it on start; the tables that a migration
+rebuilds are written once, as one definition used for both a new database and
+the copy a migration builds, so the two shapes cannot drift apart.
 
 | Table | Holds |
 | --- | --- |
@@ -113,7 +118,8 @@ SQLite, defined in `src/Database.jo`.
 | `stock_movements` | Every receipt, issue and adjustment. |
 | `checks` | What the administrator wrote. |
 | `warnings` | What the watcher is currently saying. |
-| `draft_orders`, `draft_order_lines` | Proposals awaiting review. |
+| `draft_orders`, `draft_order_lines` | Orders, from proposal to delivered. |
+| `order_receipts` | Each delivery, and the ledger row it produced. |
 | `runs`, `skill_revisions` | What each agent did, and how the method changed. |
 
 Stock on hand is never stored. Every movement in or out is a row, and the
@@ -136,10 +142,31 @@ because the same item is often sourced from several suppliers at different
 prices, lead times and pack sizes. That is what gives a written sourcing check
 something to decide.
 
+An order has a life: `draft`, then `ordered` or `rejected` by a person, then
+`part_received` and `received` as deliveries arrive, or `cancelled` if they
+never will. Only a delivery moves it along that second half — there is no button
+that declares stock received without stock arriving.
+
+What is on order is what was ordered and has **not** yet arrived:
+
+```sql
+SUM(l.quantity - l.received_quantity)  -- over 'ordered' and 'part_received'
+```
+
+That subtraction is the whole point. A delivered unit is in the ledger, in
+`on_hand`; leaving it on order as well would count it twice and cover would
+climb away from the truth with every delivery. Receiving writes an ordinary
+`receipt` movement, past the same guards as one keyed in by hand, and keeps the
+`movement_id` — so a figure on the page traces to the delivery that produced it.
+
+A supplier really can send more than was ordered, but not against the line: that
+subtraction would go negative. The excess is stock that arrived against no line,
+and belongs in the ledger as its own receipt.
+
 The schema stays deliberately small: no locations, no bins, no units of measure,
-and nothing tracks cost beyond the purchase price on a draft line. Accepting an
-order means "on order" and the demo stops there — receiving goods into stock is
-out of scope.
+no lot or expiry tracking, and nothing tracks cost beyond the purchase price on
+a line. There is still no supplier the order is actually sent to — accepting one
+records the decision, and a person carries it to the supplier.
 
 ## Layout
 

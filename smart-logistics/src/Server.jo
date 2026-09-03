@@ -44,6 +44,7 @@ class Server(brain: Model, home: String, databasePath: String, database: Databas
     case Http.Post("/api/skills") => saveSkill()
     case Http.Post("/api/skills/delete") => deleteSkill()
     case Http.Post("/api/drafts/status") => draftStatus()
+    case Http.Post("/api/orders/receive") => receiveDelivery()
     // The watcher, on demand as well as on its schedule.
     case Http.Post("/api/check-now") => Http.respondJson(watcher.run("manual"))
     // The planner, only ever on demand, with this run's note.
@@ -124,6 +125,28 @@ class Server(brain: Model, home: String, databasePath: String, database: Databas
     val data = body()
     Http.respondJson(py.dict("ok" ~
       database.setDraftStatus(data.get("id").asInt, data.get("status").asString)))
+
+  //[ Booking a delivery against an open order. The only caller is a person at
+    ! the receiving door; neither agent has this, or any other, write to stock.
+  //]
+  private def receiveDelivery(): py.List receives request =
+    refusable(() => ok(py.dict("received" ~ database.receiveOrder(body()))))
+
+  //[ A refusal a person can act on.
+    !
+    ! Everything the depot declines to do — more than the line still owes, past
+    ! the capacity of a shelf, against an order that is closed — is declined for
+    ! a stated reason, and the person at the receiving door is the one who has
+    ! to do something about it. Letting that surface as a bare 500 would tell
+    ! them only that the computer said no.
+  //]
+  private def refusable(handler: () => py.List): py.List receives request =
+    val outcome = py.try: handler()
+    match outcome
+    case Ok(response) => response
+    case Err(error) =>
+      Http.respond("400 Bad Request", "application/json",
+        py.module("json").dumps(py.dict("error" ~ error.message)).asString)
 
   private def draftExport(): py.List receives request =
     val id = Int.parse(query("id")) rescue None => 0

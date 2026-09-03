@@ -333,9 +333,10 @@ tr.at-risk td:first-child { box-shadow: inset 3px 0 0 var(--critical); }
 }
 .pill.critical, .pill.failed { background: #fbeaea; color: var(--critical); }
 .pill.warning { background: #fdf3e3; color: var(--warn); }
-.pill.enabled, .pill.accepted, .pill.success { background: #e8f6ee; color: var(--ok); }
-.pill.draft, .pill.running { background: #eef2ff; color: var(--accent-ink); }
-.pill.rejected, .pill.off { background: var(--line-soft); color: var(--muted); }
+.pill.enabled, .pill.accepted, .pill.received, .pill.success { background: #e8f6ee; color: var(--ok); }
+.pill.draft, .pill.running, .pill.ordered { background: #eef2ff; color: var(--accent-ink); }
+.pill.part_received { background: #fdf3e3; color: var(--warn); }
+.pill.rejected, .pill.cancelled, .pill.off { background: var(--line-soft); color: var(--muted); }
 
 .cards { display: grid; gap: 10px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 15px 16px; }
@@ -357,6 +358,35 @@ tr.at-risk td:first-child { box-shadow: inset 3px 0 0 var(--critical); }
   background: #fdf6f6; border: 1px solid #f0dada; border-radius: var(--r-sm);
 }
 .confirm p { margin: 0; font-size: 13px; }
+
+/* Orders on their way ------------------------------------------------------ */
+
+/* An order past its date is the one thing on this page that wants finding at a
+   glance, so it is the only card that carries a colour of its own. */
+.card.overdue { border-color: #f0cfcf; background: #fefafa; }
+.due-line { margin: 8px 0 0; font-size: 12.5px; }
+.due { color: var(--muted); }
+.late { color: var(--critical); font-weight: 600; }
+.group-title .late { font-size: 12px; font-weight: 600; }
+.lines .qty.done { color: var(--ok); }
+
+/* Counting a delivery in. One row per line still owed, wide enough to read the
+   product without the box moving about between rows. */
+.confirm.receive { display: grid; gap: 8px; background: var(--raise); border-color: var(--line); }
+.receive-row {
+  display: grid; grid-template-columns: 1fr 7ch auto;
+  gap: 10px; align-items: center; margin: 0; font-size: 13px;
+}
+.receive-name { overflow-wrap: anywhere; }
+.receive-row input { width: 100%; font-variant-numeric: tabular-nums; }
+.receive-row input[type="text"] { grid-column: 2 / span 2; }
+.confirm.receive .actions { margin-top: 2px; }
+
+@media (max-width: 560px) {
+  .receive-row { grid-template-columns: 1fr 7ch; }
+  .receive-row .muted { grid-column: 2; text-align: right; }
+  .receive-row input[type="text"] { grid-column: 1 / span 2; }
+}
 
 /* Skills ------------------------------------------------------------------- */
 
