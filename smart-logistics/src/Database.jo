@@ -144,6 +144,15 @@ class Database(path: String, home: String)
       );
     """)
     seed(conn)
+    // A run is executed by this process, so none can outlive it. Anything left
+    // 'running' belongs to a process that is gone — without this the row stays
+    // running for ever, and the page waits on a run nobody is performing.
+    conn.execute("""
+      UPDATE runs SET status='failed', finished_at=datetime('now'),
+        summary='The server stopped while this run was in progress. Nothing was '
+                || 'recorded from it, and no warnings were resolved.'
+      WHERE status='running'
+    """)
     conn.commit()
     conn.close()
 
