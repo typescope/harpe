@@ -122,8 +122,10 @@ The main framework events are:
 was attempted, and what the engine decided about it.
 - **`harpe.tools.skills.read`** (`name`) and **`harpe.tools.skills.searched`**
   (`query`) — content reached through the skill tools.
-- **`harpe.turn.*`** — conversation records written when the application uses a
-  [Journal transcript](/concepts/transcript/).
+- **`harpe.turn.*`** — the conversation itself: `started`, `message`, and one of
+  `answered` / `interrupted` / `failed`. The engine writes these on every turn,
+  so a [transcript](/concepts/transcript/) is a reading of the log rather than a
+  second place to record it.
 
 ## Logging from your own tool
 
@@ -318,7 +320,7 @@ Per-session destinations do not need that redundant field.
 
 The provided `Journal` transcript writes through this same channel.
 The framework emits stable `harpe.turn.started`, `harpe.turn.message`, and
-terminal `harpe.turn.answered` / `interrupted` / `failed` categories.
+terminal `harpe.turn.answered` / `interrupted` / `failed` events.
 
 Applications decide how session events are stored and correlated. Producers emit
 through `logger` without depending on that policy. `Journal.records` projects an

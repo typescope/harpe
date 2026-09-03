@@ -5,8 +5,10 @@ A transcript records the user-facing turns in a conversation. It can provide
 chat history for the user interface and seed model context when a session is
 resumed.
 
-Recording is optional. If `transcript` is omitted from `Agent.ask`, Harpe uses
-`Transcript.NoTranscript` and the turn is not persisted by the framework.
+Recording is not optional. `Agent.ask` writes the turn to the ambient
+[logger](/concepts/logging/) as it runs, so a turn is in the log whether or not
+anything reads it back. A transcript is a **projection over those records**, not a
+second place to write them.
 
 ## Transcript, context, and logs
 
@@ -15,7 +17,7 @@ These concepts see related events but serve different purposes:
 | Concept | Purpose | Typical lifetime |
 | --- | --- | --- |
 | [Context](/concepts/context/) | Select the instructions and history sent to the model | One active session |
-| Transcript | Record user-facing conversation turns | Across session restarts when persisted |
+| Transcript | A reading of the log as user-facing conversation turns | As long as the log is kept |
 | [Log](/concepts/logging/) | Record operational events for diagnostics and auditing | Application-defined |
 
 A context may omit or summarize old turns without deleting them from the
@@ -24,24 +26,17 @@ details that are not part of the conversation shown to the user.
 
 ## Recording a turn
 
-Harpe provides `Journal`, a transcript implementation that writes structured
-entries through a `Logger`. A common file-backed setup is:
+Install a `Logger` for the session and the turn records itself:
 
 ```jo
 val sessionLog = new JsonlLogger(sessionPath)
-val transcript = new Journal(sessionLog)
-```
 
-Pass the journal to every turn in that session:
-
-```jo
-val turn =
+with logger = sessionLog in
   Agent.ask:
     message
     brain = brain
     tools = tools
     context = context
-    transcript = transcript
 ```
 
 During the call, `Agent.ask` records:
@@ -61,20 +56,25 @@ might deliver a document. The driver records those application-level facts by
 placing a request and response around `Agent.ask`:
 
 ```jo
-transcript.request:
+val journal = new Journal(sessionLog)
+
+journal.request:
   Journal.payload("text" ~ message, "files" ~ uploadedFiles)
 
 val turn =
-  Agent.ask:
-    message
-    brain = brain
-    tools = tools
-    context = context
-    transcript = transcript
+  with logger = sessionLog in
+    Agent.ask:
+      message
+      brain = brain
+      tools = tools
+      context = context
 
-transcript.response:
+journal.response:
   Journal.payload("reply" ~ replyForUser(turn))
 ```
+
+`Journal` writes only the bracket. The turn inside it is the engine's, and lands
+in the same log either way.
 
 Together, the records have this shape:
 
@@ -151,31 +151,29 @@ The transcript does not recreate the context strategy itself. The application
 chooses a new `FullContext`, `WindowedContext`, `SummarizingContext`, or
 `TurnContext` when it opens the session.
 
-## Transcript storage
+## Where a conversation is stored
 
-The core interface contains only the methods `Agent.ask` needs while recording a
-turn:
+`harpe.TurnLog` owns the record format — the five event names and the one codec
+that both writes and reads them:
 
 ```jo
-interface Transcript
-  def start(input: UserInput): Unit
-  def append(message: Assistant | ToolResults): Unit
-  def commit(): Unit
-  def interrupted(): Unit
-  def failed(detail: String): Unit
-end
+harpe.turn.started       the input the turn is about to run
+harpe.turn.message       an assistant reply, or a batch of tool results
+harpe.turn.answered      ┐
+harpe.turn.interrupted    ├ one of exactly three terminators
+harpe.turn.failed        ┘
 ```
 
-`Journal` implements this interface using structured log entries. An application
-can implement it with a database, event stream, or another store. Reading,
-querying, and defining the user-facing turn boundary then belong to that
-implementation and its driver.
+Storage is a `Logger` backend, which was always the pluggable part. An
+application that keeps conversations in a database, or on an event stream,
+implements `Logger` — and gets the operational records in the same place, rather
+than wiring a second interface and discovering later that only one of them was
+connected.
 
-A transcript implementation records events as they occur. It does not roll them
-back. On failure, the engine appends a failure terminator while the context rolls
-back provisional model and tool history. This difference lets the transcript
-preserve what happened while preventing an unsuccessful tail from becoming the
-model's future working context.
+The engine records events as they occur and does not roll them back. On failure
+it appends a failure terminator while the *context* rolls back provisional model
+and tool history. That difference is what preserves what happened while keeping
+an unsuccessful tail out of the model's future working context.
 
 ## See also
 

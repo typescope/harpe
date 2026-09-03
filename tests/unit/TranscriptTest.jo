@@ -89,11 +89,11 @@ private def withJournal(body: (Journal, String) => Unit receives logger): Unit =
 
 // One answered turn, including an unrelated diagnostic entry between messages.
 private def answeredTurn(journal: Journal): Unit receives logger =
-  journal.start(UserInput("hi", []))
-  journal.append(Assistant("on it", [call()]))
+  TurnLog.started(UserInput("hi", []))
+  TurnLog.message(Assistant("on it", [call()]))
   logger.log("myagent.debug", "note" ~ "between messages")
-  journal.append(ToolResults([ToolResult("c1", "42", [], success = false)]))
-  journal.commit()
+  TurnLog.message(ToolResults([ToolResult("c1", "42", [], success = false)]))
+  TurnLog.answered()
 
 //[ A failed turn, an answered one, and one whose process died mid-turn
   !
@@ -104,50 +104,50 @@ private def answeredTurn(journal: Journal): Unit receives logger =
 //]
 private def bracketedTurns(journal: Journal): Unit receives logger =
   journal.request(Journal.payload("text" ~ "will fail"))
-  journal.start(UserInput("will fail", []))
-  journal.append(Assistant("partial", []))
-  journal.failed("bad model")
+  TurnLog.started(UserInput("will fail", []))
+  TurnLog.message(Assistant("partial", []))
+  TurnLog.failed("bad model")
   journal.response("turnEnd")
 
   journal.request(Journal.payload("text" ~ "again"))
-  journal.start(UserInput("again", []))
-  journal.append(Assistant("done", [call()]))
-  journal.append(ToolResults([ToolResult("c1", "no such file", [], success = false)]))
-  journal.commit()
+  TurnLog.started(UserInput("again", []))
+  TurnLog.message(Assistant("done", [call()]))
+  TurnLog.message(ToolResults([ToolResult("c1", "no such file", [], success = false)]))
+  TurnLog.answered()
   journal.response("turnEnd")
 
   journal.request(Journal.payload("text" ~ "crashed"))
-  journal.start(UserInput("crashed", []))
+  TurnLog.started(UserInput("crashed", []))
 
 // A delegating turn, an externally interrupted one, unbracketed machinery, and a
 // bracket the process died inside.
 private def projectableTurns(journal: Journal): Unit receives logger =
   journal.request(Journal.payload("kind" ~ "upload", "file" ~ "a.png"))
-  journal.start(UserInput("look", []))
-  journal.append(Assistant("delegating", [call()]))
-  journal.start(UserInput("subagent work", []))
-  journal.append(Assistant("sub answer", []))
-  journal.commit()
-  journal.append(ToolResults([ToolResult("c1", "42", [])]))
-  journal.append(Assistant("done", []))
-  journal.commit()
+  TurnLog.started(UserInput("look", []))
+  TurnLog.message(Assistant("delegating", [call()]))
+  TurnLog.started(UserInput("subagent work", []))
+  TurnLog.message(Assistant("sub answer", []))
+  TurnLog.answered()
+  TurnLog.message(ToolResults([ToolResult("c1", "42", [])]))
+  TurnLog.message(Assistant("done", []))
+  TurnLog.answered()
   journal.response(Journal.payload("text" ~ "done"))
 
   // A response can survive even when the engine's terminator does not. Treat
   // that externally interrupted turn as interrupted rather than nullable.
   journal.request(Journal.payload("kind" ~ "chat"))
-  journal.start(UserInput("partial", []))
-  journal.append(Assistant("working", []))
+  TurnLog.started(UserInput("partial", []))
+  TurnLog.message(Assistant("working", []))
   journal.response(Journal.payload("text" ~ ""))
 
   // Machinery: a turn nobody bracketed.
-  journal.start(UserInput("cron job", []))
-  journal.append(Assistant("tick", []))
-  journal.commit()
+  TurnLog.started(UserInput("cron job", []))
+  TurnLog.message(Assistant("tick", []))
+  TurnLog.answered()
 
   // Bracketed, but the process died mid-turn.
   journal.request(Journal.payload("kind" ~ "chat"))
-  journal.start(UserInput("and this?", []))
+  TurnLog.started(UserInput("and this?", []))
 
 def transcriptSuite(): Unit receives thisSuite = suite: "session log", () =>
   suite: "what the journal writes", () =>

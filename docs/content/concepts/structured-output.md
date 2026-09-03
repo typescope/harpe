@@ -133,13 +133,15 @@ nothing was sent, and reads that as its next turn's input. The driver reads
 never becomes an attachment on the page. Both come off the same record, which is
 what keeps them from disagreeing.
 
-That value closes the turn's transcript bracket, beside the driver's own record
-of what the user asked:
+That value closes the turn's bracket, beside the driver's own record of what the
+user asked:
 
 ```jo
-transcript.turn: request, () =>
-  val turn = Agent.ask(prompt, brain = brain, tools = tools, transcript = transcript)
-  Journal.payload("reply" ~ Session.reply(turn))
+journal.request(request)
+val turn =
+  with logger = sessionLog in
+    Agent.ask(prompt, brain = brain, tools = tools)
+journal.response(Journal.payload("reply" ~ Session.reply(turn)))
 ```
 
 One event, two renderings. The model sees a tool call it made and knows what it

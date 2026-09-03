@@ -34,7 +34,6 @@ def ask(
     tools: Toolset = Toolset.empty,
     interact: Interact = Interact.unattended,
     context: Context = Context.noHistory,
-    transcript: Transcript = Transcript.NoTranscript,
     maxToolRounds: Int = 50,
     maxRetries: Int = 4,
     maxOutputTokens: Int = 8192)
