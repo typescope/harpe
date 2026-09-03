@@ -36,10 +36,11 @@ const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => HTML_ES
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 // SQLite writes UTC without a zone marker; say so before parsing.
-function ago(stamp) {
-  if (!stamp) return '';
-  const then = new Date(stamp.replace(' ', 'T') + 'Z');
-  const minutes = Math.round((Date.now() - then.getTime()) / 60000);
+const stamp = value => Date.parse(value.replace(' ', 'T') + 'Z');
+
+function ago(value) {
+  if (!value) return '';
+  const minutes = Math.round((Date.now() - stamp(value)) / 60000);
   if (minutes < 1) return 'just now';
   if (minutes < 60) return `${plural(minutes, 'minute')} ago`;
   const hours = Math.round(minutes / 60);
@@ -52,16 +53,6 @@ function toast(message) {
   element.textContent = message;
   element.classList.add('show');
   setTimeout(() => element.classList.remove('show'), 2400);
-}
-
-function busy(button, label, run) {
-  const original = button.textContent;
-  button.disabled = true;
-  button.textContent = label;
-  return run().finally(() => {
-    button.disabled = false;
-    button.textContent = original;
-  });
 }
 
 /* Rendering ---------------------------------------------------------------- */
@@ -91,6 +82,7 @@ function render() {
   renderMovements();
   renderSuppliers();
   renderRuns();
+  adoptRunningRun();
 }
 
 // The problem, in the reader's words, before anything else on the page.
@@ -231,7 +223,8 @@ function renderRuns() {
         #${run.id} · ${escapeHtml(run.trigger)} · ${escapeHtml(ago(run.started_at))}
         ${run.note ? `· “${escapeHtml(run.note)}”` : ''}
       </summary>
-      <div class="report-body">${reportHtml(run.summary)}</div>
+      <div class="report-body">${run.status === 'running'
+        ? '<p class="muted">Still running…</p>' : reportHtml(run.summary)}</div>
     </details>`).join('');
 }
 
@@ -443,39 +436,106 @@ function reportHtml(text) {
 
 const renderReport = text => { $('#report').innerHTML = reportHtml(text); };
 
-// A run takes minutes against a local-ish model, and a disabled button is not
-// enough to tell someone the machine is still working. Count up, and bring the
-// panel into view — it sits below the fold on every page.
-function runAgent(button, label, waiting, send) {
-  return busy(button, label, async () => {
-    const started = Date.now();
-    const tick = () => {
-      const seconds = Math.round((Date.now() - started) / 1000);
-      $('#report').innerHTML =
-        `<p class="working">${escapeHtml(waiting)} <span>${seconds}s</span></p>`;
-    };
-    tick();
-    const timer = setInterval(tick, 1000);
-    $('.report-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    try {
-      const result = await send();
-      renderReport(result.report);
-      await refresh();
-    } catch (error) {
-      renderReport('**' + label.replace('…', '') + ' failed** — ' + error.message);
-    } finally {
-      clearInterval(timer);
+const AGENTS = {
+  plan: {
+    button: '#plan', label: 'Planning…',
+    waiting: 'The planner is working out what to order…'
+  },
+  watch: {
+    button: '#check-now', label: 'Checking…',
+    waiting: 'The watcher is going through the depot…'
+  }
+};
+
+// A run outlives the page that started it. The POST only returns when the run
+// is over — minutes later — and the browser may be long gone by then, but the
+// server thread carries on and writes its result either way. So the page never
+// relies on that response: it watches the run list. That is what makes a
+// refresh mid-run harmless, since the reloaded page finds the run still going
+// and picks it back up instead of pretending nothing is happening.
+// The two agents hold separate locks and can run at once, so each is tracked
+// on its own. The panel is shared, and shows whichever finished last.
+const tracked = {};
+
+function stopTracking(kind) {
+  const entry = tracked[kind];
+  if (!entry) return;
+  clearInterval(entry.tick);
+  clearInterval(entry.poll);
+  const button = $(AGENTS[kind].button);
+  button.disabled = false;
+  button.textContent = entry.original;
+  delete tracked[kind];
+}
+
+function track(kind, since, startedAt) {
+  if (tracked[kind]) return;
+  const agent = AGENTS[kind];
+  const button = $(agent.button);
+  const entry = {
+    since, original: button.textContent,
+    started: startedAt ?? Date.now(), tick: 0, poll: 0
+  };
+  tracked[kind] = entry;
+  button.disabled = true;
+  button.textContent = agent.label;
+  const show = () => {
+    const seconds = Math.max(0, Math.round((Date.now() - entry.started) / 1000));
+    $('#report').innerHTML =
+      `<p class="working">${escapeHtml(agent.waiting)} <span>${seconds}s</span></p>`;
+  };
+  show();
+  entry.tick = setInterval(show, 1000);
+  entry.poll = setInterval(() => poll(kind), 3000);
+}
+
+async function poll(kind) {
+  let runs;
+  // A blip here is not worth surrendering the run over; the next tick retries.
+  try { ({ runs } = await api('/api/runs')); } catch { return; }
+  const entry = tracked[kind];
+  if (!entry) return;
+  const mine = runs.filter(run => run.kind === kind && run.id > entry.since);
+  const live = mine.find(run => run.status === 'running');
+  // Once the row exists, count from the server's clock rather than from the
+  // click, so the elapsed time survives a reload and reads as the run's age.
+  if (live) entry.started = stamp(live.started_at);
+  const done = mine.find(run => run.status !== 'running');
+  if (!done) return;
+  stopTracking(kind);
+  renderReport(done.summary);
+  await refresh();
+}
+
+// Adopt runs this page did not start — the ones a reload left behind, and the
+// scheduled checks nobody clicked for.
+function adoptRunningRun() {
+  for (const run of state.runs) {
+    if (run.status === 'running' && AGENTS[run.kind] && !tracked[run.kind]) {
+      track(run.kind, run.id - 1, stamp(run.started_at));
     }
+  }
+}
+
+function start(kind, send) {
+  const since = state.runs.length ? state.runs[0].id : 0;
+  track(kind, since);
+  $('.report-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  // Deliberately not awaited — see the note above.
+  send().then(async result => {
+    if (!tracked[kind]) return;            // the poller got there first
+    stopTracking(kind);
+    renderReport(result.report);
+    if (!result.busy) await refresh();
+  }).catch(error => {
+    if (!tracked[kind]) return;
+    stopTracking(kind);
+    renderReport('**Could not reach the server** — ' + error.message);
   });
 }
 
-$('#plan').onclick = event => runAgent(
-  event.target, 'Planning…', 'The planner is working out what to order…',
-  () => post('/api/plan', { note: $('#note').value }));
-
-$('#check-now').onclick = event => runAgent(
-  event.target, 'Checking…', 'The watcher is going through the depot…',
-  () => post('/api/check-now', {}));
+$('#plan').onclick = () => start('plan', () => post('/api/plan', { note: $('#note').value }));
+$('#check-now').onclick = () => start('watch', () => post('/api/check-now', {}));
 
 /* Chrome and delegated actions --------------------------------------------- */
 
