@@ -71,6 +71,10 @@ groups that share a name — rather than silently keeping one of them.
 You describe the spec in Jo. Each provider renders its own wire spec from it, so
 you never hand-write JSON schema.
 
+Every parameter is required, by design. Optionality buys a human caller
+ergonomics a model has no use for, and explicit is better. Give a parameter that
+does not always apply a documented value meaning "not applicable" instead.
+
 See [Structured output](/concepts/structured-output/) for why Harpe usually keeps
 machine-consumed data in the typed Jo program instead of formatting it as the
 agent's final answer.
