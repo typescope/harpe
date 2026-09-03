@@ -43,18 +43,20 @@ The model reads `description` to decide when to call the tool. It uses `params`
 to construct the call. Parameter names therefore become part of the contract
 between the model and your handler.
 
-Harpe provides four parameter constructors:
+Harpe provides five parameter constructors:
 
 ```jo
-strParam(name, description)    // string
-intParam(name, description)    // integer
-boolParam(name, description)   // boolean
-numParam(name, description)    // number
+strParam(name, description)      // string
+intParam(name, description)      // integer
+boolParam(name, description)     // boolean
+numParam(name, description)      // number
+strListParam(name, description)  // list of strings
 ```
 
 Every parameter is required — explicit is better, and a model has no use for the
 ergonomics an optional argument buys a human caller. Give a parameter that does
-not always apply a documented value meaning "not applicable" instead.
+not always apply a documented value meaning "not applicable" instead — for a
+string list, usually the empty list.
 
 ## Implement the operation
 
@@ -115,6 +117,7 @@ input.string("city")
 input.int("count")
 input.bool("verbose")
 input.num("threshold")
+input.strings("tags")
 ```
 
 If a key is absent, these accessors return the type's zero value. Since every

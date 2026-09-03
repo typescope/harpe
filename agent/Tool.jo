@@ -109,18 +109,21 @@ section Tool
     ! The JSON-schema type of a tool input parameter, modeled in Jo so tool
     ! authors never hand-write JSON schema.
   //]
-  union ParamType = StrParam | IntParam | BoolParam | NumParam
-    //[ Map a `ParamType` to its JSON-schema type string.
+  union ParamType = StrParam | IntParam | BoolParam | NumParam | StrListParam
+    //[ This type as a JSON-schema fragment.
       !
-      ! Shared by all provider impls so each one can render tool specs without
-      ! duplicating this mapping.
+      ! A fragment rather than a type string because `StrListParam` is different.
+      !
+      ! Any change of this method should make sure that the schema is portable
+      ! among different model providers.
     //]
-    def jsonType: String =
+    def schema: py.Dict =
       match this
-      case StrParam  => "string"
-      case IntParam  => "integer"
-      case BoolParam => "boolean"
-      case NumParam  => "number"
+      case StrParam     => py.dict("type" ~ "string")
+      case IntParam     => py.dict("type" ~ "integer")
+      case BoolParam    => py.dict("type" ~ "boolean")
+      case NumParam     => py.dict("type" ~ "number")
+      case StrListParam => py.dict("type" ~ "array", "items" ~ py.dict("type" ~ "string"))
 
   //[ Tool parameter
     !
@@ -130,6 +133,14 @@ section Tool
     ! ergonomics a model has no use for, and explicit is better.
   //]
   class ToolParam(name: String, paramType: ParamType, description: String)
+    //[ This parameter as one JSON-schema property, for a provider to place
+      ! under `properties`.
+    //]
+    def schema: py.Dict =
+      val s = paramType.schema
+      s.set("description", description)
+      s
+  end
 
   //[ A tool call the model wants to make
     !
@@ -170,6 +181,12 @@ section Tool
     def int(name: String): Int = raw.get(name, 0).asInt
     def bool(name: String): Bool = raw.get(name, false).asBool
     def num(name: String): Float = raw.get(name, 0.0).asFloat
+
+    //[ The list-of-strings argument under `name`, or `[]` if the key is missing. //]
+    def strings(name: String): List[String] =
+      var out: List[String] = []
+      for x in raw.get(name, py.list()).cast[py.List] do out = out + x.asString
+      out
   end
 
 
@@ -225,6 +242,10 @@ section Tool
   //[ A number (float) parameter. //]
   def numParam(name: String, description: String): ToolParam =
     new ToolParam(name, NumParam, description)
+
+  //[ A string-list parameter, read back with `ToolInput.strings`. //]
+  def strListParam(name: String, description: String): ToolParam =
+    new ToolParam(name, StrListParam, description)
 
   //[ Bound a tool result's text to at most `maxChars`
     !
