@@ -373,19 +373,25 @@ tr.at-risk td:first-child { box-shadow: inset 3px 0 0 var(--critical); }
 /* Counting a delivery in. One row per line still owed, wide enough to read the
    product without the box moving about between rows. */
 .confirm.receive { display: grid; gap: 8px; background: var(--raise); border-color: var(--line); }
+/* The box sits beside the product it counts, not out at the edge of the card:
+   the name column is given a width rather than all the slack. */
 .receive-row {
-  display: grid; grid-template-columns: 1fr 7ch auto;
+  display: grid; grid-template-columns: minmax(0, 26ch) 7ch auto;
   gap: 10px; align-items: center; margin: 0; font-size: 13px;
+  justify-content: start;
 }
 .receive-name { overflow-wrap: anywhere; }
 .receive-row input { width: 100%; font-variant-numeric: tabular-nums; }
-.receive-row input[type="text"] { grid-column: 2 / span 2; }
+.receive-row input[type="text"] { grid-column: 2 / span 2; min-width: 34ch; }
 .confirm.receive .actions { margin-top: 2px; }
 
+/* Too narrow for a name and a box side by side: the name takes its own line and
+   the box sits next to what it is counting against. */
 @media (max-width: 560px) {
-  .receive-row { grid-template-columns: 1fr 7ch; }
-  .receive-row .muted { grid-column: 2; text-align: right; }
-  .receive-row input[type="text"] { grid-column: 1 / span 2; }
+  .receive-row { grid-template-columns: 7ch 1fr; }
+  .receive-name { grid-column: 1 / span 2; }
+  .receive-row .muted { grid-column: 2; text-align: left; }
+  .receive-row input[type="text"] { grid-column: 1 / span 2; min-width: 0; }
 }
 
 /* Skills ------------------------------------------------------------------- */

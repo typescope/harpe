@@ -134,7 +134,7 @@ const STATUS_LABEL = {
 /* Routing ------------------------------------------------------------------ */
 
 const PAGES = {
-  stock: 'Stock', orders: 'Orders to review', agents: 'Agents', checks: 'Checks',
+  stock: 'Stock', orders: 'Orders', agents: 'Agents', checks: 'Checks',
   movements: 'Movements', suppliers: 'Suppliers', skills: 'Skills'
 };
 
