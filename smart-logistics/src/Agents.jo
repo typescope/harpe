@@ -35,16 +35,30 @@ class Watcher(brain: Model, home: String, databasePath: String, database: Databa
     case Ok(value) => value
     case Err(error) => py.dict("ok" ~ false, "busy" ~ false, "report" ~ error.message)
 
+  private val inconclusive =
+    "The watcher stopped without reporting anything — most likely it spent its "
+      + "tool budget. Existing warnings were left exactly as they were; nothing "
+      + "was resolved. Run it again."
+
   private def checkDepot(trigger: String): py.Dict =
     val runId = database.beginRun("watch", trigger, "")
     val attempt = py.try: ask(runId)
     match attempt
     case Ok(report) =>
-      // Whatever this run did not raise again no longer holds.
-      val resolved = database.resolveWarningsNotRaisedBy(runId)
-      database.finishRun(runId, "success", report)
-      py.dict("ok" ~ true, "busy" ~ false, "run_id" ~ runId,
-              "resolved" ~ resolved, "report" ~ report)
+      // A turn that spends its whole tool budget still ends in Success, with
+      // nothing to say. Resolving on that would read the silence as "all
+      // clear" and quietly wipe warnings that still hold, so an empty report
+      // resolves nothing and is reported as the failure it is.
+      if report.trim == "" then
+        database.finishRun(runId, "failed", inconclusive)
+        py.dict("ok" ~ false, "busy" ~ false, "run_id" ~ runId,
+                "report" ~ inconclusive)
+      else
+        // Whatever this run did not raise again no longer holds.
+        val resolved = database.resolveWarningsNotRaisedBy(runId)
+        database.finishRun(runId, "success", report)
+        py.dict("ok" ~ true, "busy" ~ false, "run_id" ~ runId,
+                "resolved" ~ resolved, "report" ~ report)
     case Err(error) =>
       database.finishRun(runId, "failed", error.message)
       py.dict("ok" ~ false, "busy" ~ false, "run_id" ~ runId,
@@ -61,7 +75,7 @@ class Watcher(brain: Model, home: String, databasePath: String, database: Databa
         "Check the depot now and record the warnings that hold."
         SkillTools.toolset(os.path.join(home, "skills", "watch"))
           ++ runCode.toolset(guestEnv)
-        8
+        12
 end
 
 //[ The planner: on demand, started by a person, reviewed by a person.

@@ -231,7 +231,7 @@ function renderRuns() {
         #${run.id} · ${escapeHtml(run.trigger)} · ${escapeHtml(ago(run.started_at))}
         ${run.note ? `· “${escapeHtml(run.note)}”` : ''}
       </summary>
-      <pre>${escapeHtml(run.summary) || 'No report recorded.'}</pre>
+      <div class="report-body">${reportHtml(run.summary)}</div>
     </details>`).join('');
 }
 
@@ -417,26 +417,65 @@ $('#delete-skill').onclick = async () => {
 
 /* The two agents ----------------------------------------------------------- */
 
-$('#plan').onclick = event => busy(event.target, 'Planning…', async () => {
-  $('#report').textContent = 'The planner is working out what to order…';
-  try {
-    const result = await post('/api/plan', { note: $('#note').value });
-    $('#report').textContent = result.report;
-    await refresh();
-  } catch (error) {
-    $('#report').textContent = 'Planning failed: ' + error.message;
+// Reports come back as markdown. Rendering the whole of it would be a library;
+// these three shapes are what the two prompts actually produce, and raw ** and
+// ``` in the panel read as noise. Every segment is escaped before any tag is
+// added, so this stays a formatter, never a way into the DOM.
+function reportHtml(text) {
+  if (!text || !text.trim()) {
+    return '<p class="muted">The run finished without saying anything.</p>';
   }
-});
+  const inline = value => escapeHtml(value)
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+  return text.split(/```/).map((chunk, index) => {
+    // Odd chunks sit between fences: keep them verbatim, since the planner
+    // lays its lines out in columns that only survive in a pre.
+    if (index % 2) return `<pre>${escapeHtml(chunk.replace(/^\n/, ''))}</pre>`;
+    // A blank line starts a paragraph; a single newline is a line break, which
+    // is what keeps a bulleted list from running together into one sentence.
+    return chunk.split(/\n\s*\n/)
+      .filter(block => block.trim())
+      .map(block => `<p>${inline(block.trim()).replace(/\n/g, '<br>')}</p>`)
+      .join('');
+  }).join('');
+}
 
-$('#check-now').onclick = event => busy(event.target, 'Checking…', async () => {
-  try {
-    const result = await post('/api/check-now', {});
-    $('#report').textContent = result.report;
-    await refresh();
-  } catch (error) {
-    $('#report').textContent = 'Check failed: ' + error.message;
-  }
-});
+const renderReport = text => { $('#report').innerHTML = reportHtml(text); };
+
+// A run takes minutes against a local-ish model, and a disabled button is not
+// enough to tell someone the machine is still working. Count up, and bring the
+// panel into view — it sits below the fold on every page.
+function runAgent(button, label, waiting, send) {
+  return busy(button, label, async () => {
+    const started = Date.now();
+    const tick = () => {
+      const seconds = Math.round((Date.now() - started) / 1000);
+      $('#report').innerHTML =
+        `<p class="working">${escapeHtml(waiting)} <span>${seconds}s</span></p>`;
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    $('.report-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    try {
+      const result = await send();
+      renderReport(result.report);
+      await refresh();
+    } catch (error) {
+      renderReport('**' + label.replace('…', '') + ' failed** — ' + error.message);
+    } finally {
+      clearInterval(timer);
+    }
+  });
+}
+
+$('#plan').onclick = event => runAgent(
+  event.target, 'Planning…', 'The planner is working out what to order…',
+  () => post('/api/plan', { note: $('#note').value }));
+
+$('#check-now').onclick = event => runAgent(
+  event.target, 'Checking…', 'The watcher is going through the depot…',
+  () => post('/api/check-now', {}));
 
 /* Chrome and delegated actions --------------------------------------------- */
 
@@ -491,7 +530,8 @@ document.addEventListener('click', async event => {
   }
   if (act === 'export') {
     const data = await api(`/api/drafts/export?id=${Number(id)}`);
-    $('#report').textContent = JSON.stringify(data.orders, null, 2);
+    $('#report').innerHTML = `<pre>${escapeHtml(JSON.stringify(data.orders, null, 2))}</pre>`;
+    $('.report-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     return toast('Exported into the run panel');
   }
 });
