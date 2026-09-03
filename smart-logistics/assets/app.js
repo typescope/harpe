@@ -503,7 +503,7 @@ const AGENTS = {
     waiting: 'The planner is working out what to order…'
   },
   watch: {
-    idle: 'Check now', label: 'Checking…', tone: 'accent',
+    idle: 'Check now', label: 'Checking…', tone: 'primary',
     icon: ICON('<path d="M1.6 8S4.1 3.7 8 3.7 14.4 8 14.4 8 11.9 12.3 8 12.3 1.6 8 1.6 8z"/>'
       + '<circle cx="8" cy="8" r="1.9"/>'),
     waiting: 'The watcher is going through the depot…'
@@ -511,7 +511,9 @@ const AGENTS = {
 };
 
 // Every trigger for an agent is built here, so the banner's and the card's are
-// the same button wherever they appear.
+// the same button wherever they appear. Both agents get the primary treatment:
+// each is the only action on its own card. Which matters more is said by the
+// order the cards stand in, not by dressing one button down.
 const triggerHtml = kind => {
   const agent = AGENTS[kind];
   return `<button class="${agent.tone}" data-run-agent="${kind}">`

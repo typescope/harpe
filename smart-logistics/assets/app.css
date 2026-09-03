@@ -69,10 +69,6 @@ button.primary, .button.primary {
   background: var(--accent); border-color: var(--accent); color: #fff;
 }
 button.primary:hover, .button.primary:hover { background: #1a51e0; border-color: #1a51e0; }
-button.accent, .button.accent {
-  color: var(--accent-ink); background: #eaefff; border-color: #c4d2ff;
-}
-button.accent:hover, .button.accent:hover { background: #dde5ff; border-color: #a9bdff; }
 button.danger { color: var(--critical); }
 button.danger:hover { border-color: #e0b4b4; background: #fdf6f6; }
 button.ghost { border-color: transparent; background: none; color: var(--muted); }
@@ -103,14 +99,21 @@ label { font-size: 12.5px; color: var(--muted); }
 
 .shell { display: grid; grid-template-columns: var(--sidebar) 1fr; min-height: 100vh; }
 
+/* Three planes, so the eye can tell chrome from page from card: the sidebar
+   sits under the content ground, the content ground under the white panels. */
 .sidebar {
-  background: var(--panel);
-  border-right: 1px solid var(--line);
-  padding: 16px 12px;
-  display: flex; flex-direction: column; gap: 18px;
+  background: linear-gradient(180deg, #eaedf3 0%, #e3e7ef 100%);
+  border-right: 1px solid #d3d8e1;
+  padding: 14px 10px;
+  display: flex; flex-direction: column; gap: 14px;
   position: sticky; top: 0; height: 100vh; overflow-y: auto;
 }
-.brand { display: flex; align-items: center; gap: 9px; text-decoration: none; color: inherit; padding: 0 6px; }
+.brand {
+  display: flex; align-items: center; gap: 9px;
+  text-decoration: none; color: inherit;
+  padding: 2px 8px 14px;
+  border-bottom: 1px solid rgba(22, 24, 29, .09);
+}
 .mark {
   background: var(--ink); color: #fff; font-weight: 700; font-size: 12px;
   padding: 4px 7px; border-radius: 6px; letter-spacing: .04em;
@@ -118,40 +121,64 @@ label { font-size: 12.5px; color: var(--muted); }
 .brand-name { display: grid; line-height: 1.25; }
 .brand-name small { color: var(--muted); font-size: 11.5px; }
 
-#nav { display: grid; gap: 1px; }
+#nav { display: grid; gap: 2px; }
 .nav-group {
-  margin: 12px 0 3px; padding: 0 8px;
-  font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
-  color: var(--muted); font-weight: 600;
+  margin: 14px 0 4px; padding: 0 9px;
+  font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  color: #79808d; font-weight: 700;
 }
 .nav-group:first-child { margin-top: 0; }
 #nav a {
+  position: relative;
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 7px 8px; border-radius: var(--r-sm);
-  color: var(--ink); text-decoration: none;
+  padding: 7px 9px; border-radius: var(--r-sm);
+  color: #2b2f38; text-decoration: none;
+  transition: background .12s ease, color .12s ease, box-shadow .12s ease;
 }
-#nav a:hover { background: var(--line-soft); }
-#nav a[aria-current="page"] { background: #eef2ff; color: var(--accent-ink); font-weight: 600; }
+#nav a:hover { background: rgba(255, 255, 255, .62); color: var(--ink); }
+
+/* The current section is lifted out of the chrome onto its own white surface
+   and pinned by an accent rail, so it reads as the page you are standing on
+   rather than as one more link that happens to be tinted. */
+#nav a[aria-current="page"] {
+  background: var(--panel);
+  color: var(--accent-ink);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(22, 24, 29, .10), 0 0 0 1px rgba(22, 24, 29, .05);
+}
+#nav a[aria-current="page"]::before {
+  content: "";
+  position: absolute; left: 0; top: 6px; bottom: 6px; width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+}
 
 /* Line icons rather than emoji: they take the link's own colour, so they go
    muted, then ink, then accent along with the label instead of sitting on the
    page as seven unrelated pictures. */
 .nav-label { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.nav-icon { width: 16px; height: 16px; flex: none; opacity: .62; }
-#nav a:hover .nav-icon { opacity: .8; }
+.nav-icon { width: 16px; height: 16px; flex: none; opacity: .72; }
+#nav a:hover .nav-icon { opacity: .85; }
 #nav a[aria-current="page"] .nav-icon { opacity: 1; }
 
+/* Bordered, so the chip holds its shape both on the tinted ground and on the
+   white surface of the current item. */
 .count {
-  font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums;
-  min-width: 20px; text-align: center;
+  font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
+  min-width: 21px; text-align: center;
   padding: 1px 6px; border-radius: 999px;
-  background: var(--line-soft); color: var(--muted);
+  background: var(--panel); color: var(--muted);
+  border: 1px solid rgba(22, 24, 29, .12);
 }
 .count:empty { display: none; }
-.count.critical { background: #fbeaea; color: var(--critical); }
-.count.busy { background: #eef2ff; color: var(--accent-ink); }
+.count.critical { background: #fdecec; color: var(--critical); border-color: #f0cfcf; }
+.count.busy { background: #eef2ff; color: var(--accent-ink); border-color: #ccd9ff; }
 
-.sidebar-foot { margin: auto 0 0; padding: 0 8px; font-size: 11.5px; color: var(--muted); }
+.sidebar-foot {
+  margin: auto 0 0; padding: 12px 9px 2px;
+  border-top: 1px solid rgba(22, 24, 29, .09);
+  font-size: 11.5px; color: #6b7280;
+}
 
 .content { min-width: 0; display: flex; flex-direction: column; }
 
@@ -181,7 +208,9 @@ label { font-size: 12.5px; color: var(--muted); }
 /* Agents ------------------------------------------------------------------- */
 
 .agent-cards { display: grid; gap: 12px; }
-.card.agent { display: grid; gap: 4px; }
+.card.agent { display: grid; gap: 4px; justify-items: start; }
+.card.agent > * { justify-self: stretch; }
+.card.agent .row { justify-self: start; }
 .card.agent h2 { margin: 0; font-size: 15px; }
 .agent-does { margin: 2px 0 0; color: var(--muted); max-width: 52ch; }
 .agent-last { margin: 8px 0 0; font-size: 12.5px; color: var(--muted); }
@@ -422,9 +451,11 @@ menu { display: flex; justify-content: flex-end; gap: 8px; padding: 0; margin: 8
      than scrolling out of sight, so every section stays visible. */
   .sidebar {
     position: static; height: auto; overflow: visible;
-    border-right: 0; border-bottom: 1px solid var(--line);
+    border-right: 0; border-bottom: 1px solid #d3d8e1;
     gap: 10px; padding: 12px 16px;
   }
+  .brand { border-bottom: 0; padding: 0; }
+  #nav a[aria-current="page"]::before { display: none; }
   .nav-group { display: none; }
   #nav { display: flex; flex-wrap: wrap; gap: 4px; }
   #nav a { padding: 5px 10px; gap: 6px; white-space: nowrap; }
