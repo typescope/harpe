@@ -15,7 +15,7 @@ import harpe.ffi.tempfile
 import harpe.util.File
 import harpe.*
 import harpe.logging.*
-import harpe.models.logUsage
+import harpe.models.logReplied
 import harpe.testing.thisSuite
 import harpe.testing.suite
 import harpe.testing.test
@@ -56,7 +56,7 @@ private def withRecords(body: List[py.Dict] => Unit): Unit =
   jsonl.log("runs", "code" ~ "y", "exitCode" ~ 1)
   jsonl.log("tools", "name" ~ "read")
   jsonl.warn("harpe.test", "rate limited", "attempt" ~ 3)
-  with logger = jsonl in logUsage("anthropic", "claude-x", 100, 20)
+  with logger = jsonl in logReplied("anthropic", "claude-x", 100, 20, 0, 0)
   jsonl.close()
   body(readRecords(path))
 

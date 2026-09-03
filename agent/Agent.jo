@@ -228,6 +228,18 @@ section Agent
     | GaveUp(detail: String)
     | Stopped
 
+  //[ The engine's own categories for how it handled a model request
+    !
+    ! NOT the request itself: that is one `harpe.model` record per attempt,
+    ! written by the provider, which is the only party that knows which model
+    ! was asked (see `harpe.models.logFailed`). What is left here is the
+    ! decision the loop took about a failure it was handed — retry, or stop —
+    ! and neither is a fact about the request. Reading the two categories in
+    ! order gives the whole story: what was attempted, then what was decided.
+  //]
+  private def retryCategory: String  = "harpe.model.retry"
+  private def gaveUpCategory: String = "harpe.model.gaveUp"
+
   //[ Exponential backoff between retries: 1s, 2s, 4s, … capped at 30s.  //]
   private def backoffSeconds(attempt: Int): Float =
     var d = 1.0
@@ -279,7 +291,7 @@ section Agent
           break
 
         case Fatal(detail) =>
-          logger.error("harpe.model.request", detail)
+          logger.error(gaveUpCategory, detail, "retries" ~ 0)
           outcome = GaveUp(detail)
           break
 
@@ -287,13 +299,13 @@ section Agent
           interact.emit: TurnEvent.AssistantStreamReset
           attempt = attempt + 1
           if attempt > maxRetries then
-            logger.error("harpe.model.request", detail, "retries" ~ maxRetries)
+            logger.error(gaveUpCategory, detail, "retries" ~ maxRetries)
             outcome = GaveUp(detail)
             break
 
           else
             val delay = backoffSeconds(attempt)
-            logger.warn("harpe.model.request", detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
+            logger.warn(retryCategory, detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
             interact.emit: TurnEvent.TransientError(detail, delay)
             // pause returns true if cancellation fired during the backoff.
             if interact.pause(delay) then
@@ -304,13 +316,13 @@ section Agent
           interact.emit: TurnEvent.AssistantStreamReset
           attempt = attempt + 1
           if attempt > maxRetries then
-            logger.error("harpe.model.request", detail, "retries" ~ maxRetries)
+            logger.error(gaveUpCategory, detail, "retries" ~ maxRetries)
             outcome = GaveUp(detail)
             break
 
           else
             val delay = retryAfterSeconds
-            logger.warn("harpe.model.request", detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
+            logger.warn(retryCategory, detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
             interact.emit: TurnEvent.TransientError(detail, delay)
             // pause returns true if cancellation fired during the backoff.
             if interact.pause(delay) then

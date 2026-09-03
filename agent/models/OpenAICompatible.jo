@@ -175,7 +175,7 @@ private class CompatibleSession(
         else builtins.getattrOr(usage, "prompt_tokens_details", py.none)
 
       val cacheRead = if details.isNone then 0 else usageInt(details, "cached_tokens")
-      logUsage("openai-compatible", model, inTok, outTok, cacheRead)
+      logReplied("openai-compatible", model, inTok, outTok, cacheRead, cacheWriteTokens = 0)
 
       // Preserve the provider's complete assistant message, including unknown
       // extension fields. Failed requests never mutate `committed`.
@@ -185,7 +185,7 @@ private class CompatibleSession(
       committed = Some(messages)
 
       Model.Reply(CompatibleChat.parseResponse(response), new Usage(inTok, outTok))
-    case Err(err) => classifyError(err)
+    case Err(err) => classifyError(err, "openai-compatible", model)
 end
 
 private def compatibleCreate(

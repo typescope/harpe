@@ -1,11 +1,16 @@
 //[ Usage.jo
   !
-  ! Token-usage logging shared by the provider models. Each provider extracts the
-  ! counts from its own response shape and calls `logUsage`, which emits one
-  ! `harpe.model` event — same category and fields for every provider, so billing
-  ! and auditing can sum across them. Because a model reads the `logger` at reply
-  ! time (not when it was built), the event is stamped with the turn's session
-  ! context automatically.
+  ! One `harpe.model` record per attempt at asking the model, whatever came back.
+  !
+  ! ONE ATTEMPT, ONE RECORD, EMITTED WHERE THE FACTS ARE. `provider` and `model`
+  ! identify every record, so a request that failed is as attributable as one
+  ! that succeeded — `outcome` selects the rest. The provider emits both, being
+  ! the only party that knows which model it was talking to. What the ENGINE
+  ! knows — that it will retry, that it has given up — is its own decision and
+  ! its own record (`harpe.model.retry`, `harpe.model.gaveUp`).
+  !
+  ! Because a model reads the `logger` at reply time (not when it was built),
+  ! every record is stamped with the turn's session context automatically.
 //]
 
 namespace harpe.models
@@ -13,7 +18,10 @@ namespace harpe.models
 import harpe.logging.logger
 import harpe.ffi.builtins
 
-//[ Emit one `harpe.model` usage event for a completed model call.
+//[ The category every model attempt is recorded under. //]
+private[harpe] def modelCategory: String = "harpe.model"
+
+//[ Record an attempt that came back with a reply.
   !
   ! `inputTokens` is the TOTAL input the provider processed, cached tokens
   ! included, so it means the same thing on every provider and sums across them.
@@ -28,18 +36,38 @@ import harpe.ffi.builtins
   ! three are all parts of `inputTokens`, a price table applies the discounted
   ! rate to the cache fields and the base rate to the remainder.
 //]
-private[harpe] def logUsage(
+private[harpe] def logReplied(
     provider: String, model: String, inputTokens: Int, outputTokens: Int,
-    cacheReadTokens: Int = 0, cacheWriteTokens: Int = 0)
+    cacheReadTokens: Int, cacheWriteTokens: Int)
 : Unit receives logger =
   logger.log:
-    "harpe.model"
+    modelCategory
     "provider"         ~ provider
     "model"            ~ model
+    "outcome"          ~ "replied"
     "inputTokens"      ~ inputTokens
     "outputTokens"     ~ outputTokens
     "cacheReadTokens"  ~ cacheReadTokens
     "cacheWriteTokens" ~ cacheWriteTokens
+
+//[ Record an attempt that failed, with what the provider said about it
+  !
+  ! `status` is the HTTP status, or 0 for a failure that never reached the
+  ! server. `retryable` is the classification the engine acts on, recorded so a
+  ! log reader can see WHY a request was retried or abandoned without inferring
+  ! it from the status.
+//]
+private[harpe] def logFailed(
+    provider: String, model: String, error: String, status: Int, retryable: Bool)
+: Unit receives logger =
+  logger.error:
+    modelCategory
+    error
+    "provider"  ~ provider
+    "model"     ~ model
+    "outcome"   ~ "failed"
+    "status"    ~ status
+    "retryable" ~ retryable
 
 //[ An optional integer counter off a provider's `usage` object
   !

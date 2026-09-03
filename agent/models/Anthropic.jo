@@ -257,10 +257,10 @@ private class AnthropicSession(
       val cacheWrite = usageInt(u, "cache_creation_input_tokens")
       val inTok = usageInt(u, "input_tokens") + cacheRead + cacheWrite
       val outTok = u.output_tokens.asInt
-      logUsage("anthropic", model, inTok, outTok, cacheRead, cacheWrite)
+      logReplied("anthropic", model, inTok, outTok, cacheRead, cacheWrite)
       Reply(anthropicParseReply(response), new Usage(inTok, outTok))
 
-    case Err(err) => classifyError(err)
+    case Err(err) => classifyError(err, "anthropic", model)
 end
 
 //[ A user turn carrying tool_result blocks for `results`.

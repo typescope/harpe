@@ -252,10 +252,10 @@ private class OpenAIResponsesSession(
       val cacheWrite = if details.isNone then 0 else usageInt(details, "cache_write_tokens")
       val inTok = u.input_tokens.asInt
       val outTok = u.output_tokens.asInt
-      logUsage("openai", model, inTok, outTok, cacheRead, cacheWrite)
+      logReplied("openai", model, inTok, outTok, cacheRead, cacheWrite)
       Model.Reply(OpenAIResponses.parseResponse(response), new Usage(inTok, outTok))
 
-    case Err(err) => classifyError(err)
+    case Err(err) => classifyError(err, "openai", model)
 end
 
 //[ One `responses.create` call.

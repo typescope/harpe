@@ -5,6 +5,8 @@ namespace harpe.test.integration.anthropic.FailureTest
 import harpe.models.anthropic
 import harpe.models.Anthropic
 import harpe.logging.logger
+import harpe.logging.Logger
+import harpe.logging.Entry
 import harpe.testing.thisSuite
 import harpe.testing.suite
 import harpe.testing.test
@@ -19,6 +21,29 @@ private def failure(status: String, kind: String, message: String): ProviderFixt
     """
       {"type":"error","error":{"type":"\{kind}","message":"\{message}"}}
       """
+
+// Keeps the last `harpe.model` record, which is how one attempt at asking the
+// model is reported whatever came back.
+private class ModelRecords
+  view Logger
+
+  var provider: String = ""
+  var model: String = ""
+  var outcome: String = ""
+  var status: Int = 0
+  var retryable: Bool = false
+
+  def logEntry(entry: Entry): Unit =
+    if entry.category == "harpe.model" then
+      val d = Entry.toDict(entry)
+      provider = d.get("provider", "").asString
+      model = d.get("model", "").asString
+      outcome = d.get("outcome", "").asString
+      status = d.get("status", 0).asInt
+      retryable = d.get("retryable", false).asBool
+
+  def close(): Unit = pass
+end
 
 private def model(server: ProviderFixture.Server) =
   anthropic("test-key", "test-model", Anthropic.NoCache, timeoutSeconds = 2, baseUrl = server.origin)
@@ -51,6 +76,20 @@ def failureSuite(): Unit receives thisSuite, logger = suite: "failure", () =>
     ProviderFixture.withResponses: [failure("401 Unauthorized", "authentication_error", "bad key")], server =>
       val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectFatal()
       check("classified fatal", detail != "")
+
+  // A failed request must name the model that failed, the same way a successful
+  // one does — otherwise a wrong key is a 401 with nothing to attribute it to.
+  test: "a failed attempt records which model failed, and why", () =>
+    ProviderFixture.withResponses: [failure("401 Unauthorized", "authentication_error", "bad key")], server =>
+      val records = new ModelRecords
+      with logger = records in
+        val _ = ModelDriver.start(model(server), prompt = "Say hello.").expectFatal()
+
+      check("provider", records.provider == "anthropic")
+      check("model", records.model == "test-model")
+      check("outcome", records.outcome == "failed")
+      check("status", records.status == 401)
+      check("not retryable", !records.retryable)
 
   test: "a malformed stream is fatal", () =>
     ProviderFixture.withResponses: [ProviderFixture.sse("event: message_start\ndata: {not-json}")], server =>
