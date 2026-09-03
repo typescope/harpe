@@ -72,8 +72,8 @@ The viewer is one reader; the file is plain JSON lines, so `jq` is another:
 # every turn the user actually had, with its outcome
 jq -c 'select(.event|startswith("harpe.turn.request","harpe.turn.response"))' session.jsonl
 
-# what the agent ran, and whether it compiled
-jq -c 'select(.event=="harpe.tools.runCode") | {compiled, exitCode, runSeconds}' session.jsonl
+# what the agent ran, and how each program ended
+jq -c 'select(.event=="harpe.tools.runCode.ran") | {exitCode, runSeconds}' session.jsonl
 
 # token spend for the session
 jq -s 'map(select(.event=="harpe.model.replied")) | {calls: length, input: (map(.inputTokens)|add), output: (map(.outputTokens)|add)}' session.jsonl

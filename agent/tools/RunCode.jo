@@ -2,7 +2,7 @@
   !
   ! The `runCode` tool: compile the model's program against the agent sandbox
   ! and run it, capturing the result — timed and emitted as a
-  ! `harpe.tools.runCode` log entry to the caller's injected channel. This is
+  ! `harpe.tools.runCode.*` log entry to the caller's injected channel. This is
   ! the program-execution log, distinct from the conversational session history.
   ! The format and destination are the `Logger` backend's policy (see
   ! `harpe.logging`).
@@ -45,13 +45,18 @@ import harpe.logging.*
 private def shutilMod: py.Dynamic = py.module("shutil")
 private def tempfileMod: py.Dynamic = py.module("tempfile")
 
-//[ The log event for this tool's records — one program compile+run each
+//[ This tool's events — one per attempted program, naming how it ended
   !
-  ! Reverse-namespaced (namespace + tool name) so it is unique in the open set
-  ! and filterable by prefix. See the event convention on
-  ! `harpe.logging.Entry`.
+  ! Five outcomes, five names, because they do not carry the same fields: what
+  ! ended the attempt decides whether there is a `compileError`, an `exitCode`,
+  ! or only timings. `startswith("harpe.tools.runCode")` still reads every
+  ! program the agent tried. See the event convention on `harpe.logging.Entry`.
 //]
-private def runCodeEvent: String = "harpe.tools.runCode"
+private def compileTimedOutEvent: String  = "harpe.tools.runCode.compileTimedOut"
+private def compileFailedEvent: String    = "harpe.tools.runCode.compileFailed"
+private def timedOutEvent: String         = "harpe.tools.runCode.timedOut"
+private def approvalTimedOutEvent: String = "harpe.tools.runCode.approvalTimedOut"
+private def ranEvent: String              = "harpe.tools.runCode.ran"
 
 //[ The default: the driver grants the guest no configuration of its own. //]
 private def noGuestEnv: Map[String, String] = Map.empty[String, String]
@@ -177,8 +182,8 @@ private def replayAudit(path: String): Unit receives logger =
   ! the shared, read-only dependency libraries — so they never corrupt each
   ! other.
   !
-  ! Each run emits one `harpe.tools.runCode` `Entry` (code, and the outcome's
-  ! compile/run timings, output or error) to the ambient `logger` channel — read
+  ! Each run emits one `harpe.tools.runCode.*` `Entry` — the code, the timings
+  ! it got through, and whatever the outcome carries — to the `logger` channel, read
   ! at call time, so the turn's `Logging.withContext` tags reach it. Its format
   ! and destination are the `Logger` backend's policy — see
   ! `harpe.logging.Logging.withLogger`.
@@ -281,7 +286,7 @@ class RunCodeTool(
       code: String, donePath: String, runDir: String, guestEnv: Map[String, String],
       interact: Interact)
   : ToolOutcome receives logger =
-    // Each run emits one `harpe.tools.runCode` log entry — the program under test
+    // Each run emits one `harpe.tools.runCode.*` log entry — the program under test
     // plus the fields specific to how it ended — to the injected channel. What
     // becomes of the entry (format, destination) is the Logger backend's policy.
     val runSrc   = os.path.join(runDir, "Task.jo")
@@ -299,12 +304,9 @@ class RunCodeTool(
 
     if build.timedOut then
       logger.log:
-        runCodeEvent
+        compileTimedOutEvent
         "code"           ~ code
-        "compiled"       ~ false
         "compileSeconds" ~ compileSeconds
-        "timedOut"       ~ true
-        "phase"          ~ "compile"
       return new ToolOutcome:
         "The build timed out after \{buildTimeout}s."
         "build timed out · \{buildTimeout}s"
@@ -313,9 +315,8 @@ class RunCodeTool(
     if build.returnCode != 0 then
       val compileError = compilerErrorText(build.out, build.err)
       logger.log:
-        runCodeEvent
+        compileFailedEvent
         "code"           ~ code
-        "compiled"       ~ false
         "compileSeconds" ~ compileSeconds
         "compileError"   ~ compileError
       return new ToolOutcome:
@@ -389,13 +390,10 @@ class RunCodeTool(
 
     if run.timedOut then
       logger.log:
-        runCodeEvent
+        if run.pauseTimedOut then approvalTimedOutEvent else timedOutEvent
         "code"           ~ code
-        "compiled"       ~ true
         "compileSeconds" ~ compileSeconds
         "runSeconds"     ~ runSeconds
-        "timedOut"       ~ true
-        "phase"          ~ (if run.pauseTimedOut then "approval" else "run")
 
       if run.pauseTimedOut then
         return new ToolOutcome:
@@ -426,9 +424,8 @@ class RunCodeTool(
       else "ran · compiled \{compileSeconds}s, ran \{runSeconds}s"
 
     logger.log:
-      runCodeEvent
+      ranEvent
       "code"           ~ code
-      "compiled"       ~ true
       "compileSeconds" ~ compileSeconds
       "runSeconds"     ~ runSeconds
       "exitCode"       ~ runReturnCode

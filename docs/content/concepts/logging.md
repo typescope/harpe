@@ -69,17 +69,17 @@ The application owns the file layout. These examples use
 `logs/sessions/<session>.jsonl` as a representative path:
 
 ```json
-{"time":"2024-07-09T16:00:00.400000Z","event":"harpe.tools.runCode","code":"…","compiled":true,"exitCode":0,"compileSeconds":1.2,"runSeconds":0.3,"output":"…"}
+{"time":"2024-07-09T16:00:00.400000Z","event":"harpe.tools.runCode.ran","code":"…","exitCode":0,"compileSeconds":1.2,"runSeconds":0.3,"output":"…"}
 ```
 
 With events in a JSON file, read them with anything that speaks JSON — `jq` is quickest:
 
 ```sh
-# every runCode event, newest last
-jq 'select(.event=="harpe.tools.runCode")' logs/sessions/<session>.jsonl
+# every program the agent tried, newest last
+jq 'select(.event | startswith("harpe.tools.runCode"))' logs/sessions/<session>.jsonl
 
-# just the failures
-jq 'select(.event=="harpe.tools.runCode" and .compiled==false)' logs/sessions/<session>.jsonl
+# just the ones that did not compile
+jq 'select(.event=="harpe.tools.runCode.compileFailed")' logs/sessions/<session>.jsonl
 ```
 
 Wherever the events go, each has the same shape: an **`event`**, a **`time`**,
@@ -89,9 +89,14 @@ JSONL encodes `time` as an RFC 3339 UTC string. The backend-independent
 timestamp representation and indexes.
 The main framework events are:
 
-- **`harpe.tools.runCode`** — one per program the agent runs: `code`, `compiled`,
-  `compileSeconds`, and — depending on the outcome — `runSeconds`, `exitCode`,
-  `output`, or a `compileError`.
+- **`harpe.tools.runCode.ran`** — a program that compiled and ran: `code`,
+  `compileSeconds`, `runSeconds`, `exitCode`, `output`.
+- **`harpe.tools.runCode.compileFailed`** — it did not compile: `code`,
+  `compileSeconds`, `compileError`.
+- **`harpe.tools.runCode.compileTimedOut`** / **`.timedOut`** /
+  **`.approvalTimedOut`** — a clock ran out during the build, the run, or the
+  approval the run was waiting on. `startswith("harpe.tools.runCode")` reads
+  every program the agent tried, however it ended.
 - **`harpe.model.replied`** — one per attempt that came back with a reply:
   `provider`, `model`, `inputTokens`, `outputTokens`, `cacheReadTokens`,
   `cacheWriteTokens`. This is your token-usage feed for billing and auditing.
@@ -115,8 +120,8 @@ The main framework events are:
 
 `startswith("harpe.model")` reads the whole story of talking to a model — what
 was attempted, and what the engine decided about it.
-- **`harpe.tools.skills`** — reads and searches performed through the skill
-  tools.
+- **`harpe.tools.skills.read`** (`name`) and **`harpe.tools.skills.searched`**
+  (`query`) — content reached through the skill tools.
 - **`harpe.turn.*`** — conversation records written when the application uses a
   [Journal transcript](/concepts/transcript/).
 
