@@ -156,13 +156,13 @@ def transcriptSuite(): Unit receives thisSuite = suite: "session log", () =>
         answeredTurn(journal)
         val all = readRecords(path)
         check("five records", all.size == 5)
-        check("diagnostic category retained", all.get(2).get("category", "").asString == "myagent.debug")
+        check("diagnostic event retained", all.get(2).get("event", "").asString == "myagent.debug")
 
     test: "records the user message", () =>
       withJournal: (journal, path) =>
         answeredTurn(journal)
         val user = readRecords(path).get(0)
-        check("category", user.get("category", "").asString == "harpe.turn.started")
+        check("event", user.get("event", "").asString == "harpe.turn.started")
         check("role", user.get("role", "").asString == "user")
         check("text", user.get("text", "").asString == "hi")
         val timestamp = user.get("time", "").asString

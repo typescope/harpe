@@ -45,13 +45,13 @@ import harpe.logging.*
 private def shutilMod: py.Dynamic = py.module("shutil")
 private def tempfileMod: py.Dynamic = py.module("tempfile")
 
-//[ The log category for this tool's records — one program compile+run each
+//[ The log event for this tool's records — one program compile+run each
   !
   ! Reverse-namespaced (namespace + tool name) so it is unique in the open set
-  ! and filterable by prefix. See the category convention on
+  ! and filterable by prefix. See the event convention on
   ! `harpe.logging.Entry`.
 //]
-private def runCodeCategory: String = "harpe.tools.runCode"
+private def runCodeEvent: String = "harpe.tools.runCode"
 
 //[ The default: the driver grants the guest no configuration of its own. //]
 private def noGuestEnv: Map[String, String] = Map.empty[String, String]
@@ -299,7 +299,7 @@ class RunCodeTool(
 
     if build.timedOut then
       logger.log:
-        runCodeCategory
+        runCodeEvent
         "code"           ~ code
         "compiled"       ~ false
         "compileSeconds" ~ compileSeconds
@@ -313,7 +313,7 @@ class RunCodeTool(
     if build.returnCode != 0 then
       val compileError = compilerErrorText(build.out, build.err)
       logger.log:
-        runCodeCategory
+        runCodeEvent
         "code"           ~ code
         "compiled"       ~ false
         "compileSeconds" ~ compileSeconds
@@ -389,7 +389,7 @@ class RunCodeTool(
 
     if run.timedOut then
       logger.log:
-        runCodeCategory
+        runCodeEvent
         "code"           ~ code
         "compiled"       ~ true
         "compileSeconds" ~ compileSeconds
@@ -426,7 +426,7 @@ class RunCodeTool(
       else "ran · compiled \{compileSeconds}s, ran \{runSeconds}s"
 
     logger.log:
-      runCodeCategory
+      runCodeEvent
       "code"           ~ code
       "compiled"       ~ true
       "compileSeconds" ~ compileSeconds

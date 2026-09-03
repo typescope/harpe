@@ -6,8 +6,8 @@
   ! `logEntry`. Producers, which hold a `Logger` and call `log`, never change.
   !
   ! The framework ships `JsonlLogger` (see JsonlLogger.jo), which appends every
-  ! entry as one JSON line to a single file (`category` a field). Routing
-  ! entries to different targets by `category` is just another `Logger` impl a
+  ! entry as one JSON line to a single file (`event` a field). Routing
+  ! entries to different targets by `event` is just another `Logger` impl a
   ! driver can write, so none is provided.
   !
   ! Backends need not be thread-safe: `Logging.withLogger` installs them behind
@@ -26,26 +26,26 @@ import harpe.util.Clock
   ! resources at the end of the logging scope — `pass` if there are none).
 //]
 interface Logger
-  def log(category: String, fields: ..(String ~ Value)): Unit =
+  def log(event: String, fields: ..(String ~ Value)): Unit =
     var map = Map.empty[String, Value]
     for k ~ v in fields do map = map.add(k, v)
-    logEntry(new Entry(Clock.now(), category, map))
+    logEntry(new Entry(Clock.now(), event, map))
 
   //[ Log a diagnostic message at a severity — the reserved-key convention on `Entry`
     !
     ! `message` becomes the `info`/`warning`/`error` field. Any extra structured
     ! context goes in `fields`:
     !
-    ! logger.warn("harpe.model", "rate limited, retrying", "attempt" ~ 3)
+    ! logger.warn("harpe.models.retried", "rate limited, retrying", "attempt" ~ 3)
   //]
-  def info(category: String, message: String, fields: ..(String ~ Value)): Unit =
-    log(category, "info" ~ message, ..fields)
+  def info(event: String, message: String, fields: ..(String ~ Value)): Unit =
+    log(event, "info" ~ message, ..fields)
 
-  def warn(category: String, message: String, fields: ..(String ~ Value)): Unit =
-    log(category, "warning" ~ message, ..fields)
+  def warn(event: String, message: String, fields: ..(String ~ Value)): Unit =
+    log(event, "warning" ~ message, ..fields)
 
-  def error(category: String, message: String, fields: ..(String ~ Value)): Unit =
-    log(category, "error" ~ message, ..fields)
+  def error(event: String, message: String, fields: ..(String ~ Value)): Unit =
+    log(event, "error" ~ message, ..fields)
 
   def logEntry(entry: Entry): Unit
 

@@ -21,14 +21,14 @@ import harpe.Interact
 import harpe.Tool.*
 import harpe.logging.logger
 
-//[ The audit-log category for the skills tools
+//[ The audit-log event for the skills tools
   !
   ! One record per content read (`skillsRead`/`skillsSearch`), tagged by
-  ! `action`. Reverse-namespaced per the `harpe.logging.Entry` category
+  ! `action`. Reverse-namespaced per the `harpe.logging.Entry` event
   ! convention. A denied `..` traversal is recorded too (the requested `name` is
   ! logged before confinement is checked).
 //]
-private def skillsCategory: String = "harpe.tools.skills"
+private def skillsEvent: String = "harpe.tools.skills"
 
 //[ Collect (relativeName ~ fullPath) for every file under skillsDir.
   !
@@ -101,7 +101,7 @@ section SkillTools
   //[ One skill file's contents, confined to `skillsDir`. //]
   def read(skillsDir: String, skill: String): ToolOutcome receives logger =
     logger.log:
-      skillsCategory
+      skillsEvent
       "action" ~ "read"
       "name"   ~ skill
 
@@ -126,7 +126,7 @@ section SkillTools
   //[ Matching lines across every skill file under `skillsDir`, capped at `maxHits`. //]
   def search(skillsDir: String, query: String): ToolOutcome receives logger =
     logger.log:
-      skillsCategory
+      skillsEvent
       "action" ~ "search"
       "query"  ~ query
 

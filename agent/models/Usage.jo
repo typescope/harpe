@@ -1,14 +1,14 @@
 //[ Usage.jo
   !
-  ! One record per attempt at asking the model: `harpe.model.replied` when one
-  ! came back, `harpe.model.failed` when none did.
+  ! One record per attempt at asking the model: `harpe.models.replied` when one
+  ! came back, `harpe.models.failed` when none did.
   !
   ! EMITTED WHERE THE FACTS ARE. `provider` and `model` identify both, so a
   ! request that failed is as attributable as one that succeeded, and
-  ! `startswith("harpe.model")` reads the whole story. The provider writes them,
+  ! `startswith("harpe.models")` reads the whole story. The provider writes them,
   ! being the only party that knows which model it was talking to. What the
   ! ENGINE knows — that it will retry, that it has given up — is its own
-  ! decision under its own name (`harpe.model.retried`, `harpe.model.gaveUp`).
+  ! decision under its own name (`harpe.models.retried`, `harpe.models.gaveUp`).
   !
   ! Because a model reads the `logger` at reply time (not when it was built),
   ! every record is stamped with the turn's session context automatically.
@@ -20,10 +20,10 @@ import harpe.logging.logger
 import harpe.ffi.builtins
 
 //[ One attempt that came back with a reply. //]
-private[harpe] def repliedCategory: String = "harpe.model.replied"
+private[harpe] def repliedEvent: String = "harpe.models.replied"
 
 //[ One attempt the provider refused or could not complete. //]
-private[harpe] def failedCategory: String = "harpe.model.failed"
+private[harpe] def failedEvent: String = "harpe.models.failed"
 
 //[ Record an attempt that came back with a reply.
   !
@@ -45,7 +45,7 @@ private[harpe] def logReplied(
     cacheReadTokens: Int, cacheWriteTokens: Int)
 : Unit receives logger =
   logger.log:
-    repliedCategory
+    repliedEvent
     "provider"         ~ provider
     "model"            ~ model
     "inputTokens"      ~ inputTokens
@@ -64,7 +64,7 @@ private[harpe] def logFailed(
     provider: String, model: String, error: String, status: Int, retryable: Bool)
 : Unit receives logger =
   logger.error:
-    failedCategory
+    failedEvent
     error
     "provider"  ~ provider
     "model"     ~ model

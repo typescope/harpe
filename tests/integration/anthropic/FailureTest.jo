@@ -22,21 +22,21 @@ private def failure(status: String, kind: String, message: String): ProviderFixt
       {"type":"error","error":{"type":"\{kind}","message":"\{message}"}}
       """
 
-// Keeps the last `harpe.model.failed` record — how one attempt that produced no
+// Keeps the last `harpe.models.failed` record — how one attempt that produced no
 // reply is reported, and by whom.
 private class ModelRecords
   view Logger
 
-  var category: String = ""
+  var event: String = ""
   var provider: String = ""
   var model: String = ""
   var status: Int = 0
   var retryable: Bool = false
 
   def logEntry(entry: Entry): Unit =
-    if entry.category == "harpe.model.failed" then
+    if entry.event == "harpe.models.failed" then
       val d = Entry.toDict(entry)
-      category = entry.category
+      event = entry.event
       provider = d.get("provider", "").asString
       model = d.get("model", "").asString
       status = d.get("status", 0).asInt
@@ -85,7 +85,7 @@ def failureSuite(): Unit receives thisSuite, logger = suite: "failure", () =>
       with logger = records in
         val _ = ModelDriver.start(model(server), prompt = "Say hello.").expectFatal()
 
-      check("category", records.category == "harpe.model.failed")
+      check("event", records.event == "harpe.models.failed")
       check("provider", records.provider == "anthropic")
       check("model", records.model == "test-model")
       check("status", records.status == 401)

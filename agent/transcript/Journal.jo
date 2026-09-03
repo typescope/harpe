@@ -56,7 +56,7 @@ class Journal(log: Logger)
     ! `records` yields nothing for it.
   //]
   def request(data: Value): Unit =
-    log.log(Journal.requestCategory, "data" ~ data)
+    log.log(Journal.requestEvent, "data" ~ data)
 
   //[ Close the bracket opened by `request`.
     !
@@ -66,10 +66,10 @@ class Journal(log: Logger)
     ! with another turn's bracket.
   //]
   def response(data: Value): Unit =
-    log.log(Journal.responseCategory, "data" ~ data)
+    log.log(Journal.responseEvent, "data" ~ data)
 
-  private def emit(category: String, message: Message): Unit =
-    log.logEntry(new Entry(Clock.now(), category, messageFields(message)))
+  private def emit(event: String, message: Message): Unit =
+    log.logEntry(new Entry(Clock.now(), event, messageFields(message)))
 
 
   private def messageFields(message: Message): Map[String, Value] =
@@ -137,8 +137,8 @@ section Journal
 
   def maxResumeChars: Int = 1000000
 
-  def requestCategory: String  = "harpe.turn.request"
-  def responseCategory: String = "harpe.turn.response"
+  def requestEvent: String  = "harpe.turn.request"
+  def responseEvent: String = "harpe.turn.response"
 
   //[ Load resumable model history from an existing JSONL journal.
     !
@@ -187,7 +187,7 @@ section Journal
     var span: List[Entry] = []
 
     for entry in entries do
-      if entry.category == requestCategory then
+      if entry.event == requestEvent then
         open = true
         request = entry.fields.getOrElse("data", "")
         span = []
@@ -195,7 +195,7 @@ section Journal
       // Outside a bracket every record is machinery.
       else if !open then pass
 
-      else if entry.category == responseCategory then
+      else if entry.event == responseEvent then
         // No turn under the bracket means the process died before `ask` was
         // ever reached. Nothing was said, so there is nothing to show.
         match turnOf(span)
@@ -231,16 +231,16 @@ section Journal
 
     for entry in entries do
       // Once the turn has ended, later engine records are not its own.
-      if entry.category == "harpe.turn.started" && data is None then
+      if entry.event == "harpe.turn.started" && data is None then
         depth = depth + 1
         if depth == 1 then
           user = Some(messageFromDict(Entry.toDict(entry)))
           pending = []
 
-      else if entry.category == "harpe.turn.message" && depth == 1 then
+      else if entry.event == "harpe.turn.message" && depth == 1 then
         pending = pending + messageFromDict(Entry.toDict(entry))
 
-      else if isTerminator(entry.category) && depth > 0 then
+      else if isTerminator(entry.event) && depth > 0 then
         depth = depth - 1
         if depth == 0 then
           match user
@@ -256,14 +256,14 @@ section Journal
       case Some(message) => TurnData(message, pending, TurnResult.Interrupted)
       case None          => None
 
-  private def isTerminator(category: String): Bool =
-    category == "harpe.turn.answered"
-      || category == "harpe.turn.interrupted"
-      || category == "harpe.turn.failed"
+  private def isTerminator(event: String): Bool =
+    event == "harpe.turn.answered"
+      || event == "harpe.turn.interrupted"
+      || event == "harpe.turn.failed"
 
   private def turnFrom(user: Message, pending: List[Message], terminator: Entry): TurnData =
-    if terminator.category == "harpe.turn.answered" then TurnData(user, pending, TurnResult.Success)
-    else if terminator.category == "harpe.turn.interrupted" then TurnData(user, [], TurnResult.Interrupted)
+    if terminator.event == "harpe.turn.answered" then TurnData(user, pending, TurnResult.Success)
+    else if terminator.event == "harpe.turn.interrupted" then TurnData(user, [], TurnResult.Interrupted)
     else TurnData(user, [], TurnResult.Failed(Entry.toDict(terminator).get("error", "").asString))
 
   //[ Derive model history from the transcript

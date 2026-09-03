@@ -55,13 +55,13 @@ same infrastructure.
 ## Billing and accounting
 
 Harpe does not calculate prices or issue invoices. Built-in models emit one
-`harpe.model` event per call with the provider, model, input tokens, output
+`harpe.models.replied` event per call with the provider, model, input tokens, output
 tokens, and session context. Use a durable [Logger](/concepts/logging/) to
 aggregate these events by customer and apply the relevant price table.
 
 For other billable work, emit structured events from trusted tools and
 capability implementations. Record the units consumed, provider cost, and
-customer context under a stable category. See
+customer context under a stable event name. See
 [Building usage, billing, and stats](/concepts/logging/#building-usage-billing-and-stats)
 for offline aggregation and live metering patterns.
 

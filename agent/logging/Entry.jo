@@ -23,51 +23,57 @@ import harpe.ffi.json
 import harpe.util.Clock
 import harpe.util.File
 
-//[ A log record: when it happened (`time`), its `category`, and named `fields`.
+//[ A log record: when it happened (`time`), the `event` it is, and named `fields`.
   !
-  ! CATEGORY CONVENTION. A category is a stable, dotted, reverse-namespaced
-  ! identifier for the KIND of record, and its LAST segment names WHAT HAPPENED:
-  ! `harpe.turn.started`, `harpe.model.failed`. Everything before that segment is
+  ! EVENT CONVENTION. A record IS an event, and `event` is its name: a stable,
+  ! dotted, reverse-namespaced identifier whose LAST segment says WHAT HAPPENED —
+  ! `harpe.turn.started`, `harpe.models.failed`. Everything before that segment is
   ! a filter unit, so a consumer reads one subtree with
-  ! `jq 'select(.category | startswith("harpe.model"))'` — every record about
+  ! `jq 'select(.event | startswith("harpe.models"))'` — every record about
   ! talking to a model, whatever the outcome — and the open set stays
   ! collision-free (a third-party tool cannot clash with a framework one).
   !
-  ! ONE CATEGORY, ONE FIELD SHAPE. The category is the record's schema tag, so
-  ! two records carrying different fields are two events and take two names. A
+  ! ONE NAME, ONE FIELD SHAPE. The name is the record's schema tag, so two
+  ! records carrying different fields are two events and take two names. A
   ! discriminator field standing in for that — an `outcome`, a `phase` — means
   ! the name stopped one segment short.
   !
-  ! Each producer owns its category and defines it once as a named constant (see
-  ! `runCode`'s `runCodeCategory`). Derive it from the producer's namespace, but
-  ! then keep it STABLE: downstream consumers filter on it, so it is a data
+  ! Each producer owns its event names and defines each once as a named constant
+  ! (see `runCode`'s `runCodeEvent`). DERIVE THE PREFIX FROM THE PRODUCER'S
+  ! NAMESPACE — `harpe.models` writes `harpe.models.failed` — so the open set
+  ! stays collision-free without anyone inventing a scheme. Where a producer's
+  ! namespace names nothing useful, the prefix follows the SUBJECT instead: the
+  ! turn engine sits in the bare root `harpe`, and writes `harpe.models.retried`
+  ! for what it decided about a model request.
+  !
+  ! Then keep the name STABLE: downstream consumers filter on it, so it is a data
   ! contract — not something to re-tie to the code on every refactor.
   !
   ! SEVERITY CONVENTION (optional). Most records are pure data — the outcome lives
-  ! in the fields (`"compiled" ~ false`) or the category, so they carry NO
+  ! in the fields (`"compiled" ~ false`) or the name, so they carry NO
   ! severity. A record that instead has a human-facing diagnostic message uses ONE
   ! reserved field key — `"info"`, `"warning"`, or `"error"` — whose value is that
   ! message. The `Logger.info` / `warn` / `error` helpers write it:
   !
-  !     logger.warn("harpe.model", "rate limited, retrying", "attempt" ~ 3)
+  !     logger.warn("harpe.models.retried", "rate limited, retrying", "attempt" ~ 3)
   !
   ! The three keys are reserved for this and mutually exclusive (structured context
   ! goes in other fields — note `runCode` uses `"compileError"`, not `"error"`).
   ! Filter by key existence: `jq 'select(has("error"))'`, or
   ! `select(has("warning") or has("error"))` for warn-and-up.
 //]
-class Entry(time: Float, category: String, fields: Map[String, Value])
+class Entry(time: Float, event: String, fields: Map[String, Value])
 
 section Entry
   //[ An entry as a JSON-able dict
     !
-    ! `time`, `category`, then its fields (each `Value` unwrapped to its
+    ! `time`, `event`, then its fields (each `Value` unwrapped to its
     ! underlying host value. A nested map becomes a nested object).
     !
     ! `JsonlLogger` serializes with it.
   //]
   def toDict(entry: Entry): py.Dict =
-    val d = py.dict("time" ~ Clock.toRfc3339(entry.time), "category" ~ entry.category)
+    val d = py.dict("time" ~ Clock.toRfc3339(entry.time), "event" ~ entry.event)
     for k ~ v in entry.fields.toList do d.set(k, Value.toJson(v))
     d
 
@@ -78,15 +84,15 @@ section Entry
   //]
   def fromDict(d: py.Dict): Entry =
     val timestamp = Clock.fromRfc3339(d.get("time", "").asString)
-    val category = d.get("category", "").asString
+    val event = d.get("event", "").asString
 
     var fields = Map.empty[String, Value]
     for k in py.iter(d.keys()) do
       val key = k.asString
-      if key != "time" && key != "category" then
+      if key != "time" && key != "event" then
         fields = fields.add(key, Value.fromJson(d.get(key)))
 
-    new Entry(timestamp, category, fields)
+    new Entry(timestamp, event, fields)
 
   //[ Every entry in the JSONL file at `path`, in the order written
     !

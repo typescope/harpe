@@ -228,17 +228,21 @@ section Agent
     | GaveUp(detail: String)
     | Stopped
 
-  //[ The engine's own categories for how it handled a model request
+  //[ The engine's own events for how it handled a model request
     !
-    ! NOT the attempt itself: that is `harpe.model.replied` or
-    ! `harpe.model.failed`, written by the provider, which is the only party
+    ! NOT the attempt itself: that is `harpe.models.replied` or
+    ! `harpe.models.failed`, written by the provider, which is the only party
     ! that knows which model was asked. What is left here is the
     ! decision the loop took about a failure it was handed — retry, or stop —
-    ! and neither is a fact about the request. Reading the two categories in
-    ! order gives the whole story: what was attempted, then what was decided.
+    ! and neither is a fact about the request. Reading the subtree in order
+    ! gives the whole story: what was attempted, then what was decided.
+    !
+    ! Prefixed `harpe.models` for the SUBJECT rather than this file's namespace,
+    ! which is the bare root `harpe` and would name nothing. The engine is the
+    ! only producer where the two differ.
   //]
-  private def retryCategory: String  = "harpe.model.retried"
-  private def gaveUpCategory: String = "harpe.model.gaveUp"
+  private def retryEvent: String  = "harpe.models.retried"
+  private def gaveUpEvent: String = "harpe.models.gaveUp"
 
   //[ Exponential backoff between retries: 1s, 2s, 4s, … capped at 30s.  //]
   private def backoffSeconds(attempt: Int): Float =
@@ -291,7 +295,7 @@ section Agent
           break
 
         case Fatal(detail) =>
-          logger.error(gaveUpCategory, detail, "retries" ~ 0)
+          logger.error(gaveUpEvent, detail, "retries" ~ 0)
           outcome = GaveUp(detail)
           break
 
@@ -299,13 +303,13 @@ section Agent
           interact.emit: TurnEvent.AssistantStreamReset
           attempt = attempt + 1
           if attempt > maxRetries then
-            logger.error(gaveUpCategory, detail, "retries" ~ maxRetries)
+            logger.error(gaveUpEvent, detail, "retries" ~ maxRetries)
             outcome = GaveUp(detail)
             break
 
           else
             val delay = backoffSeconds(attempt)
-            logger.warn(retryCategory, detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
+            logger.warn(retryEvent, detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
             interact.emit: TurnEvent.TransientError(detail, delay)
             // pause returns true if cancellation fired during the backoff.
             if interact.pause(delay) then
@@ -316,13 +320,13 @@ section Agent
           interact.emit: TurnEvent.AssistantStreamReset
           attempt = attempt + 1
           if attempt > maxRetries then
-            logger.error(gaveUpCategory, detail, "retries" ~ maxRetries)
+            logger.error(gaveUpEvent, detail, "retries" ~ maxRetries)
             outcome = GaveUp(detail)
             break
 
           else
             val delay = retryAfterSeconds
-            logger.warn(retryCategory, detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
+            logger.warn(retryEvent, detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
             interact.emit: TurnEvent.TransientError(detail, delay)
             // pause returns true if cancellation fired during the backoff.
             if interact.pause(delay) then

@@ -103,7 +103,7 @@ private class CaptureLogger
   var events: List[String] = []
 
   def logEntry(entry: Entry): Unit =
-    if entry.category == "harpe.turn.message" then
+    if entry.event == "harpe.turn.message" then
       val d = Entry.toDict(entry)
       val role = d.get("role", "").asString
       if role == "assistant" && d.get("calls", py.list()).cast[py.List].size > 0 then
@@ -113,7 +113,7 @@ private class CaptureLogger
       else
         events = events + role
     else
-      events = events + entry.category
+      events = events + entry.event
 
   def close(): Unit = pass
 end
