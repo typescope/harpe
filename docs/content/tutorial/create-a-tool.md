@@ -66,7 +66,7 @@ def lookUp(city: String, units: String): ToolOutcome =
 ```
 
 This tutorial returns sample weather so the example has no external dependency.
-In an application, this method can call your weather client, database, or other
+In a real application, this method can call your weather client, database, or other
 service.
 
 A `ToolOutcome` has four fields:

@@ -3,8 +3,8 @@ title = "Create a Flight Booking Agent"
 +++
 The flight booking example is a web app, named **Sky**, that searches for
 flights and places orders through the [Duffel](https://duffel.com/docs) API. It
-is the example to read for one reason above the others: booking is an
-irreversible action, so the capability that performs it asks a human first.
+shows how irreversible actions like booking can pop out for human approval easily.
+There's no way for the generated code to skip approval step.
 
 Everything runs against Duffel's test mode. No real flights are booked and no
 money is charged.

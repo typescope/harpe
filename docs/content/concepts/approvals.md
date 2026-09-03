@@ -5,10 +5,7 @@ Human approval is a human-in-the-loop check before an agent performs a specific
 operation. An agent might prepare a payment, for example, while every transfer
 still requires confirmation.
 
-Approval is an application interaction. The request does not become a message
-for the model, and the model cannot approve its own action. The code responsible
-for the operation waits for the user's decision and performs the effect only
-when the decision is `Approved`.
+Approval is an application interaction. Unlike regular model prompt confirmation, the request does not become a message for the model, and the model cannot approve its own action. The code responsible for the operation waits for the user's decision and performs the effect only when the decision is `Approved`.
 
 ## Where approval happens
 
@@ -19,11 +16,8 @@ code. Harpe supports approval in both paths:
 
 A host-side tool asks through the turn's `Interact`. A trusted code-mode
 capability asks through `Approvals`. The `runCode` broker carries that request
-back to the same `Interact` used by the turn.
-
-In both cases, put the approval check in the trusted code that performs the
-effect. A prompt may tell the model to ask first, but a prompt is not an
-enforcement boundary.
+back to the same `Interact` used by the turn. Both cases put the approval check in the trusted code that performs the
+effect.
 
 ## Approval from a tool
 
@@ -125,7 +119,7 @@ interaction.
 
 Approval remains outside the model conversation in both paths. It does not
 consume model context or appear in the transcript when a conversation is
-resumed. An application may still log requests and decisions for auditing.
+resumed. An application can still log requests and decisions for auditing.
 
 ## Interaction and timeouts
 
@@ -140,8 +134,6 @@ from rejection because the user never made a decision.
 For generated code, `runCode` also has an approval deadline as a watchdog. Set
 it slightly longer than the interaction deadline. This prevents a broken
 interaction implementation from leaving the sandbox process waiting forever.
-Time spent waiting for approval does not consume the generated program's
-execution budget.
 
 Harpe approval is synchronous. The tool handler or generated program remains
 active while it waits. An approval that may take hours, involve another person,
