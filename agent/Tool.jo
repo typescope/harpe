@@ -112,9 +112,10 @@ section Tool
   union ParamType = StrParam | IntParam | BoolParam | NumParam | StrListParam
     //[ This type as a JSON-schema fragment.
       !
-      ! A fragment rather than a type string because an array is not one: it
-      ! carries the `items` schema its elements are checked against. Shared by
-      ! all provider impls so each renders tool specs without duplicating it.
+      ! A fragment rather than a type string because `StrListParam` is different.
+      !
+      ! Any change of this method should make sure that the schema is portable
+      ! among different model providers.
     //]
     def schema: py.Dict =
       match this
