@@ -8,7 +8,7 @@ Telegram-compatible markdown text.
 ## Create the project
 
 ```sh
-jo new my-agent --template typescope/agents:telegram
+jo new my-agent --template typescope/harpe:telegram
 cd my-agent
 pip install -r requirements.txt
 cp .env.example .env

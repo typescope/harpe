@@ -1,0 +1,139 @@
+//[ Driver.jo
+  !
+  ! What the end-to-end suite needs before it can drive anything: the built
+  ! agent, a home for it to run in, an environment pointing it at a scripted
+  ! model, and a way to kill it afterwards.
+  !
+  ! The agent is the one in the directory above this suite, built through its own
+  ! `jo.toml` against the published packages — the same way a user builds it. That
+  ! is the only layout there is here, which is why nothing in this file chooses
+  ! between two of them.
+//]
+
+namespace harpe.web.tests
+
+import harpe.ffi.os
+import harpe.ffi.glob
+import harpe.ffi.signal
+import harpe.util.File
+import harpe.util.Process
+
+section Driver
+  //[ The agent's directory — the one holding `jo.toml`, `src/`, and this suite.
+    !
+    ! `jo run tests` is invoked from there, so it is simply the working
+    ! directory. Asserting on `jo.toml` turns "run from somewhere else" into a
+    ! sentence rather than a confusing build failure later.
+  //]
+  def agentHome(): String =
+    val here = os.path.abspath(".")
+    assert: os.path.isfile(os.path.join(here, "jo.toml")),
+      "e2e: no jo.toml here — run this suite from the agent's directory"
+    here
+
+  //[ The built agent and the sandbox guest compiled alongside it
+    !
+    ! This is the sole owner of build layout: callers ask it to build, find its
+    ! executable, or install its guest record into an isolated agent home.
+  //]
+  class Application(root: String, name: String)
+
+    //[ A file or directory shipped by this agent. //]
+    def path(relative: String): String = os.path.join(root, relative)
+
+    def build(): Unit =
+      // One build per process, however many scenarios ask for it.
+      val memo = "HARPE_TEST_E2E_BUILT_" + name
+      if os.getenv(memo, "") != root then
+        buildOne(root, "agent")
+        buildOne(os.path.join(root, "sandbox"), "guest")
+        os.environ.set(memo, root)
+
+    //[ The newest built executable across compiler versions. //]
+    def executable: String =
+      newestMatch:
+        os.path.join(root, ".build/agent", "*/target/*.py")
+        "built " + name
+
+    //[ Install the invocation record `runCode` needs into an agent home
+      !
+      ! The record contains absolute paths to its prebuilt libraries. `runCode`
+      ! replaces its source, output, and SAST arguments, so no other target file
+      ! is needed in the home.
+    //]
+    def installGuest(home: String): Unit =
+      val record = newestMatch:
+        os.path.join(root, "sandbox/.build/guest", "*/target/*.py.done")
+        "built sandbox guest"
+
+      val target = os.path.dirname(record)
+      val version = os.path.basename(os.path.dirname(target))
+      val installed = os.path.join(home, "sandbox/.build/guest", version, "target")
+      File.ensureDir(installed)
+      py.module("shutil").copy2(record, os.path.join(installed, os.path.basename(record)))
+
+    private def buildOne(specDir: String, module: String): Unit =
+      val built = Process.runCapped:
+        py.list("jo", "build", module)
+        300.0
+        cwd = specDir
+
+      assert: !built.timedOut && built.returnCode == 0,
+        "e2e: failed to build \{module} for \{name}:\n\{built.err}"
+  end // application
+
+  //[ The agent this suite belongs to. //]
+  def application(): Application =
+    val root = agentHome()
+    new Application(root, os.path.basename(root))
+
+  //[ The one file matching `paths`, or the newest when a stale build lingers
+    !
+    ! Build outputs are keyed by compiler version, so the path is discovered
+    ! rather than spelled out — and an older version's leftovers are ignored
+    ! rather than picked at random.
+  //]
+  def newestMatch(paths: String, what: String): String =
+    var newest = ""
+    var newestTime = 0.0
+    for candidate in glob.glob(paths, recursive = true) do
+      val path = candidate.asString
+      val modified = os.path.getmtime(path)
+      if modified > newestTime then
+        newest = path
+        newestTime = modified
+
+    assert: newest != "", "e2e: no \{what} found at \{paths}"
+    newest
+
+  //[ The child's environment: this process's, plus the scripted model
+    !
+    ! `OPENAI_API_KEY` selects the OpenAI branch of `Model.default` and
+    ! `OPENAI_BASE_URL` points it at the fixture, so the agent's own model
+    ! selection runs — no suite constructs a `Model` for it. Both are set rather
+    ! than merely inherited, so a developer's real keys in the ambient
+    ! environment cannot reach the network from a test run.
+  //]
+  def modelEnv(modelBaseUrl: String): py.Dict =
+    val env = py.module("os").environ.copy().cast[py.Dict]
+    env.set("OPENAI_API_KEY", "e2e-fixture-key")
+    env.set("OPENAI_BASE_URL", modelBaseUrl)
+    env.set("MODEL", "test-model")
+    // So a failure report shows everything the agent had printed by then.
+    env.set("PYTHONUNBUFFERED", "1")
+    env
+
+  //[ Kill the process group, so nothing the agent spawned outlives the test
+    !
+    ! An agent mid-turn owns a compiler or a guest process, and those are its
+    ! children — killing the leader alone would leave them running.
+  //]
+  def terminate(proc: py.Dynamic): Unit =
+    val _ = py.try: os.killpg(os.getpgid(proc.pid.asInt), signal.SIGKILL)
+    val _ = py.try: proc.wait(timeout = 5.0)
+
+  //[ Discard a scenario's home, once it has nothing left to say. //]
+  def discardHome(home: String): Unit =
+    val _ = py.try: py.module("shutil").rmtree(home)
+    pass
+end

@@ -1,0 +1,146 @@
+//[ TurnView.jo
+  !
+  ! One turn as the chat page renders it.
+  !
+  ! `Journal.TurnRecord` is the whole input: what the driver bracketed the turn with, and
+  ! the engine's own account of what happened in between. A turn that just
+  ! finished and a turn reloaded a week later go through this one function with
+  ! the same inputs, so the live view cannot drift from the persisted one.
+  !
+  ! WHAT COMES FROM WHERE. The high-level input and output come from the bracket:
+  ! the message and the files the user uploaded from `request`, the files the
+  ! agent delivered from `response`. The driver knows those as facts at the time
+  ! they happen, so the page never has to infer them.
+  !
+  ! Everything in between is recovered from `data` — the reply text, and the
+  ! `runCode` programs as `steps` (code paired with its output by call id). That
+  ! traffic is already in the journal in full, so copying any of it into the
+  ! bracket would only create a second version to keep in sync.
+//]
+
+namespace harpe.web
+
+import harpe.ffi.os
+import harpe.util.File
+
+import harpe.TurnData
+import harpe.transcript.Journal
+import harpe.logging.Value
+import harpe.Model.*
+import harpe.turns.*
+
+section TurnView
+  //[ A turn as the page's message rows
+    !
+    ! The user's message, the agent's reply, and an error row for a turn that
+    ! failed. `dataDir` is the session's data directory, used to resolve delivered
+    ! files (`None` if it does not exist).
+  //]
+  def rows(record: Journal.TurnRecord, dataDir: Option[String]): py.List =
+    val arr = py.list()
+
+    arr.append: py.dict:
+      "role" ~ "user"
+      "text" ~ requestText(record.request)
+      "received" ~ requestFiles(record.request)
+
+    val turn = record.data
+    val steps = py.list()      // this turn's {code, output} runCode steps
+    val pending = py.dict()    // runCode call id -> program, awaiting its result
+
+    for m in turn.messages do
+      if m is Assistant(_, calls) then
+        for c in calls if c.name == "runCode" do
+          pending.set(c.id, c.input.string("code"))
+
+      else if m is ToolResults(results) then
+        for r in results if pending.contains(r.id) do
+          steps.append: py.dict("code" ~ pending.get(r.id).asString, "output" ~ r.content)
+
+    // One row per thing the agent said, each carrying whatever it delivered in
+    // the same breath. The code trace rides on the first, where the work began.
+    if turn.result is TurnResult.Success then
+      var trace = steps
+      for part in items(record.response, "reply") do
+        // Files resolved at render time, not when the delivery was recorded, so
+        // one that has since vanished still shows as a muted card.
+        val sent = py.list()
+        for name in items(part, "files") do
+          sent.append: sentFileJson(dataDir, asString(name))
+
+        arr.append: py.dict:
+          "role" ~ "agent"
+          "text" ~ asString(field(part, "text"))
+          "steps" ~ trace
+          "sent" ~ sent
+
+        trace = py.list()
+
+    if turn.result is TurnResult.Failed(detail) then
+      val message = if detail == "" then "Please try again." else detail
+      arr.append: py.dict("role" ~ "error", "text" ~ message)
+
+    arr
+
+  //[ One field out of a bracket payload
+    !
+    ! A payload is the driver's own, but it has been through JSON, so every read
+    ! here tolerates a missing key or an unexpected shape rather than failing a
+    ! whole page over one malformed record.
+  //]
+  private def field(payload: Value, key: String): Value =
+    match payload
+    case m: Map[String, Value] => m.getOrElse(key, "")
+    case _                     => ""
+
+  //[ The message the user typed, out of a turn's opening payload. //]
+  def requestText(request: Value): String = asString(field(request, "text"))
+
+  //[ The files that arrived with it, as JSON cards.
+    !
+    ! The same list for a live pending turn and a reloaded one, so the page
+    ! renders an in-flight upload exactly as it will render it afterwards.
+  //]
+  def requestFiles(request: Value): py.List =
+    val arr = py.list()
+    for f in items(request, "files") do arr.append(Value.toJson(f))
+    arr
+
+  private def items(payload: Value, key: String): List[Value] =
+    match field(payload, key)
+    case xs: List[Value] => xs
+    case _               => []
+
+  private def asString(v: Value): String =
+    match v
+    case s: String => s
+    case _         => ""
+
+  //[ The card metadata for one `sendFile`d file
+    !
+    ! If the name (reduced to a basename) still resolves to a real file in `dir`,
+    ! returns `{name, size, mime}`. Otherwise `{name, missing: true}`, so a
+    ! delivered-then-vanished file is shown as a missing card rather than dropped.
+  //]
+  def sentFileJson(dir: Option[String], fileName: String): py.Dict =
+    val base = os.path.basename(fileName.replace("\\", "/"))
+    val name = if base == "" || base == "." || base == ".." then "" else base
+
+    val found: Option[String] =
+      match dir
+      case Some(d) =>
+        val p = os.path.join(d, name)
+        if name != "" && os.path.isfile(p) then Some(p) else None
+
+      case None => None
+
+    match found
+    case Some(p) =>
+      py.dict(
+        "name" ~ name,
+        "size" ~ os.path.getsize(p),
+        "mime" ~ File.mimeType(name).getOrElse("application/octet-stream"))
+
+    case None =>
+      py.dict("name" ~ (if name != "" then name else fileName), "missing" ~ true)
+end

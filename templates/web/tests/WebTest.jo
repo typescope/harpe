@@ -1,0 +1,466 @@
+//[ WebTest.jo
+  !
+  ! The web agent's workflows, end to end: a real build of `web/` in its own
+  ! process, driven over HTTP the way the chat page drives it, answering to a
+  ! scripted model.
+  !
+  ! WHAT THESE COVER that the unit and provider suites cannot. Every layer below
+  ! is already tested in isolation — the turn engine against a scripted
+  ! responder, each provider against the fixture, the tools against their own
+  ! inputs. What none of them touch is the driver's own wiring: that a message
+  ! posted to a socket mints a session, reaches the engine, streams back as the
+  ! events the page renders, lands in a journal, and comes back the same way
+  ! after a reload. That wiring is most of what the `web` template ships, and it
+  ! is what breaks when the framework moves underneath it.
+  !
+  ! WHAT THEY DELIBERATELY DO NOT COVER. The browser: `assets/app.js` renders
+  ! these events into the DOM, and asserting on that needs a browser rather than
+  ! a socket. And `/api/approval`, which needs a program that asks for one
+  ! mid-run — worth adding, and a scenario of its own.
+  !
+  ! Each scenario declares the model's answers up front, in the order the turn
+  ! will ask for them. Read them as the agent's half of a conversation whose
+  ! other half is the requests below.
+//]
+
+namespace harpe.web.tests.WebTest
+
+import harpe.ffi.json
+import harpe.ffi.os
+import harpe.util.File
+
+import harpe.testing.thisSuite
+import harpe.testing.suite
+import harpe.testing.test
+import harpe.testing.check
+import harpe.testing.checkEquals
+import harpe.web.tests.ProviderFixture
+import harpe.web.tests.WebAgent
+import harpe.web.tests.ModelScript
+import harpe.web.tests.Rest
+import harpe.web.tests.Events
+import harpe.web.tests.Driver
+
+//[ An agent whose model is never asked anything — for the routes that answer alone. //]
+private def withIdleAgent(scenario: WebAgent.Agent => Unit): Unit =
+  ProviderFixture.withResponses: [], server =>
+    WebAgent.withAgent(server.baseUrl, scenario)
+
+//[ A session's persisted conversation, as the page reloads it. //]
+private def history(agent: WebAgent.Agent, session: String): py.Dict =
+  Rest.get(agent, Rest.url("/api/history", py.dict("session" ~ session))).json
+
+//[ One row of a message list (live or reloaded), by position. //]
+private def row(rows: py.List, index: Int): py.Dict = rows.get(index).cast[py.Dict]
+
+private def rowText(rows: py.List, index: Int): String = row(rows, index).get("text", "").asString
+
+//[ The files a session currently holds, newest first. //]
+private def files(agent: WebAgent.Agent, session: String): py.List =
+  Rest.get(agent, Rest.url("/api/files", py.dict("session" ~ session)))
+    .json.get("files", py.list()).cast[py.List]
+
+//[ Everything one request carried, as text — for asking whether a value reached the model. //]
+private def requestText(server: ProviderFixture.Server, index: Int): String =
+  json.dumps(server.recorded(index).jsonBody)
+
+def webSuite(): Unit receives thisSuite = suite: "web", () =>
+  thisSuite.parallel = true
+  thisSuite.beforeSuite = () => Driver.application().build()
+
+  test: "serves the chat page, its assets, and the agent's name", () =>
+    withIdleAgent: agent =>
+      val page = Rest.get(agent, "/")
+      check("page 200", page.status == 200)
+      check("serves the agent's own index.html", page.text.contains("id=\"messages\""))
+
+      // Served from the agent's assets/ directory, so an edit needs no rebuild.
+      check("serves the script", Rest.get(agent, "/app.js").status == 200)
+      check("serves the stylesheet", Rest.get(agent, "/app.css").status == 200)
+      check("a session URL serves the same page", Rest.get(agent, "/c/anything").status == 200)
+
+      checkEquals("agent name", Rest.get(agent, "/api/info").field("name"), "Clair")
+      check("an unknown route is a 404", Rest.get(agent, "/api/nope").status == 404)
+      check("no sessions yet", Rest.get(agent, "/api/sessions").text.contains("[]"))
+
+  test: "streams a turn, then serves it back as history", () =>
+    ProviderFixture.withResponses: [ModelScript.says("I can read your files.")], server =>
+      WebAgent.withAgent: server.baseUrl, agent =>
+        val events = Rest.turn(agent, "", "What can you do?")
+        val session = Events.session(events)
+
+        check("mints a session", session != "")
+        check("reports progress", Events.statuses(events).contains("thinking"))
+        checkEquals("streams the reply as it arrives", Events.streamed(events), "I can read your files.")
+
+        // The committed rows: the same value `/api/history` will rebuild from disk.
+        val committed = Events.rows(events)
+        check("commits both sides of the turn", committed.size == 2)
+        checkEquals("the user's message", rowText(committed, 0), "What can you do?")
+        checkEquals("the agent's reply", rowText(committed, 1), "I can read your files.")
+
+        // What the agent asked the model, on the way through.
+        check("makes exactly one model request", server.requestCount == 1)
+        checkEquals("posts to the Responses API", server.recorded(0).path, "/v1/responses")
+        check:
+          "sends the agent's own system prompt"
+          server.recorded(0).jsonBody.get("instructions", "").asString != ""
+        check("sends the user's message", requestText(server, 0).contains("What can you do?"))
+        check("offers its tools", server.recorded(0).jsonBody.get("tools").cast[py.List].size > 0)
+
+        // Reloaded, the turn renders from the journal exactly as it streamed.
+        val reloaded = history(agent, session).get("messages").cast[py.List]
+        check("history has both rows", reloaded.size == 2)
+        checkEquals("history keeps the question", rowText(reloaded, 0), "What can you do?")
+        checkEquals("history keeps the answer", rowText(reloaded, 1), "I can read your files.")
+        val state = history(agent, session).get("state").cast[py.Dict]
+        check("the session is idle again", !state.get("active").asBool)
+        check("journals the session", File.exists(agent.sessionFile(session)))
+
+        // And it is offered in the picker, titled by what was asked.
+        val listed = Rest.get(agent, "/api/sessions").json.get("sessions").cast[py.List]
+        check("lists one session", listed.size == 1)
+        checkEquals("keyed by id", listed.get(0).cast[py.Dict].get("id").asString, session)
+        checkEquals:
+          "titled by the first message"
+          listed.get(0).cast[py.Dict].get("title").asString
+          "What can you do?"
+
+  test: "carries the conversation into the next turn", () =>
+    val script = [ModelScript.says("Zurich."), ModelScript.says("Nine degrees.")]
+    ProviderFixture.withResponses: script, server =>
+      WebAgent.withAgent: server.baseUrl, agent =>
+        val session = Events.session(Rest.turn(agent, "", "Where am I?"))
+        val second = Rest.turn(agent, session, "And the weather?")
+
+        checkEquals("answers the second question", Events.streamed(second), "Nine degrees.")
+        check("mints no second session", !Events.has(second, "session"))
+
+        // The turn is a fresh provider session built from the running context, so
+        // the whole exchange has to be in the request — this is what a resumed
+        // conversation actually depends on.
+        val asked = requestText(server, 1)
+        check("re-sends the earlier question", asked.contains("Where am I?"))
+        check("re-sends the earlier answer", asked.contains("Zurich."))
+        check("sends the new question", asked.contains("And the weather?"))
+
+        val reloaded = history(agent, session).get("messages").cast[py.List]
+        check("history holds both turns", reloaded.size == 4)
+        checkEquals("in order", rowText(reloaded, 3), "Nine degrees.")
+
+  test: "takes an uploaded file, and delivers one back", () =>
+    val script = [
+      ModelScript.calls("sendFile", py.dict("fileName" ~ "notes.txt")),
+      ModelScript.says("Here it is.")
+    ]
+    ProviderFixture.withResponses: script, server =>
+      WebAgent.withAgent: server.baseUrl, agent =>
+        // The page uploads first, then sends the message naming what it uploaded.
+        val stored = Rest.postJson:
+          agent
+          "/api/upload"
+          py.dict("name" ~ "notes.txt", "mime" ~ "text/plain", "data" ~ Rest.base64("hello e2e"))
+
+        val session = stored.field("session")
+        check("mints a session for the upload", session != "")
+        checkEquals("stores it under its own name", stored.field("name"), "notes.txt")
+        check("the file is on disk", File.exists(os.path.join(agent.dataDir(session), "notes.txt")))
+
+        val events = Rest.events:
+          agent
+          "/api/message"
+          py.dict:
+            "session" ~ session
+            "text" ~ "Send me my notes."
+            "attachments" ~ py.list(py.dict("name" ~ "notes.txt", "size" ~ 9, "mime" ~ "text/plain"))
+
+        // The model is told what arrived, and answers by calling `sendFile`.
+        check("tells the model about the upload", requestText(server, 0).contains("notes.txt"))
+        checkEquals:
+          "runs the tool the model called"
+          Events.first(events, "tool").get("summary", "").asString
+          "sendFile · notes.txt"
+
+        // Two agent rows: the delivery, then what it said afterwards.
+        val committed = Events.rows(events)
+        check("commits the user row and both agent rows", committed.size == 3)
+        val delivered = row(committed, 1).get("sent", py.list()).cast[py.List]
+        check("delivers one file", delivered.size == 1)
+        checkEquals("named", delivered.get(0).cast[py.Dict].get("name").asString, "notes.txt")
+        check("sized", delivered.get(0).cast[py.Dict].get("size").asInt == 9)
+        checkEquals("and says its piece", rowText(committed, 2), "Here it is.")
+
+        // The same file, listed and downloadable — what the card links to.
+        val listed = files(agent, session)
+        check("lists the session's file", listed.size == 1)
+        checkEquals("by name", listed.get(0).cast[py.Dict].get("name").asString, "notes.txt")
+
+        val download = Rest.get:
+          agent
+          Rest.url("/api/file", py.dict("session" ~ session, "name" ~ "notes.txt"))
+        check("serves the file", download.status == 200)
+        checkEquals("with its bytes intact", download.text, "hello e2e")
+
+  test: "runs a program the model wrote, against the session's files", () =>
+    // The workflow the framework exists for: the agent answers by writing a
+    // program, and the program reads the user's file through the `fs`
+    // capability the sandbox grants it. Nothing here is stubbed — the real
+    // toolchain compiles this, and the guest runs as its own process.
+    val reader = """
+      namespace sandbox.guest
+      import sandbox.api.*
+      import harpe.caps.*
+
+      def runTask(): Unit receives IO.stdout, fs =
+        match fs.readText("note.txt")
+        case Ok(text) => println text
+        case Err(err) => println("cannot read: " + err)
+      """
+
+    val script = [
+      ModelScript.calls("runCode", py.dict("code" ~ reader)),
+      ModelScript.says("Your note says: the quick brown fox.")
+    ]
+
+    ProviderFixture.withResponses: script, server =>
+      WebAgent.withAgent: server.baseUrl, agent =>
+        val stored = Rest.postJson:
+          agent
+          "/api/upload"
+          py.dict("name" ~ "note.txt", "mime" ~ "text/plain", "data" ~ Rest.base64("the quick brown fox"))
+        val session = stored.field("session")
+
+        val events = Rest.events:
+          agent
+          "/api/message"
+          py.dict("session" ~ session, "text" ~ "What does my note say?")
+
+        // The program compiled and ran. A sandbox that was granted no data
+        // directory would report `crashed` here instead.
+        val ran = Events.first(events, "tool")
+        checkEquals("runs the tool the model called", ran.get("name", "").asString, "runCode")
+        check("the program ran cleanly", ran.get("summary", "").asString.startsWith("ran"))
+
+        // What it printed goes back to the model, which is the only reason the
+        // agent could answer at all.
+        check("feeds the program's output back to the model", requestText(server, 1).contains("the quick brown fox"))
+
+        // And the page gets the program and its output as one step of the turn.
+        val committed = Events.rows(events)
+        val steps = row(committed, 1).get("steps", py.list()).cast[py.List]
+        check("records one program", steps.size == 1)
+        val step = steps.get(0).cast[py.Dict]
+        check("with the code the model wrote", step.get("code").asString.contains("fs.readText"))
+        checkEquals("and what it printed", step.get("output").asString.trim, "the quick brown fox")
+        checkEquals("then the agent's answer", rowText(committed, 1), "Your note says: the quick brown fox.")
+
+  test: "runs an edited program, and keeps what it wrote", () =>
+    // The editor's execute path (`/api/run`): the same machinery, driven by the
+    // user rather than the model, so a script sees the session's files exactly
+    // as the agent's programs do — including what it writes back.
+    val writer = """
+      namespace sandbox.guest
+      import sandbox.api.*
+      import harpe.caps.*
+
+      def runTask(): Unit receives IO.stdout, fs =
+        match fs.writeText("report.txt", "one file, written from the editor")
+        case Ok(_) => println "wrote report.txt"
+        case Err(err) => println("cannot write: " + err)
+      """
+
+    withIdleAgent: agent =>
+      val saved = Rest.postJson(agent, "/api/save", py.dict("name" ~ "script.jo", "content" ~ writer))
+      val session = saved.field("session")
+
+      val outcome = Rest.postJson(agent, "/api/run", py.dict("session" ~ session, "code" ~ writer))
+      checkEquals("runs it in the session it was saved to", outcome.field("session"), session)
+      check("reports a clean run", outcome.field("summary").startsWith("ran"))
+      checkEquals("hands back what it printed", outcome.field("result").trim, "wrote report.txt")
+
+      // The file the program wrote is a session file like any other: listed in
+      // the drawer, and downloadable from the card.
+      val listed = files(agent, session).size
+      check("the written file joins the session's files", listed == 2)
+
+      val download = Rest.get:
+        agent
+        Rest.url("/api/file", py.dict("session" ~ session, "name" ~ "report.txt"))
+      check("serves what the program wrote", download.status == 200)
+      checkEquals("with its content", download.text, "one file, written from the editor")
+
+  test: "stops a turn in flight, and leaves the session usable", () =>
+    // The first answer is held back, so the stop lands while the agent is inside
+    // its model request. The second proves the session survived the interrupt.
+    val script = [ModelScript.saysAfter(2.0, "Too late."), ModelScript.says("Still here.")]
+    ProviderFixture.withResponses: script, server =>
+      WebAgent.withAgent: server.baseUrl, agent =>
+        // A mutable cell rather than a `var`, which a closure may not capture.
+        val running = py.dict("session" ~ "")
+
+        // Stop on the `thinking` status: the model request has been sent by
+        // then, so exactly one scripted answer is consumed here and the turn
+        // below gets the next one.
+        val watch = (event: py.Dict) =>
+          val kind = event.get("type", "").asString
+          if kind == "session" then running.set("session", event.get("id", "").asString)
+          if kind == "status" && event.get("label", "").asString == "thinking" then
+            val id = running.get("session", "").asString
+            val stopped = Rest.postJson(agent, "/api/stop", py.dict("session" ~ id))
+            check("accepts the stop", stopped.status == 200)
+
+        val events = Rest.stream(agent, "/api/message", py.dict("text" ~ "Take your time."), watch)
+        val session = Events.session(events)
+
+        check("reports the turn interrupted", Events.has(events, "interrupted"))
+        check("commits nothing", !Events.has(events, "turnFinish"))
+        check("streams no answer", Events.streamed(events) == "")
+        check("used one scripted answer", server.requestCount == 1)
+
+        val state = history(agent, session).get("state").cast[py.Dict]
+        check("the session goes idle", !state.get("active").asBool)
+
+        val resumed = Rest.turn(agent, session, "Are you there?")
+        checkEquals("and takes the next turn", Events.streamed(resumed), "Still here.")
+
+  test: "lets a second view follow a turn already in flight", () =>
+    // The reply is held back long enough for another connection to attach, which
+    // is what a tab does when it loads mid-turn: it sees `state.active` on its
+    // history and opens `/api/subscribe` to watch the rest.
+    ProviderFixture.withResponses: [ModelScript.saysAfter(1.0, "Both of you get this.")], server =>
+      WebAgent.withAgent: server.baseUrl, agent =>
+        val watched = py.dict("id" ~ "", "followed" ~ false)
+
+        // The follower attaches from inside the sender's own stream, on the
+        // `thinking` status — the turn is Active from then until it commits.
+        val follow = (event: py.Dict) =>
+          val kind = event.get("type", "").asString
+          if kind == "session" then watched.set("id", event.get("id", "").asString)
+          if kind == "status" && event.get("label", "").asString == "thinking" then
+            val seen = Rest.subscribe(agent, watched.get("id", "").asString)
+            checkEquals("the follower saw the reply stream", Events.streamed(seen), "Both of you get this.")
+            check("and the finished turn", Events.has(seen, "turnFinish"))
+            watched.set("followed", true)
+
+        val events = Rest.stream(agent, "/api/message", py.dict("text" ~ "Tell us both."), follow)
+
+        check("the follower ran", watched.get("followed", false).asBool)
+        checkEquals("the sender got its own copy", Events.streamed(events), "Both of you get this.")
+
+        // Once the turn is over there is nothing left to follow, and the page
+        // falls back to the committed history rather than waiting on a stream.
+        val late = Rest.subscribe(agent, watched.get("id", "").asString)
+        check("a late subscriber gets an empty stream", late.isEmpty)
+
+  test: "refuses a message with nothing in it", () =>
+    withIdleAgent: agent =>
+      val events = Rest.events(agent, "/api/message", py.dict("text" ~ "   "))
+      checkEquals:
+        "says what was wrong"
+        Events.first(events, "error").get("detail", "").asString
+        "empty message"
+      check("mints no session for it", !Events.has(events, "session"))
+      check("leaves the picker empty", Rest.get(agent, "/api/sessions").text.contains("[]"))
+
+  test: "refuses session ids that can escape the session directories", () =>
+    withIdleAgent: agent =>
+      val events = Rest.events:
+        agent
+        "/api/message"
+        py.dict("session" ~ "../outside", "text" ~ "hello")
+      checkEquals:
+        "rejects traversal in a message session"
+        Events.first(events, "error").get("detail", "").asString
+        "invalid session"
+
+      val upload = Rest.postJson:
+        agent
+        "/api/upload"
+        py.dict:
+          "session" ~ "/tmp/outside"
+          "name" ~ "note.txt"
+          "mime" ~ "text/plain"
+          "data" ~ Rest.base64("no")
+      checkEquals("rejects an absolute upload session", upload.field("error"), "invalid session")
+
+  test: "deletes a session, its journal, and its files", () =>
+    ProviderFixture.withResponses: [ModelScript.says("Noted.")], server =>
+      WebAgent.withAgent: server.baseUrl, agent =>
+        val session = Events.session(Rest.turn(agent, "", "Remember this."))
+        val _ = Rest.postJson:
+          agent
+          "/api/upload"
+          py.dict:
+            "session" ~ session
+            "name" ~ "scratch.txt"
+            "mime" ~ "text/plain"
+            "data" ~ Rest.base64("x")
+
+        check("the session has a file to lose", files(agent, session).size == 1)
+
+        val removed = Rest.deleteJson(agent, "/api/session", py.dict("session" ~ session))
+        check("accepts the delete", removed.status == 200 && removed.json.get("ok").asBool)
+
+        check("drops it from the picker", Rest.get(agent, "/api/sessions").text.contains("[]"))
+        check("removes its journal", !File.exists(agent.sessionFile(session)))
+        check("removes its files", !os.path.isdir(agent.dataDir(session)))
+
+        val refused = Rest.deleteJson(agent, "/api/session", py.dict("session" ~ "../elsewhere"))
+        check("refuses a session id that is a path", refused.status == 400)
+
+  test: "serves files only from inside the session they belong to", () =>
+    withIdleAgent: agent =>
+      val stored = Rest.postJson:
+        agent
+        "/api/upload"
+        py.dict("name" ~ "private.txt", "mime" ~ "text/plain", "data" ~ Rest.base64("secret"))
+      val session = stored.field("session")
+
+      val traversal = Rest.get:
+        agent
+        Rest.url("/api/file", py.dict("session" ~ session, "name" ~ "../../../etc/passwd"))
+      check("refuses a name that climbs out", traversal.status == 404)
+
+      val elsewhere = Rest.get:
+        agent
+        Rest.url("/api/file", py.dict("session" ~ "..", "name" ~ "private.txt"))
+      check("refuses a session id that climbs out", elsewhere.status == 404)
+
+      val missing = Rest.get:
+        agent
+        Rest.url("/api/file", py.dict("session" ~ session, "name" ~ "absent.txt"))
+      check("a file that is not there is a 404", missing.status == 404)
+
+      // An upload never clobbers what is already there.
+      val again = Rest.postJson:
+        agent
+        "/api/upload"
+        py.dict:
+          "session" ~ session
+          "name" ~ "private.txt"
+          "mime" ~ "text/plain"
+          "data" ~ Rest.base64("newer")
+      checkEquals("de-duplicates a repeated name", again.field("name"), "private-1.txt")
+
+  test: "saves a script into a session's files, and reads it back", () =>
+    withIdleAgent: agent =>
+      val program = """
+        namespace sandbox.guest
+
+        def runTask(): Unit =
+          println "hello"
+        """
+      val saved = Rest.postJson:
+        agent
+        "/api/save"
+        py.dict("name" ~ "script.jo", "content" ~ program)
+
+      val session = saved.field("session")
+      check("mints a session for a script written in a fresh chat", session != "")
+      checkEquals("saves it under its name", saved.field("name"), "script.jo")
+
+      val reopened = Rest.get:
+        agent
+        Rest.url("/api/file", py.dict("session" ~ session, "name" ~ "script.jo"))
+      checkEquals("reopens what was saved", reopened.text, program)
+      check("lists it among the session's files", files(agent, session).size == 1)

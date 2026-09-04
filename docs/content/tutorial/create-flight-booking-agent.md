@@ -12,7 +12,7 @@ money is charged.
 ## Create the project
 
 ```sh
-jo new my-booker --template typescope/agents:flight-booker
+jo new my-booker --template typescope/harpe:flight-booker
 cd my-booker
 pip install -r requirements.txt
 cp .env.example .env

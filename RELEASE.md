@@ -19,15 +19,16 @@ PREV_MINOR=0.8               # the constraint being replaced
 
 ## Publication comes before the green build
 
-Nothing in this repository resolves the registry any more. The framework, the CLI
-agent, and both test suites all build from these sources, so a release pull
-request is green throughout — the deadlock that used to make one red before
-publication is gone with the agents that caused it.
+Nothing on the release path resolves the registry. The framework, the CLI agent,
+and both test suites all build from these sources, so a release pull request is
+green throughout — the deadlock that used to make one red before publication is
+gone with the agents that caused it.
 
-What moved is where that tension lives. The five agents in
-[typescope/agents](https://github.com/typescope/agents) are pinned to a published
-release, so they are updated *after* publication, not before it. Step 8 is that
-update.
+What moved is where that tension lives. The six templates under `templates/` are
+pinned to a published release, so they are updated *after* publication, not
+before it. Step 8 is that update. Their `Templates` workflow is deliberately not
+the release gate, and it does not run on a pull request that leaves `templates/`
+alone.
 
 ## 1. Prepare the release pull request
 
@@ -44,14 +45,16 @@ Create a branch from the latest `origin/main`. In the pull request:
 
 Consumers here are the package blocks in the root `jo.toml` and nothing else —
 `cli/` builds from source, so it carries no version to retarget. The pins that do
-move live in `typescope/agents`, and step 8 moves them.
+move live under `templates/`, and step 8 moves them.
 
-The only `version =` lines left in this repository are the three package blocks
-in the root `jo.toml`. A constraint anywhere else means something started
-resolving the registry again, which is what this layout exists to prevent:
+Outside `templates/`, the only `version =` lines in this repository are the three
+package blocks in the root `jo.toml`. A constraint anywhere else means something
+on the release path started resolving the registry again, which is what this
+layout exists to prevent:
 
 ```sh
-grep -rn 'version = "' --include='jo.toml' . | grep -v '^./jo.toml'
+grep -rn 'version = "' --include='jo.toml' . \
+  | grep -Ev '^(\./)?(jo\.toml|templates/)'
 ```
 
 **The gate before publishing is the `Jo` job**: `jo run test`, plus the CLI
@@ -217,24 +220,23 @@ gh release create v$VERSION \
   --notes-file /tmp/notes-v$VERSION.md
 ```
 
-## 8. Move the agents to the new release
+## 8. Move the templates to the new release
 
-The five agents in [typescope/agents](https://github.com/typescope/agents) are
-pinned to the previous release until now. In that repository:
+The six templates under `templates/` are pinned to the previous release until
+now. In a pull request of its own, against `main`:
 
 ```sh
-MINOR=${VERSION%.*}
-grep -rl "version = \"$PREV_MINOR\"" --include='jo.toml' . \
+grep -rl "version = \"$PREV_MINOR\"" --include='jo.toml' templates/ \
   | xargs -r sed -i "s/version = \"$PREV_MINOR\"/version = \"$MINOR\"/g"
 ```
 
-Then mirror this repository's `cli/` over it, rewriting its manifests from source
-dependencies to those same pins — it is the one agent that lives here.
-
-If the release changed an API, the agents need their sources adapted too, in the
-same pull request. Its CI builds all six against the packages just published and
-runs the suites that ship with them, so it is a real gate: `jo new` serves that
+If the release changed an API, the templates need their sources adapted too, in
+the same pull request. Touching `templates/` is what runs the `Templates`
+workflow, which builds all six against the packages just published and runs the
+suites that ship with them — so it is a real gate: `jo new` serves this
 repository's default branch, and a red build there means users are being handed
 templates that do not build.
 
-Tag it `v$VERSION` to match.
+This is a separate pull request from step 1 on purpose. The pins cannot move
+before the packages exist, and keeping it apart is what leaves the release pull
+request green throughout.

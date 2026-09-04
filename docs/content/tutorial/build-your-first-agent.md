@@ -5,7 +5,7 @@ title = "Build Your First Agent"
 ## Create the project
 
 ```sh
-jo new my-agent --template typescope/agents:hello
+jo new my-agent --template typescope/harpe:hello
 cd my-agent
 pip install -r requirements.txt
 cp .env.example .env
@@ -129,8 +129,6 @@ The [sandbox concept guide](/concepts/sandbox/) explains the compiler guarantee.
 
 ## Build a complete application
 
-- [Create a CLI agent](/tutorial/create-cli-agent/) — terminal history,
-  cancellation, skills, and audit logs.
 - [Create a web agent](/tutorial/create-web-agent/) — browser sessions,
   streaming, uploads, and downloadable files.
 - [Create a Telegram agent](/tutorial/create-telegram-agent/) — persistent bot

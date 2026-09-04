@@ -1,0 +1,218 @@
+//[ TelegramClient.jo
+  !
+  ! A thin client over the Telegram Bot API — the one place that touches the
+  ! network. Unlike the WhatsApp Cloud API (webhook in / REST out), Telegram
+  ! lets the bot *pull* updates over an outbound long-poll connection, so there
+  ! is no public endpoint, no TLS, and no signature to verify: `getUpdates`
+  ! blocks until messages arrive (or the poll times out), and `sendMessage`
+  ! posts the reply.
+  !
+  ! Everything is a JSON POST to `https://api.telegram.org/bot<token>/<method>`.
+  ! `apiCall` is the single request primitive. The higher-level methods are
+  ! phrased in terms of it.
+//]
+
+namespace harpe.telegram
+import harpe.ffi.json
+import harpe.ffi.os
+import harpe.ffi.secrets
+
+
+//[ Telegram caps a message at 4096 characters
+  !
+  ! Keep a margin so multi-byte escapes never push a chunk over the limit.
+//]
+private def maxMessageChars: Int = 4000
+
+//[ The outcome of one `getUpdates` poll
+  !
+  ! The updates array, or a human-readable failure (a 409 conflict from a second
+  ! poller, a bad token, a network blip, …) that the loop can report instead of
+  ! silently retrying.
+//]
+union PollResult =
+    Polled(updates: py.List)
+  | PollFailed(detail: String)
+
+private class TelegramClient(token: String)
+  private def base: String = "https://api.telegram.org/bot" + token
+  private def urllibReq: py.Dynamic = py.module("urllib.request")
+
+  //[ One Bot API call: POST `params` as JSON, parse the JSON reply.
+    !
+    ! `timeout` is the socket timeout in seconds — for a long poll it must exceed
+    ! the poll's own `timeout` so the read outlives the wait. A network/HTTP
+    ! failure is swallowed into `{ok: false}` so callers never see a raw error.
+  //]
+  private def apiCall(method: String, params: py.Dict, timeout: Float): py.Dict =
+    val data = py.dynamic(json.dumps(params)).encode()
+    val headers = py.dict("Content-Type" ~ "application/json")
+    val req = urllibReq.Request(base + "/" + method, data = data, headers = headers, method = "POST")
+
+    match py.try(urllibReq.urlopen(req, timeout = timeout))
+    case Ok(resp) =>
+      json.loads(resp.read().decode().asString).cast[py.Dict]
+
+    case Err(e) =>
+      py.dict("ok" ~ false, "error" ~ e.message)
+
+  //[ A human-readable reason from a non-ok reply
+    !
+    ! The network error we caught, or Telegram's own `description` (e.g.
+    ! "Conflict: terminated by other getUpdates request" for a 409), falling
+    ! back to a generic string.
+  //]
+  def detail(resp: py.Dict): String =
+    if resp.contains("error") then resp.get("error").asString
+    else resp.get("description", "unknown error").asString
+
+  //[ Identify the bot behind the token (`getMe`)
+    !
+    ! The caller uses this at startup to confirm the token works and show which
+    ! bot is live.
+  //]
+  def getMe(): py.Dict = apiCall("getMe", py.dict(), 15.0)
+
+  //[ Long-poll for updates newer than `offset`, waiting up to `pollSeconds`.
+    !
+    ! Surfaces a failure to the caller (rather than swallowing it) so a 409
+    ! conflict, bad token, or outage is visible instead of a silent dead loop.
+  //]
+  def getUpdates(offset: Int, pollSeconds: Int): PollResult =
+    val params = py.dict("offset" ~ offset, "timeout" ~ pollSeconds)
+    val resp = apiCall("getUpdates", params, py.dynamic(pollSeconds).asFloat + 15.0)
+
+    if resp.get("ok", false).asBool then
+      Polled(resp.get("result").cast[py.List])
+
+    else
+      PollFailed(detail(resp))
+
+  //[ Send `text` to `chatId`, split across as many messages as the 4096-char limit requires
+    !
+    ! Each chunk is rendered from the model's Markdown into Telegram HTML
+    ! (`Markdown.toHtml` — a real CommonMark parse: headings, lists, quotes,
+    ! code, emphasis, links). If Telegram rejects the markup, that chunk is
+    ! resent as plain text so the content always gets through. An empty body is
+    ! replaced with a placeholder so the send never fails on it.
+  //]
+  def sendMessage(chatId: String, text: String): Unit =
+    val body = if text.trim == "" then "(no output)" else text
+
+    for piece in chunk(body, maxMessageChars) do
+      val html = Markdown.toHtml(piece)
+      val resp = apiCall("sendMessage",
+        py.dict("chat_id" ~ chatId, "text" ~ html, "parse_mode" ~ "HTML"), 30.0)
+
+      if !resp.get("ok", false).asBool then
+        val _ = apiCall("sendMessage", py.dict("chat_id" ~ chatId, "text" ~ piece), 30.0)
+
+  //[ Send one instant approval request with inline decision buttons. //]
+  def sendApproval(chatId: String, id: String, title: String, detail: String): Option[Int] =
+    val source = "**Approval required**\n\n### " + title +
+      (if detail.trim == "" then "" else "\n\n" + detail)
+    val body = Markdown.toHtml(source)
+    val keyboard = py.dict("inline_keyboard" ~ py.list(
+      py.list(
+        py.dict("text" ~ "Reject", "callback_data" ~ ("reject:" + id)),
+        py.dict("text" ~ "Approve", "callback_data" ~ ("approve:" + id))
+      )
+    ))
+    val resp = apiCall("sendMessage", py.dict(
+      "chat_id" ~ chatId,
+      "text" ~ body,
+      "parse_mode" ~ "HTML",
+      "reply_markup" ~ keyboard
+    ), 30.0)
+
+    if resp.get("ok", false).asBool then
+      Some(resp.get("result").cast[py.Dict].get("message_id").asInt)
+    else
+      None
+
+  //[ Acknowledge a callback so Telegram stops the button spinner. //]
+  def answerCallback(id: String, text: String): Unit =
+    val _ = apiCall("answerCallbackQuery", py.dict(
+      "callback_query_id" ~ id,
+      "text" ~ text
+    ), 15.0)
+
+  //[ Disable the decision buttons after the request ends. //]
+  def clearApprovalButtons(chatId: String, messageId: Int): Unit =
+    val _ = apiCall("editMessageReplyMarkup", py.dict(
+      "chat_id" ~ chatId,
+      "message_id" ~ messageId,
+      "reply_markup" ~ py.dict("inline_keyboard" ~ py.list())
+    ), 15.0)
+
+  //[ Show a transient status in the chat (e.g. "typing"). Best-effort. //]
+  def sendChatAction(chatId: String, action: String): Unit =
+    val _ = apiCall("sendChatAction", py.dict("chat_id" ~ chatId, "action" ~ action), 15.0)
+
+  //[ Resolve a `file_id` to a temporary path on Telegram's file server (`getFile`), the first half of a download
+    !
+    ! Returns the `file_path` to fetch, or `None` on failure — an expired id, or
+    ! a file above the Bot API's 20 MB download cap.
+  //]
+  def getFile(fileId: String): Option[String] =
+    val resp = apiCall("getFile", py.dict("file_id" ~ fileId), 15.0)
+
+    if resp.get("ok", false).asBool then
+      Some(resp.get("result").cast[py.Dict].get("file_path").asString)
+
+    else
+      None
+
+  //[ Download the bytes behind a `getFile` path — the second half
+    !
+    ! File content is served from `/file/bot<token>/<path>` (not the JSON Bot
+    ! API), so this is a plain GET rather than an `apiCall`. `None` on any
+    ! network/HTTP failure.
+  //]
+  def downloadFile(filePath: String): Option[py.Dynamic] =
+    val url = "https://api.telegram.org/file/bot" + token + "/" + filePath
+
+    match py.try(urllibReq.urlopen(url, timeout = 60.0))
+    case Ok(resp) => Some(resp.read())
+    case Err(_)   => None
+
+  //[ Upload a local file to `chatId` as a document (`sendDocument`), with an optional caption
+    !
+    ! Bot API uploads are `multipart/form-data`, not JSON, so the body is
+    ! assembled by hand here — the one call that does not go through `apiCall`.
+    ! Best-effort, like `sendChatAction`: a failure is swallowed, since the text
+    ! answer has already been delivered.
+  //]
+  def sendDocument(chatId: String, filePath: String, caption: String): Unit =
+    val name = os.path.basename(filePath)
+    val data = py.open(filePath, "rb").read()
+    val boundary = "----HarpeBoundary" + secrets.token_hex(8)
+    val enc = (s: String) => py.dynamic(s).encode()
+    val parts = py.list()
+
+    parts.append: enc("--\{boundary}\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n\{chatId}\r\n")
+
+    if caption.trim != "" then
+      parts.append: enc("--\{boundary}\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n\{caption}\r\n")
+
+    parts.append: enc("--\{boundary}\r\nContent-Disposition: form-data; name=\"document\"; filename=\"\{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n")
+    parts.append(data)
+    parts.append: enc("\r\n--\{boundary}--\r\n")
+
+    val body = enc("").join(parts)
+    val headers = py.dict("Content-Type" ~ "multipart/form-data; boundary=\{boundary}")
+    val req = urllibReq.Request(base + "/sendDocument", data = body, headers = headers, method = "POST")
+    val _ = py.try(urllibReq.urlopen(req, timeout = 60.0))
+
+  //[ Split `s` into pieces of at most `size` characters (at least one piece). //]
+  private def chunk(s: String, size: Int): List[String] =
+    var out: List[String] = []
+    var i = 0
+
+    while i < s.size do
+      val stop = if i + size < s.size then i + size else s.size
+      out = out + s.substring(i, stop)
+      i = stop
+
+    if out.isEmpty then [s] else out
+end

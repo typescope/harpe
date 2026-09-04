@@ -11,7 +11,7 @@ compiles and runs without an external service or secret.
 ## Start from `hello`
 
 ```sh
-jo new clock-agent --template typescope/agents:hello
+jo new clock-agent --template typescope/harpe:hello
 cd clock-agent
 pip install -r requirements.txt
 cp .env.example .env

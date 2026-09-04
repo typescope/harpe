@@ -1,0 +1,17 @@
+namespace sandbox.api
+
+import jo.IO.stdout
+import harpe.caps.*
+
+// The agent's contract: the entry point the LLM implements each turn, and the
+// capabilities it receives. Grant more by declaring capability params and
+// widening `receives`. The implementations are built in the runtime, the LLM
+// only gets the capability.
+
+// The capability params (`fs`, the format backends, `image`, `ocr`) are the
+// standard ones declared in the caps module — the same set the web driver grants.
+// `fs` is the chat's data directory (`data/<chat>/`) as a confined tree the guest
+// reads and writes via relative paths: how the agent reads files the user sent and writes
+// files to send back. Its openPDF/openWorkbook/openWord shortcuts go through the
+// pdfReader/excelReader/wordReader backends, which the runtime binds.
+defer def runTask(): Unit receives stdout, fs, pdfReader, excelReader, wordReader, image, ocr

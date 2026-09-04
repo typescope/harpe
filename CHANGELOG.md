@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+The agent templates come back from `typescope/agents`, with that repository's
+history, and live under `templates/`. `jo-templates.jsonl` at the root names
+them, so `jo new --template typescope/harpe:web` replaces
+`typescope/agents:web`.
+
+They keep the pin that made the split worth making: every manifest under
+`templates/` resolves a published release rather than the sources beside it, so
+an API change on `main` still does not have to be made in six applications at
+once. What goes away is the two-repository tax — an agent and the tutorial that
+documents it now change in one pull request, and `cli/` is no longer mirrored
+across a repository boundary at each release.
+
+`cli` is no longer offered as a template. It stays in `cli/`, built from these
+sources, as the framework's end-to-end test subject, and its tutorial is
+removed. `smart-logistics` joins the set, so there are still six.
+
+Their checks run in a `Templates` workflow that fires only on a pull request
+touching `templates/`. It is deliberately not the release gate — RELEASE.md
+step 8 retargets the pins after publication, now as a pull request against this
+repository.
+
 ## 0.9.0 — 2026-09-01
 
 Ninth developer-preview release. It publishes the test framework as a package of
