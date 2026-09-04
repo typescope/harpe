@@ -1,0 +1,35 @@
+//[ Tests.jo
+  !
+  ! The entry point for this agent's suite: `jo test`, or `jo run tests`.
+  !
+  ! Two things are worth proving here. That the capability boundary is real —
+  ! generated code that reaches past it does not compile — and that the runtime
+  ! refuses a draft the physical facts do not allow, however it was asked for.
+  ! Neither needs an API key or the network.
+//]
+
+namespace harpe.examples.smartlogistics.tests.Main
+
+import jo.IO.stdout
+import harpe.logging.Logging
+import harpe.logging.logger
+import harpe.testing.Testing
+import harpe.testing.Runner
+import harpe.testing.suite
+import harpe.testing.thisSuite
+import harpe.examples.smartlogistics.tests.DepotTest
+import harpe.examples.smartlogistics.tests.CapabilityTest
+
+def main(): Unit receives stdout =
+  Logging.withLogger(Logging.discard, () => run())
+
+private def run(): Unit receives stdout, logger =
+  val root = Testing.define("smart-logistics", () => suites())
+  val passed = Runner.run(root, Runner.filterFromArgs(), Runner.lanesFromEnv())
+  if !passed then py.module("sys").exit(1)
+  println ""
+  println "all smart-logistics tests passed"
+
+private def suites(): Unit receives thisSuite, logger =
+  suite: "depot", () => DepotTest.depotSuite()
+  suite: "capability", () => CapabilityTest.capabilitySuite()

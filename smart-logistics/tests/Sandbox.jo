@@ -1,0 +1,52 @@
+//[ Sandbox.jo
+  !
+  ! Compiling and running a guest program the way the app does.
+  !
+  ! Every capability test works on a COPY of `sandbox/`, so a test can write a
+  ! hostile `Task.jo` without touching the tree the app is built from. The copy
+  ! keeps `shared/` next to `watch/` and `plan/`, because both specs reach it
+  ! through `../shared`.
+//]
+
+namespace harpe.examples.smartlogistics.tests.Sandbox
+
+import harpe.ffi.os
+import harpe.util.File
+import harpe.util.Process
+import harpe.util.Capped
+
+//[ A copy of the sandbox tree, in a directory of its own. //]
+def prepare(home: String): String =
+  val root = py.module("tempfile").mkdtemp(prefix = "sl-sandbox-").asString
+  val target = os.path.join(root, "sandbox")
+  py.module("shutil").copytree(os.path.join(home, "sandbox"), target)
+  // A stale .build would let a failed compile look like a pass.
+  for which in ["watch", "plan"] do
+    val build = os.path.join(target, which, ".build")
+    if File.exists(build) then py.module("shutil").rmtree(build)
+  target
+
+//[ Compile `code` as the guest of one capability. //]
+def build(root: String, which: String, code: String): Capped =
+  File.write(os.path.join(root, which, "Task.jo"), code)
+  Process.runCapped(
+    py.list("jo", "build", "--spec", os.path.join(root, which, "jo.toml"), "guest"),
+    240.0, cwd = root)
+
+//[ Run a guest that has already been compiled, against one database. //]
+def run(root: String, which: String, databasePath: String, runId: Int): Capped =
+  val target = os.path.join(root, which, ".build/guest/jo-0.13/target/guest.py")
+  val env = py.dict(
+    "PATH" ~ os.getenv("PATH", "/usr/bin:/bin"),
+    "SMART_LOGISTICS_DB" ~ databasePath,
+    "SMART_LOGISTICS_RUN" ~ runId.toString)
+  Process.runCapped(
+    py.list(py.module("sys").executable.asString, target), 120.0, env = env)
+
+//[ Compile and run in one step, returning everything the program printed. //]
+def output(root: String, which: String, databasePath: String, code: String): String =
+  val compiled = build(root, which, code)
+  if compiled.returnCode != 0 then
+    abort "guest did not compile: \{compiled.out}\{compiled.err}"
+  val ran = run(root, which, databasePath, 1)
+  ran.out + ran.err

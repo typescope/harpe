@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        agent: [hello, cli, web, telegram, pr-review, flight-booker]
+        agent: [hello, cli, web, telegram, pr-review, flight-booker, smart-logistics]
 
     steps:
       - name: Checkout
@@ -55,9 +55,18 @@ jobs:
         working-directory: ${{ matrix.agent }}
         run: pip install -r requirements.txt
 
-      - name: Build the sandbox guest
+      # One spec per capability. Most agents grant exactly one and keep it in
+      # sandbox/; an agent that grants several — smart-logistics gives its
+      # watcher and its planner different authority — keeps one directory each.
+      - name: Build the sandbox guests
         working-directory: ${{ matrix.agent }}
-        run: jo build --spec sandbox/jo.toml guest
+        run: |
+          for spec in sandbox/jo.toml sandbox/*/jo.toml; do
+            [ -f "$spec" ] || continue
+            echo "::group::$spec"
+            jo build --spec "$spec" guest
+            echo "::endgroup::"
+          done
 
       - name: Build the agent
         working-directory: ${{ matrix.agent }}

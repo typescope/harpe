@@ -25,3 +25,4 @@ jo start
 | `telegram` | Bot sessions, sender authorization, attachments |
 | `pr-review` | A capability scoped to one external API |
 | `flight-booker` | Human approval before an irreversible action |
+| `smart-logistics` | Two agents, two capability grants, and policy written as prose |
