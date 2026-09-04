@@ -3,6 +3,10 @@
 A local depot planner, and a demonstration of what happens when you let people
 write policy as sentences instead of filling in threshold fields.
 
+![The stock page: a banner reading "4 products will run out before a delivery
+could arrive", above a table of products sorted by days of cover, the short ones
+marked in red.](docs/stock.png)
+
 Two agents share one depot and one list of checks. Neither can buy anything.
 
 ```
@@ -55,6 +59,9 @@ Now go to **Checks** and add a sentence:
 > Nordic shuts down for two weeks over Christmas — don't order from them if it
 > won't arrive first.
 
+![The checks page: four checks written as plain sentences, each with Edit, Turn
+off and Delete.](docs/checks.png)
+
 Press **Plan orders** again. The line moves to Helvetia Wholesale, and the
 quantity drops, because Helvetia delivers in 4 days rather than 9 and less stock
 is needed to cover a shorter wait. The report says which check did it.
@@ -63,9 +70,22 @@ That check is not a field in any planning system. No schema change, no code, no
 redeploy — a sentence changed the plan.
 
 Accept the draft and the shortfall is covered; the next check clears the
-warning. The order moves to **On order** with the date it is due, and when the
-delivery turns up, **Record delivery** counts it in — in full, or short, with
-the rest left on order until it follows.
+warning. The order moves to **On order** with the date it is due.
+
+![The orders page: one draft waiting for review, and two orders on order, each
+showing when it is due and how much of it has been delivered.](docs/orders.png)
+
+When the delivery turns up, **Record delivery** counts it in. Every line still
+owed is offered, filled in with what is owed, because a delivery that matches
+the order should need no typing at all — and a short one leaves the rest on
+order until it follows.
+
+![The delivery form open on an order: a box holding 25 against a line owing 40,
+a note reading "DN-88213, one carton short", and a Book into stock
+button.](docs/receiving.png)
+
+Booking that in writes an ordinary receipt movement, so **Movements** shows
+where the stock came from and cover moves because the ledger moved.
 
 ## Checks and skills
 
