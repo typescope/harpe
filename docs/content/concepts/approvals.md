@@ -5,7 +5,7 @@ Human approval is a human-in-the-loop check before an agent performs a specific
 operation. An agent might prepare a payment, for example, while every transfer
 still requires confirmation.
 
-Approval is an application interaction. Unlike regular model prompt confirmation, the request does not become a message for the model, and the model cannot approve its own action. The code responsible for the operation waits for the user's decision and performs the effect only when the decision is `Approved`.
+Approval is an application interaction. Unlike regular model prompt confirmation, the request is initiated by trusted tools or capabilities, not by the model. It's guaranteed by design that the model cannot approve its own action. The code responsible for the operation waits for the user's decision and performs the effect only when the decision is `Approved`.
 
 ## Where approval happens
 
