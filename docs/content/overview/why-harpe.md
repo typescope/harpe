@@ -38,7 +38,7 @@ common text and JSON action formats in its benchmarks. Anthropic
 tool-schema overhead, compose operations, and process intermediate data outside
 the model context.
 
-Harpe takes a specific position on the security consequence: LLM generated code is
+Harpe takes a specific position on the security consequence: LLM-generated code is
 useful and effective, but ambient authority is the wrong model for it. Its granted authority should be
 explicit, narrow, and mechanically checked.
 
