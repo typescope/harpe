@@ -50,7 +50,7 @@ that should be narrow and reviewable. If the task requires broad, changing
 access to a development environment, use a code agent instead.
 
 The choice has a cost. You must design capability interfaces and provide
-trustworthy implementations. The work is justified when provable and high-risk aversion authority control is uncompromisable for the product.
+trustworthy implementations. The work is justified when provable authority control is essential for high-stake infrastructure and sensitive data.
 
 The compiler verifies which capabilities generated code can use. It does not
 prove that an allowed action is correct, cheap, or desirable. Consequential
