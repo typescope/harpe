@@ -43,7 +43,7 @@ are absent from its compilation environment.
 
 The trusted application implements `Calendar` and keeps credentials, tenant
 scope, retries, and validation behind the interface. Capability requirements
-are tracked through nested calls, so generated code cannot abuse authority in a
+are tracked through nested calls, so generated code cannot use ungranted capabilities in a
 helper.
 
 The result is:
