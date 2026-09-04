@@ -10,7 +10,7 @@ typed operations and nothing else.
 
 The complete agent reviews one GitHub pull request: it reads the diff, follows
 identifiers into the repository snapshot, and saves a pending draft for manual
-verification. It cannot publish, post a standalone comment, or merge.
+verification. It cannot post a standalone comment, or merge the pull request.
 
 ## Create the project
 
@@ -43,8 +43,8 @@ jo review -- https://github.com/owner/repo/pull/123
 ```
 
 `jo review` builds the sandbox guest and then runs a single turn. The agent
-prints each tool call as it works, so you can watch it fetch the PR, compile a
-program, and save its draft review.
+prints each tool call as it works, so you can watch it fetching the PR, compiling a
+program, and saving its draft review.
 
 ## The capability is the review surface
 
@@ -95,13 +95,10 @@ with api.github = ghImpl in
 `AGENT.md` instructs the agent to submit reviews as **pending** drafts, and the
 capability enforces that policy. `saveDraftReview` has no verdict argument; its
 trusted implementation always omits GitHub's event field, which saves a draft.
-Publishing, standalone comments, and merging are absent from `interface GitHub`,
+Publishing standalone comments, and merging are absent from `interface GitHub`,
 so a model-written program that attempts any of them does not compile.
 
-Authority is reduced structurally, not by asking the model to avoid dangerous
-endpoints.
-
-To add a publishing operation, widen the interface and protect the effect inside
+To add the publishing operation, widen the interface and protect the effect inside
 the trusted implementation with [human approval](/concepts/approvals/). The
 implementation should perform it only after `Approvals.Approved`; adding an
 instruction to the prompt alone would not create a boundary.

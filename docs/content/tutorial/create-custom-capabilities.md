@@ -143,8 +143,7 @@ def runTask(): Unit receives stdout, clock =
 
 ## Designing real capabilities
 
-The clock is intentionally small, but the same procedures apply to databases,
-internal APIs, ticket systems, and payment providers:
+The clock example is intentionally trivial, but the same approach can be used for accessing databases, APIs, ticket systems, and payment providers:
 
 - Put only the operations the agent needs in the interface.
 - Prefer domain types over unconstrained strings.

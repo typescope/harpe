@@ -3,7 +3,7 @@ title = "Create a Web Agent"
 +++
 The web template is a complete browser application with persistent sessions,
 streamed progress, uploads, downloadable files, and a customizable frontend.
-The server and frontend source are copied into your project.
+The server and frontend sources are copied into your project.
 
 ## Create the project
 

@@ -1,14 +1,14 @@
 +++
 title = "Context"
 +++
-A model can see only the input sent with its current request. Context determines
+A model can see only the input payload from an HTTP request. Context determines
 which instructions and conversation messages Harpe sends on each request.
 
 During a turn, Harpe adds the user's message, model replies, tool calls, and tool
 results to the context. If the model calls several tools before answering, each
-new model request sees the relevant work from earlier in that turn.
+new request sees the relevant work from earlier in that turn.
 
-Across turns, the context strategy determines what the model remembers.
+Across turns, the context strategy determines what's carried over in requests to the model.
 
 ## Context belongs to a session
 
