@@ -1,15 +1,21 @@
-name: CI
+name: Templates
 
-# Everything here resolves the published packages, which is what every agent in
-# this repository is pinned to. Nothing is ever ahead of the registry, so every
-# check is answerable at every commit — there is no expected-red job, and all of
-# these gate a pull request.
+# The one part of this repository that resolves the registry. Every manifest
+# under templates/ pins a published release rather than the sources beside it,
+# because that is what a user's copy has to build against — so these checks are
+# answerable at every commit, and an API change on `main` leaves them alone
+# until RELEASE.md retargets the pins.
+#
+# That is also why this is its own workflow rather than a job in ci.yml: it is
+# not the release gate, and a framework pull request should not pay for it.
 
 on:
   push:
     branches: [main]
+    paths: ['templates/**', 'jo-templates.jsonl', '.github/workflows/templates.yml']
   pull_request:
     branches: [main]
+    paths: ['templates/**', 'jo-templates.jsonl', '.github/workflows/templates.yml']
 
 env:
   JO_REGISTRY_URL: https://pkg.typescope.ai
@@ -25,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        agent: [hello, cli, web, telegram, pr-review, flight-booker, smart-logistics]
+        agent: [hello, web, telegram, pr-review, flight-booker, smart-logistics]
 
     steps:
       - name: Checkout
@@ -52,14 +58,14 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install requirements
-        working-directory: ${{ matrix.agent }}
+        working-directory: templates/${{ matrix.agent }}
         run: pip install -r requirements.txt
 
       # One spec per capability. Most agents grant exactly one and keep it in
       # sandbox/; an agent that grants several — smart-logistics gives its
       # watcher and its planner different authority — keeps one directory each.
       - name: Build the sandbox guests
-        working-directory: ${{ matrix.agent }}
+        working-directory: templates/${{ matrix.agent }}
         run: |
           for spec in sandbox/jo.toml sandbox/*/jo.toml; do
             [ -f "$spec" ] || continue
@@ -69,12 +75,12 @@ jobs:
           done
 
       - name: Build the agent
-        working-directory: ${{ matrix.agent }}
+        working-directory: templates/${{ matrix.agent }}
         run: jo build agent
 
       # Agents that ship a suite run it. `hello` deliberately has none.
       - name: Test
-        working-directory: ${{ matrix.agent }}
+        working-directory: templates/${{ matrix.agent }}
         run: |
           if [ -d tests ]; then jo run tests; else echo "no tests for ${{ matrix.agent }}"; fi
 
@@ -82,4 +88,4 @@ jobs:
   # new` fetches over plain HTTPS and cannot authenticate — so it stays disabled
   # until then rather than failing on every run.
   #
-  #  jo new probe --template typescope/agents#${{ github.sha }}:web
+  #  jo new probe --template typescope/harpe#${{ github.sha }}:web

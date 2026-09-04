@@ -8,7 +8,7 @@ The server and frontend sources are copied into your project.
 ## Create the project
 
 ```sh
-jo new my-agent --template typescope/agents:web
+jo new my-agent --template typescope/harpe:web
 cd my-agent
 pip install -r requirements.txt
 cp .env.example .env

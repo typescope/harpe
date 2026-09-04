@@ -15,7 +15,7 @@ verification. It cannot post a standalone comment, or merge the pull request.
 ## Create the project
 
 ```sh
-jo new my-reviewer --template typescope/agents:pr-review
+jo new my-reviewer --template typescope/harpe:pr-review
 cd my-reviewer
 pip install -r requirements.txt
 ```

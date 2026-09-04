@@ -42,12 +42,13 @@ quotes what the agent had printed, both named in the failure.
 cd cli && jo test
 ```
 
-Nothing in this repository resolves the package registry: the framework, the CLI
-agent, and both suites all build from these sources, so every check is answerable
-by the pull request that breaks it. The other five agents live in
-[typescope/agents](https://github.com/typescope/agents), pinned to a published
-release — which is what lets an API change land here without being made in six
-places at once.
+Nothing on this path resolves the package registry: the framework, the CLI agent,
+and both suites all build from these sources, so every check is answerable by the
+pull request that breaks it. The six templates under `templates/` are the
+exception — they pin a published release, which is what lets an API change land
+here without being made in six places at once. Their `Templates` workflow runs
+only when a pull request touches them, and retargeting the pins is a step in
+[RELEASE.md](RELEASE.md).
 
 The documentation site is [Zola](https://www.getzola.org/):
 
@@ -62,7 +63,8 @@ cd docs && zola serve      # `zola build` also checks internal links
 | `caps/` | Capability interfaces, published as `harpe-caps`. Pure Jo, no FFI |
 | `agent/` | The framework, published as `harpe` — turn engine, models, tools, context, logging |
 | `testing/` | The test framework, published as `harpe-testing`. Depends on nothing, not even `harpe` |
-| `cli/` | The CLI agent and its own end-to-end suite — the framework's only one |
+| `cli/` | The CLI agent and its own end-to-end suite — the framework's only one. Not a template |
+| `templates/` | The six `jo new` templates, each pinned to a published release |
 | `tests/` | The `jo run test` suite: unit and integration |
 | `docs/` | The documentation site |
 | `compose/`, `pycompose/` | An experimental drawing engine, outside the shippable surface |

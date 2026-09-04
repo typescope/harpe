@@ -21,7 +21,7 @@ curl -sSf https://jo-lang.org/install.sh | sh
 Create the minimal learning agent:
 
 ```sh
-jo new my-agent --template typescope/agents:hello
+jo new my-agent --template typescope/harpe:hello
 cd my-agent
 pip install -r requirements.txt
 cp .env.example .env
@@ -43,21 +43,20 @@ to inspect each part.
 
 ## Start from an application
 
-Six ready-to-run agents live in
-[typescope/agents](https://github.com/typescope/agents), each a `jo new` template
-that copies a complete project into your directory — sources, sandbox, prompt,
-and, where it has them, its own tests.
+Six ready-to-run agents live in [`templates/`](templates/), each a `jo new`
+template that copies a complete project into your directory — sources, sandbox,
+prompt, and, where it has them, its own tests.
 
 | Template | Includes | Guide |
 |---|---|---|
-| `cli` | terminal history, progress, cancellation, resumable sessions, and logs | [Create a CLI Agent](https://harpe.typescope.ai/tutorial/create-cli-agent/) |
 | `web` | browser sessions, streaming, uploads, and downloadable files | [Create a Web Agent](https://harpe.typescope.ai/tutorial/create-web-agent/) |
 | `telegram` | bot sessions, sender authorization, attachments, and Telegram rendering | [Create a Telegram Agent](https://harpe.typescope.ai/tutorial/create-telegram-agent/) |
 | `pr-review` | a GitHub PR reviewer, behind a capability scoped to one external API | [Create a PR Review Agent](https://harpe.typescope.ai/tutorial/create-pr-review-agent/) |
 | `flight-booker` | a booking agent that asks a human before the irreversible step | [Create a Flight Booking Agent](https://harpe.typescope.ai/tutorial/create-flight-booking-agent/) |
+| `smart-logistics` | two agents, two capability grants, and policy written as prose | — |
 
 ```sh
-jo new my-agent --template typescope/agents:cli
+jo new my-agent --template typescope/harpe:web
 ```
 
 After creating one:
@@ -71,10 +70,11 @@ jo start
 
 Each template's `.env.example` documents the variables it needs.
 
-Those agents are pinned to a published release, so they build as they stand.
-This repository holds the framework itself, and the `cli` agent — which doubles
-as its end-to-end test subject, and is mirrored to `typescope/agents` at each
-release.
+Every manifest under `templates/` pins a published release rather than the
+framework sources beside it, so a template builds as it stands and an API change
+on `main` does not have to be made in six applications at once. The `cli/` agent
+is not one of them — it builds from these sources, and is the framework's
+end-to-end test subject.
 
 ## Documentation
 
