@@ -1,0 +1,180 @@
+namespace sandbox.runtime
+
+import jo.IO.stdout
+import harpe.ffi.os
+import harpe.ffi.glob
+import harpe.media.*
+import harpe.caps.*
+import sandbox.api
+
+//[ Main entry point //]
+def main(): Unit receives stdout =
+  val prUrl   = os.getenv("PR_URL", "")
+  val token   = os.getenv("GITHUB_TOKEN", "")
+  val ghImpl = new GithubImpl(prUrl, token)
+
+  with api.github = ghImpl in
+    api.runTask()
+
+//[ JSON-encode a string value — adds surrounding quotes and escapes special chars //]
+private def jsonStr(s: String): String = json.dumps(s).asString
+
+//[ Build a JSON array of LineComment objects for the review payload //]
+private def buildCommentsJson(comments: List[api.LineComment]): String =
+  val comment = (c: api.LineComment) =>
+    """
+    {
+      "path":\{jsonStr(c.path)},
+      "line":\{c.line.toString},
+      "body":\{jsonStr(c.body)}
+    }
+    """
+
+  "[" + comments.map(comment).join(",") + "]"
+
+private class PR(owner: String, repo: String, num: Int)
+
+private def parsePrURL(url: String): Option[PR] =
+  if url.trim is `^(https://)?github\.com/(?<owner>[^/]+)/(?<repo>[^/]+)/pull/(?<num>\d+)$` then
+    Some(new PR(owner, repo, num.toInt))
+  else
+    None
+
+//[ GitHub interface backed by local snapshot files + live GitHub API //]
+class GithubImpl
+  private val pr: PR
+  private val prInfo: api.PRInfo
+  private val client: GithubClient
+  private val repoDir: String
+  private val fs: FileSystem
+
+  view api.GitHub
+
+  def GithubImpl(prUrl: String, token: String): GithubImpl =
+    this.fs = FileSystemImpl.local("./")
+    this.pr = match parsePrURL(prUrl)
+      case Some(pr) => pr
+      case None => abort("invalid PR url:" + prUrl)
+
+    this.client = new GithubClient(token)
+    this.prInfo = getPR()
+    // Download the full repo snapshot once before the LLM starts reviewing.
+    // Subsequent sandbox invocations reuse the extracted files via the sentinel.
+    val sentinel = ".downloaded_" + pr.repo + pr.num
+    this.repoDir = fs.readText(sentinel) rescue Err(_) =>
+      val prefix =
+        client.downloadRepo(pr.owner, pr.repo, prInfo.headSha) rescue Err(msg) =>
+          abort("failed to download repo: " + msg)
+
+      fs.writeText(sentinel, prefix)
+      prefix
+
+  private def getPR(): api.PRInfo =
+    val pr = client.getPR(pr.owner, pr.repo, pr.num) rescue Err(msg) =>
+      abort("failed to fetch PR: " + msg)
+
+    var diffs: List[api.FileDiff] = []
+    for d in pr["diffs"].cast[py.List] do
+      diffs = diffs + new api.FileDiff(
+        d["path"].asString,
+        d["status"].asString,
+        d["additions"].asInt,
+        d["deletions"].asInt,
+        d["patch"].asString
+      )
+
+    new api.PRInfo(
+      pr["number"].asInt,
+      pr["title"].asString,
+      pr["body"].asString,
+      pr["base_br"].asString,
+      pr["head_br"].asString,
+      pr["head_sha"].asString,
+      pr["state"].asString,
+      diffs
+    )
+
+  def getPRInfo(): api.PRInfo = prInfo
+
+  //[ Read repo file — tries local snapshot first, falls back to GitHub API. //]
+  def readFile(path: String, start: Int = 0, ends: Int = -1): String =
+    // Use raw python file read
+    match fs.readText(repoDir + "/" + path)
+    case Ok(content) =>
+      // TODO: optimize for large files
+      val lines = content.split("\n")
+      val sliced = if ends == -1 then lines.drop(start) else lines.drop(start).take(ends - start)
+      sliced.join("\n")
+
+    case Err(e) => abort: "cannot read file: " + e
+
+  //[ Keywords that introduce a definition in common languages //]
+  private val defKeywords = [
+    "def ", "class ", "interface ", "function ", "func ", "fn ",
+    "type ", "struct ", "enum ", "const "
+  ]
+
+  //[ Characters that may immediately follow an identifier at a definition site //]
+  private val defTerminators = ["(", " ", "<", "[", ":", "=", "{", ",", ")"]
+
+  //[ Extensions of files we know are binary — skip these during definition search //]
+  private val binaryExts = [
+    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".bmp", ".webp",
+    ".pdf", ".zip", ".tar", ".gz", ".7z", ".rar",
+    ".exe", ".dll", ".so", ".bin", ".wasm",
+    ".pyc", ".class", ".jar",
+    ".ttf", ".woff", ".woff2", ".eot",
+    ".mp4", ".mp3", ".wav", ".ogg"
+  ]
+
+  private def isBinaryPath(path: String): Bool = binaryExts.exists: ext => path.endsWith(ext)
+
+  //[ Return true if `trimmed` contains `keyword + identifier` at a word boundary //]
+  private def matchesDef(trimmed: String, keyword: String, identifier: String): Bool =
+    val prefix = keyword + identifier
+    if !trimmed.startsWith(prefix)  then return false
+
+    // identifier is the last token on the line
+    if trimmed == prefix then return true
+
+    var matched = false
+    for term in defTerminators do
+      if trimmed.startsWith(prefix + term) then matched = true
+    matched
+
+  def findDefinition(identifier: String): List[api.DefinitionMatch] =
+    val files = glob.glob(repoDir + "/**/*", recursive = true)
+    var results: List[api.DefinitionMatch] = []
+
+    for file in files do
+      val path = file.asString
+      if isBinaryPath(path) then continue
+
+      val content = fs.readText(path) rescue Err(_) => continue
+
+      val relPath = path.replace(repoDir + "/", "")
+      val lines   = content.split("\n")
+      var lineNum = 1
+      for line in lines do
+        val trimmed = line.trim
+        for keyword in defKeywords do
+          if matchesDef(trimmed, keyword, identifier) then
+            results = results + (new api.DefinitionMatch(relPath, lineNum, trimmed))
+        lineNum = lineNum + 1
+      end
+    end
+    results
+
+  //[ Save a pending draft review through the GitHub API. //]
+  def saveDraftReview(body: String, comments: List[api.LineComment]): Unit receives stdout =
+    val PR(owner, repo, num) = pr
+    val commentsJson = buildCommentsJson(comments)
+    match client.saveDraftReview(owner, repo, num, prInfo.headSha, body, commentsJson)
+    case Ok(_)    =>
+      println "✓ Review submitted"
+      println "ACTION_COMPLETED"
+
+    case Err(msg) =>
+      println ("✗ submit review failed: " + msg)
+
+end

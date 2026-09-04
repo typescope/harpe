@@ -1,0 +1,373 @@
+//[ DepotTest.jo
+  !
+  ! The database, and the one number the whole app is arranged around.
+//]
+
+namespace harpe.examples.smartlogistics.tests.DepotTest
+
+import harpe.ffi.os
+import harpe.testing.test
+import harpe.testing.thisSuite
+import harpe.testing.check
+import harpe.logging.logger
+import harpe.examples.smartlogistics.Database
+
+//[ A freshly seeded depot in a directory of its own. //]
+def freshDepot(): Database =
+  val root = py.module("tempfile").mkdtemp(prefix = "sl-db-").asString
+  val database = new Database(os.path.join(root, "logistics.db"), os.path.abspath("."))
+  database.initialize()
+  database
+
+//[ Take a database back to the shape it had before orders could be received:
+  ! the old status set, no dates on an order, no received column, no receipts,
+  ! and no version stamp.
+//]
+private def downgrade(path: String): Unit =
+  val conn = py.module("sqlite3").connect(path)
+  conn.execute("PRAGMA foreign_keys = OFF")
+  conn.execute("PRAGMA legacy_alter_table = ON")
+  val steps = [
+    """
+      CREATE TABLE old_orders (
+        id INTEGER PRIMARY KEY, supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+        status TEXT NOT NULL CHECK(status IN ('draft','accepted','rejected')),
+        rationale TEXT NOT NULL, total_cents INTEGER NOT NULL, currency TEXT NOT NULL,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      )
+    """,
+    """
+      INSERT INTO old_orders
+      SELECT id, supplier_id,
+        CASE status WHEN 'ordered' THEN 'accepted' ELSE status END,
+        rationale, total_cents, currency, created_at, updated_at
+      FROM draft_orders
+    """,
+    "DROP TABLE draft_orders",
+    "ALTER TABLE old_orders RENAME TO draft_orders",
+    """
+      CREATE TABLE old_lines (
+        id INTEGER PRIMARY KEY,
+        draft_order_id INTEGER NOT NULL REFERENCES draft_orders(id) ON DELETE CASCADE,
+        product_id INTEGER NOT NULL REFERENCES products(id),
+        quantity INTEGER NOT NULL CHECK(quantity > 0),
+        unit_price_cents INTEGER NOT NULL, line_total_cents INTEGER NOT NULL,
+        UNIQUE(draft_order_id, product_id)
+      )
+    """,
+    """
+      INSERT INTO old_lines
+      SELECT id, draft_order_id, product_id, quantity,
+             unit_price_cents, line_total_cents
+      FROM draft_order_lines
+    """,
+    "DROP TABLE draft_order_lines",
+    "ALTER TABLE old_lines RENAME TO draft_order_lines",
+    "DROP TABLE IF EXISTS order_receipts",
+    "PRAGMA user_version = 0"
+  ]
+  for step in steps do conn.execute(step)
+  conn.commit()
+  conn.close()
+
+private def placedCount(database: Database): Int =
+  var placed = 0
+  for item in database.drafts() do
+    if item.cast[py.Dict].get("status").asString == "ordered" then placed = placed + 1
+  placed
+
+//[ The one draft the seed leaves open, and the line on it for `sku`. //]
+private def orderOf(database: Database, sku: String): Int =
+  var found = 0
+  for item in database.drafts() do
+    val order = item.cast[py.Dict]
+    if order.get("status").asString == "draft" then
+      for raw in order.get("lines").cast[py.List] do
+        if raw.cast[py.Dict].get("sku").asString == sku then
+          found = order.get("id").asInt
+  found
+
+private def lineOf(database: Database, orderId: Int, sku: String): Int =
+  var found = 0
+  for item in database.drafts() do
+    val order = item.cast[py.Dict]
+    if order.get("id").asInt == orderId then
+      for raw in order.get("lines").cast[py.List] do
+        val line = raw.cast[py.Dict]
+        if line.get("sku").asString == sku then found = line.get("id").asInt
+  found
+
+private def orderField(database: Database, orderId: Int, field: String): String =
+  var found = ""
+  for item in database.drafts() do
+    val order = item.cast[py.Dict]
+    if order.get("id").asInt == orderId then found = order.get(field).asString
+  found
+
+private def orderStatus(database: Database, orderId: Int): String =
+  orderField(database, orderId, "status")
+
+private def product(database: Database, sku: String): py.Dict =
+  var found = py.dict()
+  for item in database.products() do
+    if item.cast[py.Dict].get("sku").asString == sku then found = item.cast[py.Dict]
+  found
+
+def depotSuite(): Unit receives thisSuite, logger =
+  test: "the seed opens on a depot in trouble", () =>
+    val database = freshDepot()
+    val summary = database.snapshot().get("summary").cast[py.Dict]
+    check("twelve products", summary.get("product_count").asInt == 12)
+    check:
+      "four run out before a delivery could arrive"
+      summary.get("at_risk_count").asInt == 4
+    check("one draft is already open", summary.get("open_drafts").asInt == 1)
+    check("nothing has been checked yet", summary.get("last_checked").asString == "")
+
+  test: "days of cover is stock plus what is on order, at the rate of sale", () =>
+    val database = freshDepot()
+    val soap = product(database, "HYGI-301")
+    check("14 on hand", soap.get("on_hand").asInt == 14)
+    check("5 a day", soap.get("sells_per_day").asFloat == 5.0)
+    check("two days of cover", soap.get("days_of_cover").asInt == 2)
+    check:
+      "a nine day wait for the preferred source"
+      soap.get("lead_time_days").asInt == 9
+
+  test: "trouble sorts to the top", () =>
+    val database = freshDepot()
+    val first = database.products()[0].cast[py.Dict]
+    check("the shortest cover comes first", first.get("sku").asString == "HYGI-301")
+
+  //[ The loop the demo closes on screen: approving an order covers the
+    ! shortfall that prompted it.
+  //]
+  test: "accepting a draft counts as on order and lifts cover", () =>
+    val database = freshDepot()
+    val before = product(database, "HYGI-303")
+    check("three days before", before.get("days_of_cover").asInt == 3)
+    check("nothing on order before", before.get("on_order").asInt == 0)
+
+    var draftId = 0
+    for item in database.drafts() do
+      val draft = item.cast[py.Dict]
+      if draft.get("status").asString == "draft" then draftId = draft.get("id").asInt
+    check("accepted", database.setDraftStatus(draftId, "accepted"))
+
+    val after = product(database, "HYGI-303")
+    check("40 on order", after.get("on_order").asInt == 40)
+    check("nine days after", after.get("days_of_cover").asInt == 9)
+    check:
+      "one fewer at risk"
+      database.snapshot().get("summary").cast[py.Dict].get("at_risk_count").asInt == 3
+    check:
+      "an accepted order cannot be accepted again"
+      !database.setDraftStatus(draftId, "rejected")
+
+  //[ What the old model got wrong. An order that has arrived is stock, and
+    ! stock is in the ledger; leaving it on order as well counted it twice and
+    ! cover climbed away from the truth with every delivery.
+  //]
+  test: "receiving moves an order into the ledger, not alongside it", () =>
+    val database = freshDepot()
+    val id = orderOf(database, "HYGI-303")
+    check("placed", database.setDraftStatus(id, "accepted"))
+
+    val onOrder = product(database, "HYGI-303")
+    check("40 on order", onOrder.get("on_order").asInt == 40)
+    check("18 on hand", onOrder.get("on_hand").asInt == 18)
+
+    check:
+      "40 booked in"
+      database.receiveOrder(py.dict(
+        "order_id" ~ id, "lines" ~ py.list(py.dict(
+          "line_id" ~ lineOf(database, id, "HYGI-303"), "quantity" ~ 40)))) == 40
+
+    val received = product(database, "HYGI-303")
+    check("nothing left on order", received.get("on_order").asInt == 0)
+    check("and 58 on hand instead", received.get("on_hand").asInt == 58)
+    // The same total either way — which is the point. Before, it would have
+    // read 98: forty units in stock and the same forty still on their way.
+    check:
+      "cover unchanged by the delivery arriving"
+      received.get("days_of_cover").asInt == onOrder.get("days_of_cover").asInt
+    check("the order is closed", orderStatus(database, id) == "received")
+
+  test: "a delivery is the ledger's, and traces back to the line it settles", () =>
+    val database = freshDepot()
+    val id = orderOf(database, "HYGI-303")
+    val _ = database.setDraftStatus(id, "accepted")
+    val _ = database.receiveOrder(py.dict("order_id" ~ id, "lines" ~ py.list(
+      py.dict("line_id" ~ lineOf(database, id, "HYGI-303"), "quantity" ~ 40))))
+
+    var booked = py.dict()
+    for item in database.movements(0, 100) do
+      val movement = item.cast[py.Dict]
+      if movement.get("reference").asString == "PO-\{id}" then booked = movement
+    check:
+      "the delivery is an ordinary receipt in the ledger"
+      booked.get("kind").asString == "receipt" && booked.get("quantity").asInt == 40
+
+    var receipts = py.list()
+    for item in database.drafts() do
+      val order = item.cast[py.Dict]
+      if order.get("id").asInt == id then receipts = order.get("receipts").cast[py.List]
+    check("one receipt recorded", receipts.size == 1)
+    check:
+      "naming the movement that changed the balance"
+      receipts[0].cast[py.Dict].get("movement_id").asInt == booked.get("id").asInt
+
+  test: "a short delivery leaves the rest on order", () =>
+    val database = freshDepot()
+    val id = orderOf(database, "HYGI-303")
+    val line = lineOf(database, id, "HYGI-303")
+    val _ = database.setDraftStatus(id, "accepted")
+
+    check:
+      "30 of 40 booked in"
+      database.receiveOrder(py.dict(
+        "order_id" ~ id,
+        "lines" ~ py.list(py.dict("line_id" ~ line, "quantity" ~ 30)))) == 30
+    check("part received", orderStatus(database, id) == "part_received")
+    check("ten still coming", product(database, "HYGI-303").get("on_order").asInt == 10)
+
+    // A supplier can send more than was ordered, but not against this line:
+    // what is outstanding would go negative and cover would read low for ever.
+    val tooMany = py.try: database.receiveOrder(py.dict(
+      "order_id" ~ id,
+      "lines" ~ py.list(py.dict("line_id" ~ line, "quantity" ~ 11))))
+    check("and no more than ten will be taken", tooMany.isErr)
+
+    check:
+      "the last ten"
+      database.receiveOrder(py.dict(
+        "order_id" ~ id,
+        "lines" ~ py.list(py.dict("line_id" ~ line, "quantity" ~ 10)))) == 10
+    check("received", orderStatus(database, id) == "received")
+    check("nothing on order", product(database, "HYGI-303").get("on_order").asInt == 0)
+
+    val again = py.try: database.receiveOrder(py.dict(
+      "order_id" ~ id,
+      "lines" ~ py.list(py.dict("line_id" ~ line, "quantity" ~ 1))))
+    check("a closed order takes no more deliveries", again.isErr)
+
+  test: "cancelling stops the rest counting, and keeps what arrived", () =>
+    val database = freshDepot()
+    val id = orderOf(database, "HYGI-303")
+    val _ = database.setDraftStatus(id, "accepted")
+    val _ = database.receiveOrder(py.dict("order_id" ~ id, "lines" ~ py.list(
+      py.dict("line_id" ~ lineOf(database, id, "HYGI-303"), "quantity" ~ 25))))
+
+    check("cancelled", database.setDraftStatus(id, "cancelled"))
+    val after = product(database, "HYGI-303")
+    check("the fifteen that never came stop counting", after.get("on_order").asInt == 0)
+    check("the twenty-five that did are in stock", after.get("on_hand").asInt == 43)
+    check:
+      "a cancelled order cannot be cancelled again"
+      !database.setDraftStatus(id, "cancelled")
+
+  test: "a draft is not a delivery, and neither is a rejected order", () =>
+    val database = freshDepot()
+    val id = orderOf(database, "HYGI-303")
+    val line = lineOf(database, id, "HYGI-303")
+
+    val early = py.try: database.receiveOrder(py.dict(
+      "order_id" ~ id, "lines" ~ py.list(py.dict("line_id" ~ line, "quantity" ~ 1))))
+    check("nothing arrives against a draft", early.isErr)
+    check("a draft cannot be cancelled", !database.setDraftStatus(id, "cancelled"))
+
+    check("rejected", database.setDraftStatus(id, "rejected"))
+    val gone = py.try: database.receiveOrder(py.dict(
+      "order_id" ~ id, "lines" ~ py.list(py.dict("line_id" ~ line, "quantity" ~ 1))))
+    check("nor against a rejected one", gone.isErr)
+    check:
+      "and it was never on order"
+      product(database, "HYGI-303").get("on_order").asInt == 0
+
+  test: "placing an order records when it is due", () =>
+    val database = freshDepot()
+    val id = orderOf(database, "HYGI-303")
+    check("no date on a draft", orderField(database, id, "expected_at") == "")
+    val _ = database.setDraftStatus(id, "accepted")
+    // Paper towels come from Nordic on a six day lead time. The dates the
+    // database writes are its own, so what is checked here is the interval
+    // between them rather than today's date read off another clock.
+    val datetime = py.module("datetime")
+    val placed = datetime.datetime.fromisoformat(
+      orderField(database, id, "ordered_at")).date()
+    val due = datetime.date.fromisoformat(orderField(database, id, "expected_at"))
+    check:
+      "due on the lead time of the slowest line"
+      due.__sub__(placed).days.asInt == 6
+    val summary = database.snapshot().get("summary").cast[py.Dict]
+    check:
+      "three orders are now in transit"
+      summary.get("outstanding_orders").asInt == 3
+    check("none of them late yet", summary.get("overdue_orders").asInt == 0)
+
+  test: "the ledger refuses to go negative or past capacity", () =>
+    val database = freshDepot()
+    val soap = product(database, "HYGI-301")
+    val id = soap.get("id").asInt
+
+    val tooMany = py.try: database.recordMovement(
+      py.dict("product_id" ~ id, "kind" ~ "issue", "quantity" ~ 9999))
+    check("cannot issue more than is there", tooMany.isErr)
+
+    val tooBig = py.try: database.recordMovement(
+      py.dict("product_id" ~ id, "kind" ~ "receipt", "quantity" ~ 9999))
+    check("cannot receive past capacity", tooBig.isErr)
+
+    val fine = database.recordMovement(
+      py.dict("product_id" ~ id, "kind" ~ "receipt", "quantity" ~ 8))
+    check("a movement that fits is recorded", fine > 0)
+    check("and the ledger says so", product(database, "HYGI-301").get("on_hand").asInt == 22)
+
+  //[ A database written before orders had a life after acceptance.
+    !
+    ! Built by taking a current one back to the old shape — the old status set,
+    ! no dates, no received column, no receipts table — so what is migrated here
+    ! is the schema this app actually shipped, not an approximation of it.
+  //]
+  test: "a database from before receiving is upgraded in place", () =>
+    val database = freshDepot()
+    val id = orderOf(database, "HYGI-303")
+    downgrade(database.path)
+
+    // Exactly what happens on the next start.
+    val reopened = new Database(database.path, os.path.abspath("."))
+    reopened.initialize()
+
+    check("the two placed orders survive as ordered", placedCount(reopened) == 2)
+    check("the open draft is still a draft", orderStatus(reopened, id) == "draft")
+    check:
+      "nothing was received before there was such a thing"
+      product(reopened, "PACK-202").get("on_order").asInt == 100
+    check:
+      "cover is unchanged by the upgrade"
+      product(reopened, "HYGI-301").get("days_of_cover").asInt == 2
+
+    // And the upgraded database does the new thing.
+    val _ = reopened.setDraftStatus(id, "accepted")
+    check:
+      "40 booked in"
+      reopened.receiveOrder(py.dict(
+        "order_id" ~ id, "lines" ~ py.list(py.dict(
+          "line_id" ~ lineOf(reopened, id, "HYGI-303"), "quantity" ~ 40)))) == 40
+    check("received", orderStatus(reopened, id) == "received")
+
+    // Twice is a no-op: the version stamp is what stops it running again.
+    val third = new Database(database.path, os.path.abspath("."))
+    third.initialize()
+    check:
+      "the upgrade does not run a second time"
+      orderStatus(third, id) == "received"
+
+  test: "checks are text, and both agents read the same list", () =>
+    val database = freshDepot()
+    check("four seeded checks", database.checks().size == 4)
+    val id = database.saveCheck(py.dict(
+      "text" ~ "Nordic shuts down over Christmas.", "enabled" ~ true))
+    check("added", database.checks().size == 5)
+    database.deleteCheck(id)
+    check("removed", database.checks().size == 4)

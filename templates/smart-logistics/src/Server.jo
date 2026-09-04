@@ -1,0 +1,174 @@
+namespace harpe.examples.smartlogistics
+
+import harpe.ffi.os
+import harpe.ffi.threading
+import harpe.util.File
+import harpe.Model
+import harpe.Http
+import harpe.Http.request
+
+class Server(brain: Model, home: String, databasePath: String, database: Database)
+  private val watcher = new Watcher(brain, home, databasePath, database)
+  private val planner = new Planner(brain, home, databasePath, database)
+
+  def route(): py.List receives request = dispatch()
+
+  private def dispatch(): py.List receives request =
+    match request
+    case Http.Get("/") => asset("index.html", "text/html; charset=utf-8")
+    case Http.Get("/app.css") => asset("app.css", "text/css; charset=utf-8")
+    case Http.Get("/app.js") => asset("app.js", "text/javascript; charset=utf-8")
+    case Http.Get("/api/snapshot") => Http.respondJson(database.snapshot())
+    case Http.Get("/api/warnings") =>
+      Http.respondJson(py.dict("warnings" ~ database.warnings()))
+    case Http.Get("/api/checks") =>
+      Http.respondJson(py.dict("checks" ~ database.checks()))
+    case Http.Get("/api/drafts") =>
+      Http.respondJson(py.dict("drafts" ~ database.drafts()))
+    case Http.Get("/api/runs") => Http.respondJson(py.dict("runs" ~ database.runs()))
+    case Http.Get("/api/demand") =>
+      Http.respondJson(py.dict("demand" ~ database.demand(28)))
+    case Http.Get("/api/movements") => movements()
+    case Http.Get("/api/suppliers") =>
+      Http.respondJson(py.dict("suppliers" ~ database.suppliers()))
+    case Http.Get("/api/skills") =>
+      Http.respondJson(py.dict("skills" ~ database.skillNames()))
+    case Http.Get("/api/skills/read") => skillRead()
+    case Http.Get("/api/skills/revisions") => skillRevisions()
+    case Http.Get("/api/skills/revision") => skillRevision()
+    case Http.Get("/api/drafts/export") => draftExport()
+    case Http.Post("/api/products") => saveProduct()
+    case Http.Post("/api/movements") => recordMovement()
+    case Http.Post("/api/checks") => saveCheck()
+    case Http.Post("/api/checks/delete") => deleteCheck()
+    case Http.Post("/api/skills") => saveSkill()
+    case Http.Post("/api/skills/delete") => deleteSkill()
+    case Http.Post("/api/drafts/status") => draftStatus()
+    case Http.Post("/api/orders/receive") => receiveDelivery()
+    // The watcher, on demand as well as on its schedule.
+    case Http.Post("/api/check-now") => Http.respondJson(watcher.run("manual"))
+    // The planner, only ever on demand, with this run's note.
+    case Http.Post("/api/plan") => plan()
+    case _ => Http.respond("404 Not Found", "application/json", "{\"error\":\"not found\"}")
+
+  //[ Browser responses carry their own headers: nothing is sniffed, and the
+    ! page may load only its own script and stylesheet.
+  //]
+  private def asset(name: String, mime: String): py.List receives request =
+    val headers = py.list:
+      py.tuple("Content-Type", mime)
+      py.tuple("Cache-Control", "no-store")
+      py.tuple("X-Content-Type-Options", "nosniff")
+      py.tuple:
+        "Content-Security-Policy"
+        "default-src 'none'; script-src 'self'; style-src 'self'; "
+          + "connect-src 'self'; img-src 'self' data:; base-uri 'none'; "
+          + "form-action 'none'"
+    val body = File.read(os.path.join(home, "assets", name))
+    Http.respondBytes("200 OK", headers, py.dynamic(body).encode())
+
+  private def body(): py.Dict = Http.readJson()
+
+  private def query(name: String): String receives request =
+    val raw = request.environ.get("QUERY_STRING", "").asString
+    val values = py.module("urllib.parse").parse_qs(raw).get(name, py.list()).cast[py.List]
+    if values.size == 0 then "" else values[0].asString
+
+  private def ok(extra: py.Dict): py.List =
+    extra.set("ok", true)
+    Http.respondJson(extra)
+
+  private def plan(): py.List receives request =
+    Http.respondJson(planner.run(body().get("note", "").asString))
+
+  private def saveProduct(): py.List receives request =
+    ok(py.dict("id" ~ database.saveProduct(body())))
+
+  private def movements(): py.List receives request =
+    val productId = Int.parse(query("product_id")) rescue None => 0
+    Http.respondJson(py.dict("movements" ~ database.movements(productId, 100)))
+
+  private def recordMovement(): py.List receives request =
+    ok(py.dict("id" ~ database.recordMovement(body())))
+
+  private def saveCheck(): py.List receives request =
+    ok(py.dict("id" ~ database.saveCheck(body())))
+
+  private def deleteCheck(): py.List receives request =
+    database.deleteCheck(body().get("id").asInt)
+    ok(py.dict())
+
+  private def skillRead(): py.List receives request =
+    val name = query("name")
+    Http.respondJson(py.dict("name" ~ name, "content" ~ database.readSkill(name)))
+
+  private def skillRevisions(): py.List receives request =
+    Http.respondJson(py.dict("revisions" ~ database.skillRevisions(query("name"))))
+
+  private def skillRevision(): py.List receives request =
+    val revision = Int.parse(query("revision")) rescue None => 0
+    val name = query("name")
+    Http.respondJson: py.dict:
+      "name"     ~ name
+      "revision" ~ revision
+      "content"  ~ database.skillRevision(name, revision)
+
+  private def saveSkill(): py.List receives request =
+    val data = body()
+    val name = database.saveSkill:
+      data.get("name", "").asString
+      data.get("content", "").asString
+    ok(py.dict("name" ~ name))
+
+  private def deleteSkill(): py.List receives request =
+    Http.respondJson: py.dict:
+      "ok" ~ database.deleteSkill(body().get("name", "").asString)
+
+  private def draftStatus(): py.List receives request =
+    val data = body()
+    Http.respondJson: py.dict:
+      "ok" ~ database.setDraftStatus(data.get("id").asInt, data.get("status").asString)
+
+  //[ Booking a delivery against an open order. The only caller is a person at
+    ! the receiving door; neither agent has this, or any other, write to stock.
+  //]
+  private def receiveDelivery(): py.List receives request =
+    refusable(() => ok(py.dict("received" ~ database.receiveOrder(body()))))
+
+  //[ A refusal a person can act on.
+    !
+    ! Everything the depot declines to do — more than the line still owes, past
+    ! the capacity of a shelf, against an order that is closed — is declined for
+    ! a stated reason, and the person at the receiving door is the one who has
+    ! to do something about it. Letting that surface as a bare 500 would tell
+    ! them only that the computer said no.
+  //]
+  private def refusable(handler: () => py.List): py.List receives request =
+    val outcome = py.try: handler()
+    match outcome
+    case Ok(response) => response
+    case Err(error) =>
+      Http.respond:
+        "400 Bad Request"
+        "application/json"
+        py.module("json").dumps(py.dict("error" ~ error.message)).asString
+
+  private def draftExport(): py.List receives request =
+    val id = Int.parse(query("id")) rescue None => 0
+    val selected = py.list()
+    for item in database.drafts() do
+      if item.cast[py.Dict].get("id").asInt == id then selected.append(item)
+    Http.respondJson(py.dict("orders" ~ selected))
+
+  //[ The watcher runs on its own. The planner never does. //]
+  def startWatching(rawMinutes: String): Unit =
+    val minutes = Int.parse(rawMinutes) rescue None => 0
+    if minutes <= 0 then return
+    val thread = threading.Thread(target = () => schedule(minutes), daemon = true)
+    thread.start()
+
+  private def schedule(minutes: Int): Unit =
+    while true do
+      py.module("time").sleep(minutes * 60)
+      val _ = watcher.run("schedule")
+end

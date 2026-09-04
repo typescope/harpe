@@ -1,0 +1,53 @@
+//[ Image.jo
+  !
+  ! The image capability: pixel size, metadata, and derived images (resized, cropped,
+  ! converted — each written to a `target` the caller names). FFI-backed, so granted
+  ! on its own.
+  !
+  ! Pixel work only. Reading the text *content* of an image is `OCR`, a separate
+  ! capability — an agent may prepare images (say, for a vision model) without being
+  ! able to extract what a document says.
+//]
+
+namespace harpe.caps
+
+import harpe.caps.Image.Size
+
+//[ Read and transform an image. //]
+interface Image
+  //[ The image's pixel dimensions. //]
+  def dimensions(src: String): Result[Size, String]
+
+  //[ The image's metadata.
+    !
+    ! `format`, `mode`, and named EXIF entries (`Orientation`, `DateTime`, `Model`,
+    ! …) when present.
+  //]
+  def metadata(src: String): Result[Map[String, String], String]
+
+  //[ Scale the image to fit within `width` x `height`, writing it to `target`.
+    !
+    ! Aspect ratio preserved, never enlarged. Returns the resulting size.
+  //]
+  def resize(src: String, width: Int, height: Int, target: String): Result[Size, String]
+
+  //[ Cut the `width` x `height` region at top-left (`x`, `y`) into `target`.
+    !
+    ! Returns the resulting size.
+  //]
+  def crop(src: String, x: Int, y: Int, width: Int, height: Int, target: String): Result[Size, String]
+
+  //[ Re-encode the image in the format `target`'s extension names.
+    !
+    ! `.png`, `.jpg`, `.webp`, …. Returns the pixel size.
+  //]
+  def convert(src: String, target: String): Result[Size, String]
+end
+
+//[ The ambient image capability. //]
+param image: Image
+
+section Image
+  //[ Image pixel dimensions. //]
+  class Size(width: Int, height: Int)
+end

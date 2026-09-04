@@ -1,0 +1,85 @@
+name: CI
+
+# Everything here resolves the published packages, which is what every agent in
+# this repository is pinned to. Nothing is ever ahead of the registry, so every
+# check is answerable at every commit — there is no expected-red job, and all of
+# these gate a pull request.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  JO_REGISTRY_URL: https://pkg.typescope.ai
+
+jobs:
+  agent:
+    name: ${{ matrix.agent }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    # One runner per agent, so each starts clean and a failure names the agent
+    # that failed without the others hiding it.
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [hello, cli, web, telegram, pr-review, flight-booker, smart-logistics]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The installed `jo` launcher runs jo.jar on the JVM, so a JDK is required.
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: liberica
+          java-version: 17
+
+      # Pinned rather than taken from the runner image, so a red build means an
+      # agent broke and never that the image moved to a Python some agent's
+      # requirements have no wheel for yet.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Jo
+        run: |
+          curl -sSf https://jo-lang.org/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install requirements
+        working-directory: ${{ matrix.agent }}
+        run: pip install -r requirements.txt
+
+      # One spec per capability. Most agents grant exactly one and keep it in
+      # sandbox/; an agent that grants several — smart-logistics gives its
+      # watcher and its planner different authority — keeps one directory each.
+      - name: Build the sandbox guests
+        working-directory: ${{ matrix.agent }}
+        run: |
+          for spec in sandbox/jo.toml sandbox/*/jo.toml; do
+            [ -f "$spec" ] || continue
+            echo "::group::$spec"
+            jo build --spec "$spec" guest
+            echo "::endgroup::"
+          done
+
+      - name: Build the agent
+        working-directory: ${{ matrix.agent }}
+        run: jo build agent
+
+      # Agents that ship a suite run it. `hello` deliberately has none.
+      - name: Test
+        working-directory: ${{ matrix.agent }}
+        run: |
+          if [ -d tests ]; then jo run tests; else echo "no tests for ${{ matrix.agent }}"; fi
+
+  # The path a user actually takes. It needs the repository to be public — `jo
+  # new` fetches over plain HTTPS and cannot authenticate — so it stays disabled
+  # until then rather than failing on every run.
+  #
+  #  jo new probe --template typescope/agents#${{ github.sha }}:web

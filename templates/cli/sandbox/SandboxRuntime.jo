@@ -1,0 +1,48 @@
+namespace sandbox.runtime
+
+import jo.IO.stdout
+import harpe.logging.*
+import harpe.ffi.os
+import harpe.media.*
+import harpe.caps.*
+import harpe.interact.BrokerApprovals
+import harpe.approvals
+import sandbox.api
+
+// The agent's per-turn entry. The guest links jo.main = sandbox.runtime.main.
+// It installs the audit channel — code inside the sandbox (capability impls)
+// logs through the framework `harpe.logging` channel to a JSONL file the host
+// names via HARPE_AUDIT_LOG. The host (`runCode`) reads that file back and
+// replays the records with the turn's context — then runs the LLM's program.
+// Capability impls are built here and granted to the guest via `with
+// sandbox.api.x = impl in ...`. The LLM only ever gets the capability. The
+// runtime depends on `harpe` directly, so impls can use the framework (even run
+// sub-agents). OS-level confinement is NOT applied here — it lives outside the
+// process, in an optional `sandbox/run.sh` wrapper (see
+// docs/concepts/sandbox.md).
+def main(): Unit receives stdout =
+  with approvals = BrokerApprovals.connect() in
+    Logging.withLogger: auditLogger(), () => run()
+
+// Grant the capabilities, all rooted at the agent's data/ directory — always
+// granted by the driver as HARPE_DATA_DIR. One root for every capability, so a
+// A relative path means the same file to all of them. Swap `TesseractOcr` for `RapidOcr`
+// to change the OCR engine.
+private def run(): Unit receives stdout =
+  val root = os.getenv("HARPE_DATA_DIR", "")
+  if root == "" then abort "sandbox: HARPE_DATA_DIR was not granted"
+
+  with
+    fs = FileSystemImpl.local(root),
+    pdfReader = new PdfiumReader(root),
+    excelReader = new OpenpyxlExcel(root),
+    wordReader = new DocxReader(root),
+    image = new PillowImage(root),
+    ocr = TesseractOcr(root)
+  in sandbox.api.runTask()
+
+// The audit backend: a JSONL file the host named in HARPE_AUDIT_LOG, or a no-op
+// when unset (the program was launched outside the runCode harness).
+private def auditLogger(): Logger =
+  val path = os.getenv("HARPE_AUDIT_LOG", "")
+  if path == "" then Logging.discard else new JsonlLogger(path)
