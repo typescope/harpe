@@ -73,8 +73,9 @@ def runTask(): Unit receives IO.stdout, plan =
   println plan.products().size.toString
 """))
     check("the watcher cannot reach the planner's capability", other.returnCode != 0)
-    check("and it is the name itself that is missing",
-      (other.out + other.err).contains("Undefined term name"))
+    check:
+      "and it is the name itself that is missing"
+      (other.out + other.err).contains("Undefined term name")
 
     val warning = Sandbox.build(root, "plan", guest("""
 def runTask(): Unit receives IO.stdout, plan =
@@ -88,8 +89,9 @@ def runTask(): Unit receives IO.stdout, plan =
   val conn = py.module("sqlite3").connect("/tmp/anything.db")
   println "opened a database"
 """))
-    check("no guest reaches Python, and so no guest reaches SQLite",
-      ffi.returnCode != 0)
+    check:
+      "no guest reaches Python, and so no guest reaches SQLite"
+      ffi.returnCode != 0
 
     val impl = Sandbox.build(root, "plan", guest("""
 import sandbox.runtime.*
@@ -98,8 +100,9 @@ def runTask(): Unit receives IO.stdout, plan =
   val mine = new PlanImpl(new Depot("/etc/passwd"))
   println "built my own"
 """))
-    check("and cannot build the trusted implementation itself",
-      impl.returnCode != 0)
+    check:
+      "and cannot build the trusted implementation itself"
+      impl.returnCode != 0
 
   //[ Inside the capability, the runtime is still the one that decides. //]
   test: "the runtime refuses a draft the facts do not allow", () =>
@@ -107,26 +110,31 @@ def runTask(): Unit receives IO.stdout, plan =
     val database = DepotTest.freshDepot()
     val printed = Sandbox.output(root, "plan", database.path, probeProgram())
 
-    check("a supplier that does not stock it",
+    check:
+      "a supplier that does not stock it"
       printed.contains("wrong supplier: ok=false")
-        && printed.contains("not sourced from this supplier"))
-    check("a quantity that is not whole cases",
+        && printed.contains("not sourced from this supplier")
+    check:
+      "a quantity that is not whole cases"
       printed.contains("not a whole case: ok=false")
-        && printed.contains("whole cases"))
+        && printed.contains("whole cases")
     check("zero", printed.contains("zero quantity: ok=false"))
     check("negative", printed.contains("negative quantity: ok=false"))
-    check("more than the shelf holds",
+    check:
+      "more than the shelf holds"
       printed.contains("over capacity: ok=false")
-        && printed.contains("storage capacity"))
+        && printed.contains("storage capacity")
     check("a product that does not exist", printed.contains("unknown product: ok=false"))
     check("a supplier that does not exist", printed.contains("unknown supplier: ok=false"))
-    check("the same product twice in one draft",
-      printed.contains("duplicate line: Duplicate product line"))
+    check:
+      "the same product twice in one draft"
+      printed.contains("duplicate line: Duplicate product line")
     check("a draft with no lines", printed.contains("no lines: A draft needs"))
     check("a draft with no reason", printed.contains("no rationale: A rationale"))
     check("a proposal the facts do allow", printed.contains("accepted: ok=true id=true"))
-    check("but not the same product a second time",
-      printed.contains("second time: FOOD-104 is already in an open draft"))
+    check:
+      "but not the same product a second time"
+      printed.contains("second time: FOOD-104 is already in an open draft")
 
     // What the guest wrote is a draft, and the orders the administrator had
     // already placed are exactly as many as before. Nothing generated code can
@@ -138,8 +146,9 @@ def runTask(): Unit receives IO.stdout, plan =
       val order = item.cast[py.Dict]
       if order.get("status").asString == "ordered" then placed = placed + 1
       if newest.size == 0 then newest = order
-    check("what the guest wrote is a draft",
-      newest.get("status").asString == "draft")
+    check:
+      "what the guest wrote is a draft"
+      newest.get("status").asString == "draft"
     check("and it ordered nothing on its way past", placed == 2)
 
   test: "the watcher can only leave a note, and refreshes it rather than repeat it", () =>
@@ -160,6 +169,7 @@ def runTask(): Unit receives IO.stdout, watch =
     check("severity is not free text", printed.contains("severity: Severity must be"))
     check("a warning needs a real product", printed.contains("product: Unknown or disabled"))
     check("and a real check, when it names one", printed.contains("check: Unknown check"))
-    check("raising the same thing twice refreshes one note",
-      printed.contains("refreshed: true"))
+    check:
+      "raising the same thing twice refreshes one note"
+      printed.contains("refreshed: true")
     check("so the list holds one row, not two", database.warnings().size == 1)

@@ -59,10 +59,11 @@ class Server(brain: Model, home: String, databasePath: String, database: Databas
       py.tuple("Content-Type", mime)
       py.tuple("Cache-Control", "no-store")
       py.tuple("X-Content-Type-Options", "nosniff")
-      py.tuple("Content-Security-Policy",
+      py.tuple:
+        "Content-Security-Policy"
         "default-src 'none'; script-src 'self'; style-src 'self'; "
           + "connect-src 'self'; img-src 'self' data:; base-uri 'none'; "
-          + "form-action 'none'")
+          + "form-action 'none'"
     val body = File.read(os.path.join(home, "assets", name))
     Http.respondBytes("200 OK", headers, py.dynamic(body).encode())
 
@@ -107,24 +108,26 @@ class Server(brain: Model, home: String, databasePath: String, database: Databas
   private def skillRevision(): py.List receives request =
     val revision = Int.parse(query("revision")) rescue None => 0
     val name = query("name")
-    Http.respondJson(py.dict(
-      "name" ~ name, "revision" ~ revision,
-      "content" ~ database.skillRevision(name, revision)))
+    Http.respondJson: py.dict:
+      "name"     ~ name
+      "revision" ~ revision
+      "content"  ~ database.skillRevision(name, revision)
 
   private def saveSkill(): py.List receives request =
     val data = body()
-    val name = database.saveSkill(
-      data.get("name", "").asString, data.get("content", "").asString)
+    val name = database.saveSkill:
+      data.get("name", "").asString
+      data.get("content", "").asString
     ok(py.dict("name" ~ name))
 
   private def deleteSkill(): py.List receives request =
-    Http.respondJson(py.dict(
-      "ok" ~ database.deleteSkill(body().get("name", "").asString)))
+    Http.respondJson: py.dict:
+      "ok" ~ database.deleteSkill(body().get("name", "").asString)
 
   private def draftStatus(): py.List receives request =
     val data = body()
-    Http.respondJson(py.dict("ok" ~
-      database.setDraftStatus(data.get("id").asInt, data.get("status").asString)))
+    Http.respondJson: py.dict:
+      "ok" ~ database.setDraftStatus(data.get("id").asInt, data.get("status").asString)
 
   //[ Booking a delivery against an open order. The only caller is a person at
     ! the receiving door; neither agent has this, or any other, write to stock.
@@ -145,8 +148,10 @@ class Server(brain: Model, home: String, databasePath: String, database: Databas
     match outcome
     case Ok(response) => response
     case Err(error) =>
-      Http.respond("400 Bad Request", "application/json",
-        py.module("json").dumps(py.dict("error" ~ error.message)).asString)
+      Http.respond:
+        "400 Bad Request"
+        "application/json"
+        py.module("json").dumps(py.dict("error" ~ error.message)).asString
 
   private def draftExport(): py.List receives request =
     val id = Int.parse(query("id")) rescue None => 0

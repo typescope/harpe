@@ -51,23 +51,33 @@ class Watcher(brain: Model, home: String, databasePath: String, database: Databa
       // resolves nothing and is reported as the failure it is.
       if report.trim == "" then
         database.finishRun(runId, "failed", inconclusive)
-        py.dict("ok" ~ false, "busy" ~ false, "run_id" ~ runId,
-                "report" ~ inconclusive)
+        py.dict:
+          "ok"     ~ false
+          "busy"   ~ false
+          "run_id" ~ runId
+          "report" ~ inconclusive
       else
         // Whatever this run did not raise again no longer holds.
         val resolved = database.resolveWarningsNotRaisedBy(runId)
         database.finishRun(runId, "success", report)
-        py.dict("ok" ~ true, "busy" ~ false, "run_id" ~ runId,
-                "resolved" ~ resolved, "report" ~ report)
+        py.dict:
+          "ok"       ~ true
+          "busy"     ~ false
+          "run_id"   ~ runId
+          "resolved" ~ resolved
+          "report"   ~ report
     case Err(error) =>
       database.finishRun(runId, "failed", error.message)
-      py.dict("ok" ~ false, "busy" ~ false, "run_id" ~ runId,
-              "report" ~ error.message)
+      py.dict:
+        "ok"     ~ false
+        "busy"   ~ false
+        "run_id" ~ runId
+        "report" ~ error.message
 
   private def ask(runId: Int): String =
-    val guestEnv = Map(
-      "SMART_LOGISTICS_DB" ~ databasePath,
-      "SMART_LOGISTICS_RUN" ~ runId.toString)
+    val guestEnv = Map:
+      "SMART_LOGISTICS_DB"  ~ databasePath
+      "SMART_LOGISTICS_RUN" ~ runId.toString
     Logging.withLogger: audit(home, "watch"), () =>
       turn:
         brain
@@ -105,8 +115,11 @@ class Planner(brain: Model, home: String, databasePath: String, database: Databa
       py.dict("ok" ~ true, "busy" ~ false, "run_id" ~ runId, "report" ~ report)
     case Err(error) =>
       database.finishRun(runId, "failed", error.message)
-      py.dict("ok" ~ false, "busy" ~ false, "run_id" ~ runId,
-              "report" ~ error.message)
+      py.dict:
+        "ok"     ~ false
+        "busy"   ~ false
+        "run_id" ~ runId
+        "report" ~ error.message
 
   //[ The note is this run's intent — what to focus on. It cannot overrule a
     ! check; changing policy means changing the check, which persists and is

@@ -332,49 +332,58 @@ class Database(path: String, home: String)
     val count = conn.execute("SELECT COUNT(*) FROM suppliers").fetchone()[0].asInt
     if count > 0 then return
 
-    conn.executemany("INSERT INTO suppliers(id,name,currency) VALUES(?,?,?)", py.list(
-      py.list(1, "Alpine Foods", "CHF"),
-      py.list(2, "Rhine Packaging", "CHF"),
-      py.list(3, "Nordic Hygiene", "EUR"),
-      py.list(4, "Helvetia Wholesale", "CHF")
-    ))
-    conn.executemany("""
+    conn.executemany:
+      "INSERT INTO suppliers(id,name,currency) VALUES(?,?,?)"
+      py.list:
+        py.list(1, "Alpine Foods", "CHF")
+        py.list(2, "Rhine Packaging", "CHF")
+        py.list(3, "Nordic Hygiene", "EUR")
+        py.list(4, "Helvetia Wholesale", "CHF")
+    conn.executemany:
+      """
       INSERT INTO products (id,sku,name,category,capacity) VALUES(?,?,?,?,?)
-    """, py.list(
-      py.list(1,"FOOD-101","Pasta 500 g","food",240),
-      py.list(2,"FOOD-102","Tomato sauce","food",180),
-      py.list(3,"FOOD-103","Rice 1 kg","food",260),
-      py.list(4,"FOOD-104","Olive oil 1 L","food",96),
-      py.list(5,"PACK-201","Small cartons","packaging",1000),
-      py.list(6,"PACK-202","Large cartons","packaging",500),
-      py.list(7,"PACK-203","Paper tape","packaging",160),
-      py.list(8,"PACK-204","Pallet wrap","packaging",180),
-      py.list(9,"HYGI-301","Hand soap","hygiene",120),
-      py.list(10,"HYGI-302","Surface cleaner","hygiene",150),
-      py.list(11,"HYGI-303","Paper towels","hygiene",90),
-      py.list(12,"HYGI-304","Waste bags","hygiene",220)
-    ))
+      """
+      py.list:
+        py.list(1,"FOOD-101","Pasta 500 g","food",240)
+        py.list(2,"FOOD-102","Tomato sauce","food",180)
+        py.list(3,"FOOD-103","Rice 1 kg","food",260)
+        py.list(4,"FOOD-104","Olive oil 1 L","food",96)
+        py.list(5,"PACK-201","Small cartons","packaging",1000)
+        py.list(6,"PACK-202","Large cartons","packaging",500)
+        py.list(7,"PACK-203","Paper tape","packaging",160)
+        py.list(8,"PACK-204","Pallet wrap","packaging",180)
+        py.list(9,"HYGI-301","Hand soap","hygiene",120)
+        py.list(10,"HYGI-302","Surface cleaner","hygiene",150)
+        py.list(11,"HYGI-303","Paper towels","hygiene",90)
+        py.list(12,"HYGI-304","Waste bags","hygiene",220)
 
     // Preferred source first, then any alternate. Alternates are dearer and
     // faster — which is what gives a written check something to decide.
-    conn.executemany("""
+    conn.executemany:
+      """
       INSERT INTO product_suppliers
         (product_id,supplier_id,unit_price_cents,lead_time_days,case_size,preferred)
       VALUES(?,?,?,?,?,?)
-    """, py.list(
-      py.list(1,1,225,5,12,1),   py.list(1,4,239,2,12,0),
-      py.list(2,1,315,4,6,1),
-      py.list(3,1,410,6,12,1),
-      py.list(4,1,1180,8,6,1),   py.list(4,4,1245,3,6,0),
-      py.list(5,2,58,3,50,1),    py.list(5,4,61,2,50,0),
-      py.list(6,2,112,5,25,1),   py.list(6,4,118,3,25,0),
-      py.list(7,2,275,4,10,1),
-      py.list(8,2,890,7,6,1),
-      py.list(9,3,540,9,8,1),    py.list(9,4,565,4,8,0),
-      py.list(10,3,720,10,6,1),
-      py.list(11,3,460,6,10,1),  py.list(11,4,470,3,10,0),
-      py.list(12,3,195,6,20,1)
-    ))
+      """
+      py.list:
+        py.list(1,1,225,5,12,1)
+        py.list(1,4,239,2,12,0)
+        py.list(2,1,315,4,6,1)
+        py.list(3,1,410,6,12,1)
+        py.list(4,1,1180,8,6,1)
+        py.list(4,4,1245,3,6,0)
+        py.list(5,2,58,3,50,1)
+        py.list(5,4,61,2,50,0)
+        py.list(6,2,112,5,25,1)
+        py.list(6,4,118,3,25,0)
+        py.list(7,2,275,4,10,1)
+        py.list(8,2,890,7,6,1)
+        py.list(9,3,540,9,8,1)
+        py.list(9,4,565,4,8,0)
+        py.list(10,3,720,10,6,1)
+        py.list(11,3,460,6,10,1)
+        py.list(11,4,470,3,10,0)
+        py.list(12,3,195,6,20,1)
 
     seedMovements(conn)
 
@@ -385,15 +394,16 @@ class Database(path: String, home: String)
     order(conn, "ordered", 3, 12, 20, 195, "Routine top-up before the weekend.")
     order(conn, "draft", 3, 11, 40, 460, "Paper towels are down to three days.")
 
-    conn.executemany("""
+    conn.executemany:
+      """
       INSERT INTO checks(text,enabled,created_at,updated_at)
       VALUES(?,1,datetime('now'),datetime('now'))
-    """, py.list(
-      py.list("Cover at least 5 days of demand beyond the supplier's lead time."),
-      py.list("Food keeps 7 days of cover instead of 5: the category moves fast and a stockout there costs more than the extra holding cost."),
-      py.list("Never propose more than 300 units of one product in a single order — receiving can only take two pallets of one item at a time."),
-      py.list("Don't warn about packaging unless it is under 3 days of cover. We can get cartons and tape same-day if we have to.")
-    ))
+      """
+      py.list:
+        py.list("Cover at least 5 days of demand beyond the supplier's lead time.")
+        py.list("Food keeps 7 days of cover instead of 5: the category moves fast and a stockout there costs more than the extra holding cost.")
+        py.list("Never propose more than 300 units of one product in a single order — receiving can only take two pallets of one item at a time.")
+        py.list("Don't warn about packaging unless it is under 3 days of cover. We can get cartons and tape same-day if we have to.")
 
   //[ A seeded order, placed two days ago. One that is already `ordered` is
     ! due on the supplier's lead time counted from then, so the depot opens with
@@ -403,7 +413,8 @@ class Database(path: String, home: String)
     conn: py.Dynamic, status: String, supplierId: Int,
     productId: Int, quantity: Int, price: Int, rationale: String
   ): Unit =
-    val cursor = conn.execute("""
+    val cursor = conn.execute:
+      """
       INSERT INTO draft_orders
         (supplier_id,status,rationale,total_cents,currency,created_at,updated_at,
          expected_at,ordered_at)
@@ -415,13 +426,23 @@ class Database(path: String, home: String)
         ELSE '' END,
         CASE WHEN ? = 'ordered' THEN datetime('now','-2 days') ELSE '' END
       FROM suppliers s WHERE s.id = ?
-    """, py.list(supplierId, status, rationale, quantity * price,
-                 status, productId, status, supplierId))
-    conn.execute("""
+      """
+      py.list:
+        supplierId
+        status
+        rationale
+        quantity * price
+        status
+        productId
+        status
+        supplierId
+    conn.execute:
+      """
       INSERT INTO draft_order_lines
         (draft_order_id,product_id,quantity,unit_price_cents,line_total_cents)
       VALUES(?,?,?,?,?)
-    """, py.list(cursor.lastrowid.asInt, productId, quantity, price, quantity * price))
+      """
+      py.list(cursor.lastrowid.asInt, productId, quantity, price, quantity * price)
 
   //[ Four weeks of ledger per product.
     !
@@ -433,10 +454,19 @@ class Database(path: String, home: String)
     val datetime = py.module("datetime")
     val today = datetime.date.today()
     // product ~ (units sold per day, stock on hand today)
-    val plan = py.list(
-      py.list(1,6,96),  py.list(2,4,12),  py.list(3,8,120), py.list(4,3,9),
-      py.list(5,25,420),py.list(6,12,60), py.list(7,5,22),  py.list(8,4,88),
-      py.list(9,5,14),  py.list(10,3,55), py.list(11,6,18), py.list(12,7,72))
+    val plan = py.list:
+      py.list(1,6,96)
+      py.list(2,4,12)
+      py.list(3,8,120)
+      py.list(4,3,9)
+      py.list(5,25,420)
+      py.list(6,12,60)
+      py.list(7,5,22)
+      py.list(8,4,88)
+      py.list(9,5,14)
+      py.list(10,3,55)
+      py.list(11,6,18)
+      py.list(12,7,72)
     var movements = py.list()
     for raw in py.iter(plan) do
       val row = py.dynamic(raw)
@@ -446,28 +476,44 @@ class Database(path: String, home: String)
       val weekly = perDay * 7
 
       val opening = today.__sub__(datetime.timedelta(days = 29))
-      movements.append(py.list(productId, "receipt", target + weekly,
-        "\{opening.isoformat().asString} 08:00:00", "OPENING", "opening balance"))
+      movements.append: py.list:
+        productId
+        "receipt"
+        target + weekly
+        "\{opening.isoformat().asString} 08:00:00"
+        "OPENING"
+        "opening balance"
 
       var week = 3
       while week >= 1 do
         val day = today.__sub__(datetime.timedelta(days = week * 7))
-        movements.append(py.list(productId, "receipt", weekly,
-          "\{day.isoformat().asString} 07:00:00", "GRN-\{productId}\{week}",
-          "weekly delivery"))
+        movements.append: py.list:
+          productId
+          "receipt"
+          weekly
+          "\{day.isoformat().asString} 07:00:00"
+          "GRN-\{productId}\{week}"
+          "weekly delivery"
         week = week - 1
 
       var age = 28
       while age >= 1 do
         val day = today.__sub__(datetime.timedelta(days = age))
         val quantity = if age % 2 == 0 then perDay + 1 else perDay - 1
-        movements.append(py.list(productId, "issue", 0 - quantity,
-          "\{day.isoformat().asString} 09:00:00", "SO-\{productId}\{age}", ""))
+        movements.append: py.list:
+          productId
+          "issue"
+          0 - quantity
+          "\{day.isoformat().asString} 09:00:00"
+          "SO-\{productId}\{age}"
+          ""
         age = age - 1
-    conn.executemany("""
+    conn.executemany:
+      """
       INSERT INTO stock_movements(product_id,kind,quantity,occurred_at,reference,note)
       VALUES(?,?,?,?,?,?)
-    """, movements)
+      """
+      movements
 
   private def rows(sql: String): py.List = rowsWith(sql, py.list())
 
@@ -486,10 +532,10 @@ class Database(path: String, home: String)
     result
 
   def snapshot(): py.Dict =
-    py.dict(
-      "products" ~ products(),
-      "suppliers" ~ suppliers(),
-      "summary" ~ rows("""
+    py.dict:
+      "products"  ~ products()
+      "suppliers" ~ suppliers()
+      "summary"   ~ rows("""
         SELECT
           (SELECT COUNT(*) FROM products WHERE enabled = 1) AS product_count,
           (SELECT COUNT(*) FROM products p
@@ -507,7 +553,6 @@ class Database(path: String, home: String)
           (SELECT COALESCE(MAX(finished_at),'') FROM runs
            WHERE kind = 'watch' AND status = 'success') AS last_checked
       """)[0]
-    )
 
   //[ Trouble first: the shortest cover at the top of the table. //]
   def products(): py.List =
@@ -519,12 +564,16 @@ class Database(path: String, home: String)
     """)
     for item in result do
       val product = item.cast[py.Dict]
-      product.set("sources", rowsWith("""
-        SELECT ps.*, s.name AS supplier_name, s.currency
-        FROM product_suppliers ps JOIN suppliers s ON s.id = ps.supplier_id
-        WHERE ps.product_id = ?
-        ORDER BY ps.preferred DESC, ps.unit_price_cents
-      """, py.list(product.get("id"))))
+      product.set:
+        "sources"
+        rowsWith:
+          """
+          SELECT ps.*, s.name AS supplier_name, s.currency
+          FROM product_suppliers ps JOIN suppliers s ON s.id = ps.supplier_id
+          WHERE ps.product_id = ?
+          ORDER BY ps.preferred DESC, ps.unit_price_cents
+          """
+          py.list(product.get("id"))
     result
 
   def suppliers(): py.List = rows("""
@@ -539,29 +588,35 @@ class Database(path: String, home: String)
 
   def demand(days: Int): py.List =
     val safe = if days < 1 then 1 else if days > 365 then 365 else days
-    rowsWith("""
+    rowsWith:
+      """
       SELECT product_id, date(occurred_at) AS demand_date, SUM(-quantity) AS quantity
       FROM stock_movements
       WHERE kind = 'issue' AND date(occurred_at) >= date('now', ?)
       GROUP BY product_id, date(occurred_at)
       ORDER BY product_id, demand_date
-    """, py.list("-\{safe} days"))
+      """
+      py.list("-\{safe} days")
 
   def movements(productId: Int, limit: Int): py.List =
     val safe = if limit < 1 then 1 else if limit > 500 then 500 else limit
     if productId == 0 then
-      rowsWith("""
+      rowsWith:
+        """
         SELECT m.*, p.sku, p.name FROM stock_movements m
         JOIN products p ON p.id = m.product_id
         ORDER BY m.occurred_at DESC, m.id DESC LIMIT ?
-      """, py.list(safe))
+        """
+        py.list(safe)
     else
-      rowsWith("""
+      rowsWith:
+        """
         SELECT m.*, p.sku, p.name FROM stock_movements m
         JOIN products p ON p.id = m.product_id
         WHERE m.product_id = ?
         ORDER BY m.occurred_at DESC, m.id DESC LIMIT ?
-      """, py.list(productId, safe))
+        """
+        py.list(productId, safe)
 
   //[ The one way stock changes. The ledger may never go negative or past
     ! storage capacity, whoever is asking.
@@ -606,26 +661,35 @@ class Database(path: String, home: String)
   private def writeMovement(
     conn: py.Dynamic, productId: Int, kind: String, signed: Int, body: py.Dict
   ): Int =
-    val product = conn.execute(
-      "SELECT capacity FROM products WHERE id = ? AND enabled = 1",
-      py.list(productId)).fetchone()
+    val product = conn
+      .execute:
+         "SELECT capacity FROM products WHERE id = ? AND enabled = 1"
+         py.list(productId)
+      .fetchone()
     if product.isNone then abort "unknown or disabled product"
     val capacity = product[0].asInt
-    val balance = conn.execute(
-      "SELECT COALESCE(SUM(quantity),0) FROM stock_movements WHERE product_id = ?",
-      py.list(productId)).fetchone()[0].asInt
+    val balance = conn
+      .execute:
+         "SELECT COALESCE(SUM(quantity),0) FROM stock_movements WHERE product_id = ?"
+         py.list(productId)
+      .fetchone()[0].asInt
     val after = balance + signed
     if after < 0 then
       abort "only \{balance} in stock, so that movement cannot be recorded"
     if after > capacity then
       abort "that movement would exceed the storage capacity of \{capacity}"
-    val cursor = conn.execute("""
+    val cursor = conn.execute:
+      """
       INSERT INTO stock_movements(product_id,kind,quantity,occurred_at,reference,note)
       VALUES(?,?,?,COALESCE(NULLIF(?,''),datetime('now')),?,?)
-    """, py.list(productId, kind, signed,
-      body.get("occurred_at", "").asString.trim,
-      body.get("reference", "").asString.trim,
-      body.get("note", "").asString.trim))
+      """
+      py.list:
+        productId
+        kind
+        signed
+        body.get("occurred_at", "").asString.trim
+        body.get("reference", "").asString.trim
+        body.get("note", "").asString.trim
     cursor.lastrowid.asInt
 
   def saveProduct(body: py.Dict): Int =
@@ -635,35 +699,42 @@ class Database(path: String, home: String)
 
   private def writeProduct(conn: py.Dynamic, body: py.Dict, sources: py.List): Int =
     val given = body.get("id", 0).asInt
-    val params = py.list(
-      body.get("sku", "").asString.trim,
-      body.get("name", "").asString.trim,
-      body.get("category", "").asString.trim,
-      body.get("capacity", 1).asInt,
-      if body.get("enabled", true).asBool then 1 else 0)
+    val params = py.list:
+      body.get("sku", "").asString.trim
+      body.get("name", "").asString.trim
+      body.get("category", "").asString.trim
+      body.get("capacity", 1).asInt
+      if body.get("enabled", true).asBool then 1 else 0
     val id = if given == 0 then insertProduct(conn, params, body)
              else updateProduct(conn, params, given)
     replaceSources(conn, id, sources)
     id
 
   private def insertProduct(conn: py.Dynamic, params: py.List, body: py.Dict): Int =
-    val created = insert(conn, """
+    val created = insert:
+      conn
+      """
       INSERT INTO products (sku,name,category,capacity,enabled) VALUES(?,?,?,?,?)
-    """, params)
+      """
+      params
     // Stock only ever arrives through the ledger, opening balances included.
     val opening = body.get("opening_stock", 0).asInt
     if opening > 0 then
-      conn.execute("""
+      conn.execute:
+        """
         INSERT INTO stock_movements(product_id,kind,quantity,occurred_at,reference,note)
         VALUES(?,'receipt',?,datetime('now'),'OPENING','opening balance')
-      """, py.list(created, opening))
+        """
+        py.list(created, opening)
     created
 
   private def updateProduct(conn: py.Dynamic, params: py.List, id: Int): Int =
     params.append(id)
-    conn.execute("""
+    conn.execute:
+      """
       UPDATE products SET sku=?,name=?,category=?,capacity=?,enabled=? WHERE id=?
-    """, params)
+      """
+      params
     id
 
   //[ The submitted set is authoritative, and exactly one row stays preferred. //]
@@ -677,22 +748,27 @@ class Database(path: String, home: String)
       val wanted = source.get("preferred", false).asBool
       val preferred = if wanted && !preferredSeen then 1 else 0
       if preferred == 1 then preferredSeen = true
-      conn.execute("""
+      conn.execute:
+        """
         INSERT INTO product_suppliers
           (product_id,supplier_id,unit_price_cents,lead_time_days,case_size,preferred)
         VALUES(?,?,?,?,?,?)
-      """, py.list(productId,
-        source.get("supplier_id", 0).asInt,
-        source.get("unit_price_cents", 0).asInt,
-        source.get("lead_time_days", 1).asInt,
-        caseSize,
-        preferred))
+        """
+        py.list:
+          productId
+          source.get("supplier_id", 0).asInt
+          source.get("unit_price_cents", 0).asInt
+          source.get("lead_time_days", 1).asInt
+          caseSize
+          preferred
     if !preferredSeen then
-      conn.execute("""
+      conn.execute:
+        """
         UPDATE product_suppliers SET preferred=1
         WHERE rowid = (SELECT rowid FROM product_suppliers
                        WHERE product_id=? ORDER BY unit_price_cents LIMIT 1)
-      """, py.list(productId))
+        """
+        py.list(productId)
 
   def checks(): py.List = rows("SELECT * FROM checks ORDER BY id")
 
@@ -704,15 +780,19 @@ class Database(path: String, home: String)
 
   private def writeCheck(conn: py.Dynamic, id: Int, text: String, enabled: Int): Int =
     if id == 0 then
-      val cursor = conn.execute("""
+      val cursor = conn.execute:
+        """
         INSERT INTO checks(text,enabled,created_at,updated_at)
         VALUES(?,?,datetime('now'),datetime('now'))
-      """, py.list(text, enabled))
+        """
+        py.list(text, enabled)
       cursor.lastrowid.asInt
     else
-      conn.execute("""
+      conn.execute:
+        """
         UPDATE checks SET text=?,enabled=?,updated_at=datetime('now') WHERE id=?
-      """, py.list(text, enabled, id))
+        """
+        py.list(text, enabled, id)
       id
 
   def deleteCheck(id: Int): Unit =
@@ -738,10 +818,14 @@ class Database(path: String, home: String)
 
   //[ Anything the watcher did not raise again this run no longer holds. //]
   def resolveWarningsNotRaisedBy(runId: Int): Int =
-    inTransaction(conn => execute(conn, """
-      UPDATE warnings SET resolved_at = datetime('now')
-      WHERE resolved_at = '' AND last_run_id != ?
-    """, py.list(runId)))
+    inTransaction: conn =>
+      execute:
+        conn
+        """
+        UPDATE warnings SET resolved_at = datetime('now')
+        WHERE resolved_at = '' AND last_run_id != ?
+        """
+        py.list(runId)
 
   //[ Every order, whatever state it reached, with what is still owed on each
     ! line and every delivery already booked against it.
@@ -757,18 +841,26 @@ class Database(path: String, home: String)
     """)
     for item in result do
       val d = item.cast[py.Dict]
-      d.set("lines", rowsWith("""
-        SELECT l.*, p.sku, p.name,
-               l.quantity - l.received_quantity AS outstanding_quantity
-        FROM draft_order_lines l
-        JOIN products p ON p.id = l.product_id
-        WHERE l.draft_order_id = ? ORDER BY p.sku
-      """, py.list(d.get("id"))))
-      d.set("receipts", rowsWith("""
-        SELECT r.*, p.sku, p.name FROM order_receipts r
-        JOIN products p ON p.id = r.product_id
-        WHERE r.draft_order_id = ? ORDER BY r.received_at, r.id
-      """, py.list(d.get("id"))))
+      d.set:
+        "lines"
+        rowsWith:
+          """
+          SELECT l.*, p.sku, p.name,
+                 l.quantity - l.received_quantity AS outstanding_quantity
+          FROM draft_order_lines l
+          JOIN products p ON p.id = l.product_id
+          WHERE l.draft_order_id = ? ORDER BY p.sku
+          """
+          py.list(d.get("id"))
+      d.set:
+        "receipts"
+        rowsWith:
+          """
+          SELECT r.*, p.sku, p.name FROM order_receipts r
+          JOIN products p ON p.id = r.product_id
+          WHERE r.draft_order_id = ? ORDER BY r.received_at, r.id
+          """
+          py.list(d.get("id"))
     result
 
   //[ Move one order along its life, by hand.
@@ -836,8 +928,11 @@ class Database(path: String, home: String)
   private def writeReceipt(
     conn: py.Dynamic, orderId: Int, lines: py.List, body: py.Dict
   ): Int =
-    val order = conn.execute(
-      "SELECT status FROM draft_orders WHERE id = ?", py.list(orderId)).fetchone()
+    val order = conn
+      .execute:
+         "SELECT status FROM draft_orders WHERE id = ?"
+         py.list(orderId)
+      .fetchone()
     if order.isNone then abort "unknown order"
     val status = order[0].asString
     if status != "ordered" && status != "part_received" then
@@ -865,10 +960,14 @@ class Database(path: String, home: String)
     conn: py.Dynamic, orderId: Int, lineId: Int, quantity: Int,
     occurredAt: String, note: String
   ): Int =
-    val row = conn.execute("""
-      SELECT product_id, quantity - received_quantity
-      FROM draft_order_lines WHERE id = ? AND draft_order_id = ?
-    """, py.list(lineId, orderId)).fetchone()
+    val row = conn
+      .execute:
+         """
+         SELECT product_id, quantity - received_quantity
+         FROM draft_order_lines WHERE id = ? AND draft_order_id = ?
+         """
+         py.list(lineId, orderId)
+      .fetchone()
     if row.isNone then abort "line \{lineId} is not on order \{orderId}"
     val productId = row[0].asInt
     val outstanding = row[1].asInt
@@ -882,19 +981,28 @@ class Database(path: String, home: String)
         + "record anything over that as a separate receipt"
       abort excess
 
-    val movementId = writeMovement(conn, productId, "receipt", quantity, py.dict(
-      "occurred_at" ~ occurredAt,
-      "reference" ~ "PO-\{orderId}",
-      "note" ~ note))
-    conn.execute("""
+    val movementId = writeMovement:
+      conn
+      productId
+      "receipt"
+      quantity
+      py.dict:
+        "occurred_at" ~ occurredAt
+        "reference"   ~ "PO-\{orderId}"
+        "note"        ~ note
+    conn.execute:
+      """
       UPDATE draft_order_lines SET received_quantity = received_quantity + ?
       WHERE id = ?
-    """, py.list(quantity, lineId))
-    conn.execute("""
+      """
+      py.list(quantity, lineId)
+    conn.execute:
+      """
       INSERT INTO order_receipts
         (draft_order_id,line_id,product_id,quantity,movement_id,received_at,note)
       VALUES(?,?,?,?,?,COALESCE(NULLIF(?,''),datetime('now')),?)
-    """, py.list(orderId, lineId, productId, quantity, movementId, occurredAt, note))
+      """
+      py.list(orderId, lineId, productId, quantity, movementId, occurredAt, note)
     quantity
 
   //[ An order is received once every line is, and part-received until then.
@@ -902,37 +1010,53 @@ class Database(path: String, home: String)
     ! coming.
   //]
   private def settle(conn: py.Dynamic, orderId: Int): Unit =
-    val remaining = conn.execute("""
-      SELECT COALESCE(SUM(quantity - received_quantity),0)
-      FROM draft_order_lines WHERE draft_order_id = ?
-    """, py.list(orderId)).fetchone()[0].asInt
+    val remaining = conn
+      .execute:
+         """
+         SELECT COALESCE(SUM(quantity - received_quantity),0)
+         FROM draft_order_lines WHERE draft_order_id = ?
+         """
+         py.list(orderId)
+      .fetchone()[0].asInt
     if remaining == 0 then
-      conn.execute("""
+      conn.execute:
+        """
         UPDATE draft_orders SET status='received', updated_at=datetime('now'),
           closed_at=datetime('now') WHERE id=?
-      """, py.list(orderId))
+        """
+        py.list(orderId)
     else
-      conn.execute("""
+      conn.execute:
+        """
         UPDATE draft_orders SET status='part_received', updated_at=datetime('now')
         WHERE id=?
-      """, py.list(orderId))
+        """
+        py.list(orderId)
 
   def runs(): py.List = rows("SELECT * FROM runs ORDER BY id DESC LIMIT 20")
 
   def beginRun(kind: String, trigger: String, note: String): Int =
-    inTransaction(conn => insert(conn, """
-      INSERT INTO runs(kind,trigger,note,status,started_at)
-      VALUES(?,?,?,'running',datetime('now'))
-    """, py.list(kind, trigger, note)))
+    inTransaction: conn =>
+      insert:
+        conn
+        """
+        INSERT INTO runs(kind,trigger,note,status,started_at)
+        VALUES(?,?,?,'running',datetime('now'))
+        """
+        py.list(kind, trigger, note)
 
   private def insert(conn: py.Dynamic, sql: String, params: py.List): Int =
     val cursor = conn.execute(sql, params)
     cursor.lastrowid.asInt
 
   def finishRun(id: Int, status: String, summary: String): Unit =
-    val _ = inTransaction(conn => execute(conn, """
-      UPDATE runs SET status=?,summary=?,finished_at=datetime('now') WHERE id=?
-    """, py.list(status, summary, id)))
+    val _ = inTransaction: conn =>
+      execute:
+        conn
+        """
+        UPDATE runs SET status=?,summary=?,finished_at=datetime('now') WHERE id=?
+        """
+        py.list(status, summary, id)
 
   //[ Skills are the planner's method, edited while the app runs. Every save
     ! records a revision, so the previous wording stays auditable.
@@ -958,20 +1082,26 @@ class Database(path: String, home: String)
     slug
 
   private def writeRevision(conn: py.Dynamic, slug: String, content: String): Int =
-    val next = conn.execute(
-      "SELECT COALESCE(MAX(revision),0)+1 FROM skill_revisions WHERE skill_name=?",
-      py.list(slug)).fetchone()[0].asInt
-    conn.execute("""
+    val next = conn
+      .execute:
+         "SELECT COALESCE(MAX(revision),0)+1 FROM skill_revisions WHERE skill_name=?"
+         py.list(slug)
+      .fetchone()[0].asInt
+    conn.execute:
+      """
       INSERT INTO skill_revisions(skill_name,content,revision,created_at)
       VALUES(?,?,?,datetime('now'))
-    """, py.list(slug, content, next))
+      """
+      py.list(slug, content, next)
     next
 
   def skillRevisions(name: String): py.List =
-    rowsWith("""
+    rowsWith:
+      """
       SELECT revision, created_at, LENGTH(content) AS size
       FROM skill_revisions WHERE skill_name=? ORDER BY revision DESC
-    """, py.list(skillSlug(name)))
+      """
+      py.list(skillSlug(name))
 
   def skillRevision(name: String, revision: Int): String =
     val found = rowsWith(

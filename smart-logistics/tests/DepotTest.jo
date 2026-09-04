@@ -118,8 +118,9 @@ def depotSuite(): Unit receives thisSuite, logger =
     val database = freshDepot()
     val summary = database.snapshot().get("summary").cast[py.Dict]
     check("twelve products", summary.get("product_count").asInt == 12)
-    check("four run out before a delivery could arrive",
-      summary.get("at_risk_count").asInt == 4)
+    check:
+      "four run out before a delivery could arrive"
+      summary.get("at_risk_count").asInt == 4
     check("one draft is already open", summary.get("open_drafts").asInt == 1)
     check("nothing has been checked yet", summary.get("last_checked").asString == "")
 
@@ -129,8 +130,9 @@ def depotSuite(): Unit receives thisSuite, logger =
     check("14 on hand", soap.get("on_hand").asInt == 14)
     check("5 a day", soap.get("sells_per_day").asFloat == 5.0)
     check("two days of cover", soap.get("days_of_cover").asInt == 2)
-    check("a nine day wait for the preferred source",
-      soap.get("lead_time_days").asInt == 9)
+    check:
+      "a nine day wait for the preferred source"
+      soap.get("lead_time_days").asInt == 9
 
   test: "trouble sorts to the top", () =>
     val database = freshDepot()
@@ -155,10 +157,12 @@ def depotSuite(): Unit receives thisSuite, logger =
     val after = product(database, "HYGI-303")
     check("40 on order", after.get("on_order").asInt == 40)
     check("nine days after", after.get("days_of_cover").asInt == 9)
-    check("one fewer at risk",
-      database.snapshot().get("summary").cast[py.Dict].get("at_risk_count").asInt == 3)
-    check("an accepted order cannot be accepted again",
-      !database.setDraftStatus(draftId, "rejected"))
+    check:
+      "one fewer at risk"
+      database.snapshot().get("summary").cast[py.Dict].get("at_risk_count").asInt == 3
+    check:
+      "an accepted order cannot be accepted again"
+      !database.setDraftStatus(draftId, "rejected")
 
   //[ What the old model got wrong. An order that has arrived is stock, and
     ! stock is in the ledger; leaving it on order as well counted it twice and
@@ -173,17 +177,20 @@ def depotSuite(): Unit receives thisSuite, logger =
     check("40 on order", onOrder.get("on_order").asInt == 40)
     check("18 on hand", onOrder.get("on_hand").asInt == 18)
 
-    check("40 booked in", database.receiveOrder(py.dict(
-      "order_id" ~ id, "lines" ~ py.list(py.dict(
-        "line_id" ~ lineOf(database, id, "HYGI-303"), "quantity" ~ 40)))) == 40)
+    check:
+      "40 booked in"
+      database.receiveOrder(py.dict(
+        "order_id" ~ id, "lines" ~ py.list(py.dict(
+          "line_id" ~ lineOf(database, id, "HYGI-303"), "quantity" ~ 40)))) == 40
 
     val received = product(database, "HYGI-303")
     check("nothing left on order", received.get("on_order").asInt == 0)
     check("and 58 on hand instead", received.get("on_hand").asInt == 58)
     // The same total either way — which is the point. Before, it would have
     // read 98: forty units in stock and the same forty still on their way.
-    check("cover unchanged by the delivery arriving",
-      received.get("days_of_cover").asInt == onOrder.get("days_of_cover").asInt)
+    check:
+      "cover unchanged by the delivery arriving"
+      received.get("days_of_cover").asInt == onOrder.get("days_of_cover").asInt
     check("the order is closed", orderStatus(database, id) == "received")
 
   test: "a delivery is the ledger's, and traces back to the line it settles", () =>
@@ -197,16 +204,18 @@ def depotSuite(): Unit receives thisSuite, logger =
     for item in database.movements(0, 100) do
       val movement = item.cast[py.Dict]
       if movement.get("reference").asString == "PO-\{id}" then booked = movement
-    check("the delivery is an ordinary receipt in the ledger",
-      booked.get("kind").asString == "receipt" && booked.get("quantity").asInt == 40)
+    check:
+      "the delivery is an ordinary receipt in the ledger"
+      booked.get("kind").asString == "receipt" && booked.get("quantity").asInt == 40
 
     var receipts = py.list()
     for item in database.drafts() do
       val order = item.cast[py.Dict]
       if order.get("id").asInt == id then receipts = order.get("receipts").cast[py.List]
     check("one receipt recorded", receipts.size == 1)
-    check("naming the movement that changed the balance",
-      receipts[0].cast[py.Dict].get("movement_id").asInt == booked.get("id").asInt)
+    check:
+      "naming the movement that changed the balance"
+      receipts[0].cast[py.Dict].get("movement_id").asInt == booked.get("id").asInt
 
   test: "a short delivery leaves the rest on order", () =>
     val database = freshDepot()
@@ -214,9 +223,11 @@ def depotSuite(): Unit receives thisSuite, logger =
     val line = lineOf(database, id, "HYGI-303")
     val _ = database.setDraftStatus(id, "accepted")
 
-    check("30 of 40 booked in", database.receiveOrder(py.dict(
-      "order_id" ~ id,
-      "lines" ~ py.list(py.dict("line_id" ~ line, "quantity" ~ 30)))) == 30)
+    check:
+      "30 of 40 booked in"
+      database.receiveOrder(py.dict(
+        "order_id" ~ id,
+        "lines" ~ py.list(py.dict("line_id" ~ line, "quantity" ~ 30)))) == 30
     check("part received", orderStatus(database, id) == "part_received")
     check("ten still coming", product(database, "HYGI-303").get("on_order").asInt == 10)
 
@@ -227,9 +238,11 @@ def depotSuite(): Unit receives thisSuite, logger =
       "lines" ~ py.list(py.dict("line_id" ~ line, "quantity" ~ 11))))
     check("and no more than ten will be taken", tooMany.isErr)
 
-    check("the last ten", database.receiveOrder(py.dict(
-      "order_id" ~ id,
-      "lines" ~ py.list(py.dict("line_id" ~ line, "quantity" ~ 10)))) == 10)
+    check:
+      "the last ten"
+      database.receiveOrder(py.dict(
+        "order_id" ~ id,
+        "lines" ~ py.list(py.dict("line_id" ~ line, "quantity" ~ 10)))) == 10
     check("received", orderStatus(database, id) == "received")
     check("nothing on order", product(database, "HYGI-303").get("on_order").asInt == 0)
 
@@ -249,8 +262,9 @@ def depotSuite(): Unit receives thisSuite, logger =
     val after = product(database, "HYGI-303")
     check("the fifteen that never came stop counting", after.get("on_order").asInt == 0)
     check("the twenty-five that did are in stock", after.get("on_hand").asInt == 43)
-    check("a cancelled order cannot be cancelled again",
-      !database.setDraftStatus(id, "cancelled"))
+    check:
+      "a cancelled order cannot be cancelled again"
+      !database.setDraftStatus(id, "cancelled")
 
   test: "a draft is not a delivery, and neither is a rejected order", () =>
     val database = freshDepot()
@@ -266,8 +280,9 @@ def depotSuite(): Unit receives thisSuite, logger =
     val gone = py.try: database.receiveOrder(py.dict(
       "order_id" ~ id, "lines" ~ py.list(py.dict("line_id" ~ line, "quantity" ~ 1))))
     check("nor against a rejected one", gone.isErr)
-    check("and it was never on order",
-      product(database, "HYGI-303").get("on_order").asInt == 0)
+    check:
+      "and it was never on order"
+      product(database, "HYGI-303").get("on_order").asInt == 0
 
   test: "placing an order records when it is due", () =>
     val database = freshDepot()
@@ -281,11 +296,13 @@ def depotSuite(): Unit receives thisSuite, logger =
     val placed = datetime.datetime.fromisoformat(
       orderField(database, id, "ordered_at")).date()
     val due = datetime.date.fromisoformat(orderField(database, id, "expected_at"))
-    check("due on the lead time of the slowest line",
-      due.__sub__(placed).days.asInt == 6)
+    check:
+      "due on the lead time of the slowest line"
+      due.__sub__(placed).days.asInt == 6
     val summary = database.snapshot().get("summary").cast[py.Dict]
-    check("three orders are now in transit",
-      summary.get("outstanding_orders").asInt == 3)
+    check:
+      "three orders are now in transit"
+      summary.get("outstanding_orders").asInt == 3
     check("none of them late yet", summary.get("overdue_orders").asInt == 0)
 
   test: "the ledger refuses to go negative or past capacity", () =>
@@ -323,23 +340,28 @@ def depotSuite(): Unit receives thisSuite, logger =
 
     check("the two placed orders survive as ordered", placedCount(reopened) == 2)
     check("the open draft is still a draft", orderStatus(reopened, id) == "draft")
-    check("nothing was received before there was such a thing",
-      product(reopened, "PACK-202").get("on_order").asInt == 100)
-    check("cover is unchanged by the upgrade",
-      product(reopened, "HYGI-301").get("days_of_cover").asInt == 2)
+    check:
+      "nothing was received before there was such a thing"
+      product(reopened, "PACK-202").get("on_order").asInt == 100
+    check:
+      "cover is unchanged by the upgrade"
+      product(reopened, "HYGI-301").get("days_of_cover").asInt == 2
 
     // And the upgraded database does the new thing.
     val _ = reopened.setDraftStatus(id, "accepted")
-    check("40 booked in", reopened.receiveOrder(py.dict(
-      "order_id" ~ id, "lines" ~ py.list(py.dict(
-        "line_id" ~ lineOf(reopened, id, "HYGI-303"), "quantity" ~ 40)))) == 40)
+    check:
+      "40 booked in"
+      reopened.receiveOrder(py.dict(
+        "order_id" ~ id, "lines" ~ py.list(py.dict(
+          "line_id" ~ lineOf(reopened, id, "HYGI-303"), "quantity" ~ 40)))) == 40
     check("received", orderStatus(reopened, id) == "received")
 
     // Twice is a no-op: the version stamp is what stops it running again.
     val third = new Database(database.path, os.path.abspath("."))
     third.initialize()
-    check("the upgrade does not run a second time",
-      orderStatus(third, id) == "received")
+    check:
+      "the upgrade does not run a second time"
+      orderStatus(third, id) == "received"
 
   test: "checks are text, and both agents read the same list", () =>
     val database = freshDepot()

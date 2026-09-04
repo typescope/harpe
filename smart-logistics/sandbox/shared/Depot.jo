@@ -39,13 +39,17 @@ class Depot(path: String)
     result
 
   private def sourcesFor(conn: py.Dynamic, productId: Int): List[api.Source] =
-    val rows = conn.execute("""
-      SELECT ps.supplier_id, s.name, s.currency, ps.unit_price_cents,
-             ps.lead_time_days, ps.case_size, ps.preferred
-      FROM product_suppliers ps JOIN suppliers s ON s.id = ps.supplier_id
-      WHERE ps.product_id = ? AND s.enabled = 1
-      ORDER BY ps.preferred DESC, ps.unit_price_cents
-    """, py.list(productId)).fetchall()
+    val rows = conn
+      .execute:
+         """
+         SELECT ps.supplier_id, s.name, s.currency, ps.unit_price_cents,
+                ps.lead_time_days, ps.case_size, ps.preferred
+         FROM product_suppliers ps JOIN suppliers s ON s.id = ps.supplier_id
+         WHERE ps.product_id = ? AND s.enabled = 1
+         ORDER BY ps.preferred DESC, ps.unit_price_cents
+         """
+         py.list(productId)
+      .fetchall()
     var result: List[api.Source] = []
     for raw in py.iter(rows) do
       val r = py.dynamic(raw)
@@ -69,13 +73,17 @@ class Depot(path: String)
   def demandHistory(productId: Int, days: Int): List[api.DemandDay] =
     val safeDays = if days < 1 then 1 else if days > 365 then 365 else days
     val conn = connect()
-    val rows = conn.execute("""
-      SELECT date(occurred_at) AS demand_date, SUM(-quantity) AS quantity
-      FROM stock_movements
-      WHERE product_id = ? AND kind = 'issue' AND date(occurred_at) >= date('now', ?)
-      GROUP BY date(occurred_at)
-      ORDER BY demand_date
-    """, py.list(productId, "-" + safeDays.toString + " days")).fetchall()
+    val rows = conn
+      .execute:
+         """
+         SELECT date(occurred_at) AS demand_date, SUM(-quantity) AS quantity
+         FROM stock_movements
+         WHERE product_id = ? AND kind = 'issue' AND date(occurred_at) >= date('now', ?)
+         GROUP BY date(occurred_at)
+         ORDER BY demand_date
+         """
+         py.list(productId, "-" + safeDays.toString + " days")
+      .fetchall()
     var result: List[api.DemandDay] = []
     for raw in py.iter(rows) do
       val r = py.dynamic(raw)
