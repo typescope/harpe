@@ -10,7 +10,7 @@ typed operations and nothing else.
 
 The complete agent reviews one GitHub pull request: it reads the diff, follows
 identifiers into the repository snapshot, and saves a pending draft for manual
-verification. It cannot post a standalone comment, or merge the pr.
+verification. It cannot post a standalone comment, or merge the pull request.
 
 ## Create the project
 
