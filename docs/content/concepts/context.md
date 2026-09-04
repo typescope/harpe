@@ -1,7 +1,7 @@
 +++
 title = "Context"
 +++
-A model can see only the input payload from the current request. Context determines
+A model can see only the input payload from an HTTP request. Context determines
 which instructions and conversation messages Harpe sends on each request.
 
 During a turn, Harpe adds the user's message, model replies, tool calls, and tool
