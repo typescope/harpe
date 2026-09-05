@@ -56,29 +56,32 @@ section TurnLog
   def answered(): Unit receives logger = logger.log(answeredEvent)
   def interrupted(): Unit receives logger = logger.log(interruptedEvent)
 
-  //[ Close a lost turn, with the diagnostic when there is one. //]
+  //[ Close a lost turn, with the diagnostic — `""` when there is none.
+    !
+    ! Written either way, so the event has one shape and its reader has no
+    ! absence to interpret.
+  //]
   def failed(detail: String): Unit receives logger =
-    if detail == "" then logger.log(failedEvent)
-    else logger.error(failedEvent, detail)
+    logger.error(failedEvent, detail)
 
   //[ The message a `started` or `message` entry carries. //]
   def messageFrom(entry: Entry): Message =
-    messageOf(entry.fields)
+    decode(entry.fields)
 
   //[ The diagnostic a `failed` entry carries, or `""`. //]
   def detailFrom(entry: Entry): String =
     str(entry.fields, "error")
 
   private def emit(event: String, message: Message): Unit receives logger =
-    logger.logEntry(new Entry(Clock.now(), event, fieldsOf(message)))
+    logger.logEntry(new Entry(Clock.now(), event, encode(message)))
 
-  private def fieldsOf(message: Message): Map[String, Value] =
+  private def encode(message: Message): Map[String, Value] =
     match message
     case UserInput(text, attachments) =>
       Map:
         "role"        ~ "user"
         "text"        ~ text
-        "attachments" ~ attachmentValues(attachments)
+        "attachments" ~ encodeAttachments(attachments)
 
     case Assistant(text, calls) =>
       var values: List[Value] = []
@@ -86,7 +89,7 @@ section TurnLog
         val value: Map[String, Value] = Map:
           "id"    ~ call.id
           "name"  ~ call.name
-          "input" ~ inputValues(call.input)
+          "input" ~ encodeInput(call.input)
         values = values + value
       Map:
         "role"  ~ "assistant"
@@ -99,14 +102,40 @@ section TurnLog
         val value: Map[String, Value] = Map:
           "id"          ~ result.id
           "content"     ~ result.content
-          "attachments" ~ attachmentValues(result.attachments)
+          "attachments" ~ encodeAttachments(result.attachments)
           "success"     ~ result.success
         values = values + value
       Map:
         "role"    ~ "tool_results"
         "results" ~ values
 
-  private def attachmentValues(attachments: List[Attachment]): List[Value] =
+  private def decode(fields: Map[String, Value]): Message =
+    val role = str(fields, "role")
+    if role == "user" then
+      UserInput(str(fields, "text"), decodeAttachments(fields, "attachments"))
+    else if role == "assistant" then
+      var calls: List[ToolCall] = []
+      for item in items(fields, "calls") do
+        val c = sub(item)
+        val call = ToolCall:
+          str(c, "id")
+          str(c, "name")
+          decodeInput(nested(c, "input"))
+        calls = calls + call
+      Assistant(str(fields, "text"), calls)
+    else
+      var results: List[ToolResult] = []
+      for item in items(fields, "results") do
+        val r = sub(item)
+        val result = ToolResult:
+          str(r, "id")
+          str(r, "content")
+          decodeAttachments(r, "attachments")
+          bool(r, "success")
+        results = results + result
+      ToolResults(results)
+
+  private def encodeAttachments(attachments: List[Attachment]): List[Value] =
     var values: List[Value] = []
     for a in attachments do
       val value: Map[String, Value] = Map:
@@ -117,33 +146,7 @@ section TurnLog
       values = values + value
     values
 
-  private def messageOf(fields: Map[String, Value]): Message =
-    val role = str(fields, "role")
-    if role == "user" then
-      UserInput(str(fields, "text"), attachmentsFrom(fields, "attachments"))
-    else if role == "assistant" then
-      var calls: List[ToolCall] = []
-      for item in items(fields, "calls") do
-        val c = sub(item)
-        val call = ToolCall:
-          str(c, "id")
-          str(c, "name")
-          toolInput(nested(c, "input"))
-        calls = calls + call
-      Assistant(str(fields, "text"), calls)
-    else
-      var results: List[ToolResult] = []
-      for item in items(fields, "results") do
-        val r = sub(item)
-        val result = ToolResult:
-          str(r, "id")
-          str(r, "content")
-          attachmentsFrom(r, "attachments")
-          bool(r, "success", missing = true)
-        results = results + result
-      ToolResults(results)
-
-  private def attachmentsFrom(fields: Map[String, Value], key: String): List[Attachment] =
+  private def decodeAttachments(fields: Map[String, Value], key: String): List[Attachment] =
     var attachments: List[Attachment] = []
     for item in items(fields, key) do
       val a = sub(item)
@@ -159,49 +162,54 @@ section TurnLog
     ! `ToolInput` — the one place this codec still crosses into `py`, because the
     ! model chose the shape and neither side ever knew it.
   //]
-  private def inputValues(input: ToolInput): Map[String, Value] =
+  private def encodeInput(input: ToolInput): Map[String, Value] =
     var fields = Map.empty[String, Value]
     for k in py.iter(input.raw.keys()) do
       fields = fields.add(k.asString, Value.fromJson(input.raw.get(k)))
     fields
 
-  private def toolInput(fields: Map[String, Value]): ToolInput =
+  private def decodeInput(fields: Map[String, Value]): ToolInput =
     val d = py.dict()
     for k ~ v in fields.toList do d.set(k, Value.toJson(v))
     ToolInput(d)
 
-  //[ Field readers.
+  //[ Field readers, which ABORT on a field that is absent or at the wrong type.
     !
-    ! A field the record does not carry, or carries at the wrong type, reads as
-    ! the empty value of what was asked for. A log is read long after it was
-    ! written, by a version that may not be the one that wrote it.
+    ! `encode` writes every one of these, so either means the record was not
+    ! written by this codec. Substituting an empty value there would report a
+    ! turn with no text rather than a log this cannot read.
   //]
+  private def field(fields: Map[String, Value], key: String): Value =
+    match fields.getOpt(key)
+    case Some(v) => v
+    case None    => abort "turn record has no '\{key}'"
+
   private def str(fields: Map[String, Value], key: String): String =
-    match fields.getOrElse(key, "")
+    match field(fields, key)
     case s: String => s
-    case _         => ""
+    case _         => abort "turn record's '\{key}' is not a string"
 
   private def int(fields: Map[String, Value], key: String): Int =
-    match fields.getOrElse(key, Value.IntVal(0))
+    match field(fields, key)
     case Value.IntVal(n) => n
-    case _               => 0
+    case _               => abort "turn record's '\{key}' is not an int"
 
-  private def bool(fields: Map[String, Value], key: String, missing: Bool): Bool =
-    match fields.getOrElse(key, Value.BoolVal(missing))
+  private def bool(fields: Map[String, Value], key: String): Bool =
+    match field(fields, key)
     case Value.BoolVal(b) => b
-    case _                => missing
+    case _                => abort "turn record's '\{key}' is not a bool"
 
   private def items(fields: Map[String, Value], key: String): List[Value] =
-    match fields.getOrElse(key, [])
+    match field(fields, key)
     case xs: List[Value] => xs
-    case _               => []
+    case _               => abort "turn record's '\{key}' is not a list"
 
   private def nested(fields: Map[String, Value], key: String): Map[String, Value] =
-    sub(fields.getOrElse(key, Map.empty[String, Value]))
+    sub(field(fields, key))
 
   private def sub(value: Value): Map[String, Value] =
     match value
     case m: Map[String, Value] => m
-    case _                     => Map.empty[String, Value]
+    case _                     => abort "turn record has a non-object where an object belongs"
 
 end
