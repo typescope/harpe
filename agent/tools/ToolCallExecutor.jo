@@ -34,6 +34,7 @@ import harpe.Tool.*
 import harpe.turns.TurnEvent
 import harpe.logging.logger
 import harpe.logging.Logging
+import harpe.logging.Value
 import harpe.util.Process
 import harpe.ffi.threading
 
@@ -85,10 +86,10 @@ section ToolCallExecutor
     // not identify a call and the id does. Stamped here rather than in the
     // parallel policy alone: a handler may run work on threads of its own under
     // either, and a record should mean the same thing however it was scheduled.
+    val callScope: Map[String, Value] = Map("id" ~ call.id, "tool" ~ toolName)
     val outcome =
       Logging.withContext:
-        callContextKey
-        Map("id" ~ call.id, "tool" ~ toolName)
+        Map(callContextKey ~ callScope)
         () => dispatch(call, tools, interact)
 
     interact.emit: TurnEvent.ToolCallEnded(toolName, outcome.summary)

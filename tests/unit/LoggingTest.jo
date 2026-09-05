@@ -139,26 +139,26 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
       val path = os.path.join(tempfile.mkdtemp(), "ctx.jsonl")
       val emit: () => Unit receives logger = () => logger.log("harpe.web", "note" ~ "hi")
       val tagged: () => Unit receives logger =
-        () => Logging.withContext("context", Map("session" ~ "s1"), emit)
+        () => Logging.withContext(Map("session" ~ "s1"), emit)
       Logging.withLogger(new JsonlLogger(path), tagged)
 
       val ctxRec = readRecords(path).get(0)
-      check("nested", ctxRec.get("context").cast[py.Dict].get("session", "").asString == "s1")
+      val scope = ctxRec.get("context").cast[py.List].get(0).cast[py.Dict]
+      check("scoped", scope.get("session", "").asString == "s1")
       check("producer field untouched", ctxRec.get("note", "").asString == "hi")
       check("not flattened", !ctxRec.contains("session"))
 
-    // Nesting one key must not cost the record either scope. The decorators wrap
-    // outward, so a record flows through the INNER one first and the outer one
-    // applies last -- and `Map.add` replaces. The scope that actually produced
-    // the record is therefore the one that disappears, without a trace in the
-    // output to say it ever existed.
-    test: "nesting one key keeps every scope, innermost last", () =>
+    // Nesting must not cost the record either scope. Records flow through the
+    // INNER decorator first and the outer one last, so a mechanism that replaced
+    // rather than accumulated would drop the scope that actually produced the
+    // record, leaving nothing in the output to say it existed.
+    test: "nesting keeps every scope, innermost first", () =>
       val path = os.path.join(tempfile.mkdtemp(), "nested-ctx.jsonl")
       val emit: () => Unit receives logger = () => logger.log("harpe.web", "note" ~ "hi")
       val inner: () => Unit receives logger =
-        () => Logging.withContext("context", Map("scope" ~ "inner"), emit)
+        () => Logging.withContext(Map("scope" ~ "inner"), emit)
       val outer: () => Unit receives logger =
-        () => Logging.withContext("context", Map("scope" ~ "outer"), inner)
+        () => Logging.withContext(Map("scope" ~ "outer"), inner)
       Logging.withLogger(new JsonlLogger(path), outer)
 
       // The plainest statement of the loss, whatever shape the fix chooses: the
@@ -171,8 +171,8 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
         val list = scopes.cast[py.List]
         check("both scopes kept", list.size == 2)
         if list.size == 2 then
-          check("outer first", list.get(0).cast[py.Dict].get("scope", "").asString == "outer")
-          check("innermost last", list.get(1).cast[py.Dict].get("scope", "").asString == "inner")
+          check("innermost first", list.get(0).cast[py.Dict].get("scope", "").asString == "inner")
+          check("outermost last", list.get(1).cast[py.Dict].get("scope", "").asString == "outer")
 
   suite: "audit codec", () =>
     test: "preserves the event, time, and field count", () =>

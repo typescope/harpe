@@ -35,7 +35,7 @@ The logging mechanism is built around three properties:
 Every logged event becomes an `Entry`:
 
 ```jo
-class Entry(time: Float, event: String, fields: Map[String, Value])
+class Entry(time: Float, event: String, fields: Map[String, Value], context: List[Value])
 
 type Value =
   (String | Float | Value.IntVal | Value.BoolVal | List[Value] | Map[String, Value])
@@ -52,6 +52,9 @@ end
 - `event` is a stable dotted name for what happened, such as
   `harpe.model.replied` or `myagent.tools.weather.called`.
 - `fields` contains the facts specific to that event.
+- `context` is the ambient scopes the record was produced under — a session, a
+  turn, the tool call inside it — innermost first. Scopes are kept apart from
+  `fields`, so ambient context can never collide with a producer's own keys.
 
 `IntVal` and `BoolVal` are implementation adapters. At the call site, integers
 and booleans are passed directly, just like strings and floats. A field can also
@@ -165,7 +168,7 @@ val tools = runCode.toolset() ++ weatherTools
 
 Now every call to your tool writes a `myagent.tools.weather.called` record. A
 per-session destination identifies the session through its path. A shared
-destination can attach session fields with `Logging.withContext`.
+destination can attach a session scope with `Logging.withContext`.
 
 ### What to log
 
@@ -225,14 +228,14 @@ val sessionLog = new JsonlLogger(sessionPath)
 
 Swap `JsonlLogger` for any `Logger` — including one you write. A `Logger` implements
 just `logEntry` (store one event) and `close`. An `entry` gives you `entry.time`,
-`entry.event`, and `entry.fields` to persist however you like:
+`entry.event`, `entry.fields`, and `entry.context` to persist however you like:
 
 ```jo
 class SqliteLogger(db: py.Dynamic)
   view Logger
 
   def logEntry(entry: Entry): Unit =
-    // insert entry.time, entry.event, and entry.fields (serialize as you wish)
+    // insert entry.time, entry.event, entry.fields, entry.context (serialize as you wish)
     ...
 
   def close(): Unit = db.close()
@@ -272,8 +275,8 @@ Logging.withLogger(new UsageMeter(new JsonlLogger(path), meter), () => serve())
 ```
 
 Every entry the meter sees carries a stable `event`. When the application uses
-`Logging.withContext`, the configured context appears as a nested field in
-`entry.fields`. Together, these identify the event shape and the session a
+`Logging.withContext`, the configured context appears as a scope in
+`entry.context`. Together, these identify the event shape and the session a
 shared destination should attribute it to.
 For billing, the `harpe.model.replied` events give you `inputTokens`/`outputTokens` per
 call already — apply your price table to turn them into cost.
@@ -307,14 +310,16 @@ interface Logger
   def close(): Unit
 end
 
-class Entry(time: Float, event: String, fields: Map[String, Value])
+class Entry(time: Float, event: String, fields: Map[String, Value], context: List[Value])
 ```
 
 Field values are `String`, `Int`, `Float`, `Bool`, `List[Value]`, or a nested
 `Map`. Scalars are written bare at the call site.
 
 Use `Logging.withContext` when several sessions share one logging destination.
-Per-session destinations do not need that redundant field.
+Per-session destinations do not need that redundant scope. Nesting it is safe:
+each scope is added to `context` rather than over the one enclosing it, so a
+record keeps every scope it was produced under.
 
 ## Turn history and transcript loading
 

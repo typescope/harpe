@@ -43,15 +43,18 @@ section Logging
     backend.close()
     result
 
-  //[ Run `work` with a `context` sub-record stamped onto its log entries
+  //[ Run `work` with `context` added as a scope on its log entries
     !
-    ! The application-defined "which user / which session" of a turn. Nesting
-    ! under one `key` keeps it from ever colliding with a producer's own fields.
-    ! The key and content are the app's to choose. A driver wraps its turn:
+    ! The application-defined "which user / which session" of a turn. It lands in
+    ! the entry's context list, never in `fields`, so it cannot collide with a
+    ! producer's own keys. The content is the app's to choose. A driver wraps its
+    ! turn:
     !
-    ! Logging.withContext("context", Map("session" ~ id), () =>
-    ! Agent.runTurn(...))
+    ! Logging.withContext(Map("session" ~ id), () => Agent.runTurn(...))
+    !
+    ! Nesting is safe: an inner scope is added to the list, never over the outer
+    ! one, so a record carries every scope it was produced under.
   //]
-  def withContext[T](key: String, context: Map[String, Value], work: () => T receives logger): T =
-    with logger = new ContextLogger(logger, key, context) in work()
+  def withContext[T](context: Map[String, Value], work: () => T receives logger): T =
+    with logger = new ContextLogger(logger, context) in work()
 end
