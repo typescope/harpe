@@ -42,17 +42,22 @@
       <div class="card" id="turn" data-grant="off" role="group" aria-label="A turn, compiled live">
         <div class="card-bar">
           <span class="dots"><i></i><i></i><i></i></span>
-          <span class="card-title">flight-agent · turn</span>
+          <span class="card-title">· turn</span>
+          <div class="card-tabs">
+            <button class="tab-btn active" data-tab="flight" type="button">flight-agent</button>
+            <button class="tab-btn" data-tab="fs" type="button">backup-agent</button>
+          </div>
           <span class="card-turn">jo build</span>
         </div>
 
+        <div class="scenario" data-scenario="flight">
         <div class="chat">
-          <div class="msg you"><span class="who">you</span><span class="bubble">Book me the 9am SFO→JFK and put it on my card.</span></div>
+          <div class="msg you"><span class="who">you</span><span class="bubble">Book me a flight from SFO to JFK around 9am.</span></div>
           <div class="msg bot"><span class="who">bot</span><span class="bubble">Writing a program to do that…</span></div>
         </div>
 
         <div class="code" aria-label="the Jo program the model wrote this turn">
-<pre><span class="ln"><span class="cmt">// written by the model — compiled before it runs</span></span><span class="ln"><span class="kw">def</span> <span class="fn">runTask</span>()<span class="pn">:</span> <span class="ty">Unit</span> <span class="kw">receives</span> stdout, booking, <span class="flag cap">payment</span> <span class="pn">=</span></span><span class="ln">  <span class="kw">val</span> seat <span class="pn">=</span> booking.<span class="fn">reserve</span>(<span class="str">"SFO"</span>, <span class="str">"JFK"</span>, <span class="str">"09:00"</span>)</span><span class="ln">  <span class="flag cap">payment</span>.<span class="fn">charge</span>(seat.price)     <span class="cmt">// needs the payment capability</span></span><span class="ln">  <span class="fn">println</span>(<span class="str">"Booked "</span> + seat.id)</span></pre>
+<pre><span class="ln"><span class="cmt">// written by the model — compiled before it runs</span></span><span class="ln"><span class="kw">def</span> <span class="fn">runTask</span>()<span class="pn">:</span> <span class="ty">Unit</span> <span class="kw">receives</span> stdout, booking, <span class="flag cap">payment</span> <span class="pn">=</span></span><span class="ln">  <span class="kw">val</span> reservation <span class="pn">=</span> booking.<span class="fn">reserve</span>(<span class="str">"SFO"</span>, <span class="str">"JFK"</span>, <span class="str">"09:00"</span>)</span><span class="ln">  <span class="flag cap">payment</span>.<span class="fn">checkout</span>(reservation)     <span class="cmt">// needs the payment capability</span></span><span class="ln">  <span class="fn">println</span>(<span class="str">"Booked "</span> + reservation.id)</span></pre>
         </div>
 
         <div class="verdict">
@@ -79,6 +84,45 @@
             <span class="switch" aria-hidden="true"></span>
           </button>
         </div>
+        </div><!-- /scenario flight -->
+
+        <div class="scenario" data-scenario="fs" hidden>
+
+          <div class="chat">
+            <div class="msg you"><span class="who">you</span><span class="bubble">Back up my project notes to the reports folder.</span></div>
+            <div class="msg bot"><span class="who">bot</span><span class="bubble">Writing a program to save the backup…</span></div>
+          </div>
+
+          <div class="code" aria-label="the Jo program the model wrote this turn">
+<pre><span class="ln"><span class="cmt">// written by the model — compiled before it runs</span></span><span class="ln"><span class="kw">def</span> <span class="fn">runTask</span>()<span class="pn">:</span> <span class="ty">Unit</span> <span class="kw">receives</span> stdout, <span class="flag cap">fileWrite</span> <span class="pn">=</span></span><span class="ln">  fileWrite.<span class="fn">write</span>(<span class="str">"reports/notes"</span>, notes)</span><span class="ln">  <span class="fn">println</span>(<span class="str">"Backup saved."</span>)</span></pre>
+          </div>
+
+          <div class="verdict">
+            <div class="diag err">
+              <span class="file">backup-agent/turn/Task.jo:2:29</span><br>
+              <span class="emsg">error: capability <b>fileWrite</b> is not granted to this agent</span><br>
+              <span class="caret">&nbsp;&nbsp;receives stdout, fileWrite<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;^^^^^^^^^</span><br>
+              <span class="stamp bad">&#x2717; won't compile</span> <span class="run">— the file is never written.</span>
+            </div>
+            <div class="diag ok">
+              <span class="okmsg">✓ type-checked against 2 granted capabilities</span><br>
+              <span class="stamp ok">✓ compiled</span> <span class="run">— runs this turn. "Backup saved."</span>
+            </div>
+          </div>
+
+          <div class="grant">
+            <div class="caps" aria-hidden="true">
+              <span class="chip on locked">stdout</span>
+              <span class="chip" id="fschip">fileWrite</span>
+            </div>
+            <button class="toggle" id="grantBtn2" type="button" aria-pressed="false">
+              Grant <b>fileWrite</b>
+              <span class="switch" aria-hidden="true"></span>
+            </button>
+          </div>
+
+        </div><!-- /scenario fs -->
+
       </div>
     </div>
   </section>
