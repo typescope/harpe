@@ -82,14 +82,21 @@ section TurnLog
     case Assistant(text, calls) =>
       val list = py.list()
       for call in calls do
-        list.append(py.dict("id" ~ call.id, "name" ~ call.name, "input" ~ call.input.raw))
+        list.append:
+          py.dict:
+            "id"    ~ call.id
+            "name"  ~ call.name
+            "input" ~ call.input.raw
       py.dict("role" ~ "assistant", "text" ~ text, "calls" ~ list)
     case ToolResults(results) =>
       val list = py.list()
       for result in results do
-        list.append(py.dict("id" ~ result.id, "content" ~ result.content,
-                            "attachments" ~ attachmentsDict(result.attachments),
-                            "success" ~ result.success))
+        list.append:
+          py.dict:
+            "id"          ~ result.id
+            "content"     ~ result.content
+            "attachments" ~ attachmentsDict(result.attachments)
+            "success"     ~ result.success
       py.dict("role" ~ "tool_results", "results" ~ list)
 
   private def attachmentsDict(attachments: List[Attachment]): py.List =
@@ -111,8 +118,11 @@ section TurnLog
       var calls: List[ToolCall] = []
       for item in d.get("calls", py.list()).cast[py.List] do
         val c = item.cast[py.Dict]
-        calls = calls + ToolCall(c.get("id", "").asString, c.get("name", "").asString,
-                                ToolInput(c.get("input", py.dict()).cast[py.Dict]))
+        val call = ToolCall:
+          c.get("id", "").asString
+          c.get("name", "").asString
+          ToolInput(c.get("input", py.dict()).cast[py.Dict])
+        calls = calls + call
       Assistant(d.get("text", "").asString, calls)
     else
       var results: List[ToolResult] = []
