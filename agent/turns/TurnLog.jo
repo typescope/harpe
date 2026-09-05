@@ -63,91 +63,145 @@ section TurnLog
 
   //[ The message a `started` or `message` entry carries. //]
   def messageFrom(entry: Entry): Message =
-    messageFromDict(Entry.toDict(entry))
+    messageOf(entry.fields)
 
   //[ The diagnostic a `failed` entry carries, or `""`. //]
   def detailFrom(entry: Entry): String =
-    Entry.toDict(entry).get("error", "").asString
+    str(entry.fields, "error")
 
   private def emit(event: String, message: Message): Unit receives logger =
-    logger.logEntry(new Entry(Clock.now(), event, messageFields(message)))
+    logger.logEntry(new Entry(Clock.now(), event, fieldsOf(message)))
 
-  private def messageFields(message: Message): Map[String, Value] =
-    val d = messageDict(message)
-    var fields = Map.empty[String, Value]
-    for k in py.iter(d.keys()) do fields = fields.add(k.asString, Value.fromJson(d.get(k)))
-    fields
-
-  private def messageDict(message: Message): py.Dict =
+  private def fieldsOf(message: Message): Map[String, Value] =
     match message
     case UserInput(text, attachments) =>
-      py.dict("role" ~ "user", "text" ~ text, "attachments" ~ attachmentsDict(attachments))
+      Map:
+        "role"        ~ "user"
+        "text"        ~ text
+        "attachments" ~ attachmentValues(attachments)
+
     case Assistant(text, calls) =>
-      val list = py.list()
+      var values: List[Value] = []
       for call in calls do
-        list.append:
-          py.dict:
-            "id"    ~ call.id
-            "name"  ~ call.name
-            "input" ~ call.input.raw
-      py.dict("role" ~ "assistant", "text" ~ text, "calls" ~ list)
+        val value: Map[String, Value] = Map:
+          "id"    ~ call.id
+          "name"  ~ call.name
+          "input" ~ inputValues(call.input)
+        values = values + value
+      Map:
+        "role"  ~ "assistant"
+        "text"  ~ text
+        "calls" ~ values
+
     case ToolResults(results) =>
-      val list = py.list()
+      var values: List[Value] = []
       for result in results do
-        list.append:
-          py.dict:
-            "id"          ~ result.id
-            "content"     ~ result.content
-            "attachments" ~ attachmentsDict(result.attachments)
-            "success"     ~ result.success
-      py.dict("role" ~ "tool_results", "results" ~ list)
+        val value: Map[String, Value] = Map:
+          "id"          ~ result.id
+          "content"     ~ result.content
+          "attachments" ~ attachmentValues(result.attachments)
+          "success"     ~ result.success
+        values = values + value
+      Map:
+        "role"    ~ "tool_results"
+        "results" ~ values
 
-  private def attachmentsDict(attachments: List[Attachment]): py.List =
-    val list = py.list()
+  private def attachmentValues(attachments: List[Attachment]): List[Value] =
+    var values: List[Value] = []
     for a in attachments do
-      list.append:
-        py.dict:
-          "name"   ~ a.name
-          "size"   ~ a.size
-          "mime"   ~ a.mime
-          "path"   ~ a.path
-    list
+      val value: Map[String, Value] = Map:
+        "name" ~ a.name
+        "size" ~ a.size
+        "mime" ~ a.mime
+        "path" ~ a.path
+      values = values + value
+    values
 
-  private def messageFromDict(d: py.Dict): Message =
-    val role = d.get("role", "").asString
+  private def messageOf(fields: Map[String, Value]): Message =
+    val role = str(fields, "role")
     if role == "user" then
-      UserInput(d.get("text", "").asString, attachmentsFrom(d.get("attachments", py.list()).cast[py.List]))
+      UserInput(str(fields, "text"), attachmentsFrom(fields, "attachments"))
     else if role == "assistant" then
       var calls: List[ToolCall] = []
-      for item in d.get("calls", py.list()).cast[py.List] do
-        val c = item.cast[py.Dict]
+      for item in items(fields, "calls") do
+        val c = sub(item)
         val call = ToolCall:
-          c.get("id", "").asString
-          c.get("name", "").asString
-          ToolInput(c.get("input", py.dict()).cast[py.Dict])
+          str(c, "id")
+          str(c, "name")
+          toolInput(nested(c, "input"))
         calls = calls + call
-      Assistant(d.get("text", "").asString, calls)
+      Assistant(str(fields, "text"), calls)
     else
       var results: List[ToolResult] = []
-      for item in d.get("results", py.list()).cast[py.List] do
-        val r = item.cast[py.Dict]
-        val toolResult = ToolResult:
-          r.get("id", "").asString
-          r.get("content", "").asString
-          attachmentsFrom(r.get("attachments", py.list()).cast[py.List])
-          r.get("success", default = true).asBool
-        results = results + toolResult
+      for item in items(fields, "results") do
+        val r = sub(item)
+        val result = ToolResult:
+          str(r, "id")
+          str(r, "content")
+          attachmentsFrom(r, "attachments")
+          bool(r, "success", missing = true)
+        results = results + result
       ToolResults(results)
 
-  private def attachmentsFrom(list: py.List): List[Attachment] =
+  private def attachmentsFrom(fields: Map[String, Value], key: String): List[Attachment] =
     var attachments: List[Attachment] = []
-    for item in list do
-      val a = item.cast[py.Dict]
+    for item in items(fields, key) do
+      val a = sub(item)
       val attachment = Attachment:
-        a.get("name", "").asString
-        a.get("size", 0).asInt
-        a.get("mime", "").asString
-        path = a.get("path", "").asString
+        str(a, "name")
+        int(a, "size")
+        str(a, "mime")
+        path = str(a, "path")
       attachments = attachments + attachment
     attachments
+
+  //[ A tool call's arguments, which are host JSON both in the record and in
+    ! `ToolInput` — the one place this codec still crosses into `py`, because the
+    ! model chose the shape and neither side ever knew it.
+  //]
+  private def inputValues(input: ToolInput): Map[String, Value] =
+    var fields = Map.empty[String, Value]
+    for k in py.iter(input.raw.keys()) do
+      fields = fields.add(k.asString, Value.fromJson(input.raw.get(k)))
+    fields
+
+  private def toolInput(fields: Map[String, Value]): ToolInput =
+    val d = py.dict()
+    for k ~ v in fields.toList do d.set(k, Value.toJson(v))
+    ToolInput(d)
+
+  //[ Field readers.
+    !
+    ! A field the record does not carry, or carries at the wrong type, reads as
+    ! the empty value of what was asked for. A log is read long after it was
+    ! written, by a version that may not be the one that wrote it.
+  //]
+  private def str(fields: Map[String, Value], key: String): String =
+    match fields.getOrElse(key, "")
+    case s: String => s
+    case _         => ""
+
+  private def int(fields: Map[String, Value], key: String): Int =
+    match fields.getOrElse(key, Value.IntVal(0))
+    case Value.IntVal(n) => n
+    case _               => 0
+
+  private def bool(fields: Map[String, Value], key: String, missing: Bool): Bool =
+    match fields.getOrElse(key, Value.BoolVal(missing))
+    case Value.BoolVal(b) => b
+    case _                => missing
+
+  private def items(fields: Map[String, Value], key: String): List[Value] =
+    match fields.getOrElse(key, [])
+    case xs: List[Value] => xs
+    case _               => []
+
+  private def nested(fields: Map[String, Value], key: String): Map[String, Value] =
+    sub(fields.getOrElse(key, Map.empty[String, Value]))
+
+  private def sub(value: Value): Map[String, Value] =
+    match value
+    case m: Map[String, Value] => m
+    case _                     => Map.empty[String, Value]
+
 end
