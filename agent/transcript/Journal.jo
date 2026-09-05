@@ -188,11 +188,11 @@ section Journal
       if entry.event == TurnLog.startedEvent && data is None then
         depth = depth + 1
         if depth == 1 then
-          user = Some(TurnLog.messageFrom(entry))
+          user = Some(TurnLog.decodeMessage(entry))
           pending = []
 
       else if entry.event == TurnLog.messageEvent && depth == 1 then
-        pending = pending + TurnLog.messageFrom(entry)
+        pending = pending + TurnLog.decodeMessage(entry)
 
       else if TurnLog.isTerminator(entry.event) && depth > 0 then
         depth = depth - 1
@@ -213,7 +213,7 @@ section Journal
   private def turnFrom(user: Message, pending: List[Message], terminator: Entry): TurnData =
     if terminator.event == TurnLog.answeredEvent then TurnData(user, pending, TurnResult.Success)
     else if terminator.event == TurnLog.interruptedEvent then TurnData(user, [], TurnResult.Interrupted)
-    else TurnData(user, [], TurnResult.Failed(TurnLog.detailFrom(terminator)))
+    else TurnData(user, [], TurnResult.Failed(TurnLog.decodeDetail(terminator)))
 
   //[ Derive model history from the transcript
     !

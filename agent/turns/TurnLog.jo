@@ -65,17 +65,41 @@ section TurnLog
     logger.error(failedEvent, detail)
 
   //[ The message a `started` or `message` entry carries. //]
-  def messageFrom(entry: Entry): Message =
-    decode(entry.fields)
+  def decodeMessage(entry: Entry): Message =
+    val fields = entry.fields
+    val role = str(fields, "role")
+    if role == "user" then
+      UserInput(str(fields, "text"), decodeAttachments(fields, "attachments"))
+    else if role == "assistant" then
+      var calls: List[ToolCall] = []
+      for item in items(fields, "calls") do
+        val c = sub(item)
+        val call = ToolCall:
+          str(c, "id")
+          str(c, "name")
+          decodeInput(nested(c, "input"))
+        calls = calls + call
+      Assistant(str(fields, "text"), calls)
+    else
+      var results: List[ToolResult] = []
+      for item in items(fields, "results") do
+        val r = sub(item)
+        val result = ToolResult:
+          str(r, "id")
+          str(r, "content")
+          decodeAttachments(r, "attachments")
+          bool(r, "success")
+        results = results + result
+      ToolResults(results)
 
   //[ The diagnostic a `failed` entry carries, or `""`. //]
-  def detailFrom(entry: Entry): String =
+  def decodeDetail(entry: Entry): String =
     str(entry.fields, "error")
 
   private def emit(event: String, message: Message): Unit receives logger =
-    logger.logEntry(new Entry(Clock.now(), event, encode(message)))
+    logger.logEntry(new Entry(Clock.now(), event, encodeMessage(message)))
 
-  private def encode(message: Message): Map[String, Value] =
+  private def encodeMessage(message: Message): Map[String, Value] =
     match message
     case UserInput(text, attachments) =>
       Map:
@@ -108,32 +132,6 @@ section TurnLog
       Map:
         "role"    ~ "tool_results"
         "results" ~ values
-
-  private def decode(fields: Map[String, Value]): Message =
-    val role = str(fields, "role")
-    if role == "user" then
-      UserInput(str(fields, "text"), decodeAttachments(fields, "attachments"))
-    else if role == "assistant" then
-      var calls: List[ToolCall] = []
-      for item in items(fields, "calls") do
-        val c = sub(item)
-        val call = ToolCall:
-          str(c, "id")
-          str(c, "name")
-          decodeInput(nested(c, "input"))
-        calls = calls + call
-      Assistant(str(fields, "text"), calls)
-    else
-      var results: List[ToolResult] = []
-      for item in items(fields, "results") do
-        val r = sub(item)
-        val result = ToolResult:
-          str(r, "id")
-          str(r, "content")
-          decodeAttachments(r, "attachments")
-          bool(r, "success")
-        results = results + result
-      ToolResults(results)
 
   private def encodeAttachments(attachments: List[Attachment]): List[Value] =
     var values: List[Value] = []
