@@ -3,6 +3,9 @@
   ! The turn's own log events: their names, and the ONE codec that both writes
   ! and reads them.
   !
+  ! Not `TurnEvent`, which is ephemeral progress delivered to a live handler and
+  ! never persisted. These are the durable record.
+  !
   ! The engine emits these to the ambient `logger` like every other record, so a
   ! turn is in the log whether or not anything reads it back.
   ! `harpe.transcript.Journal` is a READER of them — a projection over the same
@@ -16,7 +19,7 @@
   ! cannot drift apart.
 //]
 
-namespace harpe
+namespace harpe.turns
 
 import harpe.util.Clock
 import harpe.Model.*

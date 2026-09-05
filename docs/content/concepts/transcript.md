@@ -153,8 +153,8 @@ chooses a new `FullContext`, `WindowedContext`, `SummarizingContext`, or
 
 ## Where a conversation is stored
 
-`harpe.TurnLog` owns the record format — the five event names and the one codec
-that both writes and reads them:
+`harpe.turns.TurnLog` owns the record format — the five event names and the one
+codec that both writes and reads them:
 
 ```jo
 harpe.turn.started       the input the turn is about to run

@@ -12,15 +12,14 @@
   ! different one keeps the conversation apart from the diagnostics. Nothing here
   ! assumes either.
   !
-  ! What the engine writes is `harpe.TurnLog`, which owns the record format for
-  ! both directions. Nothing here is a sink for the conversation.
+  ! What the engine writes is `harpe.turns.TurnLog`, which owns the record
+  ! format for both directions. Nothing here is a sink for the conversation.
 //]
 
 namespace harpe.transcript
 import harpe.ffi.time
 import harpe.util.Clock
 import harpe.util.truncate
-import harpe.TurnLog
 import harpe.Model.*
 import harpe.Tool.*
 import harpe.logging.*
@@ -29,8 +28,8 @@ import harpe.turns.*
 //[ The driver's turn bracket, written into the same log the engine writes to.
   !
   ! ONLY the bracket. The turn itself — its input, its messages, how it ended —
-  ! is written by the engine through `harpe.TurnLog`, so it is in the log
-  ! whether or not a driver builds one of these. What is left here is the pair
+  ! is written by the engine through `harpe.turns.TurnLog`, so it is in the
+  ! log whether or not a driver builds one of these. What is left here is the pair
   ! of records only a driver can write, because only a driver knows when a
   ! request arrived and what it chose to say about the result.
   !
