@@ -10,6 +10,7 @@
 namespace harpe.test.unit.LoggingTest
 
 import harpe.ffi.os
+import harpe.ffi.builtins
 import harpe.ffi.json
 import harpe.ffi.tempfile
 import harpe.util.File
@@ -28,6 +29,10 @@ private def readRecords(path: String): List[py.Dict] =
     if line.trim != "" then records = records + json.loads(line).cast[py.Dict]
 
   records
+
+// The exact Python type of a decoded JSON value ("list", "dict", ...).
+private def typeNameOf(obj: py.Dynamic): String =
+  builtins.getattr(builtins.typeOf(obj), "__name__").asString
 
 // An in-memory Logger that keeps the entries it is handed.
 private class Capture
@@ -141,6 +146,33 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
       check("nested", ctxRec.get("context").cast[py.Dict].get("session", "").asString == "s1")
       check("producer field untouched", ctxRec.get("note", "").asString == "hi")
       check("not flattened", !ctxRec.contains("session"))
+
+    // Nesting one key must not cost the record either scope. The decorators wrap
+    // outward, so a record flows through the INNER one first and the outer one
+    // applies last -- and `Map.add` replaces. The scope that actually produced
+    // the record is therefore the one that disappears, without a trace in the
+    // output to say it ever existed.
+    test: "nesting one key keeps every scope, innermost last", () =>
+      val path = os.path.join(tempfile.mkdtemp(), "nested-ctx.jsonl")
+      val emit: () => Unit receives logger = () => logger.log("harpe.web", "note" ~ "hi")
+      val inner: () => Unit receives logger =
+        () => Logging.withContext("context", Map("scope" ~ "inner"), emit)
+      val outer: () => Unit receives logger =
+        () => Logging.withContext("context", Map("scope" ~ "outer"), inner)
+      Logging.withLogger(new JsonlLogger(path), outer)
+
+      // The plainest statement of the loss, whatever shape the fix chooses: the
+      // scope that produced the record does not appear in the record at all.
+      check("innermost scope survives", File.read(path).contains("inner"))
+
+      val scopes = readRecords(path).get(0).get("context")
+      check("context is a list of scopes", typeNameOf(scopes) == "list")
+      if typeNameOf(scopes) == "list" then
+        val list = scopes.cast[py.List]
+        check("both scopes kept", list.size == 2)
+        if list.size == 2 then
+          check("outer first", list.get(0).cast[py.Dict].get("scope", "").asString == "outer")
+          check("innermost last", list.get(1).cast[py.Dict].get("scope", "").asString == "inner")
 
   suite: "audit codec", () =>
     test: "preserves the event, time, and field count", () =>
