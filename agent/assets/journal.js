@@ -23,10 +23,17 @@ let opened = new Set();   // indices whose clipped body the reader expanded
 
 // ------------------------------------------------------------------ helpers
 
+const ENVELOPE = ['time', 'event', 'context'];
+
+// A record arrives as a four-key envelope. Flatten its `fields` up so the rest
+// of the viewer reads one plain object; the envelope wins a name clash, since
+// this is display, not data.
+const flatten = e => ({ ...(e.fields || {}), time: e.time, event: e.event, context: e.context || [] });
+
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
 const esc = s => String(s).replace(/[&<>"]/g, c => ESC[c]);
 const clock = t => (t || '').slice(11, 19) || '--:--:--';
-const isTurn = e => (e.category || '').startsWith('harpe.turn.');
+const isTurn = e => (e.event || '').startsWith('harpe.turn.');
 
 function severity(e) {
   if (e.error !== undefined) return 'err';
@@ -34,10 +41,10 @@ function severity(e) {
   return '';
 }
 
-// Which subsystem logged this, for colour. The category is a dotted,
+// Which subsystem logged this, for colour. The event name is a dotted,
 // reverse-namespaced identifier, so its prefix is the grouping already.
 function family(e) {
-  const c = e.category || '';
+  const c = e.event || '';
   if (c.startsWith('harpe.turn.')) return 'fam-turn';
   if (c.startsWith('harpe.tools.')) return 'fam-tools';
   return 'fam-other';
@@ -53,13 +60,13 @@ function clip(html, i) {
 
 // ---------------------------------------------------------------- rendering
 
-// Anything that is not `time` or `category`, as key/value pairs.
+// Anything that is not part of the envelope, as key/value pairs.
 //
 // A record of short scalars — a model call's provider and token counts — reads
 // as one run rather than four stacked lines, which is most of the vertical space
 // a busy journal wastes.
 function fieldLines(e, skip) {
-  const keys = Object.keys(e).filter(k => k !== 'time' && k !== 'category' && !skip.includes(k));
+  const keys = Object.keys(e).filter(k => !ENVELOPE.includes(k) && !skip.includes(k));
   if (keys.length === 0) return '';
 
   const pair = k => {
@@ -107,7 +114,7 @@ function body(e, i) {
 function row(e, i) {
   return `<div class="row ${family(e)} ${severity(e)}">`
     + `<span class="time">${esc(clock(e.time))}</span>`
-    + `<span class="cat">${esc(e.category || '?')}</span>`
+    + `<span class="cat">${esc(e.event || '?')}</span>`
     + `<div class="body">${body(e, i)}</div>`
     + `</div>`;
 }
@@ -121,7 +128,7 @@ function group(list) {
   let turn = null;
 
   for (const item of list) {
-    const cat = item.e.category;
+    const cat = item.e.event;
     if (cat === 'harpe.turn.request') {
       turn = { kind: 'turn', request: item.e, rows: [], outcome: 'running' };
       groups.push(turn);
@@ -196,7 +203,7 @@ async function poll() {
       entries = []; seen = 0; opened.clear();
       render();
     } else if (data.entries.length) {
-      entries = entries.concat(data.entries);
+      entries = entries.concat(data.entries.map(flatten));
       seen = data.seen;
       render();
     }

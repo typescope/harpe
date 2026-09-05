@@ -127,9 +127,9 @@ share of it is the hit rate.
 
 ```sh
 jq -s 'map(select(.event=="harpe.model.replied"))
-       | {input: (map(.inputTokens) | add),
-          read:  (map(.cacheReadTokens) | add),
-          write: (map(.cacheWriteTokens) | add)}' logs/sessions/<session>.jsonl
+       | {input: (map(.fields.inputTokens) | add),
+          read:  (map(.fields.cacheReadTokens) | add),
+          write: (map(.fields.cacheWriteTokens) | add)}' logs/sessions/<session>.jsonl
 ```
 
 > **Note.** The query assumes a JSONL backend. Storage is the application's

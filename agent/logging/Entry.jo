@@ -80,25 +80,36 @@ class Entry(time: Float, event: String, fields: Map[String, Value], context: Lis
 section Entry
   //[ An entry as a JSON-able dict
     !
-    ! `time`, `event`, the `context` scopes if it has any, then its fields (each
-    ! `Value` unwrapped to its underlying host value. A nested map becomes a
-    ! nested object).
+    ! A FIXED FOUR-KEY ENVELOPE: `time`, `event`, `fields`, `context` — always
+    ! all four, so a consumer never branches on which are present. Each `Value`
+    ! is unwrapped to its underlying host value, and a nested map becomes a
+    ! nested object.
+    !
+    ! Producer fields go UNDER `fields` rather than beside `time` and `event`.
+    ! Flat, they shared one namespace with the record's own keys, so a producer
+    ! field named `event` overwrote the record's name on the way out and was
+    ! dropped on the way back. The envelope makes that unrepresentable instead
+    ! of forbidden, and no key needs reserving.
     !
     ! `JsonlLogger` serializes with it.
   //]
   def toDict(entry: Entry): py.Dict =
-    val d = py.dict("time" ~ Clock.toRfc3339(entry.time), "event" ~ entry.event)
-    if !entry.context.isEmpty then
-      val scopes = py.list()
-      for scope in entry.context do scopes.append(Value.toJson(scope))
-      d.set("context", scopes)
-    for k ~ v in entry.fields.toList do d.set(k, Value.toJson(v))
-    d
+    val fields = py.dict()
+    for k ~ v in entry.fields.toList do fields.set(k, Value.toJson(v))
+
+    val scopes = py.list()
+    for scope in entry.context do scopes.append(Value.toJson(scope))
+
+    py.dict:
+      "time"    ~ Clock.toRfc3339(entry.time)
+      "event"   ~ entry.event
+      "fields"  ~ fields
+      "context" ~ scopes
 
   //[ The inverse of `toDict`
     !
-    ! Rebuild an `Entry` from a decoded JSON dict, its non-reserved keys becoming
-    ! typed fields. Used to replay a sandboxed program's records on the host.
+    ! Rebuild an `Entry` from a decoded JSON dict. Used to replay a sandboxed
+    ! program's records on the host.
   //]
   def fromDict(d: py.Dict): Entry =
     val timestamp = Clock.fromRfc3339(d.get("time", "").asString)
@@ -109,10 +120,9 @@ section Entry
       context = context + Value.fromJson(item)
 
     var fields = Map.empty[String, Value]
-    for k in py.iter(d.keys()) do
-      val key = k.asString
-      if key != "time" && key != "event" && key != "context" then
-        fields = fields.add(key, Value.fromJson(d.get(key)))
+    val raw = d.get("fields", py.dict()).cast[py.Dict]
+    for k in py.iter(raw.keys()) do
+      fields = fields.add(k.asString, Value.fromJson(raw.get(k)))
 
     new Entry(timestamp, event, fields, context)
 

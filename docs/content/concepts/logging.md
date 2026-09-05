@@ -72,7 +72,7 @@ The application owns the file layout. These examples use
 `logs/sessions/<session>.jsonl` as a representative path:
 
 ```json
-{"time":"2024-07-09T16:00:00.400000Z","event":"harpe.tools.runCode.ran","code":"…","exitCode":0,"compileSeconds":1.2,"runSeconds":0.3,"output":"…"}
+{"time":"2024-07-09T16:00:00.400000Z","event":"harpe.tools.runCode.ran","fields":{"code":"…","exitCode":0,"compileSeconds":1.2,"runSeconds":0.3,"output":"…"},"context":[]}
 ```
 
 With events in a JSON file, read them with anything that speaks JSON — `jq` is quickest:
@@ -85,8 +85,11 @@ jq 'select(.event | startswith("harpe.tools.runCode"))' logs/sessions/<session>.
 jq 'select(.event=="harpe.tools.runCode.compileFailed")' logs/sessions/<session>.jsonl
 ```
 
-Wherever the events go, each has the same shape: an **`event`**, a **`time`**,
-and the event's own fields. Shared destinations may additionally attach context.
+Wherever the events go, each has the same shape: a **`time`**, an **`event`**,
+the event's own **`fields`**, and the **`context`** scopes it was produced
+under. Producer fields sit under `fields` rather than beside `time` and
+`event`, so a field may be named anything without colliding with the record's
+own keys.
 JSONL encodes `time` as an RFC 3339 UTC string. The backend-independent
 `Entry.time` remains epoch seconds, so database loggers can choose their native
 timestamp representation and indexes.
@@ -182,7 +185,7 @@ destination can attach a session scope with `Logging.withContext`.
   ```
 
   The message lands under an `"info"`/`"warning"`/`"error"` key. Extra fields ride
-  alongside. Pull them out later with `jq 'select(has("error"))'`.
+  alongside. Pull them out later with `jq 'select(.fields|has("error"))'`.
 
 ### Naming your event
 
@@ -211,11 +214,11 @@ same fields and event names. A few `jq` starting points:
 ```sh
 # token usage in one session
 jq -s 'map(select(.event=="harpe.model.replied"))
-       | {inTokens: (map(.inputTokens) | add),
-          outTokens: (map(.outputTokens) | add)}' logs/sessions/<session>.jsonl
+       | {inTokens: (map(.fields.inputTokens) | add),
+          outTokens: (map(.fields.outputTokens) | add)}' logs/sessions/<session>.jsonl
 
 # all warnings and errors, across every event
-jq 'select(has("warning") or has("error"))' logs/sessions/<session>.jsonl
+jq 'select(.fields|has("warning") or has("error"))' logs/sessions/<session>.jsonl
 ```
 
 ## Sending logs somewhere else

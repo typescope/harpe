@@ -104,7 +104,7 @@ private class CaptureLogger
 
   def logEntry(entry: Entry): Unit =
     if entry.event == "harpe.turn.message" then
-      val d = Entry.toDict(entry)
+      val d = Entry.toDict(entry).get("fields", py.dict()).cast[py.Dict]
       val role = d.get("role", "").asString
       if role == "assistant" && d.get("calls", py.list()).cast[py.List].size > 0 then
         events = events + "assistant-calls"

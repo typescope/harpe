@@ -35,7 +35,7 @@ private class ModelRecords
 
   def logEntry(entry: Entry): Unit =
     if entry.event == "harpe.model.failed" then
-      val d = Entry.toDict(entry)
+      val d = Entry.toDict(entry).get("fields", py.dict()).cast[py.Dict]
       event = entry.event
       provider = d.get("provider", "").asString
       model = d.get("model", "").asString

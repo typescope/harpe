@@ -73,13 +73,13 @@ The viewer is one reader; the file is plain JSON lines, so `jq` is another:
 jq -c 'select(.event|startswith("harpe.turn.request","harpe.turn.response"))' session.jsonl
 
 # what the agent ran, and how each program ended
-jq -c 'select(.event=="harpe.tools.runCode.ran") | {exitCode, runSeconds}' session.jsonl
+jq -c 'select(.event=="harpe.tools.runCode.ran") | .fields | {exitCode, runSeconds}' session.jsonl
 
 # token spend for the session
-jq -s 'map(select(.event=="harpe.model.replied")) | {calls: length, input: (map(.inputTokens)|add), output: (map(.outputTokens)|add)}' session.jsonl
+jq -s 'map(select(.event=="harpe.model.replied")) | {calls: length, input: (map(.fields.inputTokens)|add), output: (map(.fields.outputTokens)|add)}' session.jsonl
 
 # anything that went wrong
-jq -c 'select(has("error") or has("warning"))' session.jsonl
+jq -c 'select(.fields|has("error") or has("warning"))' session.jsonl
 ```
 
 Pointing `Journal` at the same `Logger` the turn's tools use — which the bundled

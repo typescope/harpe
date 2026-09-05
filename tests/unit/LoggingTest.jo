@@ -34,6 +34,10 @@ private def readRecords(path: String): List[py.Dict] =
 private def typeNameOf(obj: py.Dynamic): String =
   builtins.getattr(builtins.typeOf(obj), "__name__").asString
 
+// The producer fields of a record, which live under the envelope's `fields` key.
+private def fieldsOf(record: py.Dict): py.Dict =
+  record.get("fields", py.dict()).cast[py.Dict]
+
 // An in-memory Logger that keeps the entries it is handed.
 private class Capture
   view Logger
@@ -95,11 +99,11 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
         check("event is a field", all.get(0).get("event", "").asString == "runs")
         // Categories coexist, distinguished by the field (jq's job downstream).
         check("another event", all.get(2).get("event", "").asString == "tools")
-        check("its fields", all.get(2).get("name", "").asString == "read")
+        check("its fields", fieldsOf(all.get(2)).get("name", "").asString == "read")
 
     test: "keeps each field at its own type", () =>
       withRecords: all =>
-        val first = all.get(0)
+        val first = fieldsOf(all.get(0))
         check("string", first.get("code", "").asString == "x")
         check("int", first.get("exitCode", -1).asInt == 0)
         check("bool", first.get("ok", false).asBool)
@@ -114,16 +118,16 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
       withRecords: all =>
         val warnRec = all.get(3)
         check("event", warnRec.get("event", "").asString == "harpe.test")
-        check("message", warnRec.get("warning", "").asString == "rate limited")
-        check("extras kept", warnRec.get("attempt", -1).asInt == 3)
+        check("message", fieldsOf(warnRec).get("warning", "").asString == "rate limited")
+        check("extras kept", fieldsOf(warnRec).get("attempt", -1).asInt == 3)
 
     test: "records model usage with its billing fields", () =>
       withRecords: all =>
         val usageRec = all.get(4)
         check("event", usageRec.get("event", "").asString == "harpe.model.replied")
-        check("provider", usageRec.get("provider", "").asString == "anthropic")
-        check("input tokens", usageRec.get("inputTokens", -1).asInt == 100)
-        check("output tokens", usageRec.get("outputTokens", -1).asInt == 20)
+        check("provider", fieldsOf(usageRec).get("provider", "").asString == "anthropic")
+        check("input tokens", fieldsOf(usageRec).get("inputTokens", -1).asInt == 100)
+        check("output tokens", fieldsOf(usageRec).get("outputTokens", -1).asInt == 20)
 
   suite: "the logger channel", () =>
     test: "withLogger installs it for the wrapped work", () =>
@@ -145,7 +149,7 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
       val ctxRec = readRecords(path).get(0)
       val scope = ctxRec.get("context").cast[py.List].get(0).cast[py.Dict]
       check("scoped", scope.get("session", "").asString == "s1")
-      check("producer field untouched", ctxRec.get("note", "").asString == "hi")
+      check("producer field untouched", fieldsOf(ctxRec).get("note", "").asString == "hi")
       check("not flattened", !ctxRec.contains("session"))
 
     // Nesting must not cost the record either scope. Records flow through the

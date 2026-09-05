@@ -26,6 +26,10 @@ import harpe.testing.suite
 import harpe.testing.test
 import harpe.testing.check
 
+// The producer fields of a record, which live under the envelope's `fields` key.
+private def fieldsOf(record: py.Dict): py.Dict =
+  record.get("fields", py.dict()).cast[py.Dict]
+
 // Read a session file back as one parsed dict per non-empty line.
 private def readRecords(path: String): List[py.Dict] =
   var records: List[py.Dict] = []
@@ -67,7 +71,7 @@ private def turnResult(d: TurnData): String =
 private def records(all: List[py.Dict], key: String, value: String): Bool =
   var found = false
   for record in all do
-    if record.get(key, "").asString == value then found = true
+    if fieldsOf(record).get(key, "").asString == value then found = true
   found
 
 private def entriesOf(path: String): List[Entry] =
@@ -162,17 +166,18 @@ def transcriptSuite(): Unit receives thisSuite = suite: "session log", () =>
     test: "records the user message", () =>
       withJournal: (journal, path) =>
         answeredTurn(journal)
-        val user = readRecords(path).get(0)
-        check("event", user.get("event", "").asString == "harpe.turn.started")
+        val record = readRecords(path).get(0)
+        val user = fieldsOf(record)
+        check("event", record.get("event", "").asString == "harpe.turn.started")
         check("role", user.get("role", "").asString == "user")
         check("text", user.get("text", "").asString == "hi")
-        val timestamp = user.get("time", "").asString
+        val timestamp = record.get("time", "").asString
         check("RFC 3339 timestamp", timestamp.contains("T") && timestamp.endsWith("Z"))
 
     test: "records the assistant message and its tool calls", () =>
       withJournal: (journal, path) =>
         answeredTurn(journal)
-        val asst = readRecords(path).get(1)
+        val asst = fieldsOf(readRecords(path).get(1))
         check("role", asst.get("role", "").asString == "assistant")
         check("text", asst.get("text", "").asString == "on it")
         val calls = asst.get("calls", py.list()).cast[py.List]
@@ -187,7 +192,7 @@ def transcriptSuite(): Unit receives thisSuite = suite: "session log", () =>
     test: "records tool results, including a refusal", () =>
       withJournal: (journal, path) =>
         answeredTurn(journal)
-        val tr = readRecords(path).get(3)
+        val tr = fieldsOf(readRecords(path).get(3))
         check("role", tr.get("role", "").asString == "tool_results")
         val results = tr.get("results", py.list()).cast[py.List]
         check("one result", results.size == 1)
