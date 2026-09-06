@@ -41,7 +41,7 @@ class Journal(log: Logger)
   //[ Open the bracket for a user-facing turn.
     !
     ! Call this at the TOP of the turn handler, before any queue or lock the
-    ! work waits behind: the gap between this record and the `harpe.turn.started`
+    ! work waits behind: the gap between this record and the turn's first
     ! that follows is then exactly how long the request was queued. A paired
     ! `response` closes the bracket. If the turn throws before `response` is
     ! reached, the bracket is left open — an unclosed bracket is a fragment, and
@@ -166,11 +166,12 @@ section Journal
 
   //[ Fold one turn's span of entries into the turn it describes
     !
-    ! The parsing half of `records`. Nested turns are handled by depth:
-    ! a subagent driving `runTurn` inside a bracketed turn writes its own
-    ! `started` and terminator within the span, and only the outermost pair
-    ! becomes the result. This assumes nested turns are sequential, so that their
-    ! records nest rather than interleave.
+    ! The parsing half of `records`. Every record names the turn that produced
+    ! it, so this SELECTS rather than parses: the turn is the outermost one the
+    ! span names, and its messages are the records naming it innermost. A
+    ! subagent's records name the subagent's turn, so they are excluded by not
+    ! matching — no depth to count, and no assumption that nested turns run
+    ! sequentially rather than interleaved.
     !
     ! `None` when the span holds no turn at all — the process died while the
     ! request was still queued, before `runTurn` was ever reached. A turn that
@@ -178,37 +179,32 @@ section Journal
     ! a crash mid-turn stays distinguishable from a crash before it.
   //]
   private def turnOf(entries: List[Entry]): TurnData | None =
-    var data: TurnData | None = None
-    var depth = 0
-    var user: Option[Message] = None
+    // The turn this bracket is about: the outermost one any record names. A
+    // later `ask` under the same bracket is a different turn and not this one.
+    var outer = ""
+    for entry in entries do
+      if outer == "" then outer = TurnLog.outerTurn(entry)
+
+    var user: Message | None = None
     var pending: List[Message] = []
+    var terminator: Entry | None = None
 
     for entry in entries do
-      // Once the turn has ended, later engine records are not its own.
-      if entry.event == TurnLog.startedEvent && data is None then
-        depth = depth + 1
-        if depth == 1 then
-          user = Some(TurnLog.decodeMessage(entry))
-          pending = []
+      if outer != "" && TurnLog.innerTurn(entry) == outer then
+        if entry.event == TurnLog.messageEvent then
+          // The turn's one user message opens it; everything else is its traffic.
+          match TurnLog.decodeMessage(entry)
+          case asked: UserInput => if user is None then user = asked
+          case said             => pending = pending + said
+        else if TurnLog.isTerminator(entry.event) && terminator is None then
+          terminator = entry
 
-      else if entry.event == TurnLog.messageEvent && depth == 1 then
-        pending = pending + TurnLog.decodeMessage(entry)
-
-      else if TurnLog.isTerminator(entry.event) && depth > 0 then
-        depth = depth - 1
-        if depth == 0 then
-          match user
-          case Some(message) => data = turnFrom(message, pending, entry)
-          case None          => pass
-          user = None
-          pending = []
-
-    match data
-    case t: TurnData => t
-    case _ =>
-      match user
-      case Some(message) => TurnData(message, pending, TurnResult.Interrupted)
-      case None          => None
+    match user
+    case message: Message =>
+      match terminator
+      case closed: Entry => turnFrom(message, pending, closed)
+      case _             => TurnData(message, pending, TurnResult.Interrupted)
+    case _ => None
 
   private def turnFrom(user: Message, pending: List[Message], terminator: Entry): TurnData =
     if terminator.event == TurnLog.answeredEvent then TurnData(user, pending, TurnResult.Success)

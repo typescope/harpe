@@ -92,13 +92,18 @@ private def withJournal(body: (Journal, String) => Unit receives logger): Unit =
   with logger = sessionLog in body(journal, path)
   sessionLog.close()
 
+// One turn's records, tagged with a turn the way `Agent.ask` tags them.
+private def asTurn(body: () => Unit receives logger): Unit receives logger =
+  with logger = TurnLog.contextLogger() in body()
+
 // One answered turn, including an unrelated diagnostic entry between messages.
 private def answeredTurn(journal: Journal): Unit receives logger =
-  TurnLog.started(UserInput("hi", []))
-  TurnLog.message(Assistant("on it", [call()]))
-  logger.log("myagent.debug", "note" ~ "between messages")
-  TurnLog.message(ToolResults([ToolResult("c1", "42", [], success = false)]))
-  TurnLog.answered()
+  asTurn: () =>
+    TurnLog.message(UserInput("hi", []))
+    TurnLog.message(Assistant("on it", [call()]))
+    logger.log("myagent.debug", "note" ~ "between messages")
+    TurnLog.message(ToolResults([ToolResult("c1", "42", [], success = false)]))
+    TurnLog.answered()
 
 //[ A failed turn, an answered one, and one whose process died mid-turn
   !
@@ -109,50 +114,59 @@ private def answeredTurn(journal: Journal): Unit receives logger =
 //]
 private def bracketedTurns(journal: Journal): Unit receives logger =
   journal.request(Journal.payload("text" ~ "will fail"))
-  TurnLog.started(UserInput("will fail", []))
-  TurnLog.message(Assistant("partial", []))
-  TurnLog.failed("bad model")
+  asTurn: () =>
+    TurnLog.message(UserInput("will fail", []))
+    TurnLog.message(Assistant("partial", []))
+    TurnLog.failed("bad model")
   journal.response("turnEnd")
 
   journal.request(Journal.payload("text" ~ "again"))
-  TurnLog.started(UserInput("again", []))
-  TurnLog.message(Assistant("done", [call()]))
-  TurnLog.message(ToolResults([ToolResult("c1", "no such file", [], success = false)]))
-  TurnLog.answered()
+  asTurn: () =>
+    TurnLog.message(UserInput("again", []))
+    TurnLog.message(Assistant("done", [call()]))
+    TurnLog.message(ToolResults([ToolResult("c1", "no such file", [], success = false)]))
+    TurnLog.answered()
   journal.response("turnEnd")
 
   journal.request(Journal.payload("text" ~ "crashed"))
-  TurnLog.started(UserInput("crashed", []))
+  asTurn: () =>
+    TurnLog.message(UserInput("crashed", []))
 
 // A delegating turn, an externally interrupted one, unbracketed machinery, and a
 // bracket the process died inside.
 private def projectableTurns(journal: Journal): Unit receives logger =
   journal.request(Journal.payload("kind" ~ "upload", "file" ~ "a.png"))
-  TurnLog.started(UserInput("look", []))
-  TurnLog.message(Assistant("delegating", [call()]))
-  TurnLog.started(UserInput("subagent work", []))
-  TurnLog.message(Assistant("sub answer", []))
-  TurnLog.answered()
-  TurnLog.message(ToolResults([ToolResult("c1", "42", [])]))
-  TurnLog.message(Assistant("done", []))
-  TurnLog.answered()
+  asTurn: () =>
+    TurnLog.message(UserInput("look", []))
+    TurnLog.message(Assistant("delegating", [call()]))
+    // The subagent's turn is a turn of its own, nested inside this one.
+    asTurn: () =>
+      TurnLog.message(UserInput("subagent work", []))
+      TurnLog.message(Assistant("sub answer", []))
+      TurnLog.answered()
+    TurnLog.message(ToolResults([ToolResult("c1", "42", [])]))
+    TurnLog.message(Assistant("done", []))
+    TurnLog.answered()
   journal.response(Journal.payload("text" ~ "done"))
 
   // A response can survive even when the engine's terminator does not. Treat
   // that externally interrupted turn as interrupted rather than nullable.
   journal.request(Journal.payload("kind" ~ "chat"))
-  TurnLog.started(UserInput("partial", []))
-  TurnLog.message(Assistant("working", []))
+  asTurn: () =>
+    TurnLog.message(UserInput("partial", []))
+    TurnLog.message(Assistant("working", []))
   journal.response(Journal.payload("text" ~ ""))
 
   // Machinery: a turn nobody bracketed.
-  TurnLog.started(UserInput("cron job", []))
-  TurnLog.message(Assistant("tick", []))
-  TurnLog.answered()
+  asTurn: () =>
+    TurnLog.message(UserInput("cron job", []))
+    TurnLog.message(Assistant("tick", []))
+    TurnLog.answered()
 
   // Bracketed, but the process died mid-turn.
   journal.request(Journal.payload("kind" ~ "chat"))
-  TurnLog.started(UserInput("and this?", []))
+  asTurn: () =>
+    TurnLog.message(UserInput("and this?", []))
 
 def transcriptSuite(): Unit receives thisSuite = suite: "session log", () =>
   suite: "what the journal writes", () =>
@@ -163,12 +177,37 @@ def transcriptSuite(): Unit receives thisSuite = suite: "session log", () =>
         check("five records", all.size == 5)
         check("diagnostic event retained", all.get(2).get("event", "").asString == "myagent.debug")
 
+    // What the turn tag buys that a position in the stream cannot: a record
+    // that is not the turn's own still says which turn spent it. This is how a
+    // model call's token counts are attributed without replaying the log.
+    test: "a diagnostic carries the turn that produced it", () =>
+      withJournal: (journal, path) =>
+        answeredTurn(journal)
+        val all = entriesOf(path)
+        val turn = TurnLog.innerTurn(all.get(0))
+        check("the turn is tagged", turn != "")
+        check("and so is the diagnostic between its messages", TurnLog.innerTurn(all.get(2)) == turn)
+
+    // A subagent's turn is a turn, so its records name it rather than the turn
+    // it runs inside — and both are on the record, outermost last.
+    test: "a nested turn names itself, and the turn it runs inside", () =>
+      withJournal: (journal, path) =>
+        projectableTurns(journal)
+        val all = entriesOf(path)
+        // 0 is the driver's request, written before the turn exists.
+        val outer = TurnLog.innerTurn(all.get(1))          // the outer turn's input
+        val nested = TurnLog.innerTurn(all.get(3))         // the subagent's input
+        check("the bracket is outside every turn", TurnLog.innerTurn(all.get(0)) == "")
+        check("a turn of its own", nested != "" && nested != outer)
+        check("still inside the outer one", TurnLog.outerTurn(all.get(3)) == outer)
+        check("the outer turn is outermost to itself", TurnLog.outerTurn(all.get(1)) == outer)
+
     test: "records the user message", () =>
       withJournal: (journal, path) =>
         answeredTurn(journal)
         val record = readRecords(path).get(0)
         val user = fieldsOf(record)
-        check("event", record.get("event", "").asString == "harpe.turn.started")
+        check("event", record.get("event", "").asString == "harpe.turn.message")
         check("role", user.get("role", "").asString == "user")
         check("text", user.get("text", "").asString == "hi")
         val timestamp = record.get("time", "").asString

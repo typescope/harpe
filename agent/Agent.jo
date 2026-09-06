@@ -88,6 +88,11 @@ section Agent
     ! so the engine has nothing to check here. (`Toolset` rejects the one
     ! mistake still possible, the same name wired twice, as it is built.) A name
     ! the model invents anyway comes back to it as an unknown tool.
+    !
+    ! Every record the turn produces — its messages, the model's diagnostics,
+    ! its tools' — is tagged with the turn, so a reader groups by it rather than
+    ! inferring membership from position in the stream. A turn run inside
+    ! another adds its own, and both are on the record.
   //]
   def ask(
       message: String,
@@ -100,7 +105,7 @@ section Agent
       maxToolRounds: Int = 50,
       maxRetries: Int = 4,
       maxOutputTokens: Int = 8192)
-  : TurnData receives logger =
+  : TurnData receives logger = with logger = TurnLog.contextLogger() in
 
     val input = UserInput(message, filesAt(attachments))
     var rounds = 0
@@ -111,7 +116,7 @@ section Agent
     var produced: List[Message] = []
 
     context.beginTurn(input)
-    TurnLog.started(input)
+    TurnLog.message(input)
 
     // Compact at the turn boundary if the previous request crossed the strategy's
     // threshold, then seed a provider session from one immutable snapshot.

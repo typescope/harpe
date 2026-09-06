@@ -98,10 +98,10 @@ section ToolCallExecutor
 
   //[ The reserved sub-record key for the tool call a record was produced under.
     !
-    ! Distinct from any key an application picks for its own ambient context, so
-    ! the two nest rather than overwrite one another.
+    ! Dotted so an application's own scopes cannot collide with it, the same
+    ! reason event names are.
   //]
-  private def callContextKey: String = "toolCall"
+  private def callContextKey: String = "harpe.tools.call"
 
   //[ Answer one call: the wired handler, or a refusal for a name nothing answers. //]
   private def dispatch(call: ToolCall, tools: Toolset, interact: Interact): ToolOutcome receives logger =

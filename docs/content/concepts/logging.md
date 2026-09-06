@@ -327,8 +327,12 @@ record keeps every scope it was produced under.
 ## Turn history and transcript loading
 
 The provided `Journal` transcript writes through this same channel.
-The framework emits stable `harpe.turn.started`, `harpe.turn.message`, and
-terminal `harpe.turn.answered` / `interrupted` / `failed` events.
+The framework emits a stable `harpe.turn.message` for every message in a turn
+and terminal `harpe.turn.answered` / `interrupted` / `failed` events. Each
+record also carries the turn that produced it as a `harpe.turn.id` scope in
+`context`, so records are grouped by that rather than by where they sit in the
+stream. Framework scope keys are dotted for the same reason event names are —
+an application's own scopes share the list and must not collide.
 
 Applications decide how session events are stored and correlated. Producers emit
 through `logger` without depending on that policy. `Journal.records` projects an

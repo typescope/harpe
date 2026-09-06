@@ -28,7 +28,7 @@ import harpe.util.File
   !
   ! EVENT CONVENTION. A record IS an event, and `event` is its name: a stable,
   ! dotted identifier whose LAST segment says WHAT HAPPENED —
-  ! `harpe.turn.started`, `harpe.model.failed`. Everything before it names the
+  ! `harpe.turn.answered`, `harpe.model.failed`. Everything before it names the
   ! SUBJECT the event is about, so a consumer reads one subtree with
   ! `jq 'select(.event | startswith("harpe.model"))'` — every record about
   ! talking to a model, whatever the outcome — and the open set stays
@@ -70,7 +70,7 @@ import harpe.util.File
   ! it.
   !
   ! A scope is any `Value`. A producer that wants a reader to tell its scope
-  ! from another's names it — `{"toolCall": {...}}` — and one with an id and
+  ! from another's names it — `{"harpe.tools.call": {...}}` — and one with an id and
   ! nothing to name may push the id alone. Scopes are separate from `fields` at
   ! the type level, so ambient context can never collide with a producer's own
   ! key — `"context"` is reserved in the JSON.
