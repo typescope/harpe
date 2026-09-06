@@ -128,6 +128,8 @@ jo run tests
 
 SQLite, in `src/db/`. One file per subject — `Stock.jo`, `Orders.jo`,
 `Checks.jo`, `Runs.jo`, `Skills.jo` — each a `section`, none holding any state.
+A route assembles its response from them, rather than each having a query shaped
+to one page.
 
 The connection is a **context parameter**. An entry point opens one and the
 stores take it from context with `receives conn`, so a request is one connection

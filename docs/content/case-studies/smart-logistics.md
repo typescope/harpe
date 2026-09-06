@@ -211,7 +211,6 @@ my-depot/
       Checks.jo          # what was written, and what the watcher says
       Runs.jo            # what each agent did
       Skills.jo          # the planner's method, and its revisions
-      Snapshot.jo        # the one call the dashboard makes
   sandbox/
     watch/API.jo         # the watcher's complete authority
     plan/API.jo          # the planner's complete authority

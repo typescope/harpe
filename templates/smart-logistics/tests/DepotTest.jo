@@ -13,7 +13,7 @@ import harpe.testing.check
 import harpe.logging.logger
 import smart.logistics.db.DB
 import smart.logistics.db.conn
-import smart.logistics.db.Snapshot
+import smart.logistics.db.Runs
 import smart.logistics.db.Stock
 import smart.logistics.db.Orders
 import smart.logistics.db.Checks
@@ -62,11 +62,38 @@ private def appliedVersions(path: String): List[String] =
   conn.close()
   out
 
-private def placedCount(): Int receives conn =
-  var placed = 0
+//[ Orders currently in one of `statuses`. //]
+private def orderCount(statuses: List[String]): Int receives conn =
+  var count = 0
   for item in Orders.drafts() do
-    if item.cast[py.Dict].get("status").asString == "ordered" then placed = placed + 1
-  placed
+    if statuses.contains(item.cast[py.Dict].get("status").asString) then count = count + 1
+  count
+
+private def placedCount(): Int receives conn = orderCount(["ordered"])
+
+//[ Products whose cover runs out before a delivery could arrive — the number
+  ! the page derives for itself, computed here the same way.
+//]
+private def atRiskCount(): Int receives conn =
+  var count = 0
+  for item in Stock.products() do
+    val product = item.cast[py.Dict]
+    if product.get("days_of_cover").asInt < product.get("lead_time_days").asInt then
+      count = count + 1
+  count
+
+//[ Orders in transit whose promised date has already passed. //]
+private def overdueCount(): Int receives conn =
+  val today = py.module("datetime").date.today().isoformat().asString
+  var count = 0
+  for item in Orders.drafts() do
+    val order = item.cast[py.Dict]
+    val expected = order.get("expected_at").asString
+    val inTransit = ["ordered", "part_received"].contains(order.get("status").asString)
+    // Both are ISO dates, so Python's string order is date order.
+    val late = expected != "" && py.dynamic(expected).__lt__(today).asBool
+    if inTransit && late then count = count + 1
+  count
 
 //[ The one draft the seed leaves open, and the line on it for `sku`. //]
 private def orderOf(sku: String): Int receives conn =
@@ -107,13 +134,10 @@ private def product(sku: String): py.Dict receives conn =
 
 def depotSuite(): Unit receives thisSuite, logger =
   depotTest: "the seed opens on a depot in trouble", () =>
-    val summary = Snapshot.snapshot().get("summary").cast[py.Dict]
-    check("twelve products", summary.get("product_count").asInt == 12)
-    check:
-      "four run out before a delivery could arrive"
-      summary.get("at_risk_count").asInt == 4
-    check("one draft is already open", summary.get("open_drafts").asInt == 1)
-    check("nothing has been checked yet", summary.get("last_checked").asString == "")
+    check("twelve products", Stock.products().size == 12)
+    check("four run out before a delivery could arrive", atRiskCount() == 4)
+    check("one draft is already open", orderCount(["draft"]) == 1)
+    check("nothing has been checked yet", Runs.lastChecked() == "")
 
   depotTest: "days of cover is stock plus what is on order, at the rate of sale", () =>
     val soap = product("HYGI-301")
@@ -145,9 +169,7 @@ def depotSuite(): Unit receives thisSuite, logger =
     val after = product("HYGI-303")
     check("40 on order", after.get("on_order").asInt == 40)
     check("nine days after", after.get("days_of_cover").asInt == 9)
-    check:
-      "one fewer at risk"
-      Snapshot.snapshot().get("summary").cast[py.Dict].get("at_risk_count").asInt == 3
+    check("one fewer at risk", atRiskCount() == 3)
     check:
       "an accepted order cannot be accepted again"
       !Orders.setDraftStatus(draftId, "rejected")
@@ -281,11 +303,10 @@ def depotSuite(): Unit receives thisSuite, logger =
     check:
       "due on the lead time of the slowest line"
       due.__sub__(placed).days.asInt == 6
-    val summary = Snapshot.snapshot().get("summary").cast[py.Dict]
     check:
       "three orders are now in transit"
-      summary.get("outstanding_orders").asInt == 3
-    check("none of them late yet", summary.get("overdue_orders").asInt == 0)
+      orderCount(["ordered", "part_received"]) == 3
+    check("none of them late yet", overdueCount() == 0)
 
   depotTest: "the ledger refuses to go negative or past capacity", () =>
     val soap = product("HYGI-301")

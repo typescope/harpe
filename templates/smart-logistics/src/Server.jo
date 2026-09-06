@@ -10,7 +10,6 @@ import smart.logistics.agents.Watcher
 import smart.logistics.agents.Planner
 import smart.logistics.db.DB
 import smart.logistics.db.conn
-import smart.logistics.db.Snapshot
 import smart.logistics.db.Stock
 import smart.logistics.db.Orders
 import smart.logistics.db.Checks
@@ -45,7 +44,7 @@ class Server(brain: Model, home: String, databasePath: String)
   //[ One connection, opened for this request and closed with its response. //]
   private def connected(): py.List receives request, conn, projectHome =
     match request
-    case Http.Get("/api/snapshot") => Http.respondJson(Snapshot.snapshot())
+    case Http.Get("/api/snapshot") => snapshot()
     case Http.Get("/api/warnings") =>
       Http.respondJson(py.dict("warnings" ~ Checks.warnings()))
     case Http.Get("/api/checks") =>
@@ -73,6 +72,20 @@ class Server(brain: Model, home: String, databasePath: String)
     case Http.Post("/api/drafts/status") => draftStatus()
     case Http.Post("/api/orders/receive") => receiveDelivery()
     case _ => Http.respond("404 Not Found", "application/json", "{\"error\":\"not found\"}")
+
+  //[ Everything the page needs on load, in one response and on one connection.
+    !
+    ! It used to carry seven counters alongside these, computed in one SELECT.
+    ! The page rendered one of them: it derives at-risk, drafts and orders from
+    ! the rows below, which it already has. The counter that cost the most was
+    ! `at_risk_count`, which walked the whole ledger a second time to produce a
+    ! number the page was working out for itself.
+  //]
+  private def snapshot(): py.List receives request, conn =
+    Http.respondJson(py.dict:
+      "products"  ~ Stock.products()
+      "suppliers" ~ Stock.suppliers()
+      "summary"   ~ py.dict("last_checked" ~ Runs.lastChecked()))
 
   //[ Browser responses carry their own headers: nothing is sniffed, and the
     ! page may load only its own script and stylesheet.
