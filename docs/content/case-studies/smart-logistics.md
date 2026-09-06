@@ -21,7 +21,7 @@ traditional logistics system, whose settings are single numbers: safety stock 7,
 reorder point 40, lead time 9. There is no field for any of the three
 rules.](/img/smart-logistics-policy.svg)
 
-Every rule needs different software. Take the Christmas rule:
+Each rule above needs a different software feature. Take the Christmas rule:
 
 > Nordic shuts down for two weeks over Christmas — don't order from them if it
 > won't arrive first.
@@ -45,17 +45,16 @@ category:
 
 > Warn about packaging only when it is under 3 days of cover.
 
-Supporting the variety of rules in depot management means a feature for every
+Supporting the variety of rules in depot management means a feature for each
 kind of rule, and no traditional planning system survives the resulting feature
 explosion.
 
 That is the smart logistics problem: how to support the variety of high-level
-planning rules in logistics software. These rules are sentences, and there is
-nowhere to put a sentence.
+planning rules in logistics software.
 
 ## Letting a model read the rules
 
-A model can read those sentences and act on them. No schema change, no code, no
+A model can read those rules and act on them. No schema change, no code, no
 release. That is the whole reason to reach for one here.
 
 This page works through an example: a depot restocking planner that keeps its
