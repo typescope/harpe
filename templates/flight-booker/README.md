@@ -38,8 +38,8 @@ confirmation card in the chat — approve or reject it there.
 - `sandbox/` — the Duffel capability
 - `skills/` — reference the model can read
 
-[Create a Flight Booking Agent](https://harpe.typescope.ai/tutorial/create-flight-booking-agent/)
-walks through how the approval boundary works.
+[Flight Booking](https://harpe.typescope.ai/case-studies/flight-booker/) walks
+through how the approval boundary works.
 
 ## Screenshots
 

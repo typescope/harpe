@@ -51,9 +51,9 @@ prompt, and, where it has them, its own tests.
 |---|---|---|
 | `web` | browser sessions, streaming, uploads, and downloadable files | [Create a Web Agent](https://harpe.typescope.ai/tutorial/create-web-agent/) |
 | `telegram` | bot sessions, sender authorization, attachments, and Telegram rendering | [Create a Telegram Agent](https://harpe.typescope.ai/tutorial/create-telegram-agent/) |
-| `pr-review` | a GitHub PR reviewer, behind a capability scoped to one external API | [Create a PR Review Agent](https://harpe.typescope.ai/tutorial/create-pr-review-agent/) |
-| `flight-booker` | a booking agent that asks a human before the irreversible step | [Create a Flight Booking Agent](https://harpe.typescope.ai/tutorial/create-flight-booking-agent/) |
-| `smart-logistics` | two agents, two capability grants, and policy written as prose | — |
+| `smart-logistics` | two agents, two capability grants, and policy written as prose | [Smart Logistics](https://harpe.typescope.ai/case-studies/smart-logistics/) |
+| `pr-review` | a GitHub PR reviewer, behind a capability scoped to one external API | [GitHub PR Review](https://harpe.typescope.ai/case-studies/pr-review/) |
+| `flight-booker` | a booking agent that asks a human before the irreversible step | [Flight Booking](https://harpe.typescope.ai/case-studies/flight-booker/) |
 
 ```sh
 jo new my-agent --template typescope/harpe:web
