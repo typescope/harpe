@@ -95,9 +95,8 @@ manager is the one who decides.
 list, and the list is checked before the program runs — not asked for in a
 prompt, where it could be argued away.
 
-**A hostile rule is still only a rule.** Anyone can write one, and text from
-outside the company can end up quoted in one. The worst it can do is argue for
-a draft that the manager then rejects.
+**Damage is contained.** Under a prompt injection attack, the worst result is a
+controversial draft order that the manager can refuse.
 
 **A new rule needs no developer.** It is a sentence, typed by the person whose
 rule it is, and it takes effect on the next run.
