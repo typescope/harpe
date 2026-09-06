@@ -1,0 +1,68 @@
+//[ Planner.jo
+  !
+  ! The on-demand agent, and the draft a person then reviews.
+//]
+
+namespace harpe.examples.smartlogistics.agents
+
+import harpe.ffi.os
+import harpe.ffi.threading
+import harpe.util.File
+import harpe.Model
+import harpe.tools.RunCodeTool
+import harpe.tools.SkillTools
+import harpe.logging.*
+import harpe.examples.smartlogistics.db.Runs
+
+//[ The planner: on demand, started by a person, reviewed by a person.
+  !
+  ! Its capability (sandbox/plan) can save a draft and nothing else. Approving,
+  ! submitting and paying are not operations it has.
+//]
+class Planner(brain: Model, home: String, databasePath: String)
+  private val lock = threading.Lock()
+  private val runCode = RunCodeTool(os.path.join(home, "sandbox", "plan"), approvalDeadline = 30)
+
+  def run(note: String): py.Dict =
+    if !lock.acquire(blocking = false).asBool then
+      return busy("A plan is already being prepared.")
+    val outcome = py.try: planOrders(note.trim)
+    lock.release()
+    match outcome
+    case Ok(value) => value
+    case Err(error) => py.dict("ok" ~ false, "busy" ~ false, "report" ~ error.message)
+
+  private def planOrders(note: String): py.Dict =
+    val runId = onDb(databasePath, () => Runs.beginRun("plan", "manual", note))
+    val attempt = py.try: ask(note)
+    match attempt
+    case Ok(report) =>
+      onDb(databasePath, () => Runs.finishRun(runId, "success", report))
+      py.dict("ok" ~ true, "busy" ~ false, "run_id" ~ runId, "report" ~ report)
+    case Err(error) =>
+      onDb(databasePath, () => Runs.finishRun(runId, "failed", error.message))
+      py.dict:
+        "ok"     ~ false
+        "busy"   ~ false
+        "run_id" ~ runId
+        "report" ~ error.message
+
+  //[ The note is this run's intent — what to focus on. It cannot overrule a
+    ! check; changing policy means changing the check, which persists and is
+    ! revisioned.
+  //]
+  private def request(note: String): String =
+    if note == "" then "Plan replenishment orders for the depot now."
+    else "Plan replenishment orders for the depot now. The administrator added, "
+      + "for this run only: \{note}"
+
+  private def ask(note: String): String =
+    Logging.withLogger: audit(home, "plan"), () =>
+      turn:
+        brain
+        File.read(os.path.join(home, "prompts", "plan.md"))
+        request(note)
+        SkillTools.toolset(os.path.join(home, "skills", "plan"))
+          ++ runCode.toolset(Map("SMART_LOGISTICS_DB" ~ databasePath))
+        12
+end

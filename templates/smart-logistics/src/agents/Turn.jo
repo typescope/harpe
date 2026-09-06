@@ -1,0 +1,86 @@
+//[ Turn.jo
+  !
+  ! What the two agents have in common: one turn, where its record goes, and the
+  ! fact that neither of them ever asks a person for approval.
+  !
+  ! The only things that differ between the two are the prompt, the skills, and
+  ! the capability their generated code is compiled against — so everything else
+  ! is here, once.
+//]
+
+namespace harpe.examples.smartlogistics.agents
+
+import harpe.ffi.os
+import harpe.util.File
+import harpe.Model
+import harpe.Agent
+import harpe.Interact
+import harpe.Approvals
+import harpe.context.FullContext
+import harpe.turns.TurnResult
+import harpe.turns.TurnEvent
+import harpe.logging.*
+import harpe.Toolset
+import harpe.examples.smartlogistics.db.DB
+import harpe.examples.smartlogistics.db.conn
+
+//[ A connection for one short piece of database work.
+  !
+  ! Deliberately not one connection around a whole run: a turn takes minutes, and
+  ! the only thing that needs the database is opening the run and closing it. An
+  ! agent's own reads go through the sandbox, which opens its own connection from
+  ! the path it is given.
+//]
+def onDb[T](databasePath: String, work: () => T receives conn): T =
+  DB.withConn(databasePath, work)
+
+//[ One turn, and its final report. Shared by both agents because the only
+  ! things that differ between them are the prompt, the skills, and the
+  ! capability their generated code is compiled against.
+//]
+def turn(
+  brain: Model,
+  system: String,
+  request: String,
+  tools: Toolset,
+  maxToolRounds: Int
+): String receives logger =
+  val context = new FullContext:
+    baseSystem = system
+    initial = []
+  val result = Agent.ask:
+    request
+    brain = brain
+    tools = tools
+    context = context
+    interact = new QuietInteract
+    maxToolRounds = maxToolRounds
+    maxRetries = 2
+  match result.result
+  case TurnResult.Success => result.finalText
+  case TurnResult.Interrupted => abort "the run was interrupted"
+  case TurnResult.Failed(detail) => abort detail
+
+//[ The sandbox writes its audit records here, so what generated code did is
+  ! recoverable after the fact rather than discarded.
+//]
+def audit(home: String, kind: String): Logger =
+  val dir = os.path.join(home, "logs")
+  File.ensureDir(dir)
+  new JsonlLogger(os.path.join(dir, "\{kind}.jsonl"))
+
+def busy(message: String): py.Dict =
+  py.dict("ok" ~ false, "busy" ~ true, "report" ~ message)
+
+//[ Neither agent has an approval path: the watcher's output is advisory and the
+  ! planner's output is a draft. So there is nothing here to prompt about.
+//]
+class QuietInteract
+  view Interact
+  def cancelled: Bool = false
+  def pause(seconds: Float): Bool =
+    py.module("time").sleep(py.dynamic(seconds))
+    false
+  def approve(title: String, detail: String): Approvals.Decision = Approvals.Cancelled
+  def emit(event: TurnEvent): Unit = pass
+end

@@ -197,7 +197,10 @@ my-depot/
   src/
     Main.jo              # startup, the binding check, and the schedule
     Server.jo            # HTTP routing
-    Agents.jo            # the watcher and the planner
+    agents/
+      Watcher.jo         # the unattended agent
+      Planner.jo         # the on-demand agent
+      Turn.jo            # what the two share: one turn, and no approvals
     db/
       DB.jo              # the connection, as a context parameter
       Schema.jo          # every table, at the shape this build expects
