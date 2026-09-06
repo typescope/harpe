@@ -102,20 +102,16 @@ rule it is, and it takes effect on the next run.
 
 ## Why the obvious designs stop short
 
-**A tool loop.** The safe default, and the right answer when the job is a
-handful of calls: the operations are the ones you defined, and your handler sees
-every one of them. Planning a depot is not a handful of calls. Every product
-needs a cover calculation over its own demand history, weighed against the
-suppliers that carry it and every rule that mentions it, and a real depot
-stocks thousands of products, not the twelve here. That is a round trip per
-product and the whole product table through the context window. As a program it
-is a loop and a comparison — which is why the model writes one, and why the
-handler no longer sees every operation.
+**Give the AI a set of tools instead.** Safe, and the right answer when the job
+is a few calls: the operations are the ones you wrote, and you see every one of
+them. But planning a depot means a calculation for each product, against its
+own sales history, its suppliers, and every rule that mentions it — thousands
+of products in a real depot. That is a round trip each, and the whole product
+table through the model. As a program it is one loop. So the AI writes a
+program, and you stop seeing each operation.
 
-**A validator in generated Python.** The obvious way to get that oversight back
-is to put `validate_order()` in front of the insert. It is the right idea in the
-wrong language: an injected `api.py` sits in the same address space as the code
-that imports it.
+**Let it write Python, and validate the writes.** Right idea, wrong language.
+The `api.py` you hand the program sits in the same memory as the program:
 
 ```python
 import api
@@ -123,15 +119,13 @@ api._db.execute("insert into draft_orders ...")   # the connection is in here
 api._validate = lambda *a: None                   # or keep the wrapper, drop the check
 ```
 
-Python has no module confinement, so the validator is a suggestion to code that
-can rewrite it.
+Nothing stops either line, so the validator is only a suggestion.
 
-**A container around each agent.** The scheduled agent and the on-request one
-want the same database, the same model and the same libraries, so a container
-drawn around each would hand both the same access. The rule that matters —
-*the unattended one may not order anything* — is not a fact about processes,
-files or sockets. It is a fact about which operations exist, and that is the
-one thing a container has no opinion about.
+**Put each agent in a container.** Both agents need the same database, the same
+model and the same libraries, so both containers end up with the same access.
+And a container decides which files and sockets a process gets. The rule that
+matters — *the unattended agent may not order anything* — is about which
+operations exist, and about that a container has nothing to say.
 
 ## The Agentic Planner
 
