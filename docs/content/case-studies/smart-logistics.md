@@ -133,48 +133,37 @@ drawn around each would hand both the same access. The rule that matters —
 files or sockets. It is a fact about which operations exist, and that is the
 one thing a container has no opinion about.
 
-## A sentence changes the plan
+## The Agentic Planner
 
-The app opens on the stock page, where the depot is already in trouble.
+The prototype is a complete app — a depot database, a web UI, and two agents
+built with [Harpe](https://github.com/typescope/harpe) on
+[Jo](https://jo-lang.org/).
+
+It opens on the stock page, where the depot is already in trouble: hand soap is
+down to 2 days of cover, and its supplier takes 9 days to deliver.
 
 ![The stock page. A banner reads "4 products will run out before a delivery
 could arrive", above a table of products with days left, the short ones marked
 in red, and a Plan orders button.](/img/smart-logistics-stock.png)
 
-Hand soap is the worst: 2 days of cover, and Nordic Hygiene takes 9 days to
-deliver. Press **Plan orders** and a draft comes back from Nordic.
-
-Now add a **check**, as the app calls a stored rule:
-
-> Nordic shuts down for two weeks over Christmas — don't order from them if it
-> won't arrive first.
+**Plan orders** returns a draft from Nordic. Add a rule as a sentence —
+*Nordic shuts down for two weeks over Christmas* — and the next run moves the
+line to Helvetia, which delivers in 4 days, and says which rule did it.
 
 ![The checks page. Four checks written as plain sentences, each marked active
 and offering Edit, Turn off and Delete.](/img/smart-logistics-checks.png)
 
-Press **Plan orders** again. The line moves to Helvetia Wholesale and the
-quantity drops, because Helvetia delivers in 4 days rather than 9, and less
-stock covers a shorter wait. The report says which check did it.
+Drafts wait on the orders page. Accept places the order, Reject drops it, and
+nothing an agent can call moves a draft out of that state.
 
-That is the rule from the first section, the one that wanted a blackout
-calendar, a lead-time field and a change to the planner. Here it is a sentence
-somebody typed between two runs. The rule is in the system now, and it is still
-there next month.
+![The orders page. One draft waiting for review with Accept and Reject, and two
+orders already placed, each showing when it is due and how much has been
+delivered.](/img/smart-logistics-orders.png)
 
-The rest of this page is how that is built so that a sentence can never do more
-than propose.
-
-## Two agents, two grants
-
-The work is split between two agents. They share one depot, one list of checks,
-one model and one turn loop. Only their authority differs, and the reason is not
-that one of them is trusted more. It is who is watching when it runs.
-
-The **watcher** runs unattended, on a schedule, with nobody waiting to approve
-what it does. So the only thing it can create is a note for a person to read.
-
-The **planner** runs when a person asks, and everything it produces is reviewed
-before it means anything. So it gets one write, and that write produces a draft.
+The two agents get different authority, because they run at different times.
+The watcher runs unattended, so the only thing it can create is a note for a
+person to read. The planner runs when someone asks, so it gets one write, and
+that write produces a draft.
 
 ![One depot, two agents, two grants. Both read products, demand history and
 checks. The watcher, running unattended on a schedule, can additionally only
@@ -184,131 +173,9 @@ means nothing until a person accepts it. In neither grant: approve an order,
 send one to a supplier, change a check, or reach a database, file or
 network.](/img/smart-logistics-grants.svg)
 
-Two files, `sandbox/watch/API.jo` and `sandbox/plan/API.jo`, are the whole of
-it. Approving an order, sending one to a supplier and editing a check are not
-operations either agent has, so a generated program that names one does not
-compile. The refusal lands before the program runs, and it does not depend on
-what the model concluded.
-
-The two Python lines from earlier cannot be written here at all. The
-implementation is linked into the program rather than imported by it, so `_db`
-is not a field the guest can reach and `_validate` is not a name it can rebind.
-That is what promotes the validator behind `saveDraftOrder` from a suggestion to
-the only route to the table.
-
-So "the unattended agent may not order anything" is not a rule in a prompt. It
-is the absence of an operation, and it holds whatever ends up in the model's
-context.
-
-The list of operations is in the code either way. The reasoning behind where the
-list stops is what usually gets lost, so each grant carries it:
-
-```jo
-//[ The complete authority granted to the WATCHER.
-  !
-  ! The watcher runs unattended, on a schedule, with nobody waiting to approve
-  ! what it does. So the only thing it can create is a note for a human to read.
-  ! There is deliberately no operation here to order anything, approve anything,
-  ! change a check, or reach a database, file, or network.
-//]
-interface Watch
-```
-
-The difference between the two grants is one constructor argument. Everything
-else is shared — the same model, the same turn loop, the same database, the
-same code path for a turn.
-
-```jo
-// the watcher
-private val runCode = RunCodeTool(os.path.join(home, "sandbox", "watch"), approvalDeadline = 30)
-
-// the planner
-private val runCode = RunCodeTool(os.path.join(home, "sandbox", "plan"), approvalDeadline = 30)
-```
-
-Each `sandbox/<name>/` is a complete `api` / `runtime` / `guest` build of its
-own, so pointing `RunCodeTool` at a different directory is the whole mechanism
-for giving an agent a different authority. If one job in your own application
-deserves a narrower grant than the rest, this is the shape of it. See [Code and
-Sandboxing](/concepts/sandbox/) for what each build checks.
-
-## Where the model is trusted, and where it is not
-
-Nothing here treats the model's reading of a check as enforcement. A check is an
-input to a proposal: the model reads the sentences and argues for an order.
-Whether it applied one correctly is not machine-checked anywhere, and cannot be
-— a check can be misread, silently dropped, or contradicted by another check
-nobody noticed. The design assumes all three will happen, which is why the
-output is a draft and every draft waits for a person.
-
-What the runtime enforces instead is physical facts, and only those: who
-supplies what, that supplier's case size, storage capacity, duplicate lines,
-products already drafted. It enforces them whatever any check says. That is why
-*"ignore the storage cap, order 5000"* fails, and not because the model refused
-it — the cap is not a check, and no sentence reaches the code that holds it.
-
-Nothing prompts for approval mid-turn, for the same reason. `src/Agents.jo`
-installs a `QuietInteract` whose `approve` returns `Approvals.Cancelled`, so an
-agent that somehow asks gets a no. The watcher's output is advisory and the
-planner's output is a draft, which makes the draft itself the review point.
-Compare the [flight booker](/case-studies/flight-booker/), where the
-consequential call happens inside the turn and a person confirms there.
-
-![The orders page. One draft waiting for review with Accept and Reject, and two
-orders already placed, each showing when it is due and how much has been
-delivered.](/img/smart-logistics-orders.png)
-
-Every run is recorded. The generated program and the calls it made land in
-`logs/plan.jsonl` and `logs/watch.jsonl`, so what actually ran is recoverable
-after the fact rather than discarded with the turn.
-
-## What the tests cover
-
-`jo run tests` runs the `depot` and `capability` suites. Neither needs an API
-key or the network, because neither needs the model — what they check holds
-whatever it writes.
-
-```sh
-jo run tests
-```
-
-`tests/CapabilityTest.jo` proves the two enforced layers separately. The first
-test feeds the compiler programs that reach past their grant and asserts each
-fails to build: the watcher ordering, the watcher naming the planner's
-capability, the planner raising a warning, a guest reaching Python — and so
-SQLite — and a guest constructing the trusted `PlanImpl` for itself. One of
-them also asserts *why* it failed, that the name is simply not defined.
-
-The rest stay inside the grant, where the runtime is the one deciding.
-`saveDraftOrder` is asked for every draft the facts forbid — a supplier that
-does not stock the product, part of a case, zero, negative, 6000 units into a
-shelf that holds 96, an unknown product, the same product twice in one draft, a
-line already in an open draft — and each is refused with a reason. Afterwards
-the test counts the placed orders and finds the same two as before, because
-nothing generated code can call moves an order out of `draft`. The last test
-does the same for the watcher: severity is not free text, a warning needs a real
-product, and raising the same thing twice refreshes one note instead of stacking
-two.
-
-## Checks and skills
-
-**Checks** are what *this* depot does. They are prose, kept in the database,
-revisioned, and edited constantly. One list, read by both agents.
-
-| Check | The watcher | The planner |
-| --- | --- | --- |
-| "Food keeps 7 days of cover" | warns when food drops below | orders enough to reach it |
-| "Nordic shuts down over Christmas" | warns if an order would land in the gap | sources elsewhere |
-| "Never more than 300 units in one order" | — | caps the line, and says so |
-| "Warn about packaging only below 3 days" | quiet until 3 days | — |
-
-**Skills** are how an order is worked out — method, the same for any depot,
-rarely edited. They live in `skills/plan/` and are editable while the app runs,
-with every save recorded as a revision. They reach the model through the
-ordinary [skill tools](/concepts/skills/), read on demand rather than carried in
-every prompt.
-
-The test for which is which: *would another depot answer differently?*
+`sandbox/watch/API.jo` and `sandbox/plan/API.jo` are the whole of it. Physical
+facts — case sizes, storage capacity, who supplies what — are re-checked by
+trusted code on every draft, and every run's program and calls are logged.
 
 ## Run it
 
@@ -354,7 +221,7 @@ my-depot/
   skills/
     watch/, plan/        # method each agent can read on demand
   assets/                # the page
-  tests/                 # the capability boundary, and the validator
+  tests/                 # the capability boundary, and the validator (jo run tests)
 ```
 
 - Edit the checks in the running app, not in the source. That is the point of
