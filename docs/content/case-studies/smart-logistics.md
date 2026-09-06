@@ -101,7 +101,7 @@ controversial draft order that the manager can refuse.
 **A new rule needs no developer.** It is a sentence, typed by the person whose
 rule it is, and it takes effect on the next run.
 
-### The obvious alternatives fall short
+### The alternatives
 
 **Give the AI a set of tools instead.** Safe, and the right answer when the job
 is a few calls: the operations are the ones you wrote, and you see every one of
