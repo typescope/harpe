@@ -139,16 +139,13 @@ The prototype is a complete app — a depot database, a web UI, and two agents
 built with [Harpe](https://github.com/typescope/harpe) on
 [Jo](https://jo-lang.org/).
 
-It opens on the stock page, where the depot is already in trouble: hand soap is
-down to 2 days of cover, and its supplier takes 9 days to deliver.
+The home page shows an overview of the stock:
 
 ![The stock page. A banner reads "4 products will run out before a delivery
 could arrive", above a table of products with days left, the short ones marked
 in red, and a Plan orders button.](/img/smart-logistics-stock.png)
 
-**Plan orders** returns a draft from Nordic. Add a rule as a sentence —
-*Nordic shuts down for two weeks over Christmas* — and the next run moves the
-line to Helvetia, which delivers in 4 days, and says which rule did it.
+The checks page allows adding a rule as a sentence:
 
 ![The checks page. Four checks written as plain sentences, each marked active
 and offering Edit, Turn off and Delete.](/img/smart-logistics-checks.png)
@@ -160,22 +157,28 @@ nothing an agent can call moves a draft out of that state.
 orders already placed, each showing when it is due and how much has been
 delivered.](/img/smart-logistics-orders.png)
 
-The two agents get different authority, because they run at different times.
-The watcher runs unattended, so the only thing it can create is a note for a
-person to read. The planner runs when someone asks, so it gets one write, and
-that write produces a draft.
+The two agents have a page of their own, with the history of what they have
+run:
+
+![The agents page. A Planner card — runs only when you ask, everything it
+produces is reviewed by a person, so its one write is a draft order — above a
+Watcher card that runs on a schedule and can only write a warning for a person
+to read. Below them a run history listing the last planner run, the last
+watcher run, and an earlier planner run that
+failed.](/img/smart-logistics-agents.png)
+
+They are not given the same authority, because they do not run at the same
+time. The watcher runs unattended, so the only thing it can create is a note
+for a person to read. The planner runs when someone asks, so it gets one write,
+and that write produces a draft.
 
 ![One depot, two agents, two grants. Both read products, demand history and
 checks. The watcher, running unattended on a schedule, can additionally only
-save a warning, which is advisory and nothing else. The planner, running when a
-person asks, can additionally read open drafts and save a draft order, which
-means nothing until a person accepts it. In neither grant: approve an order,
-send one to a supplier, change a check, or reach a database, file or
+save warnings, which are advisory and nothing else. The planner, running when a
+person asks, can additionally read open drafts and save draft orders, which
+wait for approval. In neither grant: approve an order, send one to a supplier,
+change a check, or reach a database, file or
 network.](/img/smart-logistics-grants.svg)
-
-`sandbox/watch/API.jo` and `sandbox/plan/API.jo` are the whole of it. Physical
-facts — case sizes, storage capacity, who supplies what — are re-checked by
-trusted code on every draft, and every run's program and calls are logged.
 
 ## Run it
 
