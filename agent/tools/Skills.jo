@@ -21,14 +21,15 @@ import harpe.Interact
 import harpe.Tool.*
 import harpe.logging.logger
 
-//[ The audit-log category for the skills tools
+//[ The audit-log events for the skills tools — one per content read
   !
-  ! One record per content read (`skillsRead`/`skillsSearch`), tagged by
-  ! `action`. Reverse-namespaced per the `harpe.logging.Entry` category
-  ! convention. A denied `..` traversal is recorded too (the requested `name` is
-  ! logged before confinement is checked).
+  ! Two names rather than one tagged by `action`, because a read names a file
+  ! and a search names a query. A denied `..` traversal is recorded too: the
+  ! requested `name` is logged before confinement is checked. See the event
+  ! convention on `harpe.logging.Entry`.
 //]
-private def skillsCategory: String = "harpe.tools.skills"
+private def readEvent: String     = "harpe.tools.skills.read"
+private def searchedEvent: String = "harpe.tools.skills.searched"
 
 //[ Collect (relativeName ~ fullPath) for every file under skillsDir.
   !
@@ -101,9 +102,8 @@ section SkillTools
   //[ One skill file's contents, confined to `skillsDir`. //]
   def read(skillsDir: String, skill: String): ToolOutcome receives logger =
     logger.log:
-      skillsCategory
-      "action" ~ "read"
-      "name"   ~ skill
+      readEvent
+      "name" ~ skill
 
     val absPath = os.path.abspath(os.path.normpath(os.path.join(skillsDir, skill)))
 
@@ -126,9 +126,8 @@ section SkillTools
   //[ Matching lines across every skill file under `skillsDir`, capped at `maxHits`. //]
   def search(skillsDir: String, query: String): ToolOutcome receives logger =
     logger.log:
-      skillsCategory
-      "action" ~ "search"
-      "query"  ~ query
+      searchedEvent
+      "query" ~ query
 
     new ToolOutcome(matches(skillsDir, query), "searched · \{query}", attachments = [])
 

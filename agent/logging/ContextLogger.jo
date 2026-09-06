@@ -7,18 +7,25 @@
   ! through), it catches `log`, the severity helpers, and direct `logEntry`
   ! alike.
   !
-  ! The whole `context` map goes UNDER a single `key` (a nested sub-record), not
-  ! merged flat into the entry's fields — so ambient context can never collide
-  ! with or overwrite a producer's own field. `key` is reserved for this.
+  ! The `context` map goes in whole as ONE SCOPE in the entry's context list,
+  ! never merged into `fields` — so ambient context can never collide with a
+  ! producer's own field. What the map holds, and whether it names itself, is
+  ! the caller's to choose.
+  !
+  ! It APPENDS. Decorators wrap outward, so a record meets the innermost scope
+  ! first and the outermost last, and appending at each hop leaves the list in
+  ! that order — the scope that produced the record first, the broadest one
+  ! last. Nothing is replaced: two nested scopes both survive, which stamping
+  ! into one keyed field could not express.
 //]
 
 namespace harpe.logging
 
-private class ContextLogger(inner: Logger, key: String, context: Map[String, Value])
+private[harpe] class ContextLogger(inner: Logger, context: Map[String, Value])
   view Logger
 
   def logEntry(entry: Entry): Unit =
-    inner.logEntry(new Entry(entry.time, entry.category, entry.fields.add(key, context)))
+    inner.logEntry(new Entry(entry.time, entry.event, entry.fields, entry.context + context))
 
   // A scoped decorator does not own the wrapped logger's lifecycle.
   def close(): Unit = pass

@@ -103,8 +103,8 @@ private class CaptureLogger
   var events: List[String] = []
 
   def logEntry(entry: Entry): Unit =
-    if entry.category == "harpe.turn.message" then
-      val d = Entry.toDict(entry)
+    if entry.event == "harpe.turn.message" then
+      val d = Entry.toDict(entry).get("fields", py.dict()).cast[py.Dict]
       val role = d.get("role", "").asString
       if role == "assistant" && d.get("calls", py.list()).cast[py.List].size > 0 then
         events = events + "assistant-calls"
@@ -113,7 +113,7 @@ private class CaptureLogger
       else
         events = events + role
     else
-      events = events + entry.category
+      events = events + entry.event
 
   def close(): Unit = pass
 end
@@ -424,13 +424,12 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
           brain = toolThenText()
           tools = toolsetOf([loggingTool()])
           context = new WindowedContext("", [])
-          transcript = new Journal(capture)
           interact = new TestInteract(live())
 
       checkEquals:
         "order"
         capture.events.join(",")
-        expected = "harpe.turn.started,assistant-calls,tool-invoked,tool_results,assistant-text,harpe.turn.answered"
+        expected = "user,assistant-calls,tool-invoked,tool_results,assistant-text,harpe.turn.answered"
 
     // A tool exception must not erase the assistant message that requested it.
     test: "survives the tool raising", () =>
@@ -441,13 +440,12 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
           brain = toolThenText()
           tools = toolsetOf([failingLoggingTool()])
           context = new WindowedContext("", [])
-          transcript = new Journal(capture)
           interact = new TestInteract(live())
 
       checkEquals:
         "order"
         capture.events.join(",")
-        expected = "harpe.turn.started,assistant-calls,tool-failed,tool_results,assistant-text,harpe.turn.answered"
+        expected = "user,assistant-calls,tool-failed,tool_results,assistant-text,harpe.turn.answered"
 
   // Crossing the threshold after a completed tool round replaces the provider
   // session while preserving the tool effect and the logical turn.

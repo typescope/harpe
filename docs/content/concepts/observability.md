@@ -47,7 +47,7 @@ jo run view -- logs/sessions/20260821T091402-a3f1.jsonl
 
 ## What it shows
 
-![A journal for one session. Each bracketed turn is a card with a coloured left edge; inside it, timestamped rows pair a category chip with the record's content. Assistant messages, tool results, runCode executions and model calls are each tinted differently, and the header carries the filter, the turns-only and follow toggles, a live indicator, and the entry count.](/img/journal-viewer.png)
+![A journal for one session. Each bracketed turn is a card with a coloured left edge; inside it, timestamped rows pair an event chip with the record's content. Assistant messages, tool results, runCode executions and model calls are each tinted differently, and the header carries the filter, the turns-only and follow toggles, a live indicator, and the entry count.](/img/journal-viewer.png)
 
 Turns are cards, opened by a `harpe.turn.request` and closed by its response,
 with an outcome badge — *answered*, *failed*, *interrupted*, or *running* — and a
@@ -55,7 +55,7 @@ left edge in that outcome's colour. Records nothing bracketed (a subagent's turn
 a maintenance job) render as a flat strip between cards, which is the same
 distinction `Journal.records` draws.
 
-Colour is meaning, not decoration: who spoke tints the message, and a category
+Colour is meaning, not decoration: who spoke tints the message, and an event
 chip is coloured by its prefix, so `harpe.tools.*` reads differently from
 `harpe.turn.*` at a glance.
 
@@ -70,16 +70,16 @@ The viewer is one reader; the file is plain JSON lines, so `jq` is another:
 
 ```sh
 # every turn the user actually had, with its outcome
-jq -c 'select(.category|startswith("harpe.turn.request","harpe.turn.response"))' session.jsonl
+jq -c 'select(.event|startswith("harpe.turn.request","harpe.turn.response"))' session.jsonl
 
-# what the agent ran, and whether it compiled
-jq -c 'select(.category=="harpe.tools.runCode") | {compiled, exitCode, runSeconds}' session.jsonl
+# what the agent ran, and how each program ended
+jq -c 'select(.event=="harpe.tools.runCode.ran") | .fields | {exitCode, runSeconds}' session.jsonl
 
 # token spend for the session
-jq -s 'map(select(.category=="harpe.model")) | {calls: length, input: (map(.inputTokens)|add), output: (map(.outputTokens)|add)}' session.jsonl
+jq -s 'map(select(.event=="harpe.model.replied")) | {calls: length, input: (map(.fields.inputTokens)|add), output: (map(.fields.outputTokens)|add)}' session.jsonl
 
 # anything that went wrong
-jq -c 'select(has("error") or has("warning"))' session.jsonl
+jq -c 'select(.fields|has("error") or has("warning"))' session.jsonl
 ```
 
 Pointing `Journal` at the same `Logger` the turn's tools use — which the bundled

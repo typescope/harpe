@@ -1,0 +1,256 @@
+//[ TurnLog.jo
+  !
+  ! The turn's own log events: their names, and the ONE codec that both writes
+  ! and reads them.
+  !
+  ! Not `TurnEvent`, which is ephemeral progress delivered to a live handler and
+  ! never persisted. These are the durable record.
+  !
+  ! The engine emits these to the ambient `logger` like every other record, so a
+  ! turn is in the log whether or not anything reads it back.
+  ! `harpe.transcript.Journal` is a READER of them — a projection over the same
+  ! stream, not a second sink. That is why there is no `Transcript` to wire: a
+  ! conversation kept somewhere else is a `Logger` backend, which was always the
+  ! pluggable part.
+  !
+  ! ENCODE AND DECODE SIT TOGETHER, deliberately. Two hand-written halves that
+  ! agree only by inspection is how a renamed key silently costs you records —
+  ! and each event's name is written exactly once, so the writer and the reader
+  ! cannot drift apart.
+//]
+
+namespace harpe.turns
+
+import harpe.util.Clock
+import harpe.ffi.secrets
+import harpe.Model.*
+import harpe.Tool.*
+import harpe.logging.*
+
+section TurnLog
+  //[ The four events one turn writes: every message it records, and the one
+    ! terminator that closes it.
+    !
+    ! ONE NAME FOR EVERY MESSAGE. The user's input is a message like the rest,
+    ! so it is not an event of its own. What tells the three apart is `role`,
+    ! which is the `Message` union's own tag and not a discriminator invented
+    ! for the log — a reader that understands `Message` needs nothing further.
+    ! Which turn a record belongs to is `turnKey`'s job, not a name's.
+  //]
+  def messageEvent: String     = "harpe.turn.message"
+  def answeredEvent: String    = "harpe.turn.answered"
+  def interruptedEvent: String = "harpe.turn.interrupted"
+  def failedEvent: String      = "harpe.turn.failed"
+
+  //[ The scope every record inside one turn is tagged with.
+    !
+    ! A turn is a UNIT OF WORK, not a stretch of the stream. Tagging says which
+    ! turn a record belongs to instead of leaving a reader to infer it from what
+    ! the record sits between — so nesting needs no depth counting, and a
+    ! model's token counts can be attributed to the turn that spent them.
+    !
+    ! Nested turns each add their own, innermost first, so a record carries its
+    ! whole chain of turns and a roll-up needs no second lookup.
+    !
+    ! Dotted for the same reason an event name is: scopes are an open set that
+    ! applications and third-party tools also write into, and a bare `turn`
+    ! would be theirs to claim as easily as ours.
+  //]
+  def turnKey: String = "harpe.turn.id"
+
+  //[ The ambient logger, tagged with a turn of its own: `with logger =
+    ! TurnLog.contextLogger() in <the turn>`.
+  //]
+  def contextLogger(): Logger receives logger =
+    new ContextLogger(logger, Map(turnKey ~ secrets.token_hex(8)))
+
+  //[ The turns a record was produced under, innermost first. //]
+  def turnsOf(entry: Entry): List[String] =
+    var ids: List[String] = []
+    for scope in entry.context do
+      match scope
+      case m: Map[String, Value] =>
+        match m.getOpt(turnKey)
+        case Some(s: String) => ids = ids + s
+        case _               => pass
+      case _ => pass
+    ids
+
+  //[ The turn that produced this record — the innermost, when turns nest. //]
+  def innerTurn(entry: Entry): String =
+    val ids = turnsOf(entry)
+    if ids.isEmpty then "" else ids.get(0)
+
+  //[ The outermost turn this record was produced under. //]
+  def outerTurn(entry: Entry): String =
+    val ids = turnsOf(entry)
+    if ids.isEmpty then "" else ids.get(ids.size - 1)
+
+  //[ Does this event close a turn? One of exactly three outcomes. //]
+  def isTerminator(event: String): Bool =
+    event == answeredEvent || event == interruptedEvent || event == failedEvent
+
+  //[ Record one of the turn's messages: its input, an assistant reply, or a
+    ! batch of tool results.
+  //]
+  def message(message: Message): Unit receives logger =
+    emit(messageEvent, message)
+
+  def answered(): Unit receives logger = logger.log(answeredEvent)
+  def interrupted(): Unit receives logger = logger.log(interruptedEvent)
+
+  //[ Close a lost turn, with the diagnostic — `""` when there is none.
+    !
+    ! Written either way, so the event has one shape and its reader has no
+    ! absence to interpret.
+  //]
+  def failed(detail: String): Unit receives logger =
+    logger.error(failedEvent, detail)
+
+  //[ The message a `started` or `message` entry carries. //]
+  def decodeMessage(entry: Entry): Message =
+    val fields = entry.fields
+    val role = str(fields, "role")
+    if role == "user" then
+      UserInput(str(fields, "text"), decodeAttachments(fields, "attachments"))
+    else if role == "assistant" then
+      var calls: List[ToolCall] = []
+      for item in items(fields, "calls") do
+        val c = sub(item)
+        val call = ToolCall:
+          str(c, "id")
+          str(c, "name")
+          decodeInput(nested(c, "input"))
+        calls = calls + call
+      Assistant(str(fields, "text"), calls)
+    else
+      var results: List[ToolResult] = []
+      for item in items(fields, "results") do
+        val r = sub(item)
+        val result = ToolResult:
+          str(r, "id")
+          str(r, "content")
+          decodeAttachments(r, "attachments")
+          bool(r, "success")
+        results = results + result
+      ToolResults(results)
+
+  //[ The diagnostic a `failed` entry carries, or `""`. //]
+  def decodeDetail(entry: Entry): String =
+    str(entry.fields, "error")
+
+  private def emit(event: String, message: Message): Unit receives logger =
+    logger.logEntry(new Entry(Clock.now(), event, encodeMessage(message), []))
+
+  private def encodeMessage(message: Message): Map[String, Value] =
+    match message
+    case UserInput(text, attachments) =>
+      Map:
+        "role"        ~ "user"
+        "text"        ~ text
+        "attachments" ~ encodeAttachments(attachments)
+
+    case Assistant(text, calls) =>
+      var values: List[Value] = []
+      for call in calls do
+        val value: Map[String, Value] = Map:
+          "id"    ~ call.id
+          "name"  ~ call.name
+          "input" ~ encodeInput(call.input)
+        values = values + value
+      Map:
+        "role"  ~ "assistant"
+        "text"  ~ text
+        "calls" ~ values
+
+    case ToolResults(results) =>
+      var values: List[Value] = []
+      for result in results do
+        val value: Map[String, Value] = Map:
+          "id"          ~ result.id
+          "content"     ~ result.content
+          "attachments" ~ encodeAttachments(result.attachments)
+          "success"     ~ result.success
+        values = values + value
+      Map:
+        "role"    ~ "tool_results"
+        "results" ~ values
+
+  private def encodeAttachments(attachments: List[Attachment]): List[Value] =
+    var values: List[Value] = []
+    for a in attachments do
+      val value: Map[String, Value] = Map:
+        "name" ~ a.name
+        "size" ~ a.size
+        "mime" ~ a.mime
+        "path" ~ a.path
+      values = values + value
+    values
+
+  private def decodeAttachments(fields: Map[String, Value], key: String): List[Attachment] =
+    var attachments: List[Attachment] = []
+    for item in items(fields, key) do
+      val a = sub(item)
+      val attachment = Attachment:
+        str(a, "name")
+        int(a, "size")
+        str(a, "mime")
+        path = str(a, "path")
+      attachments = attachments + attachment
+    attachments
+
+  //[ A tool call's arguments, which are host JSON both in the record and in
+    ! `ToolInput` — the one place this codec still crosses into `py`, because the
+    ! model chose the shape and neither side ever knew it.
+  //]
+  private def encodeInput(input: ToolInput): Map[String, Value] =
+    var fields = Map.empty[String, Value]
+    for k in py.iter(input.raw.keys()) do
+      fields = fields.add(k.asString, Value.fromJson(input.raw.get(k)))
+    fields
+
+  private def decodeInput(fields: Map[String, Value]): ToolInput =
+    val d = py.dict()
+    for k ~ v in fields.toList do d.set(k, Value.toJson(v))
+    ToolInput(d)
+
+  //[ Field readers, which ABORT on a field that is absent or at the wrong type.
+    !
+    ! `encode` writes every one of these, so either means the record was not
+    ! written by this codec. Substituting an empty value there would report a
+    ! turn with no text rather than a log this cannot read.
+  //]
+  private def field(fields: Map[String, Value], key: String): Value =
+    match fields.getOpt(key)
+    case Some(v) => v
+    case None    => abort "turn record has no '\{key}'"
+
+  private def str(fields: Map[String, Value], key: String): String =
+    match field(fields, key)
+    case s: String => s
+    case _         => abort "turn record's '\{key}' is not a string"
+
+  private def int(fields: Map[String, Value], key: String): Int =
+    match field(fields, key)
+    case Value.IntVal(n) => n
+    case _               => abort "turn record's '\{key}' is not an int"
+
+  private def bool(fields: Map[String, Value], key: String): Bool =
+    match field(fields, key)
+    case Value.BoolVal(b) => b
+    case _                => abort "turn record's '\{key}' is not a bool"
+
+  private def items(fields: Map[String, Value], key: String): List[Value] =
+    match field(fields, key)
+    case xs: List[Value] => xs
+    case _               => abort "turn record's '\{key}' is not a list"
+
+  private def nested(fields: Map[String, Value], key: String): Map[String, Value] =
+    sub(field(fields, key))
+
+  private def sub(value: Value): Map[String, Value] =
+    match value
+    case m: Map[String, Value] => m
+    case _                     => abort "turn record has a non-object where an object belongs"
+
+end

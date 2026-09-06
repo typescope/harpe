@@ -44,9 +44,9 @@ different purposes:
 
 | | Context | Transcript |
 | --- | --- | --- |
-| Purpose | Prepare the model's next input | Record what happened |
+| Purpose | Prepare the model's next input | Read back what happened |
 | Retention | May omit or summarize older turns | Append-only history |
-| Lifetime | Usually held in memory for a session | May be persisted by the application |
+| Lifetime | Usually held in memory for a session | As durable as the log it is read from |
 | Used by the model | Yes | Only when the application exposes or replays it |
 
 Removing an old turn from model context does not need to delete it from the

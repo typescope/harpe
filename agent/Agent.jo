@@ -12,8 +12,9 @@
   !
   ! What is deliberately NOT here: session storage layout, locks, and
   ! presentation (spinners, streams, chat actions) — those belong to the drivers.
-  ! The engine emits lifecycle/transcript entries through the ordinary logger
-  ! channel, but knows nothing about their destination.
+  ! The engine emits its turn events through the ordinary logger channel (see
+  ! `TurnLog`), but knows nothing about their destination. A conversation kept
+  ! somewhere else is a `Logger` backend, not a second interface to wire.
 //]
 
 namespace harpe
@@ -54,12 +55,11 @@ section Agent
     ! model read it with `fs`, which is what a driver minding its token bill
     ! does with uploads.
     !
-    ! `context` and `transcript` both see every message, and are deliberately
+    ! `context` and the log both see every message, and are deliberately
     ! separate. The context composes `(system, messages)` for the model and is
-    ! rolled back when a turn fails. The transcript records what was said and is
-    ! append-only, closing a failed turn with a terminator rather than erasing
-    ! it. Keeping them apart is what lets one conversation be replayed under a
-    ! different window or summarizer. On interruption/failure the provisional
+    ! rolled back when a turn fails. The log is append-only, closing a failed
+    ! turn with a terminator rather than erasing it. Keeping them apart is what
+    ! lets one conversation be replayed under a different window or summarizer. On interruption/failure the provisional
     ! assistant/tool tail is rolled back, while the user's message remains in the
     ! context. Defaulted, it is a `Context.noHistory` built fresh for this call
     ! — the model still sees this turn, and nothing survives into the next one.
@@ -88,6 +88,11 @@ section Agent
     ! so the engine has nothing to check here. (`Toolset` rejects the one
     ! mistake still possible, the same name wired twice, as it is built.) A name
     ! the model invents anyway comes back to it as an unknown tool.
+    !
+    ! Every record the turn produces — its messages, the model's diagnostics,
+    ! its tools' — is tagged with the turn, so a reader groups by it rather than
+    ! inferring membership from position in the stream. A turn run inside
+    ! another adds its own, and both are on the record.
   //]
   def ask(
       message: String,
@@ -96,12 +101,11 @@ section Agent
       tools: Toolset = Toolset.empty,
       interact: Interact = Interact.unattended,
       context: Context = Context.noHistory,
-      transcript: Transcript = Transcript.NoTranscript,
       executor: ToolCallExecutor = ToolCallExecutor.sequential,
       maxToolRounds: Int = 50,
       maxRetries: Int = 4,
       maxOutputTokens: Int = 8192)
-  : TurnData receives logger =
+  : TurnData receives logger = with logger = TurnLog.contextLogger() in
 
     val input = UserInput(message, filesAt(attachments))
     var rounds = 0
@@ -112,7 +116,7 @@ section Agent
     var produced: List[Message] = []
 
     context.beginTurn(input)
-    transcript.start(input)
+    TurnLog.message(input)
 
     // Compact at the turn boundary if the previous request crossed the strategy's
     // threshold, then seed a provider session from one immutable snapshot.
@@ -126,7 +130,7 @@ section Agent
       if interact.cancelled then
         result = TurnResult.Interrupted
         context.abortTurn()
-        transcript.interrupted()
+        TurnLog.interrupted()
         break
 
       // Once the tool budget is spent, offer no tools so the model must reply with
@@ -140,25 +144,25 @@ section Agent
         case Stopped =>
           result = TurnResult.Interrupted
           context.abortTurn()
-          transcript.interrupted()
+          TurnLog.interrupted()
           break
 
         case GaveUp(detail) =>
           result = TurnResult.Failed(detail)
           context.abortTurn()
-          transcript.failed(detail)
+          TurnLog.failed(detail)
           break
 
         case Got(reply, usage) =>
           context.observe(usage)
           context.append(reply)
           produced = produced + reply
-          transcript.append(reply)
+          TurnLog.message(reply)
 
           if reply.calls.isEmpty then
             result = TurnResult.Success
             context.commitTurn()
-            transcript.commit()
+            TurnLog.answered()
             break
 
           if reply.text.trim != "" then
@@ -172,14 +176,14 @@ section Agent
           if interact.cancelled then
             context.abortTurn()
             result = TurnResult.Interrupted
-            transcript.interrupted()
+            TurnLog.interrupted()
             break
 
           else
             val results = ToolResults(toolResults)
             context.append(results)
             produced = produced + results
-            transcript.append(results)
+            TurnLog.message(results)
             pending = toolResults
             rounds = rounds + 1
 
@@ -227,6 +231,18 @@ section Agent
       Got(message: Assistant, usage: Usage)
     | GaveUp(detail: String)
     | Stopped
+
+  //[ The engine's own events for how it handled a model request
+    !
+    ! NOT the attempt itself: that is `harpe.model.replied` or
+    ! `harpe.model.failed`, written by the provider, which is the only party
+    ! that knows which model was asked. What is left here is the
+    ! decision the loop took about a failure it was handed — retry, or stop —
+    ! and neither is a fact about the request. Reading the subtree in order
+    ! gives the whole story: what was attempted, then what was decided.
+  //]
+  private def retryEvent: String  = "harpe.model.retried"
+  private def gaveUpEvent: String = "harpe.model.gaveUp"
 
   //[ Exponential backoff between retries: 1s, 2s, 4s, … capped at 30s.  //]
   private def backoffSeconds(attempt: Int): Float =
@@ -279,7 +295,7 @@ section Agent
           break
 
         case Fatal(detail) =>
-          logger.error("harpe.model.request", detail)
+          logger.error(gaveUpEvent, detail, "retries" ~ 0)
           outcome = GaveUp(detail)
           break
 
@@ -287,13 +303,13 @@ section Agent
           interact.emit: TurnEvent.AssistantStreamReset
           attempt = attempt + 1
           if attempt > maxRetries then
-            logger.error("harpe.model.request", detail, "retries" ~ maxRetries)
+            logger.error(gaveUpEvent, detail, "retries" ~ maxRetries)
             outcome = GaveUp(detail)
             break
 
           else
             val delay = backoffSeconds(attempt)
-            logger.warn("harpe.model.request", detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
+            logger.warn(retryEvent, detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
             interact.emit: TurnEvent.TransientError(detail, delay)
             // pause returns true if cancellation fired during the backoff.
             if interact.pause(delay) then
@@ -304,13 +320,13 @@ section Agent
           interact.emit: TurnEvent.AssistantStreamReset
           attempt = attempt + 1
           if attempt > maxRetries then
-            logger.error("harpe.model.request", detail, "retries" ~ maxRetries)
+            logger.error(gaveUpEvent, detail, "retries" ~ maxRetries)
             outcome = GaveUp(detail)
             break
 
           else
             val delay = retryAfterSeconds
-            logger.warn("harpe.model.request", detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
+            logger.warn(retryEvent, detail, "attempt" ~ attempt, "retryInSeconds" ~ delay)
             interact.emit: TurnEvent.TransientError(detail, delay)
             // pause returns true if cancellation fired during the backoff.
             if interact.pause(delay) then

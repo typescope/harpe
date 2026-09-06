@@ -23,65 +23,108 @@ import harpe.ffi.json
 import harpe.util.Clock
 import harpe.util.File
 
-//[ A log record: when it happened (`time`), its `category`, and named `fields`.
+//[ A log record: when it happened (`time`), the `event` it is, its named
+  ! `fields`, and the `context` it was produced under.
   !
-  ! CATEGORY CONVENTION. A category is a stable, dotted, reverse-namespaced
-  ! identifier for the KIND of record — like a logger name, e.g.
-  ! `"harpe.tools.runCode"` (namespace + producer). Namespacing keeps the OPEN set
-  ! collision-free (a third-party tool won't clash with a framework one) and lets
-  ! a consumer filter a whole subtree —
-  ! `jq 'select(.category | startswith("harpe.tools"))'`. Entries sharing a
-  ! category share field shape, so it doubles as the record's schema tag.
+  ! EVENT CONVENTION. A record IS an event, and `event` is its name: a stable,
+  ! dotted identifier whose LAST segment says WHAT HAPPENED —
+  ! `harpe.turn.answered`, `harpe.model.failed`. Everything before it names the
+  ! SUBJECT the event is about, so a consumer reads one subtree with
+  ! `jq 'select(.event | startswith("harpe.model"))'` — every record about
+  ! talking to a model, whatever the outcome — and the open set stays
+  ! collision-free (a third-party tool cannot clash with a framework one).
   !
-  ! Each producer owns its category and defines it once as a named constant (see
-  ! `runCode`'s `runCodeCategory`). Derive it from the producer's namespace, but
-  ! then keep it STABLE: downstream consumers filter on it, so it is a data
+  ! ONE NAME, ONE FIELD SHAPE. The name is the record's schema tag, so two
+  ! records carrying different fields are two events and take two names. A
+  ! discriminator field standing in for that — an `outcome`, a `phase` — means
+  ! the name stopped one segment short.
+  !
+  ! Each producer owns its event names and defines each once as a named constant
+  ! (see `runCode`'s `runCodeEvent`). The prefix names the subject, NOT the
+  ! namespace the code happens to sit in — the turn engine is in the bare root
+  ! `harpe` and the journal in `harpe.transcript`, and both write about subjects
+  ! of their own. That is what makes the next line possible: a subject outlives a
+  ! package layout.
+  !
+  ! Keep the name STABLE: downstream consumers filter on it, so it is a data
   ! contract — not something to re-tie to the code on every refactor.
   !
-  ! SEVERITY CONVENTION (optional). Most records are pure data — the outcome lives
-  ! in the fields (`"compiled" ~ false`) or the category, so they carry NO
+  ! SEVERITY CONVENTION (optional). Most records are pure data — the outcome is
+  ! in the name (`harpe.tools.runCode.compileFailed`), so they carry NO
   ! severity. A record that instead has a human-facing diagnostic message uses ONE
   ! reserved field key — `"info"`, `"warning"`, or `"error"` — whose value is that
   ! message. The `Logger.info` / `warn` / `error` helpers write it:
   !
-  !     logger.warn("harpe.model", "rate limited, retrying", "attempt" ~ 3)
+  !     logger.warn("harpe.model.retried", "rate limited, retrying", "attempt" ~ 3)
   !
   ! The three keys are reserved for this and mutually exclusive (structured context
   ! goes in other fields — note `runCode` uses `"compileError"`, not `"error"`).
   ! Filter by key existence: `jq 'select(has("error"))'`, or
   ! `select(has("warning") or has("error"))` for warn-and-up.
+  !
+  ! CONTEXT IS A LIST, NOT A MAP. The ambient scopes a record was produced under
+  ! — a session, a turn, the tool call within it — NEST, and a map holds one
+  ! value per name, so the inner scope of two sharing a name would replace the
+  ! outer one and vanish. A list keeps every scope a record was actually under,
+  ! innermost first: the scope that produced the record, then the ones enclosing
+  ! it.
+  !
+  ! A scope is any `Value`. A producer that wants a reader to tell its scope
+  ! from another's names it — `{"harpe.tools.call": {...}}` — and one with an id and
+  ! nothing to name may push the id alone. Scopes are separate from `fields` at
+  ! the type level, so ambient context can never collide with a producer's own
+  ! key — `"context"` is reserved in the JSON.
 //]
-class Entry(time: Float, category: String, fields: Map[String, Value])
+class Entry(time: Float, event: String, fields: Map[String, Value], context: List[Value])
 
 section Entry
   //[ An entry as a JSON-able dict
     !
-    ! `time`, `category`, then its fields (each `Value` unwrapped to its
-    ! underlying host value. A nested map becomes a nested object).
+    ! A FIXED FOUR-KEY ENVELOPE: `time`, `event`, `fields`, `context` — always
+    ! all four, so a consumer never branches on which are present. Each `Value`
+    ! is unwrapped to its underlying host value, and a nested map becomes a
+    ! nested object.
+    !
+    ! Producer fields go UNDER `fields` rather than beside `time` and `event`.
+    ! Flat, they shared one namespace with the record's own keys, so a producer
+    ! field named `event` overwrote the record's name on the way out and was
+    ! dropped on the way back. The envelope makes that unrepresentable instead
+    ! of forbidden, and no key needs reserving.
     !
     ! `JsonlLogger` serializes with it.
   //]
   def toDict(entry: Entry): py.Dict =
-    val d = py.dict("time" ~ Clock.toRfc3339(entry.time), "category" ~ entry.category)
-    for k ~ v in entry.fields.toList do d.set(k, Value.toJson(v))
-    d
+    val fields = py.dict()
+    for k ~ v in entry.fields.toList do fields.set(k, Value.toJson(v))
+
+    val scopes = py.list()
+    for scope in entry.context do scopes.append(Value.toJson(scope))
+
+    py.dict:
+      "time"    ~ Clock.toRfc3339(entry.time)
+      "event"   ~ entry.event
+      "fields"  ~ fields
+      "context" ~ scopes
 
   //[ The inverse of `toDict`
     !
-    ! Rebuild an `Entry` from a decoded JSON dict, its non-reserved keys becoming
-    ! typed fields. Used to replay a sandboxed program's records on the host.
+    ! Rebuild an `Entry` from a decoded JSON dict. Used to replay a sandboxed
+    ! program's records on the host.
   //]
   def fromDict(d: py.Dict): Entry =
     val timestamp = Clock.fromRfc3339(d.get("time", "").asString)
-    val category = d.get("category", "").asString
+    val event = d.get("event", "").asString
+
+    var context: List[Value] = []
+    for item in d.get("context", py.list()).cast[py.List] do
+      context = context + Value.fromJson(item)
 
     var fields = Map.empty[String, Value]
-    for k in py.iter(d.keys()) do
-      val key = k.asString
-      if key != "time" && key != "category" then
-        fields = fields.add(key, Value.fromJson(d.get(key)))
+    val raw = d.get("fields", py.dict()).cast[py.Dict]
+    for k in py.iter(raw.keys()) do
+      fields = fields.add(k.asString, Value.fromJson(raw.get(k)))
 
-    new Entry(timestamp, category, fields)
+    new Entry(timestamp, event, fields, context)
 
   //[ Every entry in the JSONL file at `path`, in the order written
     !

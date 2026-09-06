@@ -1,8 +1,8 @@
 //[ JsonlLogger.jo
   !
   ! The framework's default `Logger` backend: append every entry as one JSON line
-  ! to a single file, `category` included as a field. One file for all categories
-  ! keeps the log easy to consume — `jq 'select(.category=="runs")' log.jsonl`
+  ! to a single file, `event` included as a field. One file for all events
+  ! keeps the log easy to consume — `jq 'select(.event=="runs")' log.jsonl`
   ! slices out one kind — and keeps this backend a plain append. This is the
   ! JSON-specific corner of the logging layer, kept apart so no other layer assumes
   ! JSON or a filesystem.
@@ -21,7 +21,7 @@ private def openLog(path: String): py.Dynamic =
 
   py.open(path, "a")
 
-//[ Append each entry as one JSON line to `path`: `time`, `category`, then its fields
+//[ Append each entry as one JSON line to `path`: `time`, `event`, then its fields
   !
   ! The file is opened once and kept open for the scope.
 //]

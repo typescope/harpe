@@ -188,9 +188,9 @@ private class OpenRouterSession(
         else builtins.getattrOr(usage, "input_tokens_details", py.none)
 
       val cacheRead = if details.isNone then 0 else usageInt(details, "cached_tokens")
-      logUsage("openrouter", model, inTok, outTok, cacheRead)
+      logReplied("openrouter", model, inTok, outTok, cacheRead, cacheWriteTokens = 0)
       Model.Reply(OpenRouterResponses.parseResponse(response), new Usage(inTok, outTok))
-    case Err(err) => classifyError(err)
+    case Err(err) => classifyError(err, "openrouter", model)
 end
 
 //[ One `responses.create` call against OpenRouter.

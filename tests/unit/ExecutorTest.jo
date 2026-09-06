@@ -91,9 +91,11 @@ private class Capture
 
   def logEntry(entry: Entry): Unit =
     lock.acquire()
-    val fields = Entry.toDict(entry)
-    val stamp = fields.get("toolCall", py.dict()).cast[py.Dict]
-    seen = seen + "\{entry.category}@\{stamp.get("tool", "-").asString}#\{stamp.get("id", "-").asString}"
+    var stamp = py.dict()
+    for item in Entry.toDict(entry).get("context", py.list()).cast[py.List] do
+      val scope = item.cast[py.Dict].get("harpe.tools.call", py.dict()).cast[py.Dict]
+      if scope.size > 0 then stamp = scope
+    seen = seen + "\{entry.event}@\{stamp.get("tool", "-").asString}#\{stamp.get("id", "-").asString}"
     lock.release()
 
   def close(): Unit = pass
