@@ -10,7 +10,7 @@ from Nordic 30 days before Christmas" is difficult to support in a conventional
 planning system. As a result, most logistics software does not support such
 high-level rules at all.
 
-## The rules a depot runs on
+## The variety of rules
 
 Here are three such rules:
 
