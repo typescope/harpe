@@ -15,63 +15,43 @@ high-level rules at all.
 Here are three such rules:
 
 ![A depot manager states three rules — "Nordic shuts down over Christmas", "two
-pallets max — receiving can't take more", and "don't warn on packaging above 3
+pallets max — receiving can't take more", and "warn on packaging only below 3
 days". An arrow marked with a question mark points from those rules to a
 traditional logistics system, whose settings are single numbers: safety stock 7,
 reorder point 40, lead time 9. There is no field for any of the three
 rules.](/img/smart-logistics-policy.svg)
 
-Two things about these rules defeat a conventional planning system: their
-variety, and how fast they change.
-
-**The variety.** Every rule needs different software. Take the Christmas rule:
+Every rule needs different software. Take the Christmas rule:
 
 > Nordic shuts down for two weeks over Christmas — don't order from them if it
 > won't arrive first.
 
-To hold that, the software needs a blackout calendar for each supplier, a start
-date and an end date, a lead time for every supplier, and planning code that
-compares the two and sources elsewhere when they collide. Four tables and a
+To support that, the software needs a blackout calendar for each supplier, a
+start date and an end date, a lead time for every supplier, and planning code
+that compares the two and sources elsewhere when they collide. Four tables and a
 change to the planner, for one sentence.
 
-The next rule needs something else entirely. "Two pallets max" has to know two
-pallets of what, for which products, and whether the cap is on the order or on
-the shelf. "Don't warn on packaging above 3 days" needs no new data at all. It
-changes what the system is allowed to say, which is the alerting code and
-nothing else. No form holds all three, because no two of them ask for the same
-thing.
+The next one asks for something else entirely:
 
-**How fast they change.** Nordic sends the closure notice in November: shut
-from the 20th to the 3rd. The rule has to be live for the December cycle, three
-weeks away. A schema change, a code change, a release
-and a regression pass is not a three-week job in most places, and it is not the
-only thing in the queue. By the time it ships, Christmas has passed. Next year
-Nordic will have moved the dates.
+> Never propose more than 300 units of one product in a single order —
+> receiving can only take two pallets of one item at a time.
 
-That is the ordinary tempo. Suppliers change lead times, a shelf gets rebuilt, a
-product changes category, a manager decides packaging is not worth warning
-about. The rules turn over through the year. The software ships on a release
-schedule.
+That is really a constraint about pallets, so supporting it in general means
+units per pallet for every product and a view of what else lands in the bay that
+morning.
 
-None of these rules is unusual. They are ordinary parts of the job, and there
-are far more than three of them.
+The third narrows which alerts the system should raise, and only for one
+category:
 
-That is why no vendor ships them. A Nordic Christmas calendar is worth nothing
-to any other customer of the planning system, so it never reaches a release, and
-an in-house team cannot cut one release per rule per season either. The problem
-is not that developers are slow. A release is the wrong unit for this, and no
-amount of engineering effort makes it the right one.
+> Warn about packaging only when it is under 3 days of cover.
 
-So most of the rules never reach the software. They stay with the people who
-know them, and those people read what the system proposes and fix it by hand,
-every cycle. Nobody writes the correction down. The system never learns the
-rule, and proposes the same wrong order next month.
+Supporting the variety of rules in depot management means a feature for every
+kind of rule, and no traditional planning system survives the resulting feature
+explosion.
 
-That is the smart logistics problem. It is not the planning computation, which
-is a cover calculation over demand history. It is that the rules which decide an
-order arrive in more shapes, and faster, than releases can carry. Almost
-everything that decides an order is a sentence, and there is nowhere to put a
-sentence.
+That is the smart logistics problem: how to support the variety of high-level
+planning rules in logistics software. These rules are sentences, and there is
+nowhere to put a sentence.
 
 ## Letting a model read the rules
 
@@ -227,9 +207,8 @@ stock covers a shorter wait. The report says which check did it.
 
 That is the rule from the first section, the one that wanted a blackout
 calendar, a lead-time field and a change to the planner. Here it is a sentence
-somebody typed between two runs. No schema change, no code, no release, and
-nothing to wait three weeks for. The rule that used to live in somebody's head
-is in the system now, and it is still there next month.
+somebody typed between two runs. No schema change, no code, no release. The
+rule is in the system now, and it is still there next month.
 
 ## Where the model is trusted, and where it is not
 
@@ -296,7 +275,7 @@ revisioned, and edited constantly. One list, read by both agents.
 | "Food keeps 7 days of cover" | warns when food drops below | orders enough to reach it |
 | "Nordic shuts down over Christmas" | warns if an order would land in the gap | sources elsewhere |
 | "Never more than 300 units in one order" | — | caps the line, and says so |
-| "Don't warn about packaging above 3 days" | stays quiet | — |
+| "Warn about packaging only below 3 days" | quiet until 3 days | — |
 
 **Skills** are how an order is worked out — method, the same for any depot,
 rarely edited. They live in `skills/plan/` and are editable while the app runs,

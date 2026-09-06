@@ -99,7 +99,7 @@ constantly. One list, read by both agents:
 | "Food keeps 7 days of cover" | warns when food drops below | orders enough to reach it |
 | "Nordic shuts down over Christmas" | warns if an order would land in the gap | sources elsewhere |
 | "Never more than 300 units in one order" | — | caps the line, and says so |
-| "Don't warn about packaging above 3 days" | stays quiet | — |
+| "Warn about packaging only below 3 days" | quiet until 3 days | — |
 
 **Skills** are how to work an order out — method, the same for any depot, rarely
 edited. They live in `skills/plan/` and are editable while the app runs, with
