@@ -150,9 +150,9 @@ watcher run, and an earlier planner run that
 failed.](/img/smart-logistics-agents.png)
 
 They are not given the same authority, because they do not run at the same
-time. The watcher runs unattended, so the only thing it can create is a note
-for a person to read. The planner runs when someone asks, so it gets one write,
-and that write produces a draft.
+time. The watcher runs unattended, and the only thing it can do is produce
+warnings. The planner has to be triggered by hand, and it may only create draft
+orders for the manager to approve.
 
 ![One depot, two agents, two grants. Both read products, demand history and
 checks. The watcher, running unattended on a schedule, can additionally only
