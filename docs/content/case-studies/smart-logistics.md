@@ -198,13 +198,18 @@ my-depot/
     Main.jo              # startup, the binding check, and the schedule
     Server.jo            # HTTP routing
     Agents.jo            # the watcher and the planner
-    Database.jo          # the schema, and the migration that maintains it
+    Database.jo          # the queries and writes
+    db/
+      Schema.jo          # every table, at the shape this build expects
+      Migrations.jo      # applies migrations/*.sql to an existing database
+      Seed.jo            # the demo depot, and the only file you can delete
   sandbox/
     watch/API.jo         # the watcher's complete authority
     plan/API.jo          # the planner's complete authority
     shared/              # the depot types both grants use
   skills/
     watch/, plan/        # method each agent can read on demand
+  migrations/            # one .sql file per change to a live database
   assets/                # the page
   tests/                 # the capability boundary, and the validator (jo run tests)
 ```

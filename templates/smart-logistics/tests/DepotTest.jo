@@ -6,6 +6,7 @@
 namespace harpe.examples.smartlogistics.tests.DepotTest
 
 import harpe.ffi.os
+import harpe.util.File
 import harpe.testing.test
 import harpe.testing.thisSuite
 import harpe.testing.check
@@ -19,56 +20,38 @@ def freshDepot(): Database =
   database.initialize()
   database
 
-//[ Take a database back to the shape it had before orders could be received:
-  ! the old status set, no dates on an order, no received column, no receipts,
-  ! and no version stamp.
+//[ A depot whose `migrations/` directory is the test's to write into.
+  !
+  ! `Database` reads migrations from its home directory, so giving the test its
+  ! own home is what lets it write a migration file and watch it be applied.
 //]
-private def downgrade(path: String): Unit =
-  val conn = py.module("sqlite3").connect(path)
-  conn.execute("PRAGMA foreign_keys = OFF")
-  conn.execute("PRAGMA legacy_alter_table = ON")
-  val steps = [
-    """
-      CREATE TABLE old_orders (
-        id INTEGER PRIMARY KEY, supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
-        status TEXT NOT NULL CHECK(status IN ('draft','accepted','rejected')),
-        rationale TEXT NOT NULL, total_cents INTEGER NOT NULL, currency TEXT NOT NULL,
-        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-      )
-    """,
-    """
-      INSERT INTO old_orders
-      SELECT id, supplier_id,
-        CASE status WHEN 'ordered' THEN 'accepted' ELSE status END,
-        rationale, total_cents, currency, created_at, updated_at
-      FROM draft_orders
-    """,
-    "DROP TABLE draft_orders",
-    "ALTER TABLE old_orders RENAME TO draft_orders",
-    """
-      CREATE TABLE old_lines (
-        id INTEGER PRIMARY KEY,
-        draft_order_id INTEGER NOT NULL REFERENCES draft_orders(id) ON DELETE CASCADE,
-        product_id INTEGER NOT NULL REFERENCES products(id),
-        quantity INTEGER NOT NULL CHECK(quantity > 0),
-        unit_price_cents INTEGER NOT NULL, line_total_cents INTEGER NOT NULL,
-        UNIQUE(draft_order_id, product_id)
-      )
-    """,
-    """
-      INSERT INTO old_lines
-      SELECT id, draft_order_id, product_id, quantity,
-             unit_price_cents, line_total_cents
-      FROM draft_order_lines
-    """,
-    "DROP TABLE draft_order_lines",
-    "ALTER TABLE old_lines RENAME TO draft_order_lines",
-    "DROP TABLE IF EXISTS order_receipts",
-    "PRAGMA user_version = 0"
-  ]
-  for step in steps do conn.execute(step)
-  conn.commit()
+private def depotIn(home: String): Database =
+  val database = new Database(os.path.join(home, "logistics.db"), home)
+  database.initialize()
+  database
+
+//[ A migration file in `home`, named so it sorts first. //]
+private def writeMigration(home: String, name: String, sql: String): Unit =
+  File.ensureDir(os.path.join(home, "migrations"))
+  File.write(os.path.join(home, "migrations", name + ".sql"), sql)
+
+//[ Whether `table` has a column called `column`. //]
+private def hasColumn(database: Database, table: String, column: String): Bool =
+  val conn = py.module("sqlite3").connect(database.path)
+  var found = false
+  for row in py.iter(conn.execute("PRAGMA table_info(\{table})")) do
+    if py.dynamic(row)[1].asString == column then found = true
   conn.close()
+  found
+
+//[ The versions recorded in `schema_migrations`. //]
+private def appliedVersions(database: Database): List[String] =
+  val conn = py.module("sqlite3").connect(database.path)
+  var out: List[String] = []
+  for row in py.iter(conn.execute("SELECT version FROM schema_migrations ORDER BY version")) do
+    out = out ++ [py.dynamic(row)[0].asString]
+  conn.close()
+  out
 
 private def placedCount(database: Database): Int =
   var placed = 0
@@ -323,45 +306,62 @@ def depotSuite(): Unit receives thisSuite, logger =
     check("a movement that fits is recorded", fine > 0)
     check("and the ledger says so", product(database, "HYGI-301").get("on_hand").asInt == 22)
 
-  //[ A database written before orders had a life after acceptance.
+  //[ The migration runner, on a database that already exists.
     !
-    ! Built by taking a current one back to the old shape — the old status set,
-    ! no dates, no received column, no receipts table — so what is migrated here
-    ! is the schema this app actually shipped, not an approximation of it.
+    ! The change is a column this app does not have, in a file written by the
+    ! test. What is under test is the mechanism — applied once, recorded, never
+    ! run again — rather than any particular change, which is the point of having
+    ! a mechanism at all.
   //]
-  test: "a database from before receiving is upgraded in place", () =>
-    val database = freshDepot()
-    val id = orderOf(database, "HYGI-303")
-    downgrade(database.path)
+  test: "a migration runs once on an existing database, and is recorded", () =>
+    val home = py.module("tempfile").mkdtemp(prefix = "sl-mig-").asString
+    val before = depotIn(home)
+    check("nothing to apply yet", appliedVersions(before).size == 0)
+    check("and no such column", !hasColumn(before, "suppliers", "note"))
+
+    writeMigration(home, "20260101T000000-supplier-note", """
+      BEGIN IMMEDIATE;
+      ALTER TABLE suppliers ADD COLUMN note TEXT NOT NULL DEFAULT '';
+      COMMIT;
+    """)
 
     // Exactly what happens on the next start.
-    val reopened = new Database(database.path, os.path.abspath("."))
-    reopened.initialize()
+    val migrated = depotIn(home)
+    check("the column is there", hasColumn(migrated, "suppliers", "note"))
+    val recorded = appliedVersions(migrated)
+    check:
+      "and the database records which file put it there"
+      recorded.size == 1 && recorded.contains("20260101T000000-supplier-note")
 
-    check("the two placed orders survive as ordered", placedCount(reopened) == 2)
-    check("the open draft is still a draft", orderStatus(reopened, id) == "draft")
-    check:
-      "nothing was received before there was such a thing"
-      product(reopened, "PACK-202").get("on_order").asInt == 100
-    check:
-      "cover is unchanged by the upgrade"
-      product(reopened, "HYGI-301").get("days_of_cover").asInt == 2
+    // Twice is a no-op, and not merely a harmless one: `ALTER TABLE ADD COLUMN`
+    // fails on a column that exists, so a second application would abort the
+    // start. Getting here at all is the assertion.
+    val again = depotIn(home)
+    check("the migration does not run a second time", appliedVersions(again).size == 1)
+    check("and the seeded depot is untouched", placedCount(again) == 2)
 
-    // And the upgraded database does the new thing.
-    val _ = reopened.setDraftStatus(id, "accepted")
+  //[ A database created at the current shape is BASELINED rather than migrated:
+    ! every file is recorded without being run, because `Schema` is supposed to
+    ! have built the shape they lead to.
+    !
+    ! Which is why a schema change is two edits, not one. The migration below is
+    ! never run here, so the column it adds is absent — `Schema.jo` is the only
+    ! thing that could have put it there, and this test is what that omission
+    ! looks like.
+  //]
+  test: "a fresh database records migrations without running them", () =>
+    val home = py.module("tempfile").mkdtemp(prefix = "sl-base-").asString
+    writeMigration(home, "20260101T000000-supplier-note", """
+      BEGIN IMMEDIATE;
+      ALTER TABLE suppliers ADD COLUMN note TEXT NOT NULL DEFAULT '';
+      COMMIT;
+    """)
+    val database = depotIn(home)
+    val recorded = appliedVersions(database)
     check:
-      "40 booked in"
-      reopened.receiveOrder(py.dict(
-        "order_id" ~ id, "lines" ~ py.list(py.dict(
-          "line_id" ~ lineOf(reopened, id, "HYGI-303"), "quantity" ~ 40)))) == 40
-    check("received", orderStatus(reopened, id) == "received")
-
-    // Twice is a no-op: the version stamp is what stops it running again.
-    val third = new Database(database.path, os.path.abspath("."))
-    third.initialize()
-    check:
-      "the upgrade does not run a second time"
-      orderStatus(third, id) == "received"
+      "recorded"
+      recorded.size == 1 && recorded.contains("20260101T000000-supplier-note")
+    check("but not run", !hasColumn(database, "suppliers", "note"))
 
   test: "checks are text, and both agents read the same list", () =>
     val database = freshDepot()

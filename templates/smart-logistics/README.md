@@ -126,10 +126,13 @@ jo run tests
 
 ## Data model
 
-SQLite, defined in `src/Database.jo`. The file carries a `user_version`, and an
-existing database is migrated up to it on start; the tables that a migration
-rebuilds are written once, as one definition used for both a new database and
-the copy a migration builds, so the two shapes cannot drift apart.
+SQLite, in `src/db/`. `Schema.jo` declares every table and creates whatever is
+missing, which builds an empty database outright. Changing a table that already
+has rows in it is what `CREATE TABLE IF NOT EXISTS` cannot do, so each such
+change is a file in `migrations/` that `Migrations.jo` applies once and records
+in `schema_migrations`. A schema change is therefore two edits — the new shape
+in `Schema.jo`, and the step to it in `migrations/`. See
+[`migrations/README.md`](migrations/README.md).
 
 | Table | Holds |
 | --- | --- |
