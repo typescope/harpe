@@ -89,45 +89,16 @@ them. Until then nothing is ordered.](/img/smart-logistics-solution.svg)
 The program issues warnings and draft orders, and nothing else. In the end the
 manager is the one who decides.
 
-## What this buys
+**The AI cannot buy anything.** Buying, approving and sending are not on the
+list, and the list is checked before the program runs — not asked for in a
+prompt, where it could be argued away.
 
-**The planner can do five things, and no more.** It can look up the products,
-the sales history, the rules and the drafts already open, and it can propose a
-draft order. Buying, approving, changing a rule, opening a network connection,
-touching a file: none of those are things it can even name, so a program that
-tries one is rejected before it runs. That does not depend on the prompt, on
-the model, or on what happened to end up in the conversation.
+**A hostile rule is still only a rule.** Anyone can write one, and text from
+outside the company can end up quoted in one. The worst it can do is argue for
+a draft that the manager then rejects.
 
-**A bad rule cannot do more than a good one.** Anyone using the app writes
-rules, and text from outside the company can end up quoted in one, so some of
-them will be wrong and one may be hostile. Telling the model in its prompt to
-ignore silly instructions would not help, because the prompt and the rule arrive
-as the same thing — text, with nothing to say which is in charge. What does
-help is that a hostile rule has exactly the power an honest one has: it can
-argue for a different proposal, and that is all it can do. The worst it
-produces is a draft that someone rejects.
-
-**Physical facts are not up for discussion.** Case sizes, how much fits on the
-shelf, which supplier stocks what, what is already on order: ordinary trusted
-code re-checks every one of them on every proposal, whatever the rules say and
-whatever the model decided. The model is trusted to reason about the rules. It
-is never trusted to enforce them.
-
-**Nothing is ordered without a person.** The planner proposes and the
-administrator decides, so no draft reaches a supplier on its own. And the agent
-that runs on a schedule, when nobody is there to accept or reject, cannot even
-propose — the most it can do is leave a note. What an agent may do follows
-from whether someone is watching, not from how much the model is trusted.
-
-**You can see exactly what it did.** Every run writes down the program the
-model produced and every call that program made, so a draft can be traced to the
-code behind it and the sentence that prompted it. Judging a model by the
-explanation it gives is guesswork. Reading the program it wrote is not.
-
-**Changing the rules does not need a developer.** A new rule is a sentence,
-typed into the running app by the person whose rule it is. The engineering work
-went into the short list of things the planner may do and the facts the code
-enforces, and that work is done once.
+**A new rule needs no developer.** It is a sentence, typed by the person whose
+rule it is, and it takes effect on the next run.
 
 ## Why the obvious designs stop short
 
