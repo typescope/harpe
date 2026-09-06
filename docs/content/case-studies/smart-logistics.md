@@ -89,6 +89,8 @@ them. Until then nothing is ordered.](/img/smart-logistics-solution.svg)
 The program issues warnings and draft orders, and nothing else. In the end the
 manager is the one who decides.
 
+### What this buys
+
 **The AI cannot buy anything.** Buying, approving and sending are not on the
 list, and the list is checked before the program runs — not asked for in a
 prompt, where it could be argued away.
@@ -100,32 +102,19 @@ a draft that the manager then rejects.
 **A new rule needs no developer.** It is a sentence, typed by the person whose
 rule it is, and it takes effect on the next run.
 
-## Why the obvious designs stop short
+### The obvious alternatives fall short
 
 **Give the AI a set of tools instead.** Safe, and the right answer when the job
 is a few calls: the operations are the ones you wrote, and you see every one of
-them. But planning a depot means a calculation for each product, against its
-own sales history, its suppliers, and every rule that mentions it — thousands
-of products in a real depot. That is a round trip each, and the whole product
-table through the model. As a program it is one loop. So the AI writes a
-program, and you stop seeing each operation.
+them. But a depot holds tens of thousands of products, and each one needs a
+calculation. Sending the data to the model saturates the context window, burns
+tokens and runs up the bill, and the answers get worse as it fills.
 
-**Let it write Python, and validate the writes.** Right idea, wrong language.
-The `api.py` you hand the program sits in the same memory as the program:
-
-```python
-import api
-api._db.execute("insert into draft_orders ...")   # the connection is in here
-api._validate = lambda *a: None                   # or keep the wrapper, drop the check
-```
-
-Nothing stops either line, so the validator is only a suggestion.
-
-**Put each agent in a container.** Both agents need the same database, the same
-model and the same libraries, so both containers end up with the same access.
-And a container decides which files and sockets a process gets. The rule that
-matters — *the unattended agent may not order anything* — is about which
-operations exist, and about that a container has nothing to say.
+**Let it write Python, run it in a container.** A container decides which files
+and sockets a process gets, while the rule that matters — *the unattended
+agent may not order anything* — is about which operations exist. Inside the
+container, the generated Python program still has permission to delete every
+row in the database.
 
 ## The Agentic Planner
 
