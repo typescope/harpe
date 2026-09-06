@@ -57,11 +57,20 @@ section Schema
         id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
         currency TEXT NOT NULL DEFAULT 'CHF', enabled INTEGER NOT NULL DEFAULT 1
       );
+      -- `on_hand` is the running total of this product's ledger, maintained by
+      -- the trigger below. It is the ONE derived value in this schema that is
+      -- stored rather than computed, and it is stored because computing it meant
+      -- summing every movement ever recorded on every page load — work that grows
+      -- without bound while the answer changes by one row at a time.
+      --
+      -- The ledger is still the record of truth. This is a cache of its sum, and
+      -- `Stock.reconcile` recomputes it from the ledger to prove the two agree.
       CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY, sku TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
         category TEXT NOT NULL,
         capacity INTEGER NOT NULL CHECK(capacity > 0),
-        enabled INTEGER NOT NULL DEFAULT 1
+        enabled INTEGER NOT NULL DEFAULT 1,
+        on_hand INTEGER NOT NULL DEFAULT 0
       );
       -- Price, lead time and case size are terms of one product-supplier
       -- relationship, not properties of the product. The same item is often
@@ -94,15 +103,25 @@ section Schema
       );
       CREATE INDEX IF NOT EXISTS stock_movements_product
         ON stock_movements(product_id, occurred_at);
+      -- The only thing that maintains `products.on_hand`. It lives in the
+      -- database rather than in the code that writes movements, so it holds for
+      -- every writer — this app, a migration, or a person with a sqlite3 prompt.
+      -- There is no UPDATE or DELETE counterpart because the ledger is
+      -- append-only: a mistake is corrected by an adjustment row, never by
+      -- editing what was recorded.
+      CREATE TRIGGER IF NOT EXISTS stock_movements_balance
+      AFTER INSERT ON stock_movements
+      BEGIN
+        UPDATE products SET on_hand = on_hand + NEW.quantity
+        WHERE id = NEW.product_id;
+      END;
       -- Views hold no data, so they are rebuilt from this file on every start.
       -- A view created by an older version of the app can then never survive
       -- into a newer one and quietly answer with the old arithmetic.
       DROP VIEW IF EXISTS product_position;
       DROP VIEW IF EXISTS product_stock;
       CREATE VIEW product_stock AS
-        SELECT p.id AS product_id, COALESCE(SUM(m.quantity),0) AS on_hand
-        FROM products p LEFT JOIN stock_movements m ON m.product_id = p.id
-        GROUP BY p.id;
+        SELECT id AS product_id, on_hand FROM products;
       -- One number decides whether a product is in trouble: how long what we
       -- have plus what is on order will last at the current rate of sale.
       -- Everything the app and both agents show is derived here, once, so the

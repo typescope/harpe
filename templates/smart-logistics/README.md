@@ -157,15 +157,30 @@ empty database outright. Changing a table that already has rows in it is what
 | `order_receipts` | Each delivery, and the ledger row it produced. |
 | `runs`, `skill_revisions` | What each agent did, and how the method changed. |
 
-Stock on hand is never stored. Every movement in or out is a row, and the
-balance is their sum, so any figure traces to what produced it:
+The ledger is the record of stock. Every movement in or out is a row, nothing is
+ever edited or deleted, and a correction is another row — so any figure traces to
+what produced it.
+
+`products.on_hand` holds the running total, and one trigger maintains it:
 
 ```sql
-CREATE VIEW product_stock AS
-  SELECT p.id AS product_id, COALESCE(SUM(m.quantity),0) AS on_hand
-  FROM products p LEFT JOIN stock_movements m ON m.product_id = p.id
-  GROUP BY p.id;
+CREATE TRIGGER stock_movements_balance
+AFTER INSERT ON stock_movements
+BEGIN
+  UPDATE products SET on_hand = on_hand + NEW.quantity WHERE id = NEW.product_id;
+END;
 ```
+
+That total is a **cache of a sum, not a second source of truth**. It exists
+because the sum was over the whole ledger, which only grows: a dashboard load re-
+added every movement ever recorded, and so did every write, to check the balance
+it was about to change. The trigger lives in the database rather than in the code
+that writes movements, so it holds for every writer — this app, a migration, or a
+person at a `sqlite3` prompt.
+
+`Stock.reconcile()` replays the ledger and corrects anything that has drifted,
+and returns how many rows were wrong. A non-zero answer is worth investigating
+rather than serving quietly.
 
 One number decides whether a product is in trouble — how long what we have plus
 what is on order will last at the current rate of sale — and `product_position`

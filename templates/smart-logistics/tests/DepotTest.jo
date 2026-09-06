@@ -325,6 +325,28 @@ def depotSuite(): Unit receives thisSuite, logger =
     check("a movement that fits is recorded", fine > 0)
     check("and the ledger says so", product("HYGI-301").get("on_hand").asInt == 22)
 
+  //[ `products.on_hand` is a stored total, so the thing worth testing is that it
+    ! still equals the ledger it caches — after a seed, a movement, and a delivery.
+  //]
+  depotTest: "the stored balance agrees with the ledger that produced it", () =>
+    check("the seed leaves nothing drifted", Stock.reconcile() == 0)
+
+    val soap = product("HYGI-301")
+    val id = soap.get("id").asInt
+    val _ = Stock.recordMovement(py.dict:
+      "product_id" ~ id
+      "kind"       ~ "receipt"
+      "quantity"   ~ 8)
+    check("a movement keeps the two in step", Stock.reconcile() == 0)
+    check("and the balance moved by exactly that", product("HYGI-301").get("on_hand").asInt == 22)
+
+    // Corrupt the cache behind the trigger's back, the way a stray UPDATE would.
+    val touched = DB.inTransaction: () =>
+      DB.execute("UPDATE products SET on_hand = on_hand + 99 WHERE id = ?", py.list(id))
+    check("one row was corrupted", touched == 1)
+    check("drift is found", Stock.reconcile() == 1)
+    check("and corrected from the ledger", product("HYGI-301").get("on_hand").asInt == 22)
+
   //[ The migration runner, on a database that already exists.
     !
     ! The change is a column this app does not have, in a file written by the

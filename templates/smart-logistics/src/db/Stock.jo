@@ -105,18 +105,17 @@ section Stock
   def writeMovement(
     productId: Int, kind: String, signed: Int, body: py.Dict
   ): Int receives conn =
+    // Capacity and the balance come off one row. The balance was summed from the
+    // whole ledger here on every write — the same unbounded scan the dashboard
+    // was doing, on the path that can least afford it.
     val product = conn
       .execute:
-         "SELECT capacity FROM products WHERE id = ? AND enabled = 1"
+         "SELECT capacity, on_hand FROM products WHERE id = ? AND enabled = 1"
          py.list(productId)
       .fetchone()
     if product.isNone then abort "unknown or disabled product"
     val capacity = product[0].asInt
-    val balance = conn
-      .execute:
-         "SELECT COALESCE(SUM(quantity),0) FROM stock_movements WHERE product_id = ?"
-         py.list(productId)
-      .fetchone()[0].asInt
+    val balance = product[1].asInt
     val after = balance + signed
     if after < 0 then
       abort "only \{balance} in stock, so that movement cannot be recorded"
@@ -212,4 +211,25 @@ section Stock
                        WHERE product_id=? ORDER BY unit_price_cents LIMIT 1)
         """
         py.list(productId)
+
+  //[ Recompute every balance from the ledger, and answer how many were wrong.
+    !
+    ! `products.on_hand` is a cache of a sum, kept by a trigger. This is what
+    ! makes that safe to rely on: the ledger is the record of truth, and this
+    ! replays it and corrects anything that has drifted. A non-zero answer means
+    ! something changed the ledger in a way the trigger did not see, which is
+    ! worth finding out about rather than serving quietly.
+  //]
+  def reconcile(): Int receives conn = DB.inTransaction(() => repair())
+
+  private def repair(): Int receives conn =
+    val ledger = """
+      (SELECT COALESCE(SUM(quantity),0) FROM stock_movements m
+       WHERE m.product_id = products.id)
+    """
+    val drifted = DB.rows("SELECT id FROM products WHERE on_hand != \{ledger}")
+    val _ = DB.execute:
+      "UPDATE products SET on_hand = \{ledger} WHERE on_hand != \{ledger}"
+      py.list()
+    drifted.size
 end
