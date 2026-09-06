@@ -198,11 +198,17 @@ my-depot/
     Main.jo              # startup, the binding check, and the schedule
     Server.jo            # HTTP routing
     Agents.jo            # the watcher and the planner
-    Database.jo          # the queries and writes
     db/
+      DB.jo              # the connection, as a context parameter
       Schema.jo          # every table, at the shape this build expects
       Migrations.jo      # applies migrations/*.sql to an existing database
       Seed.jo            # the demo depot, and the only file you can delete
+      Stock.jo           # products, suppliers, and the ledger
+      Orders.jo          # drafts, placing, and receiving
+      Checks.jo          # what was written, and what the watcher says
+      Runs.jo            # what each agent did
+      Skills.jo          # the planner's method, and its revisions
+      Snapshot.jo        # the one call the dashboard makes
   sandbox/
     watch/API.jo         # the watcher's complete authority
     plan/API.jo          # the planner's complete authority

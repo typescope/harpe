@@ -14,15 +14,28 @@ import harpe.turns.TurnResult
 import harpe.turns.TurnEvent
 import harpe.logging.*
 import harpe.Toolset
+import harpe.examples.smartlogistics.db.DB
+import harpe.examples.smartlogistics.db.conn
+import harpe.examples.smartlogistics.db.Checks
+import harpe.examples.smartlogistics.db.Runs
 
 //[ The watcher: continuous, unattended, and unable to order anything.
   !
   ! Its capability (sandbox/watch) has no operation that buys, approves, or
   ! changes a check. The only thing it can create is a note for a human.
 //]
-class Watcher(brain: Model, home: String, databasePath: String, database: Database)
+class Watcher(brain: Model, home: String, databasePath: String)
   private val lock = threading.Lock()
   private val runCode = RunCodeTool(os.path.join(home, "sandbox", "watch"), approvalDeadline = 30)
+
+  //[ A connection for one short piece of database work.
+    !
+    ! Deliberately not one connection around the whole run: a turn takes minutes,
+    ! and the only thing that needs the database is opening the run and closing
+    ! it. The agent's own reads go through the sandbox, which opens its own from
+    ! the path it is given.
+  //]
+  private def onDb[T](work: () => T receives conn): T = DB.withConn(databasePath, work)
 
   def run(trigger: String): py.Dict =
     if !lock.acquire(blocking = false).asBool then
@@ -41,7 +54,7 @@ class Watcher(brain: Model, home: String, databasePath: String, database: Databa
       + "was resolved. Run it again."
 
   private def checkDepot(trigger: String): py.Dict =
-    val runId = database.beginRun("watch", trigger, "")
+    val runId = onDb(() => Runs.beginRun("watch", trigger, ""))
     val attempt = py.try: ask(runId)
     match attempt
     case Ok(report) =>
@@ -50,7 +63,7 @@ class Watcher(brain: Model, home: String, databasePath: String, database: Databa
       // clear" and quietly wipe warnings that still hold, so an empty report
       // resolves nothing and is reported as the failure it is.
       if report.trim == "" then
-        database.finishRun(runId, "failed", inconclusive)
+        onDb(() => Runs.finishRun(runId, "failed", inconclusive))
         py.dict:
           "ok"     ~ false
           "busy"   ~ false
@@ -58,8 +71,8 @@ class Watcher(brain: Model, home: String, databasePath: String, database: Databa
           "report" ~ inconclusive
       else
         // Whatever this run did not raise again no longer holds.
-        val resolved = database.resolveWarningsNotRaisedBy(runId)
-        database.finishRun(runId, "success", report)
+        val resolved = onDb(() => Checks.resolveWarningsNotRaisedBy(runId))
+        onDb(() => Runs.finishRun(runId, "success", report))
         py.dict:
           "ok"       ~ true
           "busy"     ~ false
@@ -67,7 +80,7 @@ class Watcher(brain: Model, home: String, databasePath: String, database: Databa
           "resolved" ~ resolved
           "report"   ~ report
     case Err(error) =>
-      database.finishRun(runId, "failed", error.message)
+      onDb(() => Runs.finishRun(runId, "failed", error.message))
       py.dict:
         "ok"     ~ false
         "busy"   ~ false
@@ -93,9 +106,18 @@ end
   ! Its capability (sandbox/plan) can save a draft and nothing else. Approving,
   ! submitting and paying are not operations it has.
 //]
-class Planner(brain: Model, home: String, databasePath: String, database: Database)
+class Planner(brain: Model, home: String, databasePath: String)
   private val lock = threading.Lock()
   private val runCode = RunCodeTool(os.path.join(home, "sandbox", "plan"), approvalDeadline = 30)
+
+  //[ A connection for one short piece of database work.
+    !
+    ! Deliberately not one connection around the whole run: a turn takes minutes,
+    ! and the only thing that needs the database is opening the run and closing
+    ! it. The agent's own reads go through the sandbox, which opens its own from
+    ! the path it is given.
+  //]
+  private def onDb[T](work: () => T receives conn): T = DB.withConn(databasePath, work)
 
   def run(note: String): py.Dict =
     if !lock.acquire(blocking = false).asBool then
@@ -107,14 +129,14 @@ class Planner(brain: Model, home: String, databasePath: String, database: Databa
     case Err(error) => py.dict("ok" ~ false, "busy" ~ false, "report" ~ error.message)
 
   private def planOrders(note: String): py.Dict =
-    val runId = database.beginRun("plan", "manual", note)
+    val runId = onDb(() => Runs.beginRun("plan", "manual", note))
     val attempt = py.try: ask(note)
     match attempt
     case Ok(report) =>
-      database.finishRun(runId, "success", report)
+      onDb(() => Runs.finishRun(runId, "success", report))
       py.dict("ok" ~ true, "busy" ~ false, "run_id" ~ runId, "report" ~ report)
     case Err(error) =>
-      database.finishRun(runId, "failed", error.message)
+      onDb(() => Runs.finishRun(runId, "failed", error.message))
       py.dict:
         "ok"     ~ false
         "busy"   ~ false

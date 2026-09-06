@@ -16,6 +16,10 @@ import harpe.testing.check
 import harpe.logging.logger
 import harpe.examples.smartlogistics.tests.Sandbox
 import harpe.examples.smartlogistics.tests.DepotTest
+import harpe.examples.smartlogistics.db.DB
+import harpe.examples.smartlogistics.db.conn
+import harpe.examples.smartlogistics.db.Orders
+import harpe.examples.smartlogistics.db.Checks
 
 private def guest(body: String): String =
   "namespace sandbox.guest\n\nimport sandbox.api.*\n\n" + body
@@ -104,11 +108,28 @@ def runTask(): Unit receives IO.stdout, plan =
       "and cannot build the trusted implementation itself"
       impl.returnCode != 0
 
+  //[ What the guest wrote is a draft, and the orders the administrator had
+    ! already placed are exactly as many as before. Nothing generated code can
+    ! call moves an order out of `draft` — not onto a supplier, and not into
+    ! stock.
+  //]
+  def nothingWasOrdered(): Unit receives conn, thisSuite, logger =
+    var newest = py.dict()
+    var placed = 0
+    for item in Orders.drafts() do
+      val order = item.cast[py.Dict]
+      if order.get("status").asString == "ordered" then placed = placed + 1
+      if newest.size == 0 then newest = order
+    check:
+      "what the guest wrote is a draft"
+      newest.get("status").asString == "draft"
+    check("and it ordered nothing on its way past", placed == 2)
+
   //[ Inside the capability, the runtime is still the one that decides. //]
   test: "the runtime refuses a draft the facts do not allow", () =>
     val root = Sandbox.prepare(py.module("os").path.abspath(".").asString)
-    val database = DepotTest.freshDepot()
-    val printed = Sandbox.output(root, "plan", database.path, probeProgram())
+    val path = DepotTest.freshDepot()
+    val printed = Sandbox.output(root, "plan", path, probeProgram())
 
     check:
       "a supplier that does not stock it"
@@ -140,21 +161,12 @@ def runTask(): Unit receives IO.stdout, plan =
     // already placed are exactly as many as before. Nothing generated code can
     // call moves an order out of 'draft' — not onto a supplier, and not into
     // stock.
-    var newest = py.dict()
-    var placed = 0
-    for item in database.drafts() do
-      val order = item.cast[py.Dict]
-      if order.get("status").asString == "ordered" then placed = placed + 1
-      if newest.size == 0 then newest = order
-    check:
-      "what the guest wrote is a draft"
-      newest.get("status").asString == "draft"
-    check("and it ordered nothing on its way past", placed == 2)
+    DB.withConn(path, () => nothingWasOrdered())
 
   test: "the watcher can only leave a note, and refreshes it rather than repeat it", () =>
     val root = Sandbox.prepare(py.module("os").path.abspath(".").asString)
-    val database = DepotTest.freshDepot()
-    val printed = Sandbox.output(root, "watch", database.path, guest("""
+    val path = DepotTest.freshDepot()
+    val printed = Sandbox.output(root, "watch", path, guest("""
 def runTask(): Unit receives IO.stdout, watch =
   val bad = watch.saveWarning(1, 0, "shouting", "wrong severity")
   println("severity: " + bad.message)
@@ -172,4 +184,6 @@ def runTask(): Unit receives IO.stdout, watch =
     check:
       "raising the same thing twice refreshes one note"
       printed.contains("refreshed: true")
-    check("so the list holds one row, not two", database.warnings().size == 1)
+    check:
+      "so the list holds one row, not two"
+      DB.withConn(path, () => Checks.warnings()).size == 1

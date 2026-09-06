@@ -126,12 +126,22 @@ jo run tests
 
 ## Data model
 
-SQLite, in `src/db/`. `Schema.jo` declares every table and creates whatever is
-missing, which builds an empty database outright. Changing a table that already
-has rows in it is what `CREATE TABLE IF NOT EXISTS` cannot do, so each such
-change is a file in `migrations/` that `Migrations.jo` applies once and records
-in `schema_migrations`. A schema change is therefore two edits — the new shape
-in `Schema.jo`, and the step to it in `migrations/`. See
+SQLite, in `src/db/`. One file per subject — `Stock.jo`, `Orders.jo`,
+`Checks.jo`, `Runs.jo`, `Skills.jo` — each a `section`, none holding any state.
+
+The connection is a **context parameter**. An entry point opens one and the
+stores take it from context with `receives conn`, so a request is one connection
+and a write that spans two stores is one transaction. `DB.jo` has the whole of
+it: `withConn` opens and closes, `inTransaction` runs on whatever connection the
+caller already has. The routes that need no database — the page's own files, and
+the two that hand work to an agent — never open one.
+
+`Schema.jo` declares every table and creates whatever is missing, which builds an
+empty database outright. Changing a table that already has rows in it is what
+`CREATE TABLE IF NOT EXISTS` cannot do, so each such change is a file in
+`migrations/` that `Migrations.jo` applies once and records in
+`schema_migrations`. A schema change is therefore two edits — the new shape in
+`Schema.jo`, and the step to it in `migrations/`. See
 [`migrations/README.md`](migrations/README.md).
 
 | Table | Holds |

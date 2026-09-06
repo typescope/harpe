@@ -1,0 +1,215 @@
+//[ Stock.jo
+  !
+  ! Products, suppliers, and the ledger that is the only record of stock.
+  !
+  ! Stock on hand is never stored. Every receipt, issue and adjustment is a row,
+  ! and the balance is their sum — which is why `recordMovement` is the only
+  ! way stock changes, and why it checks the balance it is about to create.
+//]
+
+namespace harpe.examples.smartlogistics.db
+
+section Stock
+
+  //[ Trouble first: the shortest cover at the top of the table. //]
+  def products(): py.List receives conn =
+    val result = DB.rows("""
+      SELECT p.*, pos.on_hand, pos.on_order, pos.sells_per_day,
+             pos.days_of_cover, pos.lead_time_days
+      FROM products p JOIN product_position pos ON pos.product_id = p.id
+      ORDER BY pos.days_of_cover, p.sku
+    """)
+    for item in result do
+      val product = item.cast[py.Dict]
+      product.set:
+        "sources"
+        DB.rowsWith:
+          """
+          SELECT ps.*, s.name AS supplier_name, s.currency
+          FROM product_suppliers ps JOIN suppliers s ON s.id = ps.supplier_id
+          WHERE ps.product_id = ?
+          ORDER BY ps.preferred DESC, ps.unit_price_cents
+          """
+          py.list(product.get("id"))
+    result
+
+  def suppliers(): py.List receives conn = DB.rows("""
+    SELECT s.*,
+      (SELECT COUNT(*) FROM product_suppliers ps WHERE ps.supplier_id = s.id)
+        AS product_count,
+      (SELECT COUNT(*) FROM product_suppliers ps
+       WHERE ps.supplier_id = s.id AND ps.preferred = 1) AS preferred_count,
+      (SELECT COUNT(*) FROM draft_orders d WHERE d.supplier_id = s.id) AS draft_count
+    FROM suppliers s ORDER BY s.name
+  """)
+
+  def demand(days: Int): py.List receives conn =
+    val safe = if days < 1 then 1 else if days > 365 then 365 else days
+    DB.rowsWith:
+      """
+      SELECT product_id, date(occurred_at) AS demand_date, SUM(-quantity) AS quantity
+      FROM stock_movements
+      WHERE kind = 'issue' AND date(occurred_at) >= date('now', ?)
+      GROUP BY product_id, date(occurred_at)
+      ORDER BY product_id, demand_date
+      """
+      py.list("-\{safe} days")
+
+  def movements(productId: Int, limit: Int): py.List receives conn =
+    val safe = if limit < 1 then 1 else if limit > 500 then 500 else limit
+    if productId == 0 then
+      DB.rowsWith:
+        """
+        SELECT m.*, p.sku, p.name FROM stock_movements m
+        JOIN products p ON p.id = m.product_id
+        ORDER BY m.occurred_at DESC, m.id DESC LIMIT ?
+        """
+        py.list(safe)
+    else
+      DB.rowsWith:
+        """
+        SELECT m.*, p.sku, p.name FROM stock_movements m
+        JOIN products p ON p.id = m.product_id
+        WHERE m.product_id = ?
+        ORDER BY m.occurred_at DESC, m.id DESC LIMIT ?
+        """
+        py.list(productId, safe)
+
+  //[ The one way stock changes. The ledger may never go negative or past
+    ! storage capacity, whoever is asking.
+  //]
+  def recordMovement(body: py.Dict): Int receives conn =
+    val productId = body.get("product_id", 0).asInt
+    val kind = body.get("kind", "").asString
+    val amount = body.get("quantity", 0).asInt
+    if kind != "receipt" && kind != "issue" && kind != "adjustment" then
+      abort "unknown movement kind"
+    if amount == 0 then abort "a movement needs a quantity"
+    val signed = signedQuantity(kind, amount)
+    DB.inTransaction(() => writeMovement(productId, kind, signed, body))
+
+  //[ Issues and receipts are entered as positive amounts; only an adjustment
+    ! carries its own sign, which is how a stock count correction is recorded.
+  //]
+  private def signedQuantity(kind: String, amount: Int): Int =
+    if kind == "adjustment" then amount
+    else if kind == "issue" then 0 - magnitude(amount)
+    else magnitude(amount)
+
+  private def magnitude(value: Int): Int = if value < 0 then 0 - value else value
+
+  //[ Public because receiving goes through it too: a delivery is an ordinary
+    ! receipt, checked against the same balance and the same capacity as one
+    ! keyed in by hand. There is no second way into the ledger.
+  //]
+  def writeMovement(
+    productId: Int, kind: String, signed: Int, body: py.Dict
+  ): Int receives conn =
+    val product = conn
+      .execute:
+         "SELECT capacity FROM products WHERE id = ? AND enabled = 1"
+         py.list(productId)
+      .fetchone()
+    if product.isNone then abort "unknown or disabled product"
+    val capacity = product[0].asInt
+    val balance = conn
+      .execute:
+         "SELECT COALESCE(SUM(quantity),0) FROM stock_movements WHERE product_id = ?"
+         py.list(productId)
+      .fetchone()[0].asInt
+    val after = balance + signed
+    if after < 0 then
+      abort "only \{balance} in stock, so that movement cannot be recorded"
+    if after > capacity then
+      abort "that movement would exceed the storage capacity of \{capacity}"
+    val cursor = conn.execute:
+      """
+      INSERT INTO stock_movements(product_id,kind,quantity,occurred_at,reference,note)
+      VALUES(?,?,?,COALESCE(NULLIF(?,''),datetime('now')),?,?)
+      """
+      py.list:
+        productId
+        kind
+        signed
+        body.get("occurred_at", "").asString.trim
+        body.get("reference", "").asString.trim
+        body.get("note", "").asString.trim
+    cursor.lastrowid.asInt
+
+  def saveProduct(body: py.Dict): Int receives conn =
+    val sources = body.get("sources", py.list()).cast[py.List]
+    if sources.size == 0 then abort "a product needs at least one supplier"
+    DB.inTransaction(() => writeProduct(body, sources))
+
+  private def writeProduct(body: py.Dict, sources: py.List): Int receives conn =
+    val given = body.get("id", 0).asInt
+    val params = py.list:
+      body.get("sku", "").asString.trim
+      body.get("name", "").asString.trim
+      body.get("category", "").asString.trim
+      body.get("capacity", 1).asInt
+      if body.get("enabled", true).asBool then 1 else 0
+    val id = if given == 0 then insertProduct(params, body)
+             else updateProduct(params, given)
+    replaceSources(id, sources)
+    id
+
+  private def insertProduct(params: py.List, body: py.Dict): Int receives conn =
+    val created = DB.insert:
+      """
+      INSERT INTO products (sku,name,category,capacity,enabled) VALUES(?,?,?,?,?)
+      """
+      params
+    // Stock only ever arrives through the ledger, opening balances included.
+    val opening = body.get("opening_stock", 0).asInt
+    if opening > 0 then
+      conn.execute:
+        """
+        INSERT INTO stock_movements(product_id,kind,quantity,occurred_at,reference,note)
+        VALUES(?,'receipt',?,datetime('now'),'OPENING','opening balance')
+        """
+        py.list(created, opening)
+    created
+
+  private def updateProduct(params: py.List, id: Int): Int receives conn =
+    params.append(id)
+    conn.execute:
+      """
+      UPDATE products SET sku=?,name=?,category=?,capacity=?,enabled=? WHERE id=?
+      """
+      params
+    id
+
+  //[ The submitted set is authoritative, and exactly one row stays preferred. //]
+  private def replaceSources(productId: Int, sources: py.List): Unit receives conn =
+    conn.execute("DELETE FROM product_suppliers WHERE product_id=?", py.list(productId))
+    var preferredSeen = false
+    for raw in py.iter(sources) do
+      val source = raw.cast[py.Dict]
+      val caseSize = source.get("case_size", 1).asInt
+      if caseSize < 1 then abort "case size must be at least 1"
+      val wanted = source.get("preferred", false).asBool
+      val preferred = if wanted && !preferredSeen then 1 else 0
+      if preferred == 1 then preferredSeen = true
+      conn.execute:
+        """
+        INSERT INTO product_suppliers
+          (product_id,supplier_id,unit_price_cents,lead_time_days,case_size,preferred)
+        VALUES(?,?,?,?,?,?)
+        """
+        py.list:
+          productId
+          source.get("supplier_id", 0).asInt
+          source.get("unit_price_cents", 0).asInt
+          source.get("lead_time_days", 1).asInt
+          caseSize
+          preferred
+    if !preferredSeen then
+      conn.execute:
+        """
+        UPDATE product_suppliers SET preferred=1
+        WHERE rowid = (SELECT rowid FROM product_suppliers
+                       WHERE product_id=? ORDER BY unit_price_cents LIMIT 1)
+        """
+        py.list(productId)
+end

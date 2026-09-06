@@ -19,7 +19,7 @@ section Seed
     ! an open draft, and hand soap — the one with a slow preferred supplier and a
     ! faster alternate — is the worst of them.
   //]
-  def apply(conn: py.Dynamic): Unit =
+  def apply(): Unit receives conn =
     val count = conn.execute("SELECT COUNT(*) FROM suppliers").fetchone()[0].asInt
     if count > 0 then return
 
@@ -76,14 +76,14 @@ section Seed
         py.list(11,4,470,3,10,0)
         py.list(12,3,195,6,20,1)
 
-    movements(conn)
+    movements()
 
     // Already on order and still in transit, so it counts towards cover and
     // must not be ordered again. And one draft somebody left open, so the
     // planner has a reason to skip a product that genuinely is short.
-    order(conn, "ordered", 2, 6, 100, 112, "Carton stock below a week of cover.")
-    order(conn, "ordered", 3, 12, 20, 195, "Routine top-up before the weekend.")
-    order(conn, "draft", 3, 11, 40, 460, "Paper towels are down to three days.")
+    order("ordered", 2, 6, 100, 112, "Carton stock below a week of cover.")
+    order("ordered", 3, 12, 20, 195, "Routine top-up before the weekend.")
+    order("draft", 3, 11, 40, 460, "Paper towels are down to three days.")
 
     conn.executemany:
       """
@@ -101,9 +101,9 @@ section Seed
     ! deliveries genuinely in transit rather than with dates left blank.
   //]
   private def order(
-    conn: py.Dynamic, status: String, supplierId: Int,
+    status: String, supplierId: Int,
     productId: Int, quantity: Int, price: Int, rationale: String
-  ): Unit =
+  ): Unit receives conn =
     val cursor = conn.execute:
       """
       INSERT INTO draft_orders
@@ -141,7 +141,7 @@ section Seed
     ! issues that wobble either side of the product's rate. The arithmetic is
     ! chosen so the ledger lands exactly on the intended stock level today.
   //]
-  private def movements(conn: py.Dynamic): Unit =
+  private def movements(): Unit receives conn =
     val datetime = py.module("datetime")
     val today = datetime.date.today()
     // product ~ (units sold per day, stock on hand today)

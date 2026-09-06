@@ -1,0 +1,35 @@
+//[ Snapshot.jo
+  !
+  ! The one call the dashboard makes.
+  !
+  ! A page-load asks for everything at once, and gets it on ONE connection.
+  ! Before the connection was ambient this opened three.
+//]
+
+namespace harpe.examples.smartlogistics.db
+
+section Snapshot
+
+  def snapshot(): py.Dict receives conn =
+    py.dict:
+      "products"  ~ Stock.products()
+      "suppliers" ~ Stock.suppliers()
+      "summary"   ~ DB.rows("""
+        SELECT
+          (SELECT COUNT(*) FROM products WHERE enabled = 1) AS product_count,
+          (SELECT COUNT(*) FROM products p
+           JOIN product_position pos ON pos.product_id = p.id
+           WHERE p.enabled = 1 AND pos.days_of_cover < pos.lead_time_days)
+            AS at_risk_count,
+          (SELECT COUNT(*) FROM warnings WHERE resolved_at = '') AS open_warnings,
+          (SELECT COUNT(*) FROM draft_orders WHERE status = 'draft') AS open_drafts,
+          (SELECT COUNT(*) FROM draft_orders
+           WHERE status IN ('ordered','part_received')) AS outstanding_orders,
+          (SELECT COUNT(*) FROM draft_orders
+           WHERE status IN ('ordered','part_received')
+             AND expected_at != '' AND date(expected_at) < date('now'))
+            AS overdue_orders,
+          (SELECT COALESCE(MAX(finished_at),'') FROM runs
+           WHERE kind = 'watch' AND status = 'success') AS last_checked
+      """)[0]
+end
