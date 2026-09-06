@@ -294,6 +294,75 @@ logger.log("myagent.tools.search", "queries" ~ n, "vendorCost" ~ cost)
 Your reports and your `UsageMeter` pick it up with no other change — a new signal
 is just a new event, and the wiring (one installed `Logger`) stays put.
 
+That openness is right while a number is something you watch. Once it is something
+you invoice from, give the record a codec — see
+[Explicit contracts for business logic](#explicit-contracts-for-business-logic).
+
+## Explicit contracts for business logic
+
+The log is deliberately open. Any producer can invent a name and any fields, and
+nothing validates them — that is what makes a new signal cost one line. It is the
+right trade for diagnostics, where a record is read by a person with `jq` and a
+missing field is an inconvenience.
+
+It is the wrong trade when real logic depends on the record. An invoice computed
+from `harpe.model.replied`, or a conversation replayed out of the log, is business
+logic reading a wire format, and an open wire gives it nothing to hold on to:
+
+- **Documentation.** The field list lives in whichever call site last emitted it.
+  A consumer learns the shape by reading a producer, or by reading a sample record
+  and hoping it was typical.
+- **Contract.** Renaming a field is not a compile error. The producer changes, the
+  consumer goes on asking for a key nobody writes, and gets a default back instead
+  of a failure.
+- **Versioning.** A log outlives the code that wrote it. Nothing on a record says
+  which shape it was written in, so nothing downstream can decide what to do with
+  an old one.
+
+**For those records, declare the type.** Define a class for the domain data, and one
+module that owns the event name, the encoder, and the decoder — together, in one
+file, so the two halves cannot drift apart. The contract stops being something
+everyone remembers and becomes something the compiler holds:
+
+```jo
+class Charge(model: String, inputTokens: Int, outputTokens: Int, cents: Int)
+
+section ChargeLog
+  def chargedEvent: String = "myagent.billing.charged"
+
+  def charged(charge: Charge): Unit receives logger =
+    logger.log:
+      chargedEvent
+      "model"        ~ charge.model
+      "inputTokens"  ~ charge.inputTokens
+      "outputTokens" ~ charge.outputTokens
+      "cents"        ~ charge.cents
+
+  def decode(entry: Entry): Charge = ...
+end
+```
+
+Three rules turn that from a convention into a contract:
+
+- **One type, one event name.** The name is the record's schema tag, so a change of
+  shape is a change of name — never a `version` field, and never a discriminator
+  that lets one name mean two things.
+- **Encode and decode in one file.** Two hand-written halves that agree only by
+  inspection are how a renamed key silently costs you records.
+- **Decode fails loudly.** A field that is absent or at the wrong type means the
+  record did not come from this codec. Substituting an empty value bills a charge
+  of zero, which reads as a fact rather than as the failure it is.
+
+The point is not ceremony. It is that the contract can now only be broken on
+purpose. Change `Charge` and the codec stops compiling until both halves are
+updated; on the open wire the same edit compiles, ships, and shows up later as a
+wrong number on an invoice with nothing to say when it started.
+
+`harpe.turns.TurnLog` is the worked example. It owns `harpe.turn.message` and the
+three terminators, encodes a `Message` into a record and decodes one back, and
+aborts naming the field when a record does not match. Everything else in the log
+stays open — only the records something is built on pay for a codec.
+
 ## Quick reference
 
 ```jo
