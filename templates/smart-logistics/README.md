@@ -99,7 +99,7 @@ constantly. One list, read by both agents:
 | "Food keeps 7 days of cover" | warns when food drops below | orders enough to reach it |
 | "Nordic shuts down over Christmas" | warns if an order would land in the gap | sources elsewhere |
 | "Never more than 300 units in one order" | — | caps the line, and says so |
-| "Don't warn about packaging above 3 days" | stays quiet | — |
+| "Warn about packaging only below 3 days" | quiet until 3 days | — |
 
 **Skills** are how to work an order out — method, the same for any depot, rarely
 edited. They live in `skills/plan/` and are editable while the app runs, with
@@ -126,10 +126,25 @@ jo run tests
 
 ## Data model
 
-SQLite, defined in `src/Database.jo`. The file carries a `user_version`, and an
-existing database is migrated up to it on start; the tables that a migration
-rebuilds are written once, as one definition used for both a new database and
-the copy a migration builds, so the two shapes cannot drift apart.
+SQLite, in `src/db/`. One file per subject — `Stock.jo`, `Orders.jo`,
+`Checks.jo`, `Runs.jo`, `Skills.jo` — each a `section`, none holding any state.
+A route assembles its response from them, rather than each having a query shaped
+to one page.
+
+The connection is a **context parameter**. An entry point opens one and the
+stores take it from context with `receives conn`, so a request is one connection
+and a write that spans two stores is one transaction. `DB.jo` has the whole of
+it: `withConn` opens and closes, `inTransaction` runs on whatever connection the
+caller already has. The routes that need no database — the page's own files, and
+the two that hand work to an agent — never open one.
+
+`Schema.jo` declares every table and creates whatever is missing, which builds an
+empty database outright. Changing a table that already has rows in it is what
+`CREATE TABLE IF NOT EXISTS` cannot do, so each such change is a file in
+`migrations/` that `Migrations.jo` applies once and records in
+`schema_migrations`. A schema change is therefore two edits — the new shape in
+`Schema.jo`, and the step to it in `migrations/`. See
+[`migrations/README.md`](migrations/README.md).
 
 | Table | Holds |
 | --- | --- |
@@ -142,15 +157,30 @@ the copy a migration builds, so the two shapes cannot drift apart.
 | `order_receipts` | Each delivery, and the ledger row it produced. |
 | `runs`, `skill_revisions` | What each agent did, and how the method changed. |
 
-Stock on hand is never stored. Every movement in or out is a row, and the
-balance is their sum, so any figure traces to what produced it:
+The ledger is the record of stock. Every movement in or out is a row, nothing is
+ever edited or deleted, and a correction is another row — so any figure traces to
+what produced it.
+
+`products.on_hand` holds the running total, and one trigger maintains it:
 
 ```sql
-CREATE VIEW product_stock AS
-  SELECT p.id AS product_id, COALESCE(SUM(m.quantity),0) AS on_hand
-  FROM products p LEFT JOIN stock_movements m ON m.product_id = p.id
-  GROUP BY p.id;
+CREATE TRIGGER stock_movements_balance
+AFTER INSERT ON stock_movements
+BEGIN
+  UPDATE products SET on_hand = on_hand + NEW.quantity WHERE id = NEW.product_id;
+END;
 ```
+
+That total is a **cache of a sum, not a second source of truth**. It exists
+because the sum was over the whole ledger, which only grows: a dashboard load re-
+added every movement ever recorded, and so did every write, to check the balance
+it was about to change. The trigger lives in the database rather than in the code
+that writes movements, so it holds for every writer — this app, a migration, or a
+person at a `sqlite3` prompt.
+
+`Stock.reconcile()` replays the ledger and corrects anything that has drifted,
+and returns how many rows were wrong. A non-zero answer is worth investigating
+rather than serving quietly.
 
 One number decides whether a product is in trouble — how long what we have plus
 what is on order will last at the current rate of sale — and `product_position`

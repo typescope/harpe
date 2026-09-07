@@ -23,6 +23,13 @@ touching `templates/`. It is deliberately not the release gate — RELEASE.md
 step 8 retargets the pins after publication, now as a pull request against this
 repository.
 
+The documentation gains a **Case Studies** section. The PR review and flight
+booking pages move there from Tutorials, keeping their old URLs as redirects,
+and `smart-logistics` gets the page it did not have. A tutorial teaches a piece
+of the framework in order. A case study leads with a problem, says why a
+conventional sandbox or a prompt instruction does not solve it, and shows the
+finished application — so the two are no longer competing for one section.
+
 ## 0.9.0 — 2026-09-01
 
 Ninth developer-preview release. It publishes the test framework as a package of

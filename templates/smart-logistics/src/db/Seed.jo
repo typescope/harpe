@@ -1,0 +1,208 @@
+//[ Seed.jo
+  !
+  ! The depot the first run opens on.
+  !
+  ! Demonstration data, and the only file here that is: delete it and the app
+  ! works, on an empty depot. It is kept out of `Schema` because the two answer
+  ! different questions — what shape the database has, and what happens to be in
+  ! it — and only one of them is a decision a copy of this template inherits.
+//]
+
+namespace smart.logistics.db
+
+section Seed
+
+  //[ Twelve products, four suppliers, four weeks of ledger.
+    !
+    ! Sized so the first screen tells a story without setup: four products will
+    ! run out before a delivery could arrive, one of them is already covered by
+    ! an open draft, and hand soap — the one with a slow preferred supplier and a
+    ! faster alternate — is the worst of them.
+  //]
+  def apply(): Unit receives conn =
+    val count = conn.execute("SELECT COUNT(*) FROM suppliers").fetchone()[0].asInt
+    if count > 0 then return
+
+    conn.executemany:
+      "INSERT INTO suppliers(id,name,currency) VALUES(?,?,?)"
+      py.list:
+        py.list(1, "Alpine Foods", "CHF")
+        py.list(2, "Rhine Packaging", "CHF")
+        py.list(3, "Nordic Hygiene", "EUR")
+        py.list(4, "Helvetia Wholesale", "CHF")
+    conn.executemany:
+      """
+      INSERT INTO products (id,sku,name,category,capacity) VALUES(?,?,?,?,?)
+      """
+      py.list:
+        py.list(1,"FOOD-101","Pasta 500 g","food",240)
+        py.list(2,"FOOD-102","Tomato sauce","food",180)
+        py.list(3,"FOOD-103","Rice 1 kg","food",260)
+        py.list(4,"FOOD-104","Olive oil 1 L","food",96)
+        py.list(5,"PACK-201","Small cartons","packaging",1000)
+        py.list(6,"PACK-202","Large cartons","packaging",500)
+        py.list(7,"PACK-203","Paper tape","packaging",160)
+        py.list(8,"PACK-204","Pallet wrap","packaging",180)
+        py.list(9,"HYGI-301","Hand soap","hygiene",120)
+        py.list(10,"HYGI-302","Surface cleaner","hygiene",150)
+        py.list(11,"HYGI-303","Paper towels","hygiene",90)
+        py.list(12,"HYGI-304","Waste bags","hygiene",220)
+
+    // Preferred source first, then any alternate. Alternates are dearer and
+    // faster — which is what gives a written check something to decide.
+    conn.executemany:
+      """
+      INSERT INTO product_suppliers
+        (product_id,supplier_id,unit_price_cents,lead_time_days,case_size,preferred)
+      VALUES(?,?,?,?,?,?)
+      """
+      py.list:
+        py.list(1,1,225,5,12,1)
+        py.list(1,4,239,2,12,0)
+        py.list(2,1,315,4,6,1)
+        py.list(3,1,410,6,12,1)
+        py.list(4,1,1180,8,6,1)
+        py.list(4,4,1245,3,6,0)
+        py.list(5,2,58,3,50,1)
+        py.list(5,4,61,2,50,0)
+        py.list(6,2,112,5,25,1)
+        py.list(6,4,118,3,25,0)
+        py.list(7,2,275,4,10,1)
+        py.list(8,2,890,7,6,1)
+        py.list(9,3,540,9,8,1)
+        py.list(9,4,565,4,8,0)
+        py.list(10,3,720,10,6,1)
+        py.list(11,3,460,6,10,1)
+        py.list(11,4,470,3,10,0)
+        py.list(12,3,195,6,20,1)
+
+    movements()
+
+    // Already on order and still in transit, so it counts towards cover and
+    // must not be ordered again. And one draft somebody left open, so the
+    // planner has a reason to skip a product that genuinely is short.
+    order("ordered", 2, 6, 100, 112, "Carton stock below a week of cover.")
+    order("ordered", 3, 12, 20, 195, "Routine top-up before the weekend.")
+    order("draft", 3, 11, 40, 460, "Paper towels are down to three days.")
+
+    conn.executemany:
+      """
+      INSERT INTO checks(text,enabled,created_at,updated_at)
+      VALUES(?,1,datetime('now'),datetime('now'))
+      """
+      py.list:
+        py.list("Cover at least 5 days of demand beyond the supplier's lead time.")
+        py.list("Food keeps 7 days of cover instead of 5: the category moves fast and a stockout there costs more than the extra holding cost.")
+        py.list("Never propose more than 300 units of one product in a single order — receiving can only take two pallets of one item at a time.")
+        py.list("Warn about packaging only when it is under 3 days of cover. We can get cartons and tape same-day if we have to.")
+
+  //[ A seeded order, placed two days ago. One that is already `ordered` is
+    ! due on the supplier's lead time counted from then, so the depot opens with
+    ! deliveries genuinely in transit rather than with dates left blank.
+  //]
+  private def order(
+    status: String, supplierId: Int,
+    productId: Int, quantity: Int, price: Int, rationale: String
+  ): Unit receives conn =
+    val cursor = conn.execute:
+      """
+      INSERT INTO draft_orders
+        (supplier_id,status,rationale,total_cents,currency,created_at,updated_at,
+         expected_at,ordered_at)
+      SELECT ?, ?, ?, ?, s.currency, datetime('now','-2 days'), datetime('now','-2 days'),
+        CASE WHEN ? = 'ordered' THEN
+          (SELECT date('now','-2 days','+' || ps.lead_time_days || ' days')
+           FROM product_suppliers ps
+           WHERE ps.product_id = ? AND ps.supplier_id = s.id)
+        ELSE '' END,
+        CASE WHEN ? = 'ordered' THEN datetime('now','-2 days') ELSE '' END
+      FROM suppliers s WHERE s.id = ?
+      """
+      py.list:
+        supplierId
+        status
+        rationale
+        quantity * price
+        status
+        productId
+        status
+        supplierId
+    conn.execute:
+      """
+      INSERT INTO draft_order_lines
+        (draft_order_id,product_id,quantity,unit_price_cents,line_total_cents)
+      VALUES(?,?,?,?,?)
+      """
+      py.list(cursor.lastrowid.asInt, productId, quantity, price, quantity * price)
+
+  //[ Four weeks of ledger per product.
+    !
+    ! An opening balance a week ahead of demand, a weekly delivery, and daily
+    ! issues that wobble either side of the product's rate. The arithmetic is
+    ! chosen so the ledger lands exactly on the intended stock level today.
+  //]
+  private def movements(): Unit receives conn =
+    val datetime = py.module("datetime")
+    val today = datetime.date.today()
+    // product ~ (units sold per day, stock on hand today)
+    val plan = py.list:
+      py.list(1,6,96)
+      py.list(2,4,12)
+      py.list(3,8,120)
+      py.list(4,3,9)
+      py.list(5,25,420)
+      py.list(6,12,60)
+      py.list(7,5,22)
+      py.list(8,4,88)
+      py.list(9,5,14)
+      py.list(10,3,55)
+      py.list(11,6,18)
+      py.list(12,7,72)
+    var ledger = py.list()
+    for raw in py.iter(plan) do
+      val row = py.dynamic(raw)
+      val productId = row[0].asInt
+      val perDay = row[1].asInt
+      val target = row[2].asInt
+      val weekly = perDay * 7
+
+      val opening = today.__sub__(datetime.timedelta(days = 29))
+      ledger.append: py.list:
+        productId
+        "receipt"
+        target + weekly
+        "\{opening.isoformat().asString} 08:00:00"
+        "OPENING"
+        "opening balance"
+
+      var week = 3
+      while week >= 1 do
+        val day = today.__sub__(datetime.timedelta(days = week * 7))
+        ledger.append: py.list:
+          productId
+          "receipt"
+          weekly
+          "\{day.isoformat().asString} 07:00:00"
+          "GRN-\{productId}\{week}"
+          "weekly delivery"
+        week = week - 1
+
+      var age = 28
+      while age >= 1 do
+        val day = today.__sub__(datetime.timedelta(days = age))
+        val quantity = if age % 2 == 0 then perDay + 1 else perDay - 1
+        ledger.append: py.list:
+          productId
+          "issue"
+          0 - quantity
+          "\{day.isoformat().asString} 09:00:00"
+          "SO-\{productId}\{age}"
+          ""
+        age = age - 1
+    conn.executemany:
+      """
+      INSERT INTO stock_movements(product_id,kind,quantity,occurred_at,reference,note)
+      VALUES(?,?,?,?,?,?)
+      """
+      ledger
+end

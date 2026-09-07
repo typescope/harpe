@@ -1,0 +1,89 @@
+//[ Watcher.jo
+  !
+  ! The unattended agent, and the one thing it may produce.
+//]
+
+namespace smart.logistics.agents
+
+import harpe.ffi.os
+import harpe.ffi.threading
+import harpe.util.File
+import harpe.Model
+import harpe.tools.RunCodeTool
+import harpe.tools.SkillTools
+import harpe.logging.*
+import smart.logistics.db.Checks
+import smart.logistics.db.Runs
+
+//[ The watcher: continuous, unattended, and unable to order anything.
+  !
+  ! Its capability (sandbox/watch) has no operation that buys, approves, or
+  ! changes a check. The only thing it can create is a note for a human.
+//]
+class Watcher(brain: Model, home: String, databasePath: String)
+  private val lock = threading.Lock()
+  private val runCode = RunCodeTool(os.path.join(home, "sandbox", "watch"), approvalDeadline = 30)
+
+  def run(trigger: String): py.Dict =
+    if !lock.acquire(blocking = false).asBool then
+      return busy("A check is already running.")
+    // The lock is released whatever happens below, so one failed run cannot
+    // wedge every run after it.
+    val outcome = py.try: checkDepot(trigger)
+    lock.release()
+    match outcome
+    case Ok(value) => value
+    case Err(error) => py.dict("ok" ~ false, "busy" ~ false, "report" ~ error.message)
+
+  private val inconclusive =
+    "The watcher stopped without reporting anything — most likely it spent its "
+      + "tool budget. Existing warnings were left exactly as they were; nothing "
+      + "was resolved. Run it again."
+
+  private def checkDepot(trigger: String): py.Dict =
+    val runId = onDb(databasePath, () => Runs.beginRun("watch", trigger, ""))
+    val attempt = py.try: ask(runId)
+    match attempt
+    case Ok(report) =>
+      // A turn that spends its whole tool budget still ends in Success, with
+      // nothing to say. Resolving on that would read the silence as "all
+      // clear" and quietly wipe warnings that still hold, so an empty report
+      // resolves nothing and is reported as the failure it is.
+      if report.trim == "" then
+        onDb(databasePath, () => Runs.finishRun(runId, "failed", inconclusive))
+        py.dict:
+          "ok"     ~ false
+          "busy"   ~ false
+          "run_id" ~ runId
+          "report" ~ inconclusive
+      else
+        // Whatever this run did not raise again no longer holds.
+        val resolved = onDb(databasePath, () => Checks.resolveWarningsNotRaisedBy(runId))
+        onDb(databasePath, () => Runs.finishRun(runId, "success", report))
+        py.dict:
+          "ok"       ~ true
+          "busy"     ~ false
+          "run_id"   ~ runId
+          "resolved" ~ resolved
+          "report"   ~ report
+    case Err(error) =>
+      onDb(databasePath, () => Runs.finishRun(runId, "failed", error.message))
+      py.dict:
+        "ok"     ~ false
+        "busy"   ~ false
+        "run_id" ~ runId
+        "report" ~ error.message
+
+  private def ask(runId: Int): String =
+    val guestEnv = Map:
+      "SMART_LOGISTICS_DB"  ~ databasePath
+      "SMART_LOGISTICS_RUN" ~ runId.toString
+    Logging.withLogger: audit(home, "watch"), () =>
+      turn:
+        brain
+        File.read(os.path.join(home, "prompts", "watch.md"))
+        "Check the depot now and record the warnings that hold."
+        SkillTools.toolset(os.path.join(home, "skills", "watch"))
+          ++ runCode.toolset(guestEnv)
+        12
+end

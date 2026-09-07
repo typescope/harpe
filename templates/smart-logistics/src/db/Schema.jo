@@ -1,0 +1,246 @@
+//[ Schema.jo
+  !
+  ! Every table, index and view in `data/logistics.db`, in one place.
+  !
+  ! These statements describe the shape this build expects, and `CREATE TABLE IF
+  ! NOT EXISTS` makes running them against a database that already has it free.
+  ! So this runs on every start, and a database that is missing a table gets it.
+  !
+  ! What this CANNOT do is change a table that already exists — add a column,
+  ! reshape one, move data between them. That is `Migrations`, and the split
+  ! matters: this file always describes the CURRENT shape, while a migration
+  ! describes one step from an older shape to a newer one and must go on saying
+  ! what it said when it was written. Editing this file to change a table is
+  ! therefore only ever half the job.
+//]
+
+namespace smart.logistics.db
+
+import harpe.ffi.os
+import harpe.util.File
+
+section Schema
+
+  //[ A connection to the depot database, with the pragmas every caller needs:
+    ! rows addressable by column name, foreign keys enforced rather than merely
+    ! declared, WAL so a reader is not blocked while a write commits, and a busy
+    ! timeout so the watcher and a request do not collide.
+  //]
+  def open(path: String): py.Dynamic =
+    val sqlite = py.module("sqlite3")
+    val conn = sqlite.connect(path, timeout = 10.0)
+    conn.row_factory = sqlite.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 10000")
+    conn
+
+  //[ Create every table, index and view that is missing, and answer whether this
+    ! was a database that did not exist yet.
+    !
+    ! That answer is what `Migrations` needs and cannot work out for itself. The
+    ! statements below describe the current shape, so a fresh database arrives at
+    ! it directly and every migration would fail against it — the change each one
+    ! makes is already here. A fresh database is therefore RECORDED as having had
+    ! them rather than being put through them.
+  //]
+  def initialize(path: String): Bool =
+    File.ensureDir(os.path.dirname(path))
+    val conn = open(path)
+    // Emptiness is the question, not the presence of any one table: a database
+    // with no tables at all is one nothing has ever run against.
+    val fresh = conn.execute("""
+      SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'
+    """).fetchone()[0].asInt == 0
+    conn.executescript("""
+      CREATE TABLE IF NOT EXISTS suppliers (
+        id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+        currency TEXT NOT NULL DEFAULT 'CHF', enabled INTEGER NOT NULL DEFAULT 1
+      );
+      -- `on_hand` is the running total of this product's ledger, maintained by
+      -- the trigger below. It is the ONE derived value in this schema that is
+      -- stored rather than computed, and it is stored because computing it meant
+      -- summing every movement ever recorded on every page load — work that grows
+      -- without bound while the answer changes by one row at a time.
+      --
+      -- The ledger is still the record of truth. This is a cache of its sum, and
+      -- `Stock.reconcile` recomputes it from the ledger to prove the two agree.
+      CREATE TABLE IF NOT EXISTS products (
+        id INTEGER PRIMARY KEY, sku TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+        category TEXT NOT NULL,
+        capacity INTEGER NOT NULL CHECK(capacity > 0),
+        enabled INTEGER NOT NULL DEFAULT 1,
+        on_hand INTEGER NOT NULL DEFAULT 0
+      );
+      -- Price, lead time and case size are terms of one product-supplier
+      -- relationship, not properties of the product. The same item is often
+      -- sourced from several suppliers; exactly one of them is preferred.
+      CREATE TABLE IF NOT EXISTS product_suppliers (
+        product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+        unit_price_cents INTEGER NOT NULL CHECK(unit_price_cents >= 0),
+        lead_time_days INTEGER NOT NULL DEFAULT 1 CHECK(lead_time_days >= 0),
+        case_size INTEGER NOT NULL DEFAULT 1 CHECK(case_size > 0),
+        preferred INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(product_id, supplier_id)
+      );
+      CREATE INDEX IF NOT EXISTS product_suppliers_supplier
+        ON product_suppliers(supplier_id);
+      -- Every unit that entered or left the depot. Stock on hand is the sum of
+      -- this ledger, never a number somebody typed, and demand is the issue
+      -- rows rolled up by day.
+      CREATE TABLE IF NOT EXISTS stock_movements (
+        id INTEGER PRIMARY KEY,
+        product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK(kind IN ('receipt','issue','adjustment')),
+        quantity INTEGER NOT NULL CHECK(quantity != 0),
+        occurred_at TEXT NOT NULL,
+        reference TEXT NOT NULL DEFAULT '',
+        note TEXT NOT NULL DEFAULT '',
+        CHECK((kind = 'receipt' AND quantity > 0)
+           OR (kind = 'issue' AND quantity < 0)
+           OR kind = 'adjustment')
+      );
+      CREATE INDEX IF NOT EXISTS stock_movements_product
+        ON stock_movements(product_id, occurred_at);
+      -- The only thing that maintains `products.on_hand`. It lives in the
+      -- database rather than in the code that writes movements, so it holds for
+      -- every writer — this app, a migration, or a person with a sqlite3 prompt.
+      -- There is no UPDATE or DELETE counterpart because the ledger is
+      -- append-only: a mistake is corrected by an adjustment row, never by
+      -- editing what was recorded.
+      CREATE TRIGGER IF NOT EXISTS stock_movements_balance
+      AFTER INSERT ON stock_movements
+      BEGIN
+        UPDATE products SET on_hand = on_hand + NEW.quantity
+        WHERE id = NEW.product_id;
+      END;
+      -- Views hold no data, so they are rebuilt from this file on every start.
+      -- A view created by an older version of the app can then never survive
+      -- into a newer one and quietly answer with the old arithmetic.
+      DROP VIEW IF EXISTS product_position;
+      DROP VIEW IF EXISTS product_stock;
+      CREATE VIEW product_stock AS
+        SELECT id AS product_id, on_hand FROM products;
+      -- One number decides whether a product is in trouble: how long what we
+      -- have plus what is on order will last at the current rate of sale.
+      -- Everything the app and both agents show is derived here, once, so the
+      -- watcher and the planner can never disagree about it.
+      CREATE VIEW product_position AS
+        SELECT p.id AS product_id,
+          st.on_hand AS on_hand,
+          COALESCE(oo.on_order,0) AS on_order,
+          ROUND(COALESCE(dm.per_day,0),1) AS sells_per_day,
+          CASE WHEN COALESCE(dm.per_day,0) <= 0 THEN 999
+               ELSE CAST((st.on_hand + COALESCE(oo.on_order,0)) / dm.per_day
+                         AS INTEGER) END AS days_of_cover,
+          COALESCE(src.lead_time_days,0) AS lead_time_days
+        FROM products p
+        JOIN product_stock st ON st.product_id = p.id
+        -- What is on order is what was ordered and has NOT yet arrived. A
+        -- received unit is in the ledger, in on_hand; counting it here as well
+        -- would say the depot holds it twice, and cover would climb for ever.
+        LEFT JOIN (SELECT l.product_id,
+                          SUM(l.quantity - l.received_quantity) AS on_order
+                   FROM draft_order_lines l
+                   JOIN draft_orders d ON d.id = l.draft_order_id
+                   WHERE d.status IN ('ordered','part_received')
+                   GROUP BY l.product_id) oo
+          ON oo.product_id = p.id
+        LEFT JOIN (SELECT product_id, SUM(-quantity)/28.0 AS per_day
+                   FROM stock_movements
+                   WHERE kind = 'issue'
+                     AND date(occurred_at) >= date('now','-28 days')
+                   GROUP BY product_id) dm
+          ON dm.product_id = p.id
+        LEFT JOIN (SELECT product_id, lead_time_days FROM product_suppliers
+                   WHERE preferred = 1) src
+          ON src.product_id = p.id;
+      -- Checks are what the administrator wrote, in their own words. The
+      -- watcher applies them to today's stock; the planner proposes orders that
+      -- pass them. Nothing here machine-checks them.
+      CREATE TABLE IF NOT EXISTS checks (
+        id INTEGER PRIMARY KEY, text TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      -- The watcher's output. Refreshed rather than duplicated while a
+      -- condition persists, and resolved by the watcher when it stops holding.
+      CREATE TABLE IF NOT EXISTS warnings (
+        id INTEGER PRIMARY KEY,
+        product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        check_id INTEGER NOT NULL DEFAULT 0,
+        severity TEXT NOT NULL CHECK(severity IN ('critical','warning')),
+        text TEXT NOT NULL,
+        first_seen TEXT NOT NULL, last_seen TEXT NOT NULL,
+        resolved_at TEXT NOT NULL DEFAULT '',
+        last_run_id INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS warnings_open ON warnings(resolved_at, product_id);
+      CREATE TABLE IF NOT EXISTS draft_orders (
+        id INTEGER PRIMARY KEY, supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+        status TEXT NOT NULL CHECK(status IN
+          ('draft','rejected','ordered','part_received','received','cancelled')),
+        rationale TEXT NOT NULL, total_cents INTEGER NOT NULL, currency TEXT NOT NULL,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        -- When the last line of it is due, worked out from the lead times in
+        -- force at the moment it was ordered. Recomputing it later from current
+        -- terms would let a supplier's new lead time rewrite what we were
+        -- promised, and an order would stop being late by being re-read.
+        expected_at TEXT NOT NULL DEFAULT '',
+        ordered_at TEXT NOT NULL DEFAULT '',
+        closed_at TEXT NOT NULL DEFAULT ''
+      );
+      CREATE TABLE IF NOT EXISTS draft_order_lines (
+        id INTEGER PRIMARY KEY,
+        draft_order_id INTEGER NOT NULL REFERENCES draft_orders(id) ON DELETE CASCADE,
+        product_id INTEGER NOT NULL REFERENCES products(id),
+        quantity INTEGER NOT NULL CHECK(quantity > 0),
+        received_quantity INTEGER NOT NULL DEFAULT 0,
+        unit_price_cents INTEGER NOT NULL, line_total_cents INTEGER NOT NULL,
+        UNIQUE(draft_order_id, product_id),
+        -- Everything the depot believes about cover rests on this subtraction,
+        -- so the database itself refuses a receipt that would make it lie.
+        CHECK(received_quantity >= 0 AND received_quantity <= quantity)
+      );
+      CREATE INDEX IF NOT EXISTS draft_order_lines_product
+        ON draft_order_lines(product_id);
+      CREATE TABLE IF NOT EXISTS order_receipts (
+        id INTEGER PRIMARY KEY,
+        draft_order_id INTEGER NOT NULL REFERENCES draft_orders(id) ON DELETE CASCADE,
+        line_id INTEGER NOT NULL REFERENCES draft_order_lines(id) ON DELETE CASCADE,
+        product_id INTEGER NOT NULL REFERENCES products(id),
+        quantity INTEGER NOT NULL CHECK(quantity > 0),
+        movement_id INTEGER NOT NULL REFERENCES stock_movements(id),
+        received_at TEXT NOT NULL, note TEXT NOT NULL DEFAULT ''
+      );
+      CREATE INDEX IF NOT EXISTS order_receipts_order
+        ON order_receipts(draft_order_id, line_id);
+      CREATE TABLE IF NOT EXISTS skill_revisions (
+        id INTEGER PRIMARY KEY, skill_name TEXT NOT NULL, content TEXT NOT NULL,
+        revision INTEGER NOT NULL, created_at TEXT NOT NULL,
+        UNIQUE(skill_name, revision)
+      );
+      CREATE TABLE IF NOT EXISTS runs (
+        id INTEGER PRIMARY KEY,
+        kind TEXT NOT NULL CHECK(kind IN ('watch','plan')),
+        trigger TEXT NOT NULL,
+        note TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL CHECK(status IN ('running','success','failed')),
+        summary TEXT NOT NULL DEFAULT '', started_at TEXT NOT NULL,
+        finished_at TEXT NOT NULL DEFAULT ''
+      );
+      -- Which files in `migrations/` this database has had. The only table here
+      -- that is about the database rather than about the depot, and it is
+      -- declared here anyway, because the rule that every table lives in this
+      -- file is what makes the file worth reading. `Migrations` reads and
+      -- appends to it. It does not create it.
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version TEXT PRIMARY KEY,
+        applied_at TEXT NOT NULL
+      );
+    """)
+    conn.commit()
+    conn.close()
+    fresh
+end
