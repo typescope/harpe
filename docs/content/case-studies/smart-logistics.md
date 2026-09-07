@@ -2,12 +2,12 @@
 title = "The Smart Logistics Problem"
 +++
 
-Restocking a depot is a computation over stock on hand, demand history, supplier
-lead times and case sizes. It tells what to buy, and from which supplier — all
-to ensure it arrives before the shelves are empty.
+Restocking a depot necessitates computing over stock on hand, demand history,
+supplier lead times and case sizes. It tells what to buy, and from which
+supplier — all to ensure it arrives before the shelves are empty.
 
-The computation is easy — the rules that constrain it are not. A rule such as
-"order from Nordic 30 days before Christmas" is difficult to support in a
+The computating part is easy — the rules that constrain it are not. A rule such
+as "order from Nordic 30 days before Christmas" is difficult to support in a
 conventional planning system. As a result, most logistical software doesn't
 support such high-level rules.
 
