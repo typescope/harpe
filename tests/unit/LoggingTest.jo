@@ -3,8 +3,9 @@
   ! Tests for the logging layer (`harpe.logging`): that `Logger.log` accepts bare
   ! typed pairs and assembles an `Entry` (via the `Value` adapters), that
   ! `JsonlLogger` appends every event to one file as well-formed JSON — with
-  ! `event` a field and values kept typed — and that `Logging.withLogger`
-  ! installs a `logger` that reaches producers.
+  ! `event` a field and values kept typed — that `Logging.withLogger`
+  ! installs a `logger` that reaches producers, and that `TeeLogger` fans one
+  ! entry out to several backends.
 //]
 
 namespace harpe.test.unit.LoggingTest
@@ -43,10 +44,11 @@ private class Capture
   view Logger
 
   var entries: List[Entry] = []
+  var closed: Bool = false
 
   def logEntry(entry: Entry): Unit = entries = entries + entry
 
-  def close(): Unit = pass
+  def close(): Unit = closed = true
 end
 
 // A producer: emits through the ambient `logger` channel.
@@ -177,6 +179,31 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
         if list.size == 2 then
           check("innermost first", list.get(0).cast[py.Dict].get("scope", "").asString == "inner")
           check("outermost last", list.get(1).cast[py.Dict].get("scope", "").asString == "outer")
+
+  suite: "TeeLogger", () =>
+    test: "hands every entry to each of its loggers", () =>
+      val first = new Capture
+      val second = new Capture
+      val tee = new TeeLogger([first, second])
+
+      tee.log("runs", "code" ~ "x")
+      tee.log("tools", "name" ~ "read")
+
+      check("first got both", first.entries.size == 2)
+      check("second got both", second.entries.size == 2)
+      check("same entry", second.entries.get(1).event == "tools")
+
+    test: "closes all of them", () =>
+      val first = new Capture
+      val second = new Capture
+      new TeeLogger([first, second]).close()
+      check("first closed", first.closed)
+      check("second closed", second.closed)
+
+    test: "with no loggers it is a no-op", () =>
+      val tee = new TeeLogger([])
+      tee.log("runs", "code" ~ "x")
+      check("silent", true)
 
   suite: "audit codec", () =>
     test: "preserves the event, time, and field count", () =>

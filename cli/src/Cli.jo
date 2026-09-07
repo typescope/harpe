@@ -24,6 +24,10 @@ import harpe.util.Process
 import jo.IO.stdout
 import harpe.*
 import harpe.logging.JsonlLogger
+import harpe.logging.Logger
+import harpe.logging.TeeLogger
+import harpe.observability.TailLogger
+import harpe.observability.Viewer
 import harpe.transcript.Journal
 import harpe.logging.logger
 import harpe.Model.UserInput
@@ -51,8 +55,17 @@ private def runChat(): Unit receives stdout, appHome =
   console.init()
 
   val sessionPath = chooseSession(resumeRequested())
-  val sessionLog = new JsonlLogger(sessionPath)
+  val fileLog = new JsonlLogger(sessionPath)
+
+  // The file is the journal. The tail is a second copy in memory, kept only when
+  // the viewer is going to serve it, so an unwatched run carries nothing extra.
+  val viewerPort = journalPort()
+  val tail = new TailLogger(capacity = 5000)
+  val sessionLog: Logger =
+    if viewerPort > 0 then new TeeLogger([fileLog, tail]) else fileLog
+
   val journal = new Journal(sessionLog)
+  openViewer(tail, viewerPort, sessionPath)
   // `runCode` owns a build semaphore, so it is an object built once here. The
   // rest own nothing and are reached through their sections.
   val runCode = RunCodeTool(os.path.join(appHome, "sandbox"), approvalDeadline = 610)
@@ -135,6 +148,22 @@ private def runChat(): Unit receives stdout, appHome =
 
   println("  " + Style.success("♪ Elise stopped."))
 end
+
+//[ The port `JOURNAL_PORT` asked the journal viewer for, or 0 for off
+  !
+  ! OFF unless asked. A terminal agent opening a listening socket nobody
+  ! requested is a surprise, and a journal is the whole conversation — prompts,
+  ! replies, tool output — served with no authentication.
+//]
+private def journalPort(): Int =
+  Int.parse(os.getenv("JOURNAL_PORT", "")) rescue None => 0
+
+//[ Serve `tail` on `port`, on loopback. //]
+private def openViewer(tail: TailLogger, port: Int, path: String): Unit receives stdout =
+  if port > 0 then
+    val _ = Viewer.start(tail, os.path.basename(path), "127.0.0.1", port)
+    println("")
+    println("  " + Style.muted("journal · http://127.0.0.1:\{port}"))
 
 //[ Whether the user explicitly requested the session picker
   !

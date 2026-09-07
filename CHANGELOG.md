@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+The journal viewer is now something a driver mounts, not a second process you
+start. `harpe.observability.TailLogger` is a `Logger` that retains the last
+`capacity` entries in memory and lets them be read back, which gives a
+write-only channel a read side, and `harpe.logging.TeeLogger` puts it beside the
+durable backend a driver already had rather than in front of it.
+`harpe.observability.Viewer` serves that tail: `Viewer.page` returns one
+self-contained page and `Viewer.respondEvents` its feed, so an agent already
+serving HTTP adds two routes at a path of its own choosing, and one that is not
+takes `Viewer.start` to bind a port on a daemon thread. An entry is visible the
+moment it is logged — no flush, no file path to agree on, no `jo run view` in
+another terminal.
+
+`harpe.transcript.serve` and the `[module.view]` block every agent declared to
+link it are gone with it. A journal that outlives its process is still a JSONL
+file and still `jq`'s job.
+
+A tail holds whatever it was logged, which may be several conversations at once.
+The page now pairs each turn's bracket within the scope its records carry
+(`Logging.withContext`) instead of positionally, so a driver may tee every
+concurrent session into one tail without their turns closing each other's cards,
+and the scope is labelled per card once more than one is present. Giving each
+session its own tail still works, through the same two functions.
+
+The framework binds nothing on its own: whether to expose a journal, where, and
+to whom is the driver's call, since the page has no authentication and carries
+whole conversations. The CLI agent serves it only when `JOURNAL_PORT` is set,
+and builds the tee only then, so an unwatched run keeps no second copy.
+
+**Templates**: `templates/` still pins the previous release, so `web` and
+`telegram` keep their `[module.view]` block for now. Retargeting them (RELEASE.md
+step 8) means dropping that block, teeing each session's `JsonlLogger` with a
+`TailLogger`, and mounting the two routes behind a switch of the driver's own.
+
 The agent templates come back from `typescope/agents`, with that repository's
 history, and live under `templates/`. `jo-templates.jsonl` at the root names
 them, so `jo new --template typescope/harpe:web` replaces

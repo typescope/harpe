@@ -1,0 +1,29 @@
+//[ TeeLogger.jo
+  !
+  ! A `Logger` that hands every entry to several others, so one log can reach two
+  ! destinations without either knowing about the other. The `logger` channel
+  ! carries ONE backend, and a driver that wants a durable file AND something
+  ! reading the same stream in memory would otherwise have to write a backend
+  ! that does both.
+  !
+  ! Order is the order given, and it is sequential: a slow member delays the ones
+  ! after it. Fanning out to a slow destination is that destination's problem to
+  ! solve, by buffering behind its own `logEntry`.
+//]
+
+namespace harpe.logging
+
+//[ Write every entry to each of `loggers`, in order.
+  !
+  ! `close` closes them all — a tee is a composition of backends the caller
+  ! handed over, not a scope around one it borrowed.
+//]
+class TeeLogger(loggers: List[Logger])
+  view Logger
+
+  def logEntry(entry: Entry): Unit =
+    for target in loggers do target.logEntry(entry)
+
+  def close(): Unit =
+    for target in loggers do target.close()
+end

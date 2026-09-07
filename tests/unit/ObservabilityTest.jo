@@ -1,0 +1,63 @@
+//[ ObservabilityTest.jo
+  !
+  ! Tests for `TailLogger`: that it retains a bounded window of what it was
+  ! logged, hands a reader only what that reader has not seen, and reports the
+  ! entries that aged out rather than closing the gap silently.
+//]
+
+namespace harpe.test.unit.ObservabilityTest
+
+import harpe.logging.*
+import harpe.observability.TailLogger
+import harpe.testing.thisSuite
+import harpe.testing.suite
+import harpe.testing.test
+import harpe.testing.check
+
+def observabilitySuite(): Unit receives thisSuite = suite: "observability", () =>
+  suite: "TailLogger", () =>
+    test: "hands a reader only what it has not seen", () =>
+      val tail = new TailLogger(capacity = 10)
+      tail.log("a", "n" ~ 1)
+      tail.log("b", "n" ~ 2)
+
+      val first = tail.since(0)
+      check("both", first.entries.size == 2)
+      check("position", first.logged == 2)
+
+      tail.log("c", "n" ~ 3)
+
+      val next = tail.since(first.logged)
+      check("only the new one", next.entries.size == 1)
+      check("which one", next.entries.get(0).event == "c")
+      check("nothing lost", next.dropped == 0)
+
+    test: "a caught-up reader gets nothing", () =>
+      val tail = new TailLogger(capacity = 10)
+      tail.log("a", "n" ~ 1)
+      val caughtUp = tail.since(1)
+      check("empty", caughtUp.entries.size == 0)
+      check("position unchanged", caughtUp.logged == 1)
+
+    // The window is bounded, so a slow reader loses the oldest entries. It has
+    // to be TOLD, or it renders a gap as a continuous journal.
+    test: "drops the oldest past capacity, and says how many", () =>
+      val tail = new TailLogger(capacity = 3)
+      for n in [1, 2, 3, 4, 5] do tail.log("e\{n}", "n" ~ n)
+
+      val window = tail.since(0)
+      check("keeps capacity", window.entries.size == 3)
+      check("keeps the newest", window.entries.get(2).event == "e5")
+      check("oldest first of those kept", window.entries.get(0).event == "e3")
+      check("counts every entry ever", window.logged == 5)
+      check("reports the gap", window.dropped == 2)
+
+    // A reader that reconnects to a different (or restarted) session sends a
+    // position this logger never reached. It must not read off the end.
+    test: "a position past the end yields nothing", () =>
+      val tail = new TailLogger(capacity = 10)
+      tail.log("a", "n" ~ 1)
+      val ahead = tail.since(99)
+      check("empty", ahead.entries.size == 0)
+      check("position is the truth", ahead.logged == 1)
+      check("no phantom gap", ahead.dropped == 0)

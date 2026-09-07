@@ -12,38 +12,59 @@ first live in a browser, then from the command line.
 
 ## The journal viewer
 
-Harpe ships a viewer for one session's journal. It is a module you declare, not
-code you write:
+A `Logger` is write-only, so nothing can show you a log while it is being
+written. `TailLogger` is a `Logger` that keeps the last `capacity` entries in
+memory and lets them be read back. Tee it beside the backend you already had, so
+the file still gets everything:
 
-```toml
-[module.view]
-kind = "app"
-platform = "python"
-enable-ffi = true
-src = []
-depth = 2
-
-packages = [{ name = "harpe", version = "0.4" }]
-
-links = [
-  { from = "jo.main", to = "harpe.transcript.serve" },
-]
+```jo
+val tail = new TailLogger(capacity = 5000)
+val log  = new TeeLogger([new JsonlLogger(sessionPath), tail])
 ```
 
-`src = []` is deliberate: every line of the viewer is harpe's, linked in as this
-module's entry point. The bundled drivers already declare it.
+`Viewer` serves that tail as two routes:
 
-```sh
-jo run view -- logs/sessions/20260821T091402-a3f1.jsonl
+```jo
+case Http.Get("/journal")        => Http.respondHtml(Viewer.page(id, "/journal/events"))
+case Http.Get("/journal/events") => Viewer.respondEvents(tail)
 ```
 
-```
-  20260821T091402-a3f1.jsonl
-  Live at http://127.0.0.1:8760
-  Ctrl-C to stop
+An entry is visible the moment it is logged — no flush, no second process, no
+path to agree on.
+
+`Viewer.page` returns one self-contained page, so those two routes are the whole
+integration: no stylesheet or script URL to route, and the path is yours to
+choose. An agent with no HTTP server of its own takes `Viewer.start` instead,
+which binds a port on a daemon thread:
+
+```jo
+val _ = Viewer.start(tail, title, "127.0.0.1", port)
 ```
 
-`HOST` and `PORT` override the defaults.
+The framework provides the mechanism and stops there. Whether to expose a
+journal, on which port, behind which path, and to whom is a driver's decision —
+see [Before you expose it](#before-you-expose-it).
+
+## One tail, or one per session
+
+Nothing about a tail says how many conversations are in it. A server driving
+concurrent sessions can tee them all into one:
+
+```jo
+val log = new TeeLogger([new JsonlLogger(sessionPath(id)), sharedTail])
+```
+
+The page pairs each turn's bracket **within the scope its records carry**, not
+positionally, so interleaved sessions render as separate cards rather than
+closing each other's turns. That scope is whatever
+[`Logging.withContext`](/concepts/logging/) installed — the outermost one, since
+scopes nest inward — and it is labelled on each card once more than one is
+present. Filter to a single conversation by typing its id.
+
+Giving each session its own `TailLogger` and routing per session works the same
+way, through the same two functions. Which to do is a driver's call: one tail is
+one page for the whole process, and per-session tails keep one conversation out
+of another's view.
 
 ## What it shows
 
@@ -64,9 +85,30 @@ as it happens. Filter from the header — it matches anywhere in a record, neste
 fields included. `/` focuses the filter, `t` toggles turns-only, `f` toggles
 follow.
 
+The retained window is bounded by `capacity`. A busy process pushes its oldest
+entries out, and the page says how many it lost rather than presenting the
+remainder as the whole journal. Nothing is lost from the teed backend.
+
+## In the CLI agent
+
+The bundled CLI agent wires it, and leaves it off:
+
+```sh
+JOURNAL_PORT=8760 jo run
+```
+
+```
+  journal · http://127.0.0.1:8760
+```
+
+Opt-in, because a terminal agent that opens a listening socket nobody asked for
+is a surprise. It also builds the tee only when the port is set, so an unwatched
+run keeps no second copy in memory.
+
 ## Reading it from the shell
 
-The viewer is one reader; the file is plain JSON lines, so `jq` is another:
+The viewer reads the live process. The file the teed `JsonlLogger` wrote outlives
+it, and is plain JSON lines, so `jq` reads a session that has already ended:
 
 ```sh
 # every turn the user actually had, with its outcome
@@ -95,10 +137,12 @@ The viewer serves the journal's contents to anyone who can reach it, and a
 journal contains the full conversation: prompts, replies, tool output, file
 names. It has **no authentication**.
 
-It binds `127.0.0.1` by default, which is what you want. Setting `HOST=0.0.0.0`
-publishes a session's entire conversation to the network. Treat it as a
-developer tool on a machine you control, and reach a remote journal by copying
-the file or tunnelling the port rather than by opening one up.
+That is why the framework binds nothing on its own. A driver that mounts the
+routes on a server it already runs is publishing them to everyone that server
+reaches, so gate them — the CLI agent's `JOURNAL_PORT` is one shape, an
+environment switch checked in the route is another — and keep `Viewer.start` on
+a loopback address. Reach a remote journal by tunnelling the port or copying the
+file the teed backend wrote, not by opening one up.
 
 ## See also
 

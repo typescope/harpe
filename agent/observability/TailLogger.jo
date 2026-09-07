@@ -1,0 +1,61 @@
+//[ TailLogger.jo
+  !
+  ! A `Logger` that keeps the most recent entries in memory: `Logger` is
+  ! write-only, so nothing could show a log while it was being written. `since`
+  ! is the read side, and `Viewer` serves it.
+  !
+  ! It retains INSTEAD of storing, so a driver wanting both tees it beside the
+  ! backend it already had.
+  !
+  ! `capacity` entries, oldest dropped first, and `since` reports how many went,
+  ! so a reader is told it has a gap rather than shown a seamless one.
+  !
+  ! It has its own lock: `Logging.withLogger` serializes writes, not a `since`
+  ! from an HTTP request thread.
+//]
+
+namespace harpe.observability
+import harpe.ffi.threading
+import harpe.logging.Entry
+import harpe.logging.Logger
+
+//[ What a reader asked for: the entries after its position, and what it missed.
+  !
+  ! `logged` counts every entry ever logged, not the retained ones, so it is the
+  ! position a reader passes back as `seen`. `dropped` is how many between that
+  ! `seen` and the oldest retained entry are gone.
+//]
+class Tail(logged: Int, dropped: Int, entries: List[Entry])
+
+//[ Retain the last `capacity` entries, and nothing else. //]
+class TailLogger(capacity: Int)
+  view Logger
+
+  private val lock = threading.Lock()
+
+  // Both guarded by `lock`.
+  private var kept: List[Entry] = []
+  private var logged: Int = 0
+
+  def logEntry(entry: Entry): Unit =
+    lock.acquire()
+    kept = kept + entry
+    logged = logged + 1
+    if kept.size > capacity then kept = kept.drop(kept.size - capacity)
+    lock.release()
+
+  //[ Everything logged after position `seen`, of what is still retained. //]
+  def since(seen: Int): Tail =
+    lock.acquire()
+    val total = logged
+    val oldest = total - kept.size
+    val start = if seen < oldest then oldest else if seen > total then total else seen
+    val window = kept.drop(start - oldest)
+    val dropped = if seen < oldest then oldest - seen else 0
+    lock.release()
+
+    new Tail(total, dropped, window)
+
+  //[ Memory released with the object, so there is nothing to close. //]
+  def close(): Unit = pass
+end

@@ -1,0 +1,103 @@
+//[ Viewer.jo
+  !
+  ! A live view of a running agent's journal, in a browser.
+  !
+  ! MECHANISM, NOT A DRIVER. Two pure functions — a page, and the JSON feed it
+  ! polls — over a `TailLogger` the driver logs to. Whether to expose them at
+  ! all, on which port, behind which path, and to whom, is the driver's
+  ! decision: an agent that serves HTTP adds two routes to the server it
+  ! already has, and one that does not can take `start` below.
+  !
+  !     val tail = new TailLogger(capacity = 5000)
+  !     val log  = new TeeLogger([new JsonlLogger(path), tail])
+  !
+  !     case Http.Get("/journal")        => Http.respondHtml(Viewer.page(title, "/journal/events"))
+  !     case Http.Get("/journal/events") => Viewer.respondEvents(tail)
+  !
+  ! Reading the LOGGER, not a file, is what makes it live: an entry is visible
+  ! the moment it is logged, with no flush, no second process, and no path to
+  ! agree on. A journal that outlives the process is a `jq` job over whatever
+  ! durable backend the driver teed the tail with.
+  !
+  ! HOW MANY CONVERSATIONS A TAIL HOLDS IS NOT THIS FILE'S BUSINESS. A driver
+  ! serving concurrent sessions may tee them all into one, and the page pairs
+  ! each turn's bracket within the scope its records carry (`Logging.withContext`)
+  ! rather than positionally, so interleaved sessions stay separate cards. A
+  ! driver that would rather serve one session at a time gives each its own
+  ! `TailLogger` and routes accordingly — both are the same two functions.
+  !
+  ! Polling, not streaming: the page asks for everything after the position it
+  ! last saw. A poll costs a list slice, and a reader that reconnects, or that
+  ! was never there for the first turn, is the same code path as one that has
+  ! kept up.
+  !
+  ! The page is ONE self-contained response — `agent/assets/journal.{html,css,js}`
+  ! bundled with the `harpe` module and inlined at serve time. The three stay
+  ! separate files to edit, and a driver mounting the viewer under a path of its
+  ! choosing has no stylesheet or script URL to route.
+//]
+
+namespace harpe.observability
+
+import harpe.ffi.json
+import harpe.logging.Entry
+import harpe.util.Process
+import harpe.Http
+import harpe.Http.request
+import jo.resource.*
+import jo.py.resource.*
+
+section Viewer
+
+  //[ The viewer page: `title` in its header, polling `eventsUrl`.
+    !
+    ! `title` names what this page is showing — an agent, a deployment, one
+    ! session — and is the driver's to choose.
+  //]
+  def page(title: String, eventsUrl: String): String =
+    val bundle = new py.resource.ResourceBundle("harpe")
+
+    asset(bundle, "journal.html")
+      .replace("__NAME__", title)
+      .replace("__EVENTS__", eventsUrl)
+      .replace("__STYLE__", asset(bundle, "journal.css"))
+      .replace("__SCRIPT__", asset(bundle, "journal.js"))
+
+  //[ Everything `tail` has logged after `seen`, as the page's JSON envelope. //]
+  def events(tail: TailLogger, seen: Int): String =
+    val window = tail.since(seen)
+
+    val entries = py.list()
+    for entry in window.entries do entries.append(Entry.toDict(entry))
+
+    json.dumps(py.dict("seen" ~ window.logged, "dropped" ~ window.dropped, "entries" ~ entries))
+
+  //[ `events` as a response, reading `seen` from the query string. //]
+  def respondEvents(tail: TailLogger): py.List receives request =
+    val seen = Int.parse(Http.queryParam("seen")) rescue None => 0
+    Http.respond("200 OK", "application/json", events(tail, seen))
+
+  //[ Serve the viewer alone on `host:port`, on a daemon thread.
+    !
+    ! For a driver with no HTTP server of its own. It binds immediately and
+    ! returns the server, so the caller prints its own banner and can `shutdown()`
+    ! it. NO AUTHENTICATION: a journal holds every conversation it was given, so
+    ! `host` belongs on a loopback address.
+  //]
+  def start(tail: TailLogger, title: String, host: String, port: Int): py.Dynamic =
+    val httpd = Http.server: host, port, () => route(tail, title)
+    Process.daemon(() => httpd.serve_forever()).start()
+    httpd
+
+  private def route(tail: TailLogger, title: String): py.List receives request =
+    match request
+    case Http.Get("/")       => Http.respondHtml(page(title, "/events"))
+    case Http.Get("/events") => respondEvents(tail)
+    case _                   => Http.notFound()
+
+  //[ One bundled asset, or a comment saying which one is missing. //]
+  private def asset(bundle: py.resource.ResourceBundle, rel: String): String =
+    match bundle.readText("assets/" + rel)
+    case Ok(text) => text
+    case Err(why) => "/* " + rel + " missing: " + why + " */"
+end

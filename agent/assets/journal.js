@@ -1,9 +1,14 @@
 // journal.js — poll the journal and render it as turns.
 //
-// The server hands back whole entries the page has not seen yet, keyed by a
-// line count. Everything here is presentation: grouping the flat stream into
-// the turns a driver bracketed, and rendering each entry by what it carries.
+// The server hands back whole entries the page has not seen yet, keyed by how
+// many have been logged. Everything here is presentation: grouping the flat
+// stream into the turns a driver bracketed, and rendering each entry by what it
+// carries.
+//
+// The feed's URL comes from the page, because the driver decides where it
+// mounted the viewer.
 
+const EVENTS = (window.JOURNAL || {}).events || '/events';
 const POLL_MS = 1000;
 const CLIP_CHARS = 700;
 
@@ -18,6 +23,7 @@ const el = {
 };
 
 let seen = 0;
+let dropped = 0;          // entries aged out of the server's tail, never seen here
 let entries = [];
 let opened = new Set();   // indices whose clipped body the reader expanded
 
@@ -121,20 +127,50 @@ function row(e, i) {
 
 // ------------------------------------------------------------------ turns
 
+// Which conversation a record belongs to: the OUTERMOST scope it was produced
+// under. `ContextLogger` appends outward, so the last scope is the broadest one
+// — the session, for a driver that installs one. A driver that installs no
+// context at all runs one conversation, and every record shares the one scope.
+const scopeOf = e => {
+  const ctx = e.context || [];
+  return ctx.length ? JSON.stringify(ctx[ctx.length - 1]) : '';
+};
+
+// A scope rendered for the turn header: `session 20260821T091402` out of
+// `{"session": "20260821T091402"}`, and whatever it is otherwise.
+function scopeLabel(scope) {
+  if (!scope) return '';
+  const value = JSON.parse(scope);
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return Object.entries(value).map(([k, v]) =>
+      `${k} ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ');
+  }
+  return String(value);
+}
+
 // Group the flat stream: a `harpe.turn.request` opens a turn, the matching
 // response closes it, and anything outside a bracket is loose machinery.
+//
+// One open turn PER SCOPE, not one for the log. A journal can hold several
+// conversations at once — a server running concurrent sessions logs them
+// through one channel — and pairing brackets positionally would close one
+// session's turn with another's response.
 function group(list) {
   const groups = [];
-  let turn = null;
+  const open = new Map();
 
   for (const item of list) {
     const cat = item.e.event;
+    const scope = scopeOf(item.e);
+    const turn = open.get(scope);
+
     if (cat === 'harpe.turn.request') {
-      turn = { kind: 'turn', request: item.e, rows: [], outcome: 'running' };
-      groups.push(turn);
+      const started = { kind: 'turn', scope, request: item.e, rows: [], outcome: 'running' };
+      open.set(scope, started);
+      groups.push(started);
     } else if (cat === 'harpe.turn.response' && turn) {
       turn.response = item.e;
-      turn = null;
+      open.delete(scope);
     } else if (turn) {
       if (cat === 'harpe.turn.answered') turn.outcome = 'answered';
       if (cat === 'harpe.turn.failed') turn.outcome = 'failed';
@@ -149,13 +185,17 @@ function group(list) {
   return groups;
 }
 
-function turnHead(g) {
+// `showScope` only when the view holds more than one conversation — naming the
+// single one every card belongs to is noise.
+function turnHead(g, showScope) {
   const data = (g.request || {}).data || {};
   const prompt = typeof data === 'object' ? (data.text || '') : String(data);
   const files = (data.files || []).length;
   const suffix = files ? ` <span class="badge">${files} file${files > 1 ? 's' : ''}</span>` : '';
+  const scope = showScope && g.scope ? `<span class="scope">${esc(scopeLabel(g.scope))}</span>` : '';
   return `<div class="head">`
     + `<span class="time">${esc(clock(g.request.time))}</span>`
+    + scope
     + `<span class="prompt">${esc(prompt) || '<span class="k">(no text)</span>'}</span>`
     + suffix
     + `<span class="badge ${g.outcome}">${g.outcome}</span>`
@@ -173,14 +213,23 @@ function render() {
     ? `${entries.length} entries`
     : `${wanted.length} of ${entries.length} entries`;
 
+  // The tail the server keeps is bounded, so say so rather than presenting
+  // what survived as the whole journal.
+  const gap = dropped
+    ? `<p class="gap">${dropped} earlier ${dropped === 1 ? 'entry' : 'entries'} aged out of the journal</p>`
+    : '';
+
   if (wanted.length === 0) {
-    el.log.innerHTML = `<p class="empty">${entries.length ? 'Nothing matches.' : 'Waiting for the first entry…'}</p>`;
+    el.log.innerHTML = gap + `<p class="empty">${entries.length ? 'Nothing matches.' : 'Waiting for the first entry…'}</p>`;
     return;
   }
 
-  el.log.innerHTML = group(wanted).map(g =>
+  const grouped = group(wanted);
+  const showScope = new Set(grouped.map(g => g.scope)).size > 1;
+
+  el.log.innerHTML = gap + grouped.map(g =>
     g.kind === 'turn'
-      ? `<section class="turn ${g.outcome}">${turnHead(g)}${g.rows.map(r => row(r.e, r.i)).join('')}</section>`
+      ? `<section class="turn ${g.outcome}">${turnHead(g, showScope)}${g.rows.map(r => row(r.e, r.i)).join('')}</section>`
       : `<section class="loose">${g.rows.map(r => row(r.e, r.i)).join('')}</section>`
   ).join('');
 
@@ -196,14 +245,15 @@ function setStatus(state, text) {
 
 async function poll() {
   try {
-    const res = await fetch('/events?seen=' + seen);
+    const res = await fetch(EVENTS + (EVENTS.includes('?') ? '&' : '?') + 'seen=' + seen);
     const data = await res.json();
 
-    if (data.seen < seen) {          // the journal was truncated or replaced
-      entries = []; seen = 0; opened.clear();
+    if (data.seen < seen) {          // a different journal, or a restarted one
+      entries = []; seen = 0; dropped = 0; opened.clear();
       render();
     } else if (data.entries.length) {
       entries = entries.concat(data.entries.map(flatten));
+      dropped += data.dropped || 0;
       seen = data.seen;
       render();
     }

@@ -249,6 +249,16 @@ end
 how to turn `entry.fields` (including nested maps) into JSON. You can also **wrap**
 `JsonlLogger` instead of replacing it — see below.
 
+For two destinations rather than one, `TeeLogger` hands each entry to every
+logger it holds, in order:
+
+```jo
+val log = new TeeLogger([new JsonlLogger(path), new TailLogger(capacity = 5000)])
+```
+
+That is how the [journal viewer](/concepts/observability/) reads a session as it
+runs without displacing the file.
+
 ## Building usage, billing, and stats
 
 The log is a stream of structured events keyed by name. A shared log can additionally
@@ -375,6 +385,7 @@ logger.error(event, message, ...)                   // an error
 // install a Logger — where events go (in the driver's entry point)
 Logging.withLogger(myLogger, () => run())           // myLogger: any Logger
 Logging.discard                                     // a no-op Logger (tests, logging off)
+new TeeLogger([first, second])                      // one entry, several destinations
 
 // write your own Logger
 interface Logger
