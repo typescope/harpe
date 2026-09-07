@@ -24,7 +24,7 @@ and both test suites all build from these sources, so a release pull request is
 green throughout — the deadlock that used to make one red before publication is
 gone with the agents that caused it.
 
-What moved is where that tension lives. The six templates under `templates/` are
+What moved is where that tension lives. The five templates under `templates/` are
 pinned to a published release, so they are updated *after* publication, not
 before it. Step 8 is that update. Their `Templates` workflow is deliberately not
 the release gate, and it does not run on a pull request that leaves `templates/`
@@ -222,7 +222,7 @@ gh release create v$VERSION \
 
 ## 8. Move the templates to the new release
 
-The six templates under `templates/` are pinned to the previous release until
+The five templates under `templates/` are pinned to the previous release until
 now. In a pull request of its own, against `main`:
 
 ```sh
@@ -232,7 +232,7 @@ grep -rl "version = \"$PREV_MINOR\"" --include='jo.toml' templates/ \
 
 If the release changed an API, the templates need their sources adapted too, in
 the same pull request. Touching `templates/` is what runs the `Templates`
-workflow, which builds all six against the packages just published and runs the
+workflow, which builds all five against the packages just published and runs the
 suites that ship with them — so it is a real gate: `jo new` serves this
 repository's default branch, and a red build there means users are being handed
 templates that do not build.
