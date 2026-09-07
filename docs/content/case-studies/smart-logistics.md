@@ -13,7 +13,7 @@ support such high-level rules.
 
 ## The variety of rules
 
-Here are three rules that arise in managing a depot:
+Here are three rules that can arise in managing a depot:
 
 ![A depot manager states three rules — "Nordic shuts down over Christmas", "two
 pallets max — receiving can't take more", and "warn on packaging only below 3
