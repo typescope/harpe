@@ -13,7 +13,7 @@ support such high-level rules.
 
 ## The variety of rules
 
-Here are three such rules:
+Here are three rules that arise in managing a depot:
 
 ![A depot manager states three rules — "Nordic shuts down over Christmas", "two
 pallets max — receiving can't take more", and "warn on packaging only below 3
@@ -22,15 +22,13 @@ traditional logistical system, whose settings are single numbers: safety stock 7
 reorder point 40, lead time 9. There is no field for any of the three
 rules.](/img/smart-logistics-policy.svg)
 
-Each rule above needs a different software feature. Take the Christmas rule:
+Each rule above requires a different software feature. Look at the Christmas rule:
 
 > Nordic shuts down for two weeks over Christmas — don't order from them if it
 > won't arrive first.
 
-To support that, the software needs a blackout calendar for each supplier, a
-start date and an end date, a lead time for every supplier, and planning code
-that compares the two and sources elsewhere when they collide. Four tables and a
-change to the planner, for one sentence.
+To support that, the software needs a blackout database table and update the
+algorithm to take holiday shutdown into consideration.
 
 The next one asks for something else entirely:
 
@@ -68,14 +66,14 @@ asks, it produces draft orders, such as 96 litres of olive oil from Helvetia,
 and nothing is ordered until someone accepts
 one.](/img/smart-logistics-checks-table.svg)
 
-A large language model applies the rules by checking the database. It issues
+The agent applies the rules by checking the database. It issues
 warnings where a rule is broken, and plans draft orders for the depot manager.
 
-The planning and the checks are implemented by running a program created by AI
+The planning and the checks are implemented by running a program created by LLM
 in [Jo](https://jo-lang.org/). Before that program is allowed to run,
 [Harpe](https://github.com/typescope/harpe) checks it against a short list of
 things it is permitted to do: read the stock, read the rules, propose a draft
-order. Buying, approving and sending are not on the list, so a program that
+order. Buying, approving and sending are not included in the list, so a program that
 tries one of them is rejected during the check.
 
 ![The program is checked before it is allowed to run. The AI writes a program
@@ -87,32 +85,30 @@ reads and writes the depot, where every write is checked, and what it produces
 are draft orders and warnings for the depot manager, who accepts or rejects
 them. Until then nothing is ordered.](/img/smart-logistics-solution.svg)
 
-The program issues warnings and draft orders, and nothing else. In the end the
-manager is the one who decides.
+The program only issues warnings and draft orders, and nothing else. In the end,
+the manager is the one who decides.
 
-### What this buys
+### What it guarantees
 
-**The AI cannot buy anything.** Buying, approving and sending are not on the
-list, and the list is checked before the program runs — not asked for in a
-prompt, where it could be argued away.
+**The agent cannot buy anything.** Buying, approving and sending are not in the
+list.
 
-**Damage is contained.** Under a prompt injection attack, the worst result is a
-controversial draft order that the manager can refuse.
+**Security risk is under control.** Even under prompt injection attacks, the worst can happen is a
+problematic draft order that the manager can refuse.
 
-**A new rule needs no developer.** It is a sentence, typed by the person whose
+**A new rule does not need any development effort.** It is a sentence, typed by the person whose
 rule it is, and it takes effect on the next run.
 
 ### The alternatives
 
-**Give the AI a set of tools instead.** Safe, and the right answer when the job
-is a few calls: the operations are the ones you wrote, and you see every one of
-them. But a depot holds tens of thousands of products, and each one needs a
+**Give the agent a set of tools instead.** It is the safe and right solution if
+a automation task only involves a few tool calls. But a depot holds tens of thousands of products, and each one needs a
 calculation. Sending the data to the model saturates the context window, burns
 tokens and runs up the bill, and the answers get worse as it fills.
 
-**Let it write Python, run it in a container.** A container decides which files
+**Let agent write Python code, run it in a container.** A container decides which files
 and sockets a process gets, while the rule that matters — *the unattended
-agent may not order anything* — is about which operations exist. Inside the
+agent may not order anything* — is about business logic. Inside the
 container, the generated Python program still has permission to delete every
 row in the database.
 
