@@ -87,12 +87,45 @@
     var card = document.getElementById('turn');
     var btn = document.getElementById('grantBtn');
     var chip = document.getElementById('paychip');
+    var btn2 = document.getElementById('grantBtn2');
+    var fschip = document.getElementById('fschip');
+
+    function resetGrant() {
+      card.setAttribute('data-grant', 'off');
+      if (btn)    { btn.setAttribute('aria-pressed', 'false'); }
+      if (btn2)   { btn2.setAttribute('aria-pressed', 'false'); }
+      if (chip)   { chip.classList.remove('on'); }
+      if (fschip) { fschip.classList.remove('on'); }
+    }
+
     if (card && btn) {
       btn.addEventListener('click', function () {
         var on = card.getAttribute('data-grant') === 'on';
         card.setAttribute('data-grant', on ? 'off' : 'on');
         btn.setAttribute('aria-pressed', String(!on));
         if (chip) chip.classList.toggle('on', !on);
+      });
+    }
+    if (card && btn2) {
+      btn2.addEventListener('click', function () {
+        var on = card.getAttribute('data-grant') === 'on';
+        card.setAttribute('data-grant', on ? 'off' : 'on');
+        btn2.setAttribute('aria-pressed', String(!on));
+        if (fschip) fschip.classList.toggle('on', !on);
+      });
+    }
+    if (card) {
+      card.querySelectorAll('.tab-btn').forEach(function (tabBtn) {
+        tabBtn.addEventListener('click', function () {
+          var tab = tabBtn.getAttribute('data-tab');
+          card.querySelectorAll('.tab-btn').forEach(function (b) {
+            b.classList.toggle('active', b === tabBtn);
+          });
+          card.querySelectorAll('[data-scenario]').forEach(function (s) {
+            s.hidden = s.getAttribute('data-scenario') !== tab;
+          });
+          resetGrant();
+        });
       });
     }
     document.querySelectorAll('button.copy').forEach(function (b) {

@@ -305,6 +305,20 @@ h2.sec-title {
 .dots i { width: 11px; height: 11px; border-radius: 50%; display: block; background: #303735; }
 .card-title { font-size: 0.76rem; letter-spacing: .04em; color: var(--code-mut); margin-left: 4px; }
 .card-turn { margin-left: auto; font-size: 0.7rem; letter-spacing: .06em; color: var(--code-mut); text-transform: uppercase; }
+.card[data-grant="off"] .card-turn::after { content: " \2013  failed"; color: var(--bad); }
+.card[data-grant="on"]  .card-turn::after { content: " \2013  ok";     color: var(--ok);  }
+/* --- scenario tabs --- */
+.card-tabs { display: flex; gap: 1px; margin-left: 6px; }
+.tab-btn {
+  font-family: var(--mono); font-size: 0.68rem; letter-spacing: .04em;
+  color: var(--code-mut); background: none; border: 1px solid transparent;
+  padding: 2px 8px; border-radius: 4px; cursor: pointer;
+  transition: color .15s, background .15s, border-color .15s;
+}
+.tab-btn:hover { color: var(--code-ink); }
+.tab-btn.active { color: var(--code-ink); background: var(--code-bg); border-color: var(--code-line); }
+.scenario { display: contents; }
+.scenario[hidden] { display: none; }
 .chat { padding: 14px 16px 4px; font-family: var(--sans); }
 .msg { display: flex; gap: 10px; font-size: 0.9rem; line-height: 1.5; margin-bottom: 10px; }
 .msg .who { font-family: var(--mono); font-size: 0.66rem; letter-spacing: .1em; text-transform: uppercase; padding-top: 3px; min-width: 34px; color: var(--code-mut); }
@@ -325,8 +339,10 @@ h2.sec-title {
 .card[data-grant="on"] .flag { color: var(--t-type); }
 .verdict { border-top: 1px solid var(--code-line); background: var(--code-bg2); }
 .diag { padding: 12px 16px; font-size: 0.8rem; line-height: 1.5; display: none; }
-.card[data-grant="off"] .diag.err { display: block; }
-.card[data-grant="on"]  .diag.ok  { display: block; }
+.card[data-grant="off"] .diag.err  { display: block; }
+.card[data-grant="on"]  .diag.ok   { display: block; }
+.card[data-grant="on"]  .diag.err2 { display: block; }
+.card[data-grant="on"]  .flag2 { text-decoration: underline wavy var(--bad); text-underline-offset: 4px; }
 .diag .file { color: var(--code-mut); }
 .diag .emsg { color: var(--bad); }
 .diag .caret { color: var(--bad); }
@@ -373,8 +389,9 @@ h2.sec-title {
 @media (max-width: 520px){ .features { grid-template-columns: 1fr; } }
 .feat { background: var(--bg-elev); border: 1px solid var(--line-soft); border-radius: var(--radius); padding: 26px 24px; transition: background .15s, border-color .15s, transform .15s; }
 .feat:hover { background: var(--bg-elev2); border-color: color-mix(in srgb, var(--edge) 34%, var(--line)); transform: translateY(-1px); }
-.feat .ic { color: var(--edge); width: 22px; height: 22px; }
-.feat h3 { font-size: 1.04rem; font-weight: 630; margin: 14px 0 7px; letter-spacing: -0.01em; }
+.feat-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.feat .ic { color: var(--edge); width: 22px; height: 22px; flex-shrink: 0; }
+.feat h3 { font-size: 1.04rem; font-weight: 630; margin: 0; letter-spacing: -0.01em; }
 .feat p { color: var(--muted); font-size: 0.93rem; margin: 0; line-height: 1.55; }
 .feat code { font-family: var(--mono); font-size: 0.85em; color: var(--ink); }
 
