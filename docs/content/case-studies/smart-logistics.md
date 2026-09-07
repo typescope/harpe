@@ -1,14 +1,15 @@
 +++
 title = "The Smart Logistics Problem"
 +++
-Restocking a depot is a computation over stock on hand, demand history, supplier
-lead times and case sizes: what to buy, how much, and from which supplier, so
-that it arrives before the shelf is empty.
 
-The computation is easy. The rules that constrain it are not. A rule like "order
-from Nordic 30 days before Christmas" is difficult to support in a conventional
-planning system. As a result, most logistics software does not support such
-high-level rules at all.
+Restocking a depot is a computation over stock on hand, demand history, supplier
+lead times and case sizes. It tells what to buy, and from which supplier — all
+to ensure it arrives before the shelves are empty.
+
+The computation is easy — the rules that constrain it are not. A rule such as
+"order from Nordic 30 days before Christmas" is difficult to support in a
+conventional planning system. As a result, most logistical software doesn't
+support such high-level rules.
 
 ## The variety of rules
 
@@ -17,7 +18,7 @@ Here are three such rules:
 ![A depot manager states three rules — "Nordic shuts down over Christmas", "two
 pallets max — receiving can't take more", and "warn on packaging only below 3
 days". An arrow marked with a question mark points from those rules to a
-traditional logistics system, whose settings are single numbers: safety stock 7,
+traditional logistical system, whose settings are single numbers: safety stock 7,
 reorder point 40, lead time 9. There is no field for any of the three
 rules.](/img/smart-logistics-policy.svg)
 
@@ -50,7 +51,7 @@ kind of rule, and no traditional planning system survives the resulting feature
 explosion.
 
 That is the smart logistics problem: how to support the variety of high-level
-planning rules in logistics software.
+planning rules in logistical software.
 
 ## The agentic solution
 
