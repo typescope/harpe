@@ -161,10 +161,10 @@ network.](/img/smart-logistics-grants.svg)
 
 ## Run it
 
-The template is a complete project. Copy it into your own directory:
+The application is a complete project. Clone it:
 
 ```sh
-jo new my-depot --template typescope/harpe:smart-logistics
+git clone https://github.com/typescope/smart-logistics.git my-depot
 cd my-depot
 pip install -r requirements.txt
 cp .env.example .env

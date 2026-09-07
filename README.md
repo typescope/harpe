@@ -43,7 +43,7 @@ to inspect each part.
 
 ## Start from an application
 
-Six ready-to-run agents live in [`templates/`](templates/), each a `jo new`
+Five ready-to-run agents live in [`templates/`](templates/), each a `jo new`
 template that copies a complete project into your directory — sources, sandbox,
 prompt, and, where it has them, its own tests.
 
@@ -51,7 +51,6 @@ prompt, and, where it has them, its own tests.
 |---|---|---|
 | `web` | browser sessions, streaming, uploads, and downloadable files | [Create a Web Agent](https://harpe.typescope.ai/tutorial/create-web-agent/) |
 | `telegram` | bot sessions, sender authorization, attachments, and Telegram rendering | [Create a Telegram Agent](https://harpe.typescope.ai/tutorial/create-telegram-agent/) |
-| `smart-logistics` | two agents, two capability grants, and policy written as prose | [Smart Logistics](https://harpe.typescope.ai/case-studies/smart-logistics/) |
 | `pr-review` | a GitHub PR reviewer, behind a capability scoped to one external API | [GitHub PR Review](https://harpe.typescope.ai/case-studies/pr-review/) |
 | `flight-booker` | a booking agent that asks a human before the irreversible step | [Flight Booking](https://harpe.typescope.ai/case-studies/flight-booker/) |
 
@@ -70,9 +69,14 @@ jo start
 
 Each template's `.env.example` documents the variables it needs.
 
+`smart-logistics` moved to its own repository,
+[typescope/smart-logistics](https://github.com/typescope/smart-logistics), which is
+cloned rather than created with `jo new`. Its
+[case study](https://harpe.typescope.ai/case-studies/smart-logistics/) stays here.
+
 Every manifest under `templates/` pins a published release rather than the
 framework sources beside it, so a template builds as it stands and an API change
-on `main` does not have to be made in six applications at once. The `cli/` agent
+on `main` does not have to be made in five applications at once. The `cli/` agent
 is not one of them — it builds from these sources, and is the framework's
 end-to-end test subject.
 

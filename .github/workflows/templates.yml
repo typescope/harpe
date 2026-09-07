@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        agent: [hello, web, telegram, pr-review, flight-booker, smart-logistics]
+        agent: [hello, web, telegram, pr-review, flight-booker]
 
     steps:
       - name: Checkout
@@ -61,9 +61,9 @@ jobs:
         working-directory: templates/${{ matrix.agent }}
         run: pip install -r requirements.txt
 
-      # One spec per capability. Most agents grant exactly one and keep it in
-      # sandbox/; an agent that grants several — smart-logistics gives its
-      # watcher and its planner different authority — keeps one directory each.
+      # One spec per capability. Every agent here grants exactly one and keeps
+      # it in sandbox/. An agent granting several would keep one directory each,
+      # and the loop builds either shape.
       - name: Build the sandbox guests
         working-directory: templates/${{ matrix.agent }}
         run: |

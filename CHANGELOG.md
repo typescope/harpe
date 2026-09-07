@@ -9,14 +9,20 @@ them, so `jo new --template typescope/harpe:web` replaces
 
 They keep the pin that made the split worth making: every manifest under
 `templates/` resolves a published release rather than the sources beside it, so
-an API change on `main` still does not have to be made in six applications at
+an API change on `main` still does not have to be made in five applications at
 once. What goes away is the two-repository tax — an agent and the tutorial that
 documents it now change in one pull request, and `cli/` is no longer mirrored
 across a repository boundary at each release.
 
 `cli` is no longer offered as a template. It stays in `cli/`, built from these
 sources, as the framework's end-to-end test subject, and its tutorial is
-removed. `smart-logistics` joins the set, so there are still six.
+removed. That leaves five.
+
+`smart-logistics` is not among them. It lives in
+[typescope/smart-logistics](https://github.com/typescope/smart-logistics),
+carrying the history it had here, and is cloned rather than created with `jo
+new`, so `typescope/harpe:smart-logistics` is no longer a template ref. Its case
+study stays in these docs.
 
 Their checks run in a `Templates` workflow that fires only on a pull request
 touching `templates/`. It is deliberately not the release gate — RELEASE.md
