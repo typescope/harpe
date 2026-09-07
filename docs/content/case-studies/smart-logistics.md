@@ -101,10 +101,10 @@ rule it is, and it takes effect on the next run.
 
 ### The alternatives
 
-**Give the agent a set of tools instead.** It is the safe and right solution if
-a automation task only involves a few tool calls. But a depot holds tens of thousands of products, and each one needs a
-calculation. Sending the data to the model saturates the context window, burns
-tokens and runs up the bill, and the answers get worse as it fills.
+**Give the agent a set of tools instead.** A depot holds tens of thousands of
+products, and each one needs a calculation. Sending the data to the model
+saturates the context window, burns tokens and runs up the bill, and the answers
+get worse as it fills.
 
 **Let agent write Python code, run it in a container.** A container decides which files
 and sockets a process gets, while the rule that matters — *the unattended
