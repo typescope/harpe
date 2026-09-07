@@ -69,7 +69,7 @@ one.](/img/smart-logistics-checks-table.svg)
 The agent applies the rules by checking the database. It issues
 warnings where a rule is broken, and plans draft orders for the depot manager.
 
-The planning and the checks are implemented by running a program created by LLM
+The planning and the checks are performed by running a program created by LLM
 in [Jo](https://jo-lang.org/). Before that program is allowed to run,
 [Harpe](https://github.com/typescope/harpe) checks it against a short list of
 things it is permitted to do: read the stock, read the rules, propose a draft
