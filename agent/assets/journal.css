@@ -256,8 +256,13 @@ main {
   height: 37px;
   padding: 0 14px;
   border-bottom: 1px solid var(--line);
-  background: var(--panel);
   font: 12px var(--ui);
+
+  /* A band, tinted by how deep the lane is, so the eye can tell one lane's
+     header from the next and read the depth off it — the grid puts depth in the
+     column, which says nothing once a branch wraps onto its own row. */
+  background: color-mix(in srgb,
+    var(--accent) calc(12% + var(--lane-depth, 0) * 7%), var(--panel));
 }
 .lanehead .all { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lanehead .n { color: var(--faint); font: 11px var(--mono); }

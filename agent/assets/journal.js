@@ -303,6 +303,7 @@ function row(e, i, lane, prefix) {
 // One lane: every record within `prefix`, in arrival order. `place` is its grid
 // position, and `key` scopes this lane's own expand/collapse state.
 function laneHtml(prefix, key, place, close, matches) {
+  const depth = prefix.length;
   const rows = matches
     .filter(({ e }) => within(pathOf(e), prefix))
     .map(({ e, i }) => row(e, i, key, prefix));
@@ -313,7 +314,7 @@ function laneHtml(prefix, key, place, close, matches) {
     ? `<button type="button" class="close" data-close="${close}" aria-label="Close this lane">✕</button>`
     : '';
 
-  return `<section class="lane" style="${place}" data-path="${esc(JSON.stringify(prefix))}">`
+  return `<section class="lane" style="${place} --lane-depth: ${depth};" data-path="${esc(JSON.stringify(prefix))}">`
     + `<header class="lanehead">${crumb}<span class="n">${rows.length}</span>${shut}</header>`
     + `<div class="rows">${rows.join('') || '<p class="empty">Nothing here.</p>'}</div>`
     + `</section>`;
