@@ -1,17 +1,29 @@
 +++
 title = "Why Harpe?"
 +++
-Harpe is a framework for building **specialized agents**. It enforces
-fine-grained permissions through
-[compile-time sandboxing](/overview/compile-time-sandboxing/). It is not a code
-agent for developing a software project.
+Harpe is a framework for building **specialized agents**.
 
-It is designed for agentic workflows involving critical infrastructure,
-sensitive data, or consequential operations. For security, agents are granted fine-grained permissions that are explicit and reviewable.
+It is designed for agentic workflows that rely on code generation to act on
+critical infrastructure and sensitive data, or to perform consequential
+operations.
 
-![Model-generated code is confined behind a typed boundary. It can reach the trusted runtime and outside world only through capabilities explicitly exposed by the application's API.](/img/typed-sandbox.svg)
+## Why specialized agents?
+
+A general-purpose agent asks to be trusted with broad authority. That is not an
+option where an action moves money, changes an official record, or touches a
+patient's file — finance, banking, government, health care.
+
+A specialized agent has one defined role, so its authority can be cut down to
+that role and checked. That is the **principle of least authority** (PoLA), and
+we believe it is the only way to make an agent fit for high-stake critical
+infrastructure and sensitive data.
 
 ## A typed authority boundary
+
+Harpe enforces fine-grained permissions through
+[compile-time sandboxing](/overview/compile-time-sandboxing/).
+
+![Model-generated code is confined behind a typed boundary. It can reach the trusted runtime and outside world only through capabilities explicitly exposed by the application's API.](/img/typed-sandbox.svg)
 
 For each agent action step, the model writes a Jo program. Harpe compiles it as an
 untrusted guest against capability interfaces chosen by the application.
@@ -40,21 +52,15 @@ the model context.
 
 Harpe takes a specific position on the security consequence: LLM-generated code is
 useful, but they should be confined to only permitted operations.
-Following the principle of least authority (PoLA), we think that granted authority should be
-explicit, narrow, and mechanically checked.
+Following PoLA, we think that granted authority should be explicit, narrow, and
+mechanically checked.
 
-## When Harpe fits
+## The cost of specialized agents
 
-Use Harpe when an agent has a defined role, known integrations, and authority
-that should be narrow and reviewable. If the task requires broad, changing
-access to a development environment, use a code agent instead.
-
-The choice has a cost. You must design capability interfaces and provide
-trustworthy implementations. The work is justified when provable authority control is essential for high-stake infrastructure and sensitive data.
-
-The compiler verifies which capabilities generated code can use. It does not
-prove that an allowed action is correct, cheap, or desirable. Consequential
-operations may still need approval.
+To develop a secure specialized agent, the trust boundary has to be defined
+explicitly. You design the capability interfaces the agent acts through, and
+provide trustworthy implementations behind them. The compiler verifies which
+capabilities generated code can use.
 
 Next: see why [compile-time sandboxing](/overview/compile-time-sandboxing/)
 makes those boundaries durable.
