@@ -22,21 +22,21 @@ val tail = new TailLogger(capacity = 5000)
 val log  = new TeeLogger([new JsonlLogger(sessionPath), tail])
 ```
 
-`Viewer` serves that tail as two routes:
+`Viewer` serves that tail as one route:
 
 ```jo
-case Http.Get("/journal")        => Viewer.respondPage(title, "/journal/events")
-case Http.Get("/journal/events") => Viewer.respondEvents(tail)
+case Http.Get("/journal") => Viewer.respond(tail, title)
 ```
 
 An entry is visible the moment it is logged — no flush, no second process, no
 path to agree on.
 
-Those two routes are the whole integration. The page is one self-contained
-response, so there is no stylesheet or script URL to route, and the `seen`
-cursor and envelope the two exchange stay between them — you choose the paths
-and nothing else. An agent with no HTTP server of its own takes `Viewer.start`
-instead, which binds a port on a daemon thread:
+That one route is the whole integration. It answers with the page, or — when
+the page polls it back with the cursor it has reached — with the entries after
+it. The page is one self-contained response, so there is no stylesheet or
+script URL to route either: you choose a path, and the protocol stays between
+the page and the viewer. An agent with no HTTP server of its own takes
+`Viewer.start` instead, which binds a port on a daemon thread:
 
 ```jo
 val _ = Viewer.start(tail, title, "127.0.0.1", port)
@@ -44,7 +44,7 @@ val _ = Viewer.start(tail, title, "127.0.0.1", port)
 
 That server is quiet: the page polls once a second, and `wsgiref` would
 otherwise write an access line per poll into whatever terminal the agent is
-using. Mounting the routes on a server of your own, call `Http.quiet(httpd)` if
+using. Mounting the route on a server of your own, call `Http.quiet(httpd)` if
 you want the same. Unhandled exceptions still surface either way.
 
 The framework provides the mechanism and stops there. Whether to expose a

@@ -16,10 +16,9 @@
 // fields, and `family` tints by event prefix. Nothing here interprets a record
 // to decide where it goes.
 //
-// The feed's URL comes from the page, because the driver decides where it
-// mounted the viewer.
+// The feed is this page's own URL with a `seen` cursor on it, so the driver
+// mounts one path and the two ends agree on the rest between themselves.
 
-const EVENTS = (window.JOURNAL || {}).events || '/events';
 const POLL_MS = 1000;
 const CLIP_CHARS = 700;
 
@@ -439,7 +438,7 @@ function setStatus(state, text) {
 
 async function poll() {
   try {
-    const res = await fetch(EVENTS + (EVENTS.includes('?') ? '&' : '?') + 'seen=' + seen);
+    const res = await fetch(location.pathname + '?seen=' + seen);
     const data = await res.json();
 
     if (data.seen < seen) {          // a different journal, or a restarted one

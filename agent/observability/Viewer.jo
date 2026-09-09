@@ -2,21 +2,20 @@
   !
   ! A live view of a running agent's journal, in a browser.
   !
-  ! MECHANISM, NOT A DRIVER. Two routes — a page, and the JSON feed it polls —
-  ! over a `TailLogger` the driver logs to. Whether to expose them at all, on
-  ! which port, behind which path, and to whom, is the driver's decision: an
-  ! agent that serves HTTP adds them to the server it already has, and one that
-  ! does not can take `start` below.
-  !
-  ! The `seen` cursor, the envelope the feed returns and the content types are a
-  ! contract between the page and its feed, so a driver never handles them —
-  ! only where the two live.
+  ! MECHANISM, NOT A DRIVER. One route over a `TailLogger` the driver logs to.
+  ! Whether to expose it at all, on which port, behind which path, and to whom,
+  ! is the driver's decision: an agent that serves HTTP adds it to the server it
+  ! already has, and one that does not can take `start` below.
   !
   !     val tail = new TailLogger(capacity = 5000)
   !     val log  = new TeeLogger([new JsonlLogger(path), tail])
   !
-  !     case Http.Get("/journal")        => Viewer.respondPage(title, "/journal/events")
-  !     case Http.Get("/journal/events") => Viewer.respondEvents(tail)
+  !     case Http.Get("/journal") => Viewer.respond(tail, title)
+  !
+  ! ONE ROUTE, because the protocol is nobody else's business. The page polls
+  ! the path it was served from, so the `seen` cursor, the envelope it comes
+  ! back in and the content types stay between the page and this file. A driver
+  ! chooses where the viewer lives and nothing else.
   !
   ! Reading the LOGGER, not a file, is what makes it live: an entry is visible
   ! the moment it is logged, with no flush, no second process, and no path to
@@ -28,7 +27,7 @@
   ! and the page shows lanes that are path PREFIXES. A
   ! driver serving concurrent sessions may tee them all into one tail and narrow
   ! to whichever it wants; one that would rather serve a session at a time gives
-  ! each its own `TailLogger`. Both are the same two functions, and neither needs
+  ! each its own `TailLogger`. Both are the same one function, and neither needs
   ! this file to know what a session, a turn or a tool call is.
   !
   ! Polling, not streaming: the page asks for everything after the position it
@@ -54,26 +53,27 @@ import jo.py.resource.*
 
 section Viewer
 
-  //[ The viewer page, at whatever path the driver routed here.
+  //[ The viewer, at whatever path the driver routed here.
+    !
+    ! The page, or — for the same path carrying the page's `seen` cursor — the
+    ! entries after it. One route rather than two: the page polls where it came
+    ! from, so a driver never sees the cursor or the envelope.
     !
     ! `title` names what this page is showing — an agent, a deployment, one
-    ! session — and is the driver's to choose. `eventsUrl` is where the driver
-    ! mounted `respondEvents`.
+    ! session — and is the driver's to choose.
   //]
-  def respondPage(title: String, eventsUrl: String): py.List receives request =
-    Http.respondHtml(page(title, eventsUrl))
+  def respond(tail: TailLogger, title: String): py.List receives request =
+    val asked = Http.queryParam("seen")
+    if asked == "" then Http.respondHtml(page(title))
+    else
+      val seen = Int.parse(asked) rescue None => 0
+      Http.respond("200 OK", "application/json", events(tail, seen))
 
-  //[ Everything `tail` has logged since the page's last poll. //]
-  def respondEvents(tail: TailLogger): py.List receives request =
-    val seen = Int.parse(Http.queryParam("seen")) rescue None => 0
-    Http.respond("200 OK", "application/json", events(tail, seen))
-
-  private def page(title: String, eventsUrl: String): String =
+  private def page(title: String): String =
     val bundle = new py.resource.ResourceBundle("harpe")
 
     asset(bundle, "journal.html")
       .replace("__NAME__", title)
-      .replace("__EVENTS__", eventsUrl)
       .replace("__STYLE__", asset(bundle, "journal.css"))
       .replace("__SCRIPT__", asset(bundle, "journal.js"))
 
@@ -95,8 +95,8 @@ section Viewer
     ! `host` belongs on a loopback address.
     !
     ! Quiet, because the page polls: an access log here is a line a second in
-    ! whatever terminal the driver was already using. A driver mounting the two
-    ! routes on a server of its own decides that for itself, with `Http.quiet`.
+    ! whatever terminal the driver was already using. A driver mounting the route
+    ! on a server of its own decides that for itself, with `Http.quiet`.
   //]
   def start(tail: TailLogger, title: String, host: String, port: Int): py.Dynamic =
     val httpd = Http.server: host, port, () => route(tail, title)
@@ -106,9 +106,8 @@ section Viewer
 
   private def route(tail: TailLogger, title: String): py.List receives request =
     match request
-    case Http.Get("/")       => respondPage(title, "/events")
-    case Http.Get("/events") => respondEvents(tail)
-    case _                   => Http.notFound()
+    case Http.Get("/") => respond(tail, title)
+    case _             => Http.notFound()
 
   //[ One bundled asset, or a comment saying which one is missing. //]
   private def asset(bundle: py.resource.ResourceBundle, rel: String): String =

@@ -7,13 +7,13 @@ start. `harpe.observability.TailLogger` is a `Logger` that retains the last
 `capacity` entries in memory and lets them be read back, which gives a
 write-only channel a read side, and `harpe.logging.TeeLogger` puts it beside the
 durable backend a driver already had rather than in front of it.
-`harpe.observability.Viewer` serves that tail as two routes — `Viewer.respondPage`
-for the self-contained page and `Viewer.respondEvents` for the feed it polls — so
-an agent already serving HTTP mounts them at paths of its own choosing, and one
-that is not takes `Viewer.start` to bind a port on a daemon thread. The cursor
-and envelope the two exchange stay between them. An entry is visible the
-moment it is logged — no flush, no file path to agree on, no `jo run view` in
-another terminal.
+`harpe.observability.Viewer` serves that tail as one route — `Viewer.respond`
+answers with the self-contained page, or with the entries after the cursor the
+page polls it back with — so an agent already serving HTTP mounts it at a path
+of its own choosing, and one that is not takes `Viewer.start` to bind a port on
+a daemon thread. The cursor and envelope stay between the page and the viewer.
+An entry is visible the moment it is logged — no flush, no file path to agree
+on, no `jo run view` in another terminal.
 
 `harpe.transcript.serve` and the `[module.view]` block every agent declared to
 link it are gone with it. A journal that outlives its process is still a JSONL
