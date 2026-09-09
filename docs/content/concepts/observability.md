@@ -103,6 +103,11 @@ spoke tints the message, and an event is tinted by its prefix, so
 `harpe.tools.*` reads differently from `harpe.turn.*` at a glance. None of it
 decides where a record goes.
 
+A field's value may itself be a tree — `Value` nests maps and lists — and reads
+as one: a line per entry, indented by depth, with no braces or quotes in the way.
+A branch shows what it holds (`{4}`, `[2]`) and opens when you ask, so a record
+with a deep field stays a line or two until you want it.
+
 Hovering a row reveals a `{...}` button that opens the record as the server sent
 it, with the path it sits at. What a lane contains is derived, so this is how you
 tell a wrong grouping from a wrong log.

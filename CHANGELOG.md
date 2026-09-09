@@ -78,6 +78,14 @@ a lane opened by drilling showed the end of that context rather than its start.
 Positions now survive a render: a lane resumes following only once it is back at
 the end, and a newly opened lane begins at the start of the context asked for.
 
+A field whose value is a tree renders as a tree rather than as JSON text: a line
+per entry, indented by depth, each branch showing what it holds (`{4}`, `[2]`)
+and opening on demand. Pretty-printed JSON gave a small map and a deep tree the
+same shape and turned one nested field into thirty lines of braces. Clipping is
+now measured on the text a reader sees rather than on the markup, which had been
+truncating records that fit — a `runCode` record of 496 rendered characters was
+being cut because its markup ran to 942.
+
 Every row carries a `{...}` button, revealed on hover, that opens the record as
 the server sent it together with the path it sits at — which is the whole of what
 decides the lanes it appears in.

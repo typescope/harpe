@@ -389,6 +389,52 @@ main {
 .fields .k { color: var(--faint); }
 .fields + .fields { margin-top: 2px; }
 
+/* One line of a field tree, indented by its depth. `--d` carries the depth so
+   nesting is read off the left edge rather than off punctuation. */
+.leaf {
+  /* Indent stops growing past a point: nesting deeper than this is still
+     legible on the left, where an unbounded indent would push it off. */
+  padding-left: calc(min(var(--d, 0), 10) * 14px);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.leaf .v { color: var(--fg); }
+/* A key is a name, not content: bound it so a pathological one cannot push the
+   value off the line. The whole key is on `title`, and in the raw record. */
+.leaf .k, .pair .k {
+  display: inline-block;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+/* What a closed branch holds: `{4}` or `[2]`. */
+.brief { color: var(--faint); }
+
+.fold {
+  width: 13px;
+  margin-left: -13px;          /* in the gutter, so keys stay aligned */
+  font: 11px/1.5 var(--mono);
+  color: var(--faint);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.fold:hover { color: var(--accent); }
+
+/* The rest of a long branch, on request. */
+.wider {
+  font: 11.5px var(--ui);
+  color: var(--accent);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.wider:hover { text-decoration: underline; }
+
 /* Short scalars on one line, separated rather than stacked. */
 .fields.inline { display: flex; flex-wrap: wrap; gap: 3px 14px; white-space: normal; }
 .pair { white-space: nowrap; }
