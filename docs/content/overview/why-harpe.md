@@ -14,9 +14,12 @@ option where an action moves money, changes an official record, or touches a
 patient's file — finance, banking, government, health care.
 
 A specialized agent has one defined role, so its authority can be cut down to
-that role and checked. That is the **principle of least authority** (PoLA), and
-we believe it is the only way to make an agent fit for high-stake critical
-infrastructure and sensitive data.
+that role and checked. That is the
+[**principle of least authority**](https://en.wikipedia.org/wiki/Principle_of_least_privilege)
+(PoLA), and we believe it is the only way to make an agent fit for high-stake
+critical infrastructure and sensitive data.
+
+![A general agent and a specialized agent side by side. The same five systems appear in both as bubbles: database, REST APIs, files, shell and email. For the general agent every bubble is open, so all of every system is in reach. For the specialized agent three bubbles are masked out entirely, and the two that remain are open only over a small patch of themselves.](/img/general-vs-specialized.svg)
 
 ## A typed authority boundary
 
@@ -43,8 +46,13 @@ and data transformation without routing every intermediate value through the
 model.
 
 This is not unique to Harpe. CodeAct
-[[1]](#reference-codeact) reported that code achieves better task success than
-common text and JSON action formats in its benchmarks. Anthropic
+[[1]](#reference-codeact) evaluated 17 LLMs on API-Bank and M³ToolEval, a
+benchmark of its own, and reported up to a 20% higher success rate for code than
+for the common text and JSON action formats.
+
+![Task success rate by action format on the M³ToolEval benchmark. GPT-4-1106 scores 74.4% with code against 52.4% with JSON and 53.7% with text. Claude-2 scores 54.9% against 39.0% and 29.3%. GPT-3.5-turbo scores 51.2% against 26.8% and 20.7%. These are three of the seventeen models evaluated, and code came first on twelve of them.](/img/codeact-success-rate.svg)
+
+Anthropic
 [[2]](#reference-anthropic) and Cloudflare
 [[3]](#reference-cloudflare) have shown how code execution can reduce
 tool-schema overhead, compose operations, and process intermediate data outside
@@ -55,12 +63,26 @@ useful, but they should be confined to only permitted operations.
 Following PoLA, we think that granted authority should be explicit, narrow, and
 mechanically checked.
 
-## The cost of specialized agents
+## The cost and benefits of typed trust boundaries
 
 To develop a secure specialized agent, the trust boundary has to be defined
 explicitly. You design the capability interfaces the agent acts through, and
-provide trustworthy implementations behind them. The compiler verifies which
-capabilities generated code can use.
+provide trustworthy implementations behind them. The compiler verifies generated
+code can only use explicitly granted capabilities.
+
+In an ACM Queue article, *Safe Coding* [[4]](#reference-safe-coding),
+Christoph Kern distills decades of Google's security engineering into a principle
+of rigorous modular reasoning:
+
+> ... the safety of risky operations within an abstraction must rely solely on
+> assumptions supported by the abstraction's APIs and type signatures.
+> Conversely, the composition of safe abstractions with safe code (i.e., code
+> free of risky operations, which constitutes the vast majority of a program) is
+> automatically verified by the implementation language's type checker.
+
+That is the trade a typed boundary makes: you pay once in designing the
+capability interfaces, and every program the model writes against them is checked
+by the compiler rather than by a reviewer.
 
 Next: see why [compile-time sandboxing](/overview/compile-time-sandboxing/)
 makes those boundaries durable.
@@ -73,3 +95,5 @@ makes those boundaries durable.
    more efficient agents](https://www.anthropic.com/engineering/code-execution-with-mcp)
 3. <span id="reference-cloudflare"></span>[Code Mode: give agents an entire API
    in 1,000 tokens](https://blog.cloudflare.com/code-mode-mcp/)
+4. <span id="reference-safe-coding"></span>[Safe Coding: Rigorous modular
+   reasoning about software safety](https://queue.acm.org/doi/10.1145/3773098)
