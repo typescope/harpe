@@ -20,7 +20,7 @@ it presents them structurally and contextually:
   at once.
 
 - **Content-agnostic.** The viewer assumes only the structure of the logging
-  framework, never the meaning of particular events. It works wherever the logging
+  framework, never the content of logging items. It works wherever the logging
   does, whatever the events and scopes are called.
 
 ## Lanes
