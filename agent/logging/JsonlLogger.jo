@@ -12,6 +12,7 @@ namespace harpe.logging
 import harpe.ffi.json
 
 import harpe.ffi.os
+import harpe.ffi.threading
 import harpe.util.File
 
 //[ Open `path` for appending, creating its parent directory if needed. //]
@@ -24,14 +25,37 @@ private def openLog(path: String): py.Dynamic =
 //[ Append each entry as one JSON line to `path`: `time`, `event`, then its fields
   !
   ! The file is opened once and kept open for the scope.
+  !
+  ! THREAD SAFE ON ITS OWN, because a backend must be (see `Logger`) and a turn's
+  ! tools log concurrently. The lock is cheap and makes the guarantee this
+  ! file's, rather than borrowing it from the host: CPython's buffered writer
+  ! happens to serialize `write` itself, which is a property of that runtime and
+  ! not of the contract.
 //]
 class JsonlLogger(path: String)
   view Logger
 
   private val out: py.Dynamic = openLog(path)
+  private val lock = threading.Lock()
 
   def logEntry(entry: Entry): Unit =
-    out.write(json.dumps(Entry.toDict(entry)) + "\n")
+    // Encoded before the lock is taken: only the file needs exclusive access,
+    // and a record that will not serialize must not hold it up.
+    val line = json.dumps(Entry.toDict(entry)) + "\n"
+
+    lock.acquire()
+    val written = py.try(append(line))
+    lock.release()
+
+    // Released first, then the failure is passed on as it always was — a full
+    // disk should reach the producer, not wedge every later write behind a lock
+    // its owner never let go of.
+    match written
+    case Ok(_)      => pass
+    case Err(error) => abort error.message
+
+  private def append(line: String): Unit =
+    out.write(line)
     out.flush()
 
   def close(): Unit = out.close()

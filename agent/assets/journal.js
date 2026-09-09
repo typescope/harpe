@@ -148,24 +148,11 @@ function body(e, key) {
 // appends outward), so reversing it gives the enclosing scopes in order.
 const pathOf = e => [...(e.context || [])].reverse();
 
-const key = scope => JSON.stringify(scope);
 
 // Is `path` inside `prefix`? A lane holds a scope's records AND everything
-// nested under it, which is what "all of this context" means.
-const within = (path, prefix) =>
-  prefix.every((s, i) => i < path.length && key(path[i]) === key(s));
-
-// A scope as a chip label, derived mechanically so an unknown scope reads as
-// well as a known one: the key names it, the value identifies it, and a nested
-// object contributes its values.
-function scopeLabel(scope) {
-  if (scope === null || typeof scope !== 'object') return String(scope);
-  if (Array.isArray(scope)) return scope.map(scopeLabel).join(' ');
-
-  const brief = v =>
-    v !== null && typeof v === 'object' ? Object.values(v).map(brief).join(' ') : String(v);
-  return Object.entries(scope).map(([k, v]) => `${k} ${brief(v)}`).join(' · ');
-}
+// nested under it, which is what "all of this context" means. A scope is a
+// string identity, so comparing scopes is comparing strings.
+const within = (path, prefix) => prefix.every((s, i) => path[i] === s);
 
 // ---------------------------------------------------------------- the lanes
 
@@ -188,7 +175,7 @@ function chips(e, i, key, prefix) {
 
   const each = shown.map((scope, n) =>
     `<button type="button" class="chip" data-depth="${from + n + 1}" data-row="${i}"`
-    + ` title="Show only this context">${esc(scopeLabel(scope))}</button>`).join('<span class="sep">›</span>');
+    + ` title="Show only this context">${esc(scope)}</button>`).join('<span class="sep">›</span>');
 
   const caret = rest.length > 1
     ? `<button type="button" class="caret" data-key="${key}" aria-label="Show the rest of the path">${open ? '‹' : '▾'}</button>`
@@ -214,9 +201,7 @@ function laneHtml(prefix, key, place, close, matches) {
     .filter(({ e }) => within(pathOf(e), prefix))
     .map(({ e, i }) => row(e, i, key, prefix));
 
-  const crumb = prefix.length === 0
-    ? '<span class="all">all</span>'
-    : `<span class="all">${esc(scopeLabel(prefix[prefix.length - 1]))}</span>`;
+  const crumb = `<span class="all">${esc(prefix.length ? prefix[prefix.length - 1] : 'all')}</span>`;
 
   const shut = close
     ? `<button type="button" class="close" data-close="${close}" aria-label="Close this lane">✕</button>`
@@ -378,7 +363,7 @@ function showRaw(i) {
 
   const path = pathOf(record);
   el.rawEvent.textContent = record.event || '?';
-  el.rawScope.textContent = path.length ? path.map(scopeLabel).join('  ›  ') : 'no context';
+  el.rawScope.textContent = path.length ? path.join('  ›  ') : 'no context';
   el.rawBody.textContent = JSON.stringify(record, null, 2);
   el.raw.showModal();
 }

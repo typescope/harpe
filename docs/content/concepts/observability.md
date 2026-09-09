@@ -83,11 +83,12 @@ This is why the viewer is worth pointing at a journal that is not an agent
 conversation at all: it knows nothing about turns, so it groups any log whose
 records carry scopes.
 
-The one thing it asks of a log is that **a scope be an identity** — stable for
-its unit of work and distinct between instances, which is the convention
-[`Entry`](/concepts/logging/) already describes. A driver that runs concurrent
-exchanges under *no* scope cannot be untangled by any viewer, because the log
-did not record which is which.
+It asks nothing of a log that the format does not already guarantee: a scope
+**is** a string identity — `"harpe.turn.id=209b1e14"` — so being stable for its
+unit of work and distinct between instances is what the type means, not a
+convention a producer might miss. The one case no viewer can untangle is a
+driver running concurrent exchanges under *no* scope, because the log did not
+record which is which.
 
 ## In the CLI agent
 

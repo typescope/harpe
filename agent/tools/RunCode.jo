@@ -257,8 +257,12 @@ class RunCodeTool(
         attachments = []
 
     case Some(donePath) =>
-      gate.acquire()
+      // The directory is made before the slot is taken: `mkdtemp` can fail, and
+      // failing while holding a permit would retire it from the semaphore for
+      // the life of the process.
       val runDir = tempfileMod.mkdtemp(prefix = "run-").asString
+
+      gate.acquire()
       val outcome = py.try(buildAndRun(code, donePath, runDir, guestEnv, interact))
       val _ = py.try(shutilMod.rmtree(runDir, ignore_errors = true))
       gate.release()

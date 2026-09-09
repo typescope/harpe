@@ -10,8 +10,9 @@
   ! entries to different targets by `event` is just another `Logger` impl a
   ! driver can write, so none is provided.
   !
-  ! Backends need not be thread-safe: `Logging.withLogger` installs them behind
-  ! a lock (see Logging.jo), since runs are concurrent.
+  ! A BACKEND MUST BE THREAD SAFE. A turn's tools run concurrently and log as
+  ! they go, and a driver may bind this channel without any scope wrapping it, so
+  ! there is nowhere else the guarantee could come from.
 //]
 
 namespace harpe.logging

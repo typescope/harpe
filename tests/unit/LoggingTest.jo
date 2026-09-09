@@ -15,6 +15,7 @@ import harpe.ffi.builtins
 import harpe.ffi.json
 import harpe.ffi.tempfile
 import harpe.util.File
+import harpe.util.Process
 import harpe.*
 import harpe.logging.*
 import harpe.models.logReplied
@@ -50,6 +51,13 @@ private class Capture
 
   def close(): Unit = closed = true
 end
+
+// One producer thread's share of a concurrent run.
+private def hammer(jsonl: JsonlLogger, worker: Int, rounds: Int): Unit =
+  var i = 0
+  while i < rounds do
+    jsonl.log("harpe.test.concurrent", "worker" ~ worker, "i" ~ i)
+    i = i + 1
 
 // A producer: emits through the ambient `logger` channel.
 private def emitOne(): Unit receives logger =
@@ -123,6 +131,28 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
         check("message", fieldsOf(warnRec).get("warning", "").asString == "rate limited")
         check("extras kept", fieldsOf(warnRec).get("attempt", -1).asInt == 3)
 
+    // A backend is thread safe by contract, and this is the one that writes a
+    // file. It does NOT prove the lock is load-bearing — CPython serializes
+    // `write` on its own, so this passes without it — but it holds the backend
+    // to the contract: concurrent producers, every record present and parseable.
+    test: "keeps every line whole under concurrent producers", () =>
+      val path = os.path.join(tempfile.mkdtemp(), "concurrent.jsonl")
+      val jsonl = new JsonlLogger(path)
+      val workers = [0, 1, 2, 3, 4, 5, 6, 7]
+      val rounds = 50
+
+      var threads: List[py.Dynamic] = []
+      for n in workers do
+        val thread = Process.daemon(() => hammer(jsonl, n, rounds))
+        thread.start()
+        threads = threads + thread
+
+      for thread in threads do thread.join()
+      jsonl.close()
+
+      val all = readRecords(path)
+      check("every record arrived, none torn", all.size == workers.size * rounds)
+
     test: "records model usage with its billing fields", () =>
       withRecords: all =>
         val usageRec = all.get(4)
@@ -141,18 +171,18 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
       Logging.discard.log("runs", "code" ~ "z")
       check("silent", true)
 
-    test: "withContext nests context under its key, never flattening it", () =>
+    test: "withContext keeps the scope out of the record's own fields", () =>
       val path = os.path.join(tempfile.mkdtemp(), "ctx.jsonl")
       val emit: () => Unit receives logger = () => logger.log("harpe.web", "note" ~ "hi")
       val tagged: () => Unit receives logger =
-        () => Logging.withContext(Map("session" ~ "s1"), emit)
+        () => Logging.withContext("myapp.session=s1", emit)
       Logging.withLogger(new JsonlLogger(path), tagged)
 
       val ctxRec = readRecords(path).get(0)
-      val scope = ctxRec.get("context").cast[py.List].get(0).cast[py.Dict]
-      check("scoped", scope.get("session", "").asString == "s1")
+      val scope = ctxRec.get("context").cast[py.List].get(0).asString
+      check("scoped", scope == "myapp.session=s1")
       check("producer field untouched", fieldsOf(ctxRec).get("note", "").asString == "hi")
-      check("not flattened", !ctxRec.contains("session"))
+      check("not flattened into fields", !fieldsOf(ctxRec).contains("myapp.session"))
 
     // Nesting must not cost the record either scope. Records flow through the
     // INNER decorator first and the outer one last, so a mechanism that replaced
@@ -162,9 +192,9 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
       val path = os.path.join(tempfile.mkdtemp(), "nested-ctx.jsonl")
       val emit: () => Unit receives logger = () => logger.log("harpe.web", "note" ~ "hi")
       val inner: () => Unit receives logger =
-        () => Logging.withContext(Map("scope" ~ "inner"), emit)
+        () => Logging.withContext("myapp.scope=inner", emit)
       val outer: () => Unit receives logger =
-        () => Logging.withContext(Map("scope" ~ "outer"), inner)
+        () => Logging.withContext("myapp.scope=outer", inner)
       Logging.withLogger(new JsonlLogger(path), outer)
 
       // The plainest statement of the loss, whatever shape the fix chooses: the
@@ -177,8 +207,8 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
         val list = scopes.cast[py.List]
         check("both scopes kept", list.size == 2)
         if list.size == 2 then
-          check("innermost first", list.get(0).cast[py.Dict].get("scope", "").asString == "inner")
-          check("outermost last", list.get(1).cast[py.Dict].get("scope", "").asString == "outer")
+          check("innermost first", list.get(0).asString == "myapp.scope=inner")
+          check("outermost last", list.get(1).asString == "myapp.scope=outer")
 
   suite: "TeeLogger", () =>
     test: "hands every entry to each of its loggers", () =>

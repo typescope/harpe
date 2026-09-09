@@ -81,21 +81,23 @@ private def probeEntry(name: String): Toolset =
       logger.log("probe")
       new ToolOutcome(name, "ran · \{name}", attachments = [])
 
-// Captures the tool-call context each record was stamped with. Locked, because
-// nothing wraps it in a `SerialLogger` here.
+// Captures the tool-call context each record was stamped with. Locked, as a
+// backend must be — and the lock holds only the mutation, so a change of shape
+// fails the test instead of deadlocking it.
 private class Capture
   view Logger
 
+  private val callTag: String = "harpe.tools.call="
   private val lock = threading.Lock()
   var seen: List[String] = []
 
   def logEntry(entry: Entry): Unit =
+    var stamp = "-"
+    for scope in entry.context if scope.startsWith(callTag) do
+      stamp = scope.substring(callTag.size, scope.size)
+
     lock.acquire()
-    var stamp = py.dict()
-    for item in Entry.toDict(entry).get("context", py.list()).cast[py.List] do
-      val scope = item.cast[py.Dict].get("harpe.tools.call", py.dict()).cast[py.Dict]
-      if scope.size > 0 then stamp = scope
-    seen = seen + "\{entry.event}@\{stamp.get("tool", "-").asString}#\{stamp.get("id", "-").asString}"
+    seen = seen + "\{entry.event}#\{stamp}"
     lock.release()
 
   def close(): Unit = pass
@@ -188,7 +190,8 @@ def executorSuite(): Unit receives thisSuite, logger = suite: "tool call executo
 
     test: "records carry the call they came from, not just the tool", () =>
       // The same tool, twice in one reply — the case where a name identifies
-      // nothing and only the call id tells the two apart.
+      // nothing and only the call id tells the two apart, which is why the
+      // scope carries the id.
       val capture = new Capture
       val _ =
         with logger = capture in
@@ -197,7 +200,7 @@ def executorSuite(): Unit receives thisSuite, logger = suite: "tool call executo
       checkEquals:
         "stamped call ids"
         capture.seen.sortBy(entry => entry).join(",")
-        "probe@a#id0,probe@a#id1"
+        "probe#id0,probe#id1"
 
     test: "a single call is not worth a thread, and still answers", () =>
       checkEquals:

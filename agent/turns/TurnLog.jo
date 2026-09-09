@@ -42,7 +42,7 @@ section TurnLog
   def interruptedEvent: String = "harpe.turn.interrupted"
   def failedEvent: String      = "harpe.turn.failed"
 
-  //[ The scope every record inside one turn is tagged with.
+  //[ The scope key every record inside one turn is tagged with, as `turnKey=<id>`.
     !
     ! A turn is a UNIT OF WORK, not a stretch of the stream. Tagging says which
     ! turn a record belongs to instead of leaving a reader to infer it from what
@@ -62,18 +62,14 @@ section TurnLog
     ! TurnLog.contextLogger() in <the turn>`.
   //]
   def contextLogger(): Logger receives logger =
-    new ContextLogger(logger, Map(turnKey ~ secrets.token_hex(8)))
+    new ContextLogger(logger, "\{turnKey}=\{secrets.token_hex(8)}")
 
   //[ The turns a record was produced under, innermost first. //]
   def turnsOf(entry: Entry): List[String] =
+    val tag = turnKey + "="
     var ids: List[String] = []
-    for scope in entry.context do
-      match scope
-      case m: Map[String, Value] =>
-        match m.getOpt(turnKey)
-        case Some(s: String) => ids = ids + s
-        case _               => pass
-      case _ => pass
+    for scope in entry.context if scope.startsWith(tag) do
+      ids = ids + scope.substring(tag.size, scope.size)
     ids
 
   //[ The turn that produced this record — the innermost, when turns nest. //]

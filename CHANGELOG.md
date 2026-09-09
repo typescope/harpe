@@ -19,6 +19,37 @@ another terminal.
 link it are gone with it. A journal that outlives its process is still a JSONL
 file and still `jq`'s job.
 
+`SerialLogger` is gone, and a `Logger` backend is now thread safe by contract.
+It was installed only by `Logging.withLogger`, and a driver that binds the
+`logger` channel directly — as the CLI agent does — never got it, so the promise
+that "backends need not be thread-safe" was already false where a turn's tools
+log concurrently. The guarantee moves to the backends, which is where the
+knowledge is: `JsonlLogger` locks its file, `TailLogger` its window, and
+`NullLogger`, `TeeLogger` and `ContextLogger` own no state to protect.
+
+That also retires a deadlock. `SerialLogger` held its lock across the wrapped
+backend's `logEntry`, so a backend that raised once — a third-party one, which
+the docs invite — never released it and every later `log` call blocked forever.
+The same shape is fixed in `BrokerApprovals`, which held its lock across a broker
+round trip, and in `runCode`, which could fail in `mkdtemp` while holding a
+semaphore permit and retire it for the life of the process.
+
+**A scope is now a string, not a `Value`.** `Entry.context` is `List[String]`
+and `Logging.withContext` takes one scope string, by convention
+`"<dotted key>=<id>"` — `"harpe.turn.id=209b1e14"`, `"harpe.tools.call=call_678b92"`.
+What a reader does with context is tell one unit of work from another, which
+needs the scope to be an identity; making it a string is what stops a producer
+supplying something that is not one. Detail about the unit belongs in the fields
+of the records under it, where it is queryable: the tool-call scope carries the
+call id and no longer the tool name, which those records already name.
+
+Downstream this deletes rather than simplifies — the viewer's scope-comparison
+and label-derivation helpers both collapse to identity, and `jq` gets
+`select(.context | index("myapp.session=alpha"))`.
+
+BREAKING, with no migration: journals written before this carry object scopes,
+so they will not resume and their scopes render as raw JSON in the viewer.
+
 The page groups by structure alone. A record's `context` is its scope chain
 innermost-first, so reversed it is the path from the root, and a lane is a path
 prefix: the leftmost is every record in arrival order, and clicking a scope opens

@@ -35,7 +35,7 @@ The logging mechanism is built around three properties:
 Every logged event becomes an `Entry`:
 
 ```jo
-class Entry(time: Float, event: String, fields: Map[String, Value], context: List[Value])
+class Entry(time: Float, event: String, fields: Map[String, Value], context: List[String])
 
 type Value =
   (String | Float | Value.IntVal | Value.BoolVal | List[Value] | Map[String, Value])
@@ -53,8 +53,9 @@ end
   `harpe.model.replied` or `myagent.tools.weather.called`.
 - `fields` contains the facts specific to that event.
 - `context` is the ambient scopes the record was produced under — a session, a
-  turn, the tool call inside it — innermost first. Scopes are kept apart from
-  `fields`, so ambient context can never collide with a producer's own keys.
+  turn, the tool call inside it — innermost first. Each is a string identifying
+  one unit of work (`"harpe.turn.id=209b1e14"`), kept apart from `fields` so
+  ambient context can never collide with a producer's own keys.
 
 `IntVal` and `BoolVal` are implementation adapters. At the call site, integers
 and booleans are passed directly, just like strings and floats. A field can also
@@ -384,6 +385,7 @@ logger.error(event, message, ...)                   // an error
 
 // install a Logger — where events go (in the driver's entry point)
 Logging.withLogger(myLogger, () => run())           // myLogger: any Logger
+Logging.withContext("myapp.session=42", () => ...)  // tag entries with a scope
 Logging.discard                                     // a no-op Logger (tests, logging off)
 new TeeLogger([first, second])                      // one entry, several destinations
 
@@ -393,7 +395,7 @@ interface Logger
   def close(): Unit
 end
 
-class Entry(time: Float, event: String, fields: Map[String, Value], context: List[Value])
+class Entry(time: Float, event: String, fields: Map[String, Value], context: List[String])
 ```
 
 Field values are `String`, `Int`, `Float`, `Bool`, `List[Value]`, or a nested
@@ -403,6 +405,18 @@ Use `Logging.withContext` when several sessions share one logging destination.
 Per-session destinations do not need that redundant scope. Nesting it is safe:
 each scope is added to `context` rather than over the one enclosing it, so a
 record keeps every scope it was produced under.
+
+A scope is a **string, and an identity** — stable for the unit of work it names
+and distinct between instances, by convention `"<dotted key>=<id>"`:
+
+```jo
+Logging.withContext("myapp.session=\{id}", () => runTurn())
+```
+
+Detail about the unit goes in the `fields` of the records produced under it,
+where it can be queried, rather than in the name of the scope. That is what lets
+a reader group a log by structure alone — see
+[Observability](/concepts/observability/).
 
 ## Turn history and transcript loading
 

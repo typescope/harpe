@@ -33,28 +33,29 @@ section Logging
   //[ A no-op logger — nothing is recorded (see `NullLogger`). //]
   def discard: Logger = NullLogger
 
-  //[ Run `work` with `backend` installed as the `logger` channel.
+  //[ Run `work` with `backend` installed as the `logger` channel, and close it after.
     !
-    ! Every `log` call is serialized (through a `SerialLogger`), so `backend` need
-    ! not be thread-safe. The backend is closed when `work` returns.
+    ! It installs `backend` itself. Wrapping it in a serializing decorator here
+    ! would promise thread safety that a driver binding `logger` directly never
+    ! gets, so the guarantee belongs to the backend (see `Logger`).
   //]
   def withLogger[T](backend: Logger, work: () => T receives logger): T =
-    val result = with logger = new SerialLogger(backend) in work()
+    val result = with logger = backend in work()
     backend.close()
     result
 
-  //[ Run `work` with `context` added as a scope on its log entries
+  //[ Run `work` with `scope` added to the context of its log entries
     !
     ! The application-defined "which user / which session" of a turn. It lands in
     ! the entry's context list, never in `fields`, so it cannot collide with a
-    ! producer's own keys. The content is the app's to choose. A driver wraps its
-    ! turn:
+    ! producer's own keys. A driver wraps its turn:
     !
-    ! Logging.withContext(Map("session" ~ id), () => Agent.runTurn(...))
+    ! Logging.withContext("myapp.session=\{id}", () => Agent.runTurn(...))
     !
-    ! Nesting is safe: an inner scope is added to the list, never over the outer
-    ! one, so a record carries every scope it was produced under.
+    ! A scope is an identity, and `"<dotted key>=<id>"` is the convention — see
+    ! `Entry`. Nesting is safe: an inner scope is added to the list, never over
+    ! the outer one, so a record carries every scope it was produced under.
   //]
-  def withContext[T](context: Map[String, Value], work: () => T receives logger): T =
-    with logger = new ContextLogger(logger, context) in work()
+  def withContext[T](scope: String, work: () => T receives logger): T =
+    with logger = new ContextLogger(logger, scope) in work()
 end

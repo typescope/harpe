@@ -23,16 +23,13 @@
   ! agree on. A journal that outlives the process is a `jq` job over whatever
   ! durable backend the driver teed the tail with.
   !
-  ! HOW MANY CONVERSATIONS A TAIL HOLDS IS NOT THIS FILE'S BUSINESS. A driver
-  ! serving concurrent sessions may tee them all into one, and the page pairs
-  ! each turn's bracket within the conversation its records name — the outermost
-  ! `Logging.withContext` scope that is not `TurnLog.turnKey` — rather than
-  ! positionally, so interleaved sessions stay separate cards. Excluding the turn
-  ! scope is what makes a driver that installs NO context work: the engine tags a
-  ! turn's records with one and the bracket around them carries none, so counting
-  ! it would file the two apart and leave every card reading "running". A driver
-  ! that would rather serve one session at a time gives each its own `TailLogger`
-  ! and routes accordingly — both are the same two functions.
+  ! HOW MANY CONVERSATIONS A TAIL HOLDS IS NOT THIS FILE'S BUSINESS. GROUPING IS
+  ! STRUCTURAL: a record's `context` is its scope chain innermost-first, so
+  ! reversed it is a path, and the page shows lanes that are path PREFIXES. A
+  ! driver serving concurrent sessions may tee them all into one tail and narrow
+  ! to whichever it wants; one that would rather serve a session at a time gives
+  ! each its own `TailLogger`. Both are the same two functions, and neither needs
+  ! this file to know what a session, a turn or a tool call is.
   !
   ! Polling, not streaming: the page asks for everything after the position it
   ! last saw. A poll costs a list slice, and a reader that reconnects, or that
