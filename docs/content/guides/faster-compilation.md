@@ -9,8 +9,8 @@ This is an optional performance optimization. It does not change the capability
 boundary or the generated program.
 
 > **Note.** The best performance comes from a long-running JVM compilation
-> server, which pays the startup cost once rather than on every call. Contact us
-> if you need one.
+> server, which pays the startup cost once rather than on every call. Please
+> contact us if you need technical support for setting up a compilation server.
 
 ## Build the native launcher
 
