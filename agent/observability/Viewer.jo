@@ -2,15 +2,15 @@
   !
   ! A live view of a running agent's journal, in a browser.
   !
-  ! MECHANISM, NOT A DRIVER. One route over a `TailLogger` the driver logs to.
+  ! MECHANISM, NOT A DRIVER. One route over a `ViewLogger` the driver logs to.
   ! Whether to expose it at all, on which port, behind which path, and to whom,
   ! is the driver's decision: an agent that serves HTTP adds it to the server it
   ! already has, and one that does not can take `start` below.
   !
-  !     val tail = new TailLogger(capacity = 5000)
-  !     val log  = new TeeLogger([new JsonlLogger(path), tail])
+  !     val viewLog = new ViewLogger(capacity = 5000)
+  !     val log     = new TeeLogger([new JsonlLogger(path), viewLog])
   !
-  !     case Http.Get("/journal") => Viewer.respond(tail, title)
+  !     case Http.Get("/journal") => Viewer.respond(viewLog, title)
   !
   ! ONE ROUTE, because the protocol is nobody else's business. The page polls
   ! the path it was served from, so the `seen` cursor, the envelope it comes
@@ -20,14 +20,14 @@
   ! Reading the LOGGER, not a file, is what makes it live: an entry is visible
   ! the moment it is logged, with no flush, no second process, and no path to
   ! agree on. A journal that outlives the process is a `jq` job over whatever
-  ! durable backend the driver teed the tail with.
+  ! durable backend the driver teed it with.
   !
   ! HOW MANY CONVERSATIONS A TAIL HOLDS IS NOT THIS FILE'S BUSINESS. GROUPING IS
   ! STRUCTURAL: a record's `context` IS its path from the root, outermost first,
   ! and the page shows lanes that are path PREFIXES. A
-  ! driver serving concurrent sessions may tee them all into one tail and narrow
+  ! driver serving concurrent sessions may tee them all into one and narrow
   ! to whichever it wants; one that would rather serve a session at a time gives
-  ! each its own `TailLogger`. Both are the same one function, and neither needs
+  ! each its own `ViewLogger`. Both are the same one function, and neither needs
   ! this file to know what a session, a turn or a tool call is.
   !
   ! Polling, not streaming: the page asks for everything after the position it
@@ -62,12 +62,12 @@ section Viewer
     ! `title` names what this page is showing — an agent, a deployment, one
     ! session — and is the driver's to choose.
   //]
-  def respond(tail: TailLogger, title: String): py.List receives request =
+  def respond(viewLog: ViewLogger, title: String): py.List receives request =
     val asked = Http.queryParam("seen")
     if asked == "" then Http.respondHtml(page(title))
     else
       val seen = Int.parse(asked) rescue None => 0
-      Http.respond("200 OK", "application/json", events(tail, seen))
+      Http.respond("200 OK", "application/json", events(viewLog, seen))
 
   private def page(title: String): String =
     val bundle = new py.resource.ResourceBundle("harpe")
@@ -77,9 +77,9 @@ section Viewer
       .replace("__STYLE__", asset(bundle, "journal.css"))
       .replace("__SCRIPT__", asset(bundle, "journal.js"))
 
-  //[ Everything `tail` has logged after `seen`, as the page's JSON envelope. //]
-  private def events(tail: TailLogger, seen: Int): String =
-    val window = tail.since(seen)
+  //[ Everything `viewLog` has logged after `seen`, as the page's JSON envelope. //]
+  private def events(viewLog: ViewLogger, seen: Int): String =
+    val window = viewLog.since(seen)
 
     val entries = py.list()
     for entry in window.entries do entries.append(Entry.toDict(entry))
@@ -99,14 +99,14 @@ section Viewer
     ! whatever terminal the driver was already using. A driver mounting the route
     ! on a server of its own decides that for itself, with `Http.quiet`.
   //]
-  def start(tail: TailLogger, title: String, host: String, port: Int): Unit =
-    val httpd = Http.server: host, port, () => route(tail, title)
+  def start(viewLog: ViewLogger, title: String, host: String, port: Int): Unit =
+    val httpd = Http.server: host, port, () => route(viewLog, title)
     Http.quiet(httpd)
     Process.daemon(() => httpd.serve_forever()).start()
 
-  private def route(tail: TailLogger, title: String): py.List receives request =
+  private def route(viewLog: ViewLogger, title: String): py.List receives request =
     match request
-    case Http.Get("/") => respond(tail, title)
+    case Http.Get("/") => respond(viewLog, title)
     case _             => Http.notFound()
 
   //[ One bundled asset, or a comment saying which one is missing. //]

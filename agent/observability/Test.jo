@@ -153,12 +153,12 @@ private def seed(): Unit receives logger =
   exchange("extremes", "Stress the viewer", () => extremes())
 
 def test(): Unit receives stdout =
-  val tail = new TailLogger(capacity = 5000)
-  with logger = tail in seed()
+  val viewLog = new ViewLogger(capacity = 5000)
+  with logger = viewLog in seed()
 
   val host = os.getenv("HOST", "127.0.0.1")
   val port = Int.parse(os.getenv("PORT", "8760")) rescue None => 8760
-  Viewer.start(tail, "seeded journal", host, port)
+  Viewer.start(viewLog, "seeded journal", host, port)
 
   println ""
   println "  seeded journal · http://\{host}:\{port}"

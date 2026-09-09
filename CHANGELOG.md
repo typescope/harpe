@@ -3,11 +3,11 @@
 ## Unreleased
 
 The journal viewer is now something a driver mounts, not a second process you
-start. `harpe.observability.TailLogger` is a `Logger` that retains the last
+start. `harpe.observability.ViewLogger` is a `Logger` that retains the last
 `capacity` entries in memory and lets them be read back, which gives a
 write-only channel a read side, and `harpe.logging.TeeLogger` puts it beside the
 durable backend a driver already had rather than in front of it.
-`harpe.observability.Viewer` serves that tail as one route — `Viewer.respond`
+`harpe.observability.Viewer` serves that window as one route — `Viewer.respond`
 answers with the self-contained page, or with the entries after the cursor the
 page polls it back with — so an agent already serving HTTP mounts it at a path
 of its own choosing, and one that is not takes `Viewer.start` to bind a port on
@@ -71,7 +71,7 @@ It was installed only by `Logging.withLogger`, and a driver that binds the
 `logger` channel directly — as the CLI agent does — never got it, so the promise
 that "backends need not be thread-safe" was already false where a turn's tools
 log concurrently. The guarantee moves to the backends, which is where the
-knowledge is: `JsonlLogger` locks its file, `TailLogger` its window, and
+knowledge is: `JsonlLogger` locks its file, `ViewLogger` its window, and
 `NullLogger`, `TeeLogger` and `ContextLogger` own no state to protect.
 
 That also retires a deadlock. `SerialLogger` held its lock across the wrapped
@@ -170,7 +170,7 @@ still records nothing, because nothing ran.
 **Templates**: `templates/` still pins the previous release, so `web` and
 `telegram` keep their `[module.view]` block for now. Retargeting them (RELEASE.md
 step 8) means dropping that block, teeing each session's `JsonlLogger` with a
-`TailLogger`, and mounting the two routes behind a switch of the driver's own.
+`ViewLogger`, and mounting the two routes behind a switch of the driver's own.
 
 The agent templates come back from `typescope/agents`, with that repository's
 history, and live under `templates/`. `jo-templates.jsonl` at the root names

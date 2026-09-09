@@ -262,7 +262,7 @@ For two destinations rather than one, `TeeLogger` hands each entry to every
 logger it holds, in order:
 
 ```jo
-val log = new TeeLogger([new JsonlLogger(path), new TailLogger(capacity = 5000)])
+val log = new TeeLogger([new JsonlLogger(path), new ViewLogger(capacity = 5000)])
 ```
 
 That is how the [journal viewer](/concepts/observability/) reads a session as it

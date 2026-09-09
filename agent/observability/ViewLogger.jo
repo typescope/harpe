@@ -1,8 +1,13 @@
-//[ TailLogger.jo
+//[ ViewLogger.jo
   !
   ! A `Logger` that keeps the most recent entries in memory: `Logger` is
   ! write-only, so nothing could show a log while it was being written. `since`
   ! is the read side, and `Viewer` serves it.
+  !
+  ! IT EXISTS FOR THE VIEWER. A driver constructs one and tees it, so it has to
+  ! be public, but `since` is the page's protocol rather than a general-purpose
+  ! read side — it changes when the viewer needs it to. Retaining a log for some
+  ! other purpose is a `Logger` of your own, which is a dozen lines.
   !
   ! It retains INSTEAD of storing, so a driver wanting both tees it beside the
   ! backend it already had.
@@ -28,7 +33,7 @@ import harpe.logging.Logger
 class Tail(logged: Int, dropped: Int, entries: List[Entry])
 
 //[ Retain the last `capacity` entries, and nothing else. //]
-class TailLogger(capacity: Int)
+class ViewLogger(capacity: Int)
   view Logger
 
   private val lock = threading.Lock()
