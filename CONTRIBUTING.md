@@ -30,6 +30,12 @@ jo run test -- e2e           # the shipped agents, built and run as their own pr
 jo run test -- e2e/cli       # just one of them
 ```
 
+`jo run viewer` serves a seeded journal on 8760, for the parts of the journal
+viewer no suite can judge. It holds a plain exchange, two interleaved sessions,
+and a lane of extremes — a program in one field, a 2000-character key, thirty
+levels of nesting, an 800-entry array — which is what a change to it tends to
+break. The seed drives the real producers, so it cannot drift from the format.
+
 The `e2e` suite lives beside the agent it drives, in `cli/tests/`, and runs from
 there. It builds the agent through its own `jo.toml` — against this branch's
 sources — starts it as its own process, and types at it through a

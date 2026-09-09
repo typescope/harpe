@@ -90,6 +90,18 @@ Every row carries a `{...}` button, revealed on hover, that opens the record as
 the server sent it together with the path it sits at — which is the whole of what
 decides the lanes it appears in.
 
+`harpe.observability.test` serves a seeded journal for looking at the viewer by
+hand — a plain exchange, two interleaved sessions, and a lane of deliberate
+extremes — reached by a module declaring no sources of its own, which is what
+`jo run viewer` is here. It drives `Journal`, `TurnLog` and `Logging.withContext`
+rather than writing JSON, so the seed cannot drift from the format.
+
+A record's `context` is now stored OUTERMOST FIRST — it is the path from the
+root, written the direction paths are written, so the stored order is the order
+the lanes and chips read in. `ContextLogger` prepends where it appended, and
+`TurnLog.innerTurn`/`outerTurn` swap ends. Journals written before this have
+their context reversed.
+
 `Http.quiet` silences a WSGI server's per-request access log, which a page
 polling once a second would otherwise write into the terminal its driver is
 using. `Viewer.start` applies it, and a driver mounting the routes on a server of
