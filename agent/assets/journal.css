@@ -62,9 +62,17 @@
 
 * { box-sizing: border-box; }
 
+/* The page itself does not scroll: the lanes do, each its own. A column of
+   header-then-lanes, sized by the flex box rather than by subtracting a guess at
+   the header's height from the viewport — which left a page scrollbar whenever
+   the guess was low. */
+html, body { height: 100%; }
+
 body {
   margin: 0;
-  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   color: var(--fg);
   font: 14px/1.5 var(--ui);
   -webkit-font-smoothing: antialiased;
@@ -197,7 +205,8 @@ input[type=checkbox] { accent-color: var(--accent); margin: 0; }
 main {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 53px);
+  flex: 1;
+  min-height: 0;
   padding: 0;
   overflow: hidden;
 }
@@ -546,10 +555,12 @@ dialog#raw pre {
   header { flex-wrap: wrap; gap: 10px 14px; }
   .search { order: 3; flex-basis: 100%; max-width: none; }
   .state { order: 2; }
-  main { height: auto; overflow: visible; display: block; }
+  /* Stacked, so here the PAGE is what scrolls. */
+  html, body { height: auto; }
+  body { display: block; overflow: visible; }
+  main { flex: none; min-height: 0; overflow: visible; display: block; }
   /* No room for columns: the tree becomes a stack, in the order it was opened. */
   .lanegrid { display: block; overflow: visible; }
-  .lane { border-right: none; }
   .lane { border-right: none; border-bottom: 1px solid var(--line); }
   .rows { overflow-y: visible; padding-bottom: 24px; }
   .row { grid-template-columns: 60px minmax(0, 1fr); }
