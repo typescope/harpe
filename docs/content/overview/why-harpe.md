@@ -90,10 +90,13 @@ makes those boundaries durable.
 ## References
 
 1. <span id="reference-codeact"></span>[Executable Code Actions Elicit Better
-   LLM Agents](https://arxiv.org/abs/2402.01030)
+   LLM Agents](https://arxiv.org/abs/2402.01030). Wang et al., 2024.
 2. <span id="reference-anthropic"></span>[Code execution with MCP: Building
-   more efficient agents](https://www.anthropic.com/engineering/code-execution-with-mcp)
+   more efficient
+   agents](https://www.anthropic.com/engineering/code-execution-with-mcp).
+   Anthropic, 2025.
 3. <span id="reference-cloudflare"></span>[Code Mode: give agents an entire API
-   in 1,000 tokens](https://blog.cloudflare.com/code-mode-mcp/)
+   in 1,000 tokens](https://blog.cloudflare.com/code-mode-mcp/). Cloudflare, 2026.
 4. <span id="reference-safe-coding"></span>[Safe Coding: Rigorous modular
-   reasoning about software safety](https://queue.acm.org/doi/10.1145/3773098)
+   reasoning about software safety](https://queue.acm.org/doi/10.1145/3773098).
+   Christoph Kern, 2025.
