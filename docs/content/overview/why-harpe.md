@@ -80,9 +80,9 @@ of rigorous modular reasoning:
 > free of risky operations, which constitutes the vast majority of a program) is
 > automatically verified by the implementation language's type checker.
 
-That is the trade a typed boundary makes: you pay once in designing the
-capability interfaces, and every program the model writes against them is checked
-by the compiler rather than by a reviewer.
+That is the benefit of a typed trust boundary: you pay once in designing the
+capability interfaces, and every program LLMs write against them is checked by the
+compiler rather than by a reviewer.
 
 Next: see why [compile-time sandboxing](/overview/compile-time-sandboxing/)
 makes those boundaries durable.
