@@ -64,22 +64,6 @@ the root — outermost scope first, the one that produced the record last — an
 
 ![The viewer drilling into a live journal. It opens on one lane, "all", holding every record in arrival order. Clicking a turn's scope opens a second lane beside it with that turn's records; clicking the tool call inside it opens a third. A second turn, opened from the leftmost lane, appears as a new row below rather than replacing anything, so both turns stay open at once. A record's raw JSON opens in a panel over the page.](/img/journal-lanes.gif)
 
-## In the CLI agent
-
-The bundled CLI agent wires it, and leaves it off:
-
-```sh
-JOURNAL_PORT=8760 jo run
-```
-
-```
-  journal · http://127.0.0.1:8760
-```
-
-Opt-in, because a terminal agent that opens a listening socket nobody asked for
-is a surprise. It also builds the tee only when the port is set, so an unwatched
-run keeps no second copy in memory.
-
 ## Reading it from the shell
 
 The viewer reads the live process. The file the teed `JsonlLogger` wrote outlives
