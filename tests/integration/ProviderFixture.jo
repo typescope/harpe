@@ -11,7 +11,6 @@ import harpe.Http
 import harpe.Http.request
 import harpe.ffi.json
 import harpe.util.Process
-import harpe.ffi.builtins
 
 section ProviderFixture
   //[ One scripted response
@@ -109,21 +108,6 @@ section ProviderFixture
       py.call(request.startResponse, answer.status, answer.headers)
       encode(answer.chunks)
 
-  //[ Stop the server writing an access line per request to stderr
-    !
-    ! `wsgiref` logs every exchange, which would interleave with the test report.
-    ! Its handler calls `log_message` for that, so pointing the name at a logger
-    ! nobody has configured drops the line while leaving real errors alone.
-  //]
-  private def quieten(httpd: py.Dynamic): Unit =
-    val wsgi = py.module("wsgiref.simple_server")
-    val discard = py.module("logging").getLogger("harpe.test.fixture").debug
-    val quiet = builtins.newType:
-      "QuietWSGIRequestHandler"
-      py.tuple(wsgi.WSGIRequestHandler)
-      py.dict("log_message" ~ discard)
-    py.module("builtins").setattr(httpd, "RequestHandlerClass", quiet)
-
   //[ Run `test` against a local server with an ordered response script.
     !
     ! Port zero avoids collisions. `serve_forever` permits retries and other
@@ -132,7 +116,7 @@ section ProviderFixture
   def withResponses(responses: List[Response], test: Server => Unit): Unit =
     val requests = py.list()
     val httpd = Http.server("127.0.0.1", 0, () => serve(responses, requests))
-    quieten(httpd)
+    Http.quiet(httpd)
     val port = httpd.server_port.asInt
     val server = new Server("http://127.0.0.1:\{port}", port, requests)
     val thread = Process.daemon: () => httpd.serve_forever(poll_interval = 0.01)

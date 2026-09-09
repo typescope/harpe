@@ -7,10 +7,11 @@ start. `harpe.observability.TailLogger` is a `Logger` that retains the last
 `capacity` entries in memory and lets them be read back, which gives a
 write-only channel a read side, and `harpe.logging.TeeLogger` puts it beside the
 durable backend a driver already had rather than in front of it.
-`harpe.observability.Viewer` serves that tail: `Viewer.page` returns one
-self-contained page and `Viewer.respondEvents` its feed, so an agent already
-serving HTTP adds two routes at a path of its own choosing, and one that is not
-takes `Viewer.start` to bind a port on a daemon thread. An entry is visible the
+`harpe.observability.Viewer` serves that tail as two routes — `Viewer.respondPage`
+for the self-contained page and `Viewer.respondEvents` for the feed it polls — so
+an agent already serving HTTP mounts them at paths of its own choosing, and one
+that is not takes `Viewer.start` to bind a port on a daemon thread. The cursor
+and envelope the two exchange stay between them. An entry is visible the
 moment it is logged — no flush, no file path to agree on, no `jo run view` in
 another terminal.
 
@@ -18,17 +19,48 @@ another terminal.
 link it are gone with it. A journal that outlives its process is still a JSONL
 file and still `jq`'s job.
 
-A tail holds whatever it was logged, which may be several conversations at once.
-The page now pairs each turn's bracket within the scope its records carry
-(`Logging.withContext`) instead of positionally, so a driver may tee every
-concurrent session into one tail without their turns closing each other's cards,
-and the scope is labelled per card once more than one is present. Giving each
-session its own tail still works, through the same two functions.
+The page groups by structure alone. A record's `context` is its scope chain
+innermost-first, so reversed it is the path from the root, and a lane is a path
+prefix: the leftmost is every record in arrival order, and clicking a scope opens
+a lane holding that scope and everything nested under it — `all › session › turn
+› tool call`. No event name, no scope key and no record's position decides what a
+lane contains, so a producer can invent scopes and they nest correctly without
+the viewer learning about them. Concurrent conversations are handled by narrowing
+and nesting by drilling, so neither needs a rule.
+
+Opening a context never closes another: the lanes are a tree laid out as a grid,
+a branch to a row and a depth to a column, with the root spanning them all.
+Drilling grows a row rightward and opening something off that path starts a row
+below it, so two deep contexts — one session's turn beside another's — stay
+comparable. Re-clicking a context that is already open highlights it instead.
+
+That replaces the turn cards, their outcome badges, and the bracket pairing
+behind them. What remains of content knowledge is presentation that falls back —
+a message renders as speech, anything else as its fields — and none of it decides
+where a record goes. The viewer is therefore useful against any journal whose
+records carry scopes, not only an agent's.
+
+Every row carries a `{...}` button, revealed on hover, that opens the record as
+the server sent it together with the path it sits at — which is the whole of what
+decides the lanes it appears in.
+
+`Http.quiet` silences a WSGI server's per-request access log, which a page
+polling once a second would otherwise write into the terminal its driver is
+using. `Viewer.start` applies it, and a driver mounting the routes on a server of
+its own can. Unhandled exceptions still surface. The provider test fixture drops
+its private copy of this.
 
 The framework binds nothing on its own: whether to expose a journal, where, and
 to whom is the driver's call, since the page has no authentication and carries
 whole conversations. The CLI agent serves it only when `JOURNAL_PORT` is set,
 and builds the tee only then, so an unwatched run keeps no second copy.
+
+The CLI agent's `runBash` records what it ran: `harpe.tools.runBash.ran` carries
+the `command`, `exitCode`, `runSeconds` and `output`, and
+`harpe.tools.runBash.timedOut` the `command` and the cap that stopped it. It is
+the least confined thing the agent can do and it was logging nothing, so a shell
+command was only ever prose inside a tool result. A command the user refused
+still records nothing, because nothing ran.
 
 **Templates**: `templates/` still pins the previous release, so `web` and
 `telegram` keep their `[module.view]` block for now. Retargeting them (RELEASE.md

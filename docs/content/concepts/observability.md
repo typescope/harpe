@@ -25,69 +25,69 @@ val log  = new TeeLogger([new JsonlLogger(sessionPath), tail])
 `Viewer` serves that tail as two routes:
 
 ```jo
-case Http.Get("/journal")        => Http.respondHtml(Viewer.page(id, "/journal/events"))
+case Http.Get("/journal")        => Viewer.respondPage(title, "/journal/events")
 case Http.Get("/journal/events") => Viewer.respondEvents(tail)
 ```
 
 An entry is visible the moment it is logged — no flush, no second process, no
 path to agree on.
 
-`Viewer.page` returns one self-contained page, so those two routes are the whole
-integration: no stylesheet or script URL to route, and the path is yours to
-choose. An agent with no HTTP server of its own takes `Viewer.start` instead,
-which binds a port on a daemon thread:
+Those two routes are the whole integration. The page is one self-contained
+response, so there is no stylesheet or script URL to route, and the `seen`
+cursor and envelope the two exchange stay between them — you choose the paths
+and nothing else. An agent with no HTTP server of its own takes `Viewer.start`
+instead, which binds a port on a daemon thread:
 
 ```jo
 val _ = Viewer.start(tail, title, "127.0.0.1", port)
 ```
 
+That server is quiet: the page polls once a second, and `wsgiref` would
+otherwise write an access line per poll into whatever terminal the agent is
+using. Mounting the routes on a server of your own, call `Http.quiet(httpd)` if
+you want the same. Unhandled exceptions still surface either way.
+
 The framework provides the mechanism and stops there. Whether to expose a
 journal, on which port, behind which path, and to whom is a driver's decision —
 see [Before you expose it](#before-you-expose-it).
 
-## One tail, or one per session
+## Lanes
 
-Nothing about a tail says how many conversations are in it. A server driving
-concurrent sessions can tee them all into one:
+The page groups by **structure alone**. A record's `context` is its scope chain
+innermost-first, so reversed it is the path from the root, and a **lane is a path
+prefix**:
 
-```jo
-val log = new TeeLogger([new JsonlLogger(sessionPath(id)), sharedTail])
-```
+- the leftmost lane is the empty prefix — every record, in arrival order
+- clicking a scope on a row opens a lane holding that scope's records and
+  everything nested under it
+- a lane one level deeper sits to its right: `all › session › turn › tool call`
 
-The page pairs each turn's bracket **within the scope its records carry**, not
-positionally, so interleaved sessions render as separate cards rather than
-closing each other's turns. That scope is whatever
-[`Logging.withContext`](/concepts/logging/) installed — the outermost one, since
-scopes nest inward — and it is labelled on each card once more than one is
-present. Filter to a single conversation by typing its id.
+Nothing else decides what a lane contains. No event name, no scope key, no
+record's position — so a producer can invent scopes forever and they nest
+correctly without the viewer learning about them. Concurrent conversations are
+handled by narrowing rather than by guessing, and nesting by drilling.
 
-Giving each session its own `TailLogger` and routing per session works the same
-way, through the same two functions. Which to do is a driver's call: one tail is
-one page for the whole process, and per-session tails keep one conversation out
-of another's view.
+**Opening a context never closes another.** The lanes are a tree laid out as a
+grid: a branch is a row, a scope's depth is its column, and the root spans them
+all. Drilling deeper grows a row rightward; opening something off that path
+starts a row of its own below, so two deep contexts stay side by side and
+comparable — one session's turn against another's.
 
-## What it shows
+Each row carries its innermost scope as a chip, relative to its lane, since the
+lane is already its prefix; the caret opens the rest of the path, and any chip on
+it opens that level. Clicking a context that is already on screen highlights it
+rather than opening it twice. A lane's ✕ closes it and the rest of its own row,
+and Escape closes the most recently opened lane.
 
-![A journal for one session. Each bracketed turn is a card with a coloured left edge; inside it, timestamped rows pair an event chip with the record's content. Assistant messages, tool results, runCode executions and model calls are each tinted differently, and the header carries the filter, the turns-only and follow toggles, a live indicator, and the entry count.](/img/journal-viewer.png)
+This is why the viewer is worth pointing at a journal that is not an agent
+conversation at all: it knows nothing about turns, so it groups any log whose
+records carry scopes.
 
-Turns are cards, opened by a `harpe.turn.request` and closed by its response,
-with an outcome badge — *answered*, *failed*, *interrupted*, or *running* — and a
-left edge in that outcome's colour. Records nothing bracketed (a subagent's turn,
-a maintenance job) render as a flat strip between cards, which is the same
-distinction `Journal.records` draws.
-
-Colour is meaning, not decoration: who spoke tints the message, and an event
-chip is coloured by its prefix, so `harpe.tools.*` reads differently from
-`harpe.turn.*` at a glance.
-
-The page polls once a second and appends what it has not seen, so a turn appears
-as it happens. Filter from the header — it matches anywhere in a record, nested
-fields included. `/` focuses the filter, `t` toggles turns-only, `f` toggles
-follow.
-
-The retained window is bounded by `capacity`. A busy process pushes its oldest
-entries out, and the page says how many it lost rather than presenting the
-remainder as the whole journal. Nothing is lost from the teed backend.
+The one thing it asks of a log is that **a scope be an identity** — stable for
+its unit of work and distinct between instances, which is the convention
+[`Entry`](/concepts/logging/) already describes. A driver that runs concurrent
+exchanges under *no* scope cannot be untangled by any viewer, because the log
+did not record which is which.
 
 ## In the CLI agent
 
@@ -116,6 +116,9 @@ jq -c 'select(.event|startswith("harpe.turn.request","harpe.turn.response"))' se
 
 # what the agent ran, and how each program ended
 jq -c 'select(.event=="harpe.tools.runCode.ran") | .fields | {exitCode, runSeconds}' session.jsonl
+
+# every shell command the CLI agent ran, with its status
+jq -r 'select(.event=="harpe.tools.runBash.ran") | .fields | "\(.exitCode)\t\(.command)"' session.jsonl
 
 # token spend for the session
 jq -s 'map(select(.event=="harpe.model.replied")) | {calls: length, input: (map(.fields.inputTokens)|add), output: (map(.fields.outputTokens)|add)}' session.jsonl
