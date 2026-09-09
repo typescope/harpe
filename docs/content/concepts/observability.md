@@ -1,19 +1,16 @@
 +++
 title = "Observability"
 +++
-An agent turn is a lot of things happening out of sight: a model call, a program
-compiled and run in a sandbox, a retry, a file delivered. When a turn goes wrong,
-"the agent said something odd" is the only symptom you get from the outside.
+If a flower blooms and fades in a valley and no one is around to see it, does it
+exist?
 
-Everything you need is already recorded. Each turn writes a
-[structured log](/concepts/logging/), and the driver brackets the parts that make
-up the [transcript](/concepts/transcript/). This page is about *reading* it —
-first live in a browser, then from the command line.
+That is the same fate of [logs](/concepts/logging/): without being seen and
+audited, they are dead. Observability makes dead logs alive.
 
 ## Three properties
 
-The **log viewer** is a page that shows a live journal in a browser. It is built
-around three properties:
+The **log viewer** shows logs live in a browser. Unlike traditional linear logs,
+it presents them structurally and contextually:
 
 - **Structural.** A record is structured data, so it is shown as structure rather
   than as text. A field holding a nested map or list becomes an interactive tree.
@@ -22,9 +19,9 @@ around three properties:
   path prefix. Focus on a user, a session or a turn in a lane of its own, several
   at once.
 
-- **Content-agnostic.** The viewer assumes only the structure of a log record,
-  never what it means. It works wherever the logging does, whatever the events and
-  scopes are called.
+- **Content-agnostic.** The viewer assumes only the structure of the logging
+  framework, never the meaning of particular events. It works wherever the logging
+  does, whatever the events and scopes are called.
 
 ## Lanes
 
