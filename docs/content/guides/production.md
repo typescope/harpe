@@ -44,28 +44,6 @@ restrictions add defense in depth around the compile-time capability boundary.
 Follow [Add Defense in Depth](/guides/defense-in-depth/) to configure the
 external sandbox.
 
-## Observability and evaluation
-
-The [Logger](/concepts/logging/) infrastructure provides a structured,
-contextual event stream independent of its destination. Install a backend that
-sends events to a database, data warehouse, observability service, or evaluation
-pipeline. Build a fully customized observability and evaluation platform on the
-same infrastructure.
-
-## Billing and accounting
-
-Harpe does not calculate prices or issue invoices — it meters, you bill. Built-in
-models emit one `harpe.metering.usage` event per call with the provider, model,
-token counts, and session context, and `harpe.metering.Usage` reads that record
-back as the value the adapter wrote. Use a durable [Logger](/concepts/logging/)
-to aggregate these events by customer and apply the relevant price table.
-
-For other billable work, emit structured events from trusted tools and
-capability implementations. Record the units consumed, provider cost, and
-customer context under a stable event name. See
-[Building usage, billing, and stats](/concepts/logging/#building-usage-billing-and-stats)
-for offline aggregation and live metering patterns.
-
 ## Model and data policy
 
 Review the model provider's retention, regional processing, and training
