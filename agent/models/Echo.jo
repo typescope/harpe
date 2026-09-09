@@ -9,6 +9,7 @@ namespace harpe.models
 
 import harpe.*
 import harpe.Model.*
+import harpe.metering.Usage
 
 
 private class EchoModel
@@ -24,7 +25,10 @@ private def echoReply(rendered: Rendered): ReplyResult =
   for m in rendered.messages do
     if m is UserInput(text, _) then last = text
 
-  Reply(Assistant("echo: \{last}", []), new Usage(0, 0))
+  Reply:
+    Assistant("echo: \{last}", [])
+    new Usage("echo", "echo", inputTokens = 0, outputTokens = 0,
+              cacheReadTokens = 0, cacheWriteTokens = 0)
 
 //[ Build the echo model (no provider, no API key). //]
 def echo(): Model = new EchoModel

@@ -13,6 +13,7 @@ import harpe.ffi.builtins
 
 import harpe.Model
 import harpe.Model.*
+import harpe.metering.Usage
 import harpe.Tool
 import harpe.Tool.*
 import harpe.logging.logger
@@ -187,9 +188,17 @@ private class OpenRouterSession(
         if usage.isNone then py.none
         else builtins.getattrOr(usage, "input_tokens_details", py.none)
 
-      val cacheRead = if details.isNone then 0 else usageInt(details, "cached_tokens")
-      logReplied("openrouter", model, inTok, outTok, cacheRead, cacheWriteTokens = 0)
-      Model.Reply(OpenRouterResponses.parseResponse(response), new Usage(inTok, outTok))
+      val used =
+        new Usage:
+          "openrouter"
+          model
+          inputTokens = inTok
+          outputTokens = outTok
+          cacheReadTokens = if details.isNone then 0 else Util.usageInt(details, "cached_tokens")
+          cacheWriteTokens = 0
+
+      ModelLog.logReplied(used)
+      Model.Reply(OpenRouterResponses.parseResponse(response), used)
     case Err(err) => classifyError(err, "openrouter", model)
 end
 

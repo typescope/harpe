@@ -24,6 +24,7 @@
 
 namespace harpe.observability
 
+import harpe.metering.Usage
 import harpe.ffi.os
 import harpe.ffi.threading
 import harpe.logging.Logging
@@ -78,8 +79,10 @@ private def alphaTurn(): Unit receives logger =
   with logger = TurnLog.contextLogger() in
     logger.log("harpe.turn.message", "role" ~ "user",
                "text" ~ "Largest prime under 1234567, and profile the run")
-    logger.log("harpe.model.replied", "provider" ~ "openrouter", "model" ~ "nemotron-3-ultra",
-               "inputTokens" ~ 2103, "outputTokens" ~ 228)
+    logger.log("harpe.model.replied", "provider" ~ "openrouter", "model" ~ "nemotron-3-ultra")
+    Usage.record:
+      new Usage("openrouter", "nemotron-3-ultra", inputTokens = 2103,
+                outputTokens = 228, cacheReadTokens = 1920, cacheWriteTokens = 0)
 
     Logging.withContext: "harpe.tools.call=call_7b31", () =>
       logger.log:
@@ -149,25 +152,13 @@ private def seed(): Unit receives logger =
   exchange("beta", "Summarise the corpus", () => betaTurn())
   exchange("extremes", "Stress the viewer", () => extremes())
 
-//[ The port asked for, or any free one if that is taken.
-  !
-  ! Restarting this while the last run still holds the socket is the common case,
-  ! and dying with `Address already in use` helps nobody: it is a journal to look
-  ! at, not a service anything depends on finding.
-//]
-private def bind(tail: TailLogger, host: String, want: Int): py.Dynamic =
-  match py.try(Viewer.start(tail, "seeded journal", host, want))
-  case Ok(httpd) => httpd
-  case Err(_)    => Viewer.start(tail, "seeded journal", host, 0)
-
 def test(): Unit receives stdout =
   val tail = new TailLogger(capacity = 5000)
   with logger = tail in seed()
 
   val host = os.getenv("HOST", "127.0.0.1")
-  val want = Int.parse(os.getenv("PORT", "8760")) rescue None => 8760
-  val httpd = bind(tail, host, want)
-  val port = httpd.server_port.asInt
+  val port = Int.parse(os.getenv("PORT", "8760")) rescue None => 8760
+  Viewer.start(tail, "seeded journal", host, port)
 
   println ""
   println "  seeded journal · http://\{host}:\{port}"

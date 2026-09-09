@@ -15,6 +15,53 @@ a daemon thread. The cursor and envelope stay between the page and the viewer.
 An entry is visible the moment it is logged — no flush, no file path to agree
 on, no `jo run view` in another terminal.
 
+**`Model.Usage` is now `harpe.metering.Usage`, and it is a record rather than two
+counts.** It carries the `provider` and `model` that were asked and the
+`cacheReadTokens` / `cacheWriteTokens` that break `inputTokens` down, alongside
+the totals it had, so everything a charge is computed from is in one value — no
+joining a log record back to whichever model object happened to be in scope. An
+adapter states the facts once and passes the value to both `Reply` and
+`harpe.models.logReplied`, which takes a `Usage` rather than six loose
+arguments.
+
+**The class owns its record.** `Usage.event` is the name it is logged under,
+and `Usage.encode` / `Usage.decode` are the two halves of its codec, in one file
+with the class — the arrangement `TurnLog` already used, for the reason it
+gives: two hand-written halves that agree only by inspection is how a renamed
+key silently costs a reader every record. A driver billing off a stored journal
+reads `Usage.decode(entry)` rather than picking six keys out of a dict, so a
+counter added later arrives as a field on the value rather than as a key to
+learn about. A `Context` still sizes itself on `inputTokens` alone.
+
+The provider's own log events are `harpe.models.ModelLog` — `repliedEvent`,
+`failedEvent`, `logReplied`, `logFailed` — a section rather than four loose
+`private[harpe]` functions, named for the records it owns the way
+`harpe.turns.TurnLog` is. `usageInt` moved to the adapters' `Util`, which is
+package-private, since reading a counter off a provider's response is not a
+logging concern.
+
+`Logger.logFields(event, fields)` writes a record whose fields are already a
+`Map[String, Value]`, which is what a codec has. `log` is now the pair-taking
+front door over it, and `TurnLog` and `Usage` stopped assembling an `Entry` by
+hand to stamp the time themselves.
+
+**The counts have moved to `harpe.metering.usage`, their own event.**
+`harpe.model.replied` keeps `provider` and `model` and says only that an attempt
+succeeded — `startswith("harpe.model")` still reads the whole story of a
+request, and the record a person reads while debugging is now free to grow a
+field without changing the shape an invoice is computed from. Every call you pay
+for in tokens writes one `harpe.metering.usage`: a model reply writes it beside
+its attempt record, and so does anything else counted the same way — an
+embedding, a reranker. Work charged by some other unit takes a name of its own
+rather than this one, since a record with no `model` and no tokens is a second
+shape under one name. A biller reading `harpe.model.replied` for tokens must
+move to the new event; the fields themselves are unchanged.
+
+The package is new: `harpe.metering`. `Usage` belongs to neither the model
+interface that carries it, the adapters that produce it, nor the driver that
+charges for it — and it is named for what harpe does, which is count what a call
+consumed. Pricing it is the driver's, built on top.
+
 `harpe.transcript.serve` and the `[module.view]` block every agent declared to
 link it are gone with it. A journal that outlives its process is still a JSONL
 file and still `jq`'s job.
@@ -104,7 +151,7 @@ their context reversed.
 
 `Http.quiet` silences a WSGI server's per-request access log, which a page
 polling once a second would otherwise write into the terminal its driver is
-using. `Viewer.start` applies it, and a driver mounting the routes on a server of
+using. `Viewer.start` applies it, and a driver mounting the route on a server of
 its own can. Unhandled exceptions still surface. The provider test fixture drops
 its private copy of this.
 

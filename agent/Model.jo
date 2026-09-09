@@ -15,6 +15,7 @@
 
 namespace harpe
 
+import harpe.metering.Usage
 import harpe.Model.Message
 import harpe.Model.Rendered
 import harpe.Model.ReplyResult
@@ -182,27 +183,10 @@ section Model
   //]
   class Rendered(system: String, messages: List[Message])
 
-  //[ Usage
-    !
-    ! Token counts a provider reports for one call. The provider's own count, so
-    ! it needs no tokenizer and is exact. Carried on `Reply` so the loop can feed
-    ! `inputTokens` back to the `Context` (a token-budget `SummarizingContext`
-    ! compacts on it), and logged as the `harpe.model` event.
-    !
-    ! `inputTokens` is the TOTAL input processed, cached tokens included. The
-    ! adapters normalize the providers' differing bases before it gets here.
-    ! Deliberately no cache breakdown: caching changes what a prefix COSTS, never
-    ! what it contains, so a `Context` deciding what to keep has no use for the
-    ! split — it would be a provider detail leaking into a provider-independent
-    ! decision. The breakdown belongs in the `harpe.model` event, where billing
-    ! reads it (see `harpe.models.logReplied`).
-  //]
-  class Usage(inputTokens: Int, outputTokens: Int)
-
   //[ ReplyResult
     !
     ! The outcome of asking the model for a reply: the assistant message (with
-    ! the call's token usage), or a typed error. `Transient` errors (rate
+    ! the call's `harpe.metering.Usage`), or a typed error. `Transient` errors (rate
     ! limits, 5xx, connection blips) are worth retrying with backoff. `Fatal`
     ! ones (auth, bad request) are not. The provider classifies the failure. The
     ! loop owns retries.
@@ -226,7 +210,7 @@ section Model
     ! provisional text chunks and observes cancellation while it assembles the
     ! complete `ReplyResult`. It also `receives logger` at call time so a
     ! provider can emit token usage to the turn's logging context (see
-    ! `harpe.models.logReplied`).
+    ! `harpe.models.ModelLog.logReplied`).
     ! An attachment carries its own `path`, so nothing here needs to be told a
     ! data directory to resolve it against.
     !

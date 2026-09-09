@@ -161,7 +161,7 @@ private def journalPort(): Int =
 //[ Serve `tail` on `port`, on loopback. //]
 private def openViewer(tail: TailLogger, port: Int, path: String): Unit receives stdout =
   if port > 0 then
-    val _ = Viewer.start(tail, os.path.basename(path), "127.0.0.1", port)
+    Viewer.start(tail, os.path.basename(path), "127.0.0.1", port)
     println("")
     println("  " + Style.muted("journal · http://127.0.0.1:\{port}"))
 

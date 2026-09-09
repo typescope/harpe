@@ -88,21 +88,21 @@ section Viewer
 
   //[ Serve the viewer alone on `host:port`, on a daemon thread.
     !
-    ! For a driver with no HTTP server of its own. It binds immediately and
-    ! returns the server, so the caller prints its own banner and can `shutdown()`
-    ! it. Port 0 binds any free one, which the caller reads back from
-    ! `server_port` — a driver that only wants a viewer, not a fixed address. NO AUTHENTICATION: a journal holds every conversation it was given, so
-    ! `host` belongs on a loopback address.
+    ! For a driver with no HTTP server of its own. It binds before returning, so
+    ! a port already taken raises here rather than leaving a banner pointing at
+    ! a server that never came up. The thread is a daemon and the caller prints
+    ! its own banner, so there is nothing to hand back. NO AUTHENTICATION: a
+    ! journal holds every conversation it was given, so `host` belongs on a
+    ! loopback address.
     !
     ! Quiet, because the page polls: an access log here is a line a second in
     ! whatever terminal the driver was already using. A driver mounting the route
     ! on a server of its own decides that for itself, with `Http.quiet`.
   //]
-  def start(tail: TailLogger, title: String, host: String, port: Int): py.Dynamic =
+  def start(tail: TailLogger, title: String, host: String, port: Int): Unit =
     val httpd = Http.server: host, port, () => route(tail, title)
     Http.quiet(httpd)
     Process.daemon(() => httpd.serve_forever()).start()
-    httpd
 
   private def route(tail: TailLogger, title: String): py.List receives request =
     match request

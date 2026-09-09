@@ -1,0 +1,105 @@
+//[ Usage.jo
+  !
+  ! What one metered call used — the value, the event it is logged as, and the
+  ! ONE codec that both writes and reads it. An invoice is computed from this
+  ! record long after the process that wrote it, so the two halves are defined
+  ! together: a key renamed on one side fails on the other.
+//]
+
+namespace harpe.metering
+
+import harpe.logging.Entry
+import harpe.logging.Value
+import harpe.logging.logger
+
+//[ What one model call cost: who was asked, and the tokens they counted. The
+  ! provider's own numbers, so they need no tokenizer and are exact.
+  !
+  ! EVERYTHING A CHARGE IS COMPUTED FROM IS HERE. Rates are per provider and
+  ! model and the cached halves are priced apart from the rest, so a biller never
+  ! recovers the identity from whichever `Model` happened to be in scope, nor the
+  ! split from a second record.
+  !
+  ! `inputTokens` is the TOTAL input processed, cached tokens included. The
+  ! adapters normalize the providers' differing bases before it gets here:
+  ! OpenAI's `input_tokens` is already the total, Anthropic's counts only what
+  ! follows the last cache breakpoint.
+  !
+  ! `cacheReadTokens` and `cacheWriteTokens` are parts OF that total, not
+  ! additions to it — read from a cache (cheap) against written to one (a premium
+  ! over ordinary input) — so a price table charges them their own rates and the
+  ! base rate to the remainder. Both are 0 on a provider that reports no cache
+  ! detail, which is not the same as one that cached nothing.
+  !
+  ! A `Context` sizing itself reads `inputTokens` and nothing else, since caching
+  ! changes what a prefix costs but never what it contains.
+//]
+class Usage(
+    provider: String,
+    model: String,
+    inputTokens: Int,
+    outputTokens: Int,
+    cacheReadTokens: Int,
+    cacheWriteTokens: Int)
+
+section Usage
+  //[ The event one usage is logged as — the schema tag for the fields below.
+    !
+    ! Tokens only. Work charged by the request, the megabyte or the seat has no
+    ! `model` and no token to put here, and takes a name of its own.
+  //]
+  def event: String = "harpe.metering.usage"
+
+  //[ Write one charge to the ambient logger, as of now.
+    !
+    ! Whatever spent the money calls this: the model adapters do, and so does
+    ! anything else a driver bills for.
+  //]
+  def record(usage: Usage): Unit receives logger =
+    logger.logFields(event, encode(usage))
+
+  //[ One usage as the fields of its record. //]
+  def encode(usage: Usage): Map[String, Value] =
+    Map:
+      "provider"         ~ usage.provider
+      "model"            ~ usage.model
+      "inputTokens"      ~ usage.inputTokens
+      "outputTokens"     ~ usage.outputTokens
+      "cacheReadTokens"  ~ usage.cacheReadTokens
+      "cacheWriteTokens" ~ usage.cacheWriteTokens
+
+  //[ One usage read back off a log
+    !
+    ! For an entry whose `event` is `Usage.event` — a caller selects those the
+    ! way it selects any other event, and this reads what it finds there.
+  //]
+  def decode(entry: Entry): Usage =
+    new Usage:
+      str(entry.fields, "provider")
+      str(entry.fields, "model")
+      int(entry.fields, "inputTokens")
+      int(entry.fields, "outputTokens")
+      int(entry.fields, "cacheReadTokens")
+      int(entry.fields, "cacheWriteTokens")
+
+  //[ Field readers, which ABORT on a field that is absent or at the wrong type.
+    !
+    ! `encode` writes every one of them, so either means the record was not
+    ! written by this codec. Reading a missing counter as 0 would quietly
+    ! undercharge instead.
+  //]
+  private def field(fields: Map[String, Value], key: String): Value =
+    match fields.getOpt(key)
+    case Some(v) => v
+    case None    => abort "usage record has no '\{key}'"
+
+  private def str(fields: Map[String, Value], key: String): String =
+    match field(fields, key)
+    case s: String => s
+    case _         => abort "usage record's '\{key}' is not a string"
+
+  private def int(fields: Map[String, Value], key: String): Int =
+    match field(fields, key)
+    case Value.IntVal(n) => n
+    case _               => abort "usage record's '\{key}' is not an int"
+end

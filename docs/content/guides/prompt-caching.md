@@ -120,13 +120,13 @@ server rather than of the request.
 
 ## Reading the effect
 
-Every reply emits a `harpe.model.replied` event through the
+Every reply emits a `harpe.metering.usage` event through the
 [Logger](/concepts/logging/) carrying `inputTokens`, `cacheReadTokens`, and
 `cacheWriteTokens`. The two cache fields are parts of `inputTokens`, so their
 share of it is the hit rate.
 
 ```sh
-jq -s 'map(select(.event=="harpe.model.replied"))
+jq -s 'map(select(.event=="harpe.metering.usage"))
        | {input: (map(.fields.inputTokens) | add),
           read:  (map(.fields.cacheReadTokens) | add),
           write: (map(.fields.cacheWriteTokens) | add)}' logs/sessions/<session>.jsonl

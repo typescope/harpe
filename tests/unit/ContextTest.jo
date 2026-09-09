@@ -17,6 +17,7 @@ import harpe.context.WindowedContext
 import harpe.context.SummarizingContext
 import harpe.models.echo
 import harpe.Model.*
+import harpe.metering.Usage
 import harpe.logging.logger
 import harpe.Tool.*
 import harpe.testing.thisSuite
@@ -67,6 +68,17 @@ end
 private def user(t: String): Message = UserInput(t, [])
 private def asst(t: String): Message = Assistant(t, [])
 
+// A reported usage. Only `inputTokens` is a context's business — the rest is
+// what a bill is made of, and no strategy here reads it.
+private def used(inputTokens: Int): Usage =
+  new Usage:
+    "test"
+    "test-model"
+    inputTokens
+    outputTokens = 0
+    cacheReadTokens = 0
+    cacheWriteTokens = 0
+
 // A short exchange turn: 8 chars under the `truncate` char measure.
 private def turn8(u: String, a: String): List[Message] = [user(u), asst(a)]
 
@@ -105,7 +117,7 @@ def contextSuite(): Unit receives thisSuite, logger = suite: "context", () =>
       ctx.append(user("second"))
       ctx.append(asst("done"))
       check("all present", ctx.compact(new NoInteract).rendered.messages.size == 4)
-      ctx.observe(new Usage(999, 0))
+      ctx.observe(used(999))
       check("unchanged after observe", ctx.compact(new NoInteract).rendered.messages.size == 4)
 
     test: "aborting a turn retains its input and drops provisional traffic", () =>
@@ -170,7 +182,7 @@ def contextSuite(): Unit receives thisSuite, logger = suite: "context", () =>
       val distiller = new RecordingDistiller(Some("DISTILLED"))
       val ctx = summarizing(distiller)
       feed(ctx, threeTurns())
-      ctx.observe(new Usage(20, 0))
+      ctx.observe(used(20))
 
       val result = ctx.compact(new CompactInteract)
       check("reports unchanged", !result.compacted)
@@ -183,7 +195,7 @@ def contextSuite(): Unit receives thisSuite, logger = suite: "context", () =>
       val ctx = summarizing(distiller)
       val interact = new CompactInteract
       feed(ctx, fiveTurns())
-      ctx.observe(new Usage(40, 0))
+      ctx.observe(used(40))
 
       val compacted = ctx.compact(interact)
       check("reports compaction", compacted.compacted)
@@ -197,7 +209,7 @@ def contextSuite(): Unit receives thisSuite, logger = suite: "context", () =>
       val distiller = new RecordingDistiller(Some("DISTILLED"))
       val ctx = summarizing(distiller)
       feed(ctx, fiveTurns())
-      ctx.observe(new Usage(40, 0))
+      ctx.observe(used(40))
 
       val system = ctx.compact(new CompactInteract).rendered.system
       check("summary present", system.contains("Conversation summary") && system.contains("DISTILLED"))
@@ -207,7 +219,7 @@ def contextSuite(): Unit receives thisSuite, logger = suite: "context", () =>
       val distiller = new RecordingDistiller(Some("DISTILLED"))
       val ctx = summarizing(distiller)
       feed(ctx, fiveTurns())
-      ctx.observe(new Usage(40, 0))
+      ctx.observe(used(40))
       val _ = ctx.compact(new CompactInteract)
 
       val excerpt = distiller.prompts.get(0).asString
@@ -220,10 +232,10 @@ def contextSuite(): Unit receives thisSuite, logger = suite: "context", () =>
       val ctx = summarizing(distiller)
       val interact = new CompactInteract
       feed(ctx, fiveTurns())
-      ctx.observe(new Usage(40, 0))
+      ctx.observe(used(40))
       val _ = ctx.compact(interact)
 
-      ctx.observe(new Usage(15, 0))
+      ctx.observe(used(15))
       val settled = ctx.compact(interact)
       check("reports no change", !settled.compacted)
       check("no re-distillation", distiller.prompts.size == 1)
@@ -234,11 +246,11 @@ def contextSuite(): Unit receives thisSuite, logger = suite: "context", () =>
       val ctx = summarizing(distiller)
       val interact = new CompactInteract
       feed(ctx, fiveTurns())
-      ctx.observe(new Usage(40, 0))
+      ctx.observe(used(40))
       val _ = ctx.compact(interact)
 
       feed(ctx, turn8("FFFF", "ffff") ++ turn8("GGGG", "gggg"))
-      ctx.observe(new Usage(40, 0))
+      ctx.observe(used(40))
       val again = ctx.compact(interact)
       check("reports compaction", again.compacted)
       check("second compaction event", interact.compactions == 2)
@@ -251,7 +263,7 @@ def contextSuite(): Unit receives thisSuite, logger = suite: "context", () =>
       val failing = new CompactInteract
       val ctx = summarizing(new RecordingDistiller(None))
       feed(ctx, fiveTurns())
-      ctx.observe(new Usage(40, 0))
+      ctx.observe(used(40))
 
       val result = ctx.compact(failing)
       check("reports no change", !result.compacted)
@@ -268,7 +280,7 @@ def contextSuite(): Unit receives thisSuite, logger = suite: "context", () =>
       ctx.append(asst("dddd"))
       feed(ctx, turn8("EEEE", "eeee"))
 
-      ctx.observe(new Usage(40, 0))
+      ctx.observe(used(40))
       val before = ctx.compact(interact)
       check("compaction succeeded first", before.compacted)
       check("window was compacted", before.rendered.messages.size == 4)

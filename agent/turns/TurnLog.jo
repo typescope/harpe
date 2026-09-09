@@ -21,7 +21,6 @@
 
 namespace harpe.turns
 
-import harpe.util.Clock
 import harpe.ffi.secrets
 import harpe.Model.*
 import harpe.Tool.*
@@ -136,7 +135,7 @@ section TurnLog
     str(entry.fields, "error")
 
   private def emit(event: String, message: Message): Unit receives logger =
-    logger.logEntry(new Entry(Clock.now(), event, encodeMessage(message), []))
+    logger.logFields(event, encodeMessage(message))
 
   private def encodeMessage(message: Message): Map[String, Value] =
     match message

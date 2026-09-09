@@ -39,7 +39,7 @@ the page and the viewer. An agent with no HTTP server of its own takes
 `Viewer.start` instead, which binds a port on a daemon thread:
 
 ```jo
-val _ = Viewer.start(tail, title, "127.0.0.1", port)
+Viewer.start(tail, title, "127.0.0.1", port)
 ```
 
 That server is quiet: the page polls once a second, and `wsgiref` would
@@ -159,7 +159,7 @@ jq -c 'select(.event=="harpe.tools.runCode.ran") | .fields | {exitCode, runSecon
 jq -r 'select(.event=="harpe.tools.runBash.ran") | .fields | "\(.exitCode)\t\(.command)"' session.jsonl
 
 # token spend for the session
-jq -s 'map(select(.event=="harpe.model.replied")) | {calls: length, input: (map(.fields.inputTokens)|add), output: (map(.fields.outputTokens)|add)}' session.jsonl
+jq -s 'map(select(.event=="harpe.metering.usage")) | {calls: length, input: (map(.fields.inputTokens)|add), output: (map(.fields.outputTokens)|add)}' session.jsonl
 
 # anything that went wrong
 jq -c 'select(.fields|has("error") or has("warning"))' session.jsonl

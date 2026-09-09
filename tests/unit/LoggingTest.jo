@@ -18,7 +18,8 @@ import harpe.util.File
 import harpe.util.Process
 import harpe.*
 import harpe.logging.*
-import harpe.models.logReplied
+import harpe.models.ModelLog
+import harpe.metering.Usage
 import harpe.testing.thisSuite
 import harpe.testing.suite
 import harpe.testing.test
@@ -59,13 +60,18 @@ private def hammer(jsonl: JsonlLogger, worker: Int, rounds: Int): Unit =
     jsonl.log("harpe.test.concurrent", "worker" ~ worker, "i" ~ i)
     i = i + 1
 
+// One call's usage, as an adapter would report it.
+private def billed: Usage =
+  new Usage("anthropic", "claude-x", inputTokens = 100, outputTokens = 20,
+            cacheReadTokens = 40, cacheWriteTokens = 12)
+
 // A producer: emits through the ambient `logger` channel.
 private def emitOne(): Unit receives logger =
   logger.log("runs", "code" ~ "hello")
 
 //[ Write one record of every shape this suite asserts on, and read them back
   !
-  ! One file for all five, because that a single JSONL file carries every
+  ! One file for all six, because that a single JSONL file carries every
   ! event name is itself part of the contract.
 //]
 private def withRecords(body: List[py.Dict] => Unit): Unit =
@@ -75,7 +81,7 @@ private def withRecords(body: List[py.Dict] => Unit): Unit =
   jsonl.log("runs", "code" ~ "y", "exitCode" ~ 1)
   jsonl.log("tools", "name" ~ "read")
   jsonl.warn("harpe.test", "rate limited", "attempt" ~ 3)
-  with logger = jsonl in logReplied("anthropic", "claude-x", 100, 20, 0, 0)
+  with logger = jsonl in ModelLog.logReplied(billed)
   jsonl.close()
   body(readRecords(path))
 
@@ -105,7 +111,7 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
   suite: "JsonlLogger", () =>
     test: "writes every event to one file", () =>
       withRecords: all =>
-        check("all five", all.size == 5)
+        check("all six", all.size == 6)
         check("event is a field", all.get(0).get("event", "").asString == "runs")
         // Categories coexist, distinguished by the field (jq's job downstream).
         check("another event", all.get(2).get("event", "").asString == "tools")
@@ -153,13 +159,39 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
       val all = readRecords(path)
       check("every record arrived, none torn", all.size == workers.size * rounds)
 
-    test: "records model usage with its billing fields", () =>
+    test: "a reply records the attempt and the charge as two events", () =>
       withRecords: all =>
-        val usageRec = all.get(4)
-        check("event", usageRec.get("event", "").asString == "harpe.model.replied")
-        check("provider", fieldsOf(usageRec).get("provider", "").asString == "anthropic")
-        check("input tokens", fieldsOf(usageRec).get("inputTokens", -1).asInt == 100)
-        check("output tokens", fieldsOf(usageRec).get("outputTokens", -1).asInt == 20)
+        val attempt = all.get(4)
+        check("attempt event", attempt.get("event", "").asString == "harpe.model.replied")
+        check("attempt provider", fieldsOf(attempt).get("provider", "").asString == "anthropic")
+        check("attempt carries no counts", !fieldsOf(attempt).contains("inputTokens"))
+
+        val charge = all.get(5)
+        check("charge event", charge.get("event", "").asString == "harpe.metering.usage")
+        check("provider", fieldsOf(charge).get("provider", "").asString == "anthropic")
+        check("input tokens", fieldsOf(charge).get("inputTokens", -1).asInt == 100)
+        check("output tokens", fieldsOf(charge).get("outputTokens", -1).asInt == 20)
+
+  suite: "usage codec", () =>
+    test: "a logged usage reads back as the value that was written", () =>
+      val path = os.path.join(tempfile.mkdtemp(), "usage.jsonl")
+      val jsonl = new JsonlLogger(path)
+      with logger = jsonl in Usage.record(billed)
+      jsonl.close()
+
+      val back = Usage.decode(Entry.fromDict(readRecords(path).get(0)))
+      check("provider", back.provider == billed.provider)
+      check("model", back.model == billed.model)
+      check("input tokens", back.inputTokens == billed.inputTokens)
+      check("output tokens", back.outputTokens == billed.outputTokens)
+      check("cache reads", back.cacheReadTokens == billed.cacheReadTokens)
+      check("cache writes", back.cacheWriteTokens == billed.cacheWriteTokens)
+
+    test: "a record this codec did not write is refused, not read as zeroes", () =>
+      val entry = new Entry(0.0, Usage.event, Map[String, Value]("provider" ~ "anthropic"), [])
+      match py.try(Usage.decode(entry))
+      case Ok(_)  => check("aborts on a missing counter", false)
+      case Err(_) => check("aborts on a missing counter", true)
 
   suite: "the logger channel", () =>
     test: "withLogger installs it for the wrapped work", () =>
