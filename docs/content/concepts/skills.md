@@ -79,16 +79,13 @@ Choose the directory and add `SkillTools` to the tools the agent already has:
 ```jo
 val skillsDir = os.path.join(appHome, "skills")
 
-val tools =
-  SkillTools.toolset(skillsDir)
-    ++ runCode.toolset()
+val tools = SkillTools.toolset(skillsDir) ++ runCode.toolset()
 
-val turn =
-  Agent.ask:
-    message
-    brain = brain
-    tools = tools
-    context = context
+val turn = Agent.ask:
+  message
+  brain = brain
+  tools = tools
+  context = context
 ```
 
 There is no default skills directory. Passing the path explicitly makes it clear

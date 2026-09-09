@@ -12,12 +12,13 @@ audited, they are dead. Observability makes dead logs alive.
 The **log viewer** shows logs live in a browser. Unlike traditional linear logs,
 it presents them structurally and contextually:
 
-- **Structural.** A record is structured data, so it is shown as structure rather
-  than as text. A field holding a nested map or list becomes an interactive tree.
+- **Structural.** A logging item is structured data, so it is shown as structure
+  rather than as text. A field holding a nested map or list becomes an interactive
+  tree.
 
-- **Contextual.** A record's `context` is its path from the root, and a lane is a
-  path prefix. Focus on a user, a session or a turn in a lane of its own, several
-  at once.
+- **Contextual.** A logging item's `context` is its path from the root, and a lane
+  is a path prefix. Focus on a user, a session or a turn in a lane of its own,
+  several at once.
 
 - **Content-agnostic.** The viewer assumes only the structure of the logging
   framework, never the content of logging items. It works wherever the logging
