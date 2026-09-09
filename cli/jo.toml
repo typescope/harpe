@@ -13,24 +13,6 @@ links = [
   { from = "jo.main", to = "harpe.cli.main" },
 ]
 
-# The journal viewer: a live browser view of one session's structured log.
-# Every line of it is harpe's, linked in as this module's entry point — hence
-# no sources of its own.
-#
-#     jo run view -- logs/sessions/<session>.jsonl
-[module.view]
-kind = "app"
-platform = "python"
-enable-ffi = true
-src = []
-depth = 2
-
-modules = [{ id = "harpe", path = ".." }]
-
-links = [
-  { from = "jo.main", to = "harpe.transcript.serve" },
-]
-
 # This agent's own end-to-end suite, and the framework's only one. It builds the
 # agent through the manifest above — so against this branch's sources — starts it
 # as its own process, and types at it through a pseudo-terminal.

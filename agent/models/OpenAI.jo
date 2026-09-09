@@ -20,6 +20,7 @@ import harpe.util.Digest
 
 import harpe.Model
 import harpe.Model.*
+import harpe.metering.Usage
 import harpe.Tool
 import harpe.Tool.*
 import harpe.logging.logger
@@ -246,14 +247,19 @@ private class OpenAIResponsesSession(
       // Unlike Anthropic, OpenAI's `input_tokens` is already the total — the
       // cache counters below are a breakdown OF it, not additions to it, so
       // nothing is added back here. `cache_write_tokens` appears on gpt-5.6 and
-      // later. `usageInt` reads 0 where a model or endpoint omits either field.
+      // later. `Util.usageInt` reads 0 where a model or endpoint omits either field.
       val details = builtins.getattrOr(u, "input_tokens_details", py.none)
-      val cacheRead = if details.isNone then 0 else usageInt(details, "cached_tokens")
-      val cacheWrite = if details.isNone then 0 else usageInt(details, "cache_write_tokens")
-      val inTok = u.input_tokens.asInt
-      val outTok = u.output_tokens.asInt
-      logReplied("openai", model, inTok, outTok, cacheRead, cacheWrite)
-      Model.Reply(OpenAIResponses.parseResponse(response), new Usage(inTok, outTok))
+      val used =
+        new Usage:
+          "openai"
+          model
+          inputTokens = u.input_tokens.asInt
+          outputTokens = u.output_tokens.asInt
+          cacheReadTokens = if details.isNone then 0 else Util.usageInt(details, "cached_tokens")
+          cacheWriteTokens = if details.isNone then 0 else Util.usageInt(details, "cache_write_tokens")
+
+      ModelLog.logReplied(used)
+      Model.Reply(OpenAIResponses.parseResponse(response), used)
 
     case Err(err) => classifyError(err, "openai", model)
 end

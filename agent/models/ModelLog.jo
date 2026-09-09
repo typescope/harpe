@@ -1,0 +1,66 @@
+//[ ModelLog.jo
+  !
+  ! The model layer's own log events: one record per attempt at asking a
+  ! provider — `harpe.model.replied` when one came back, `harpe.model.failed`
+  ! when none did. `harpe.turns.TurnLog` is the same thing one layer up.
+  !
+  ! EMITTED WHERE THE FACTS ARE. The provider writes both, being the only party
+  ! that knows which model it was talking to, so a request that failed is as
+  ! attributable as one that succeeded and `startswith("harpe.model")` reads the
+  ! whole story. What the ENGINE knows — that it will retry, that it has given
+  ! up — is its own decision under its own name (`harpe.model.retried`,
+  ! `harpe.model.gaveUp`).
+  !
+  ! WHAT A REPLY COST IS NOT ONE OF THEM. The counts leave as
+  ! `harpe.metering.usage`, a record whose class owns its name, its fields and
+  ! both directions of its codec (`harpe.metering.Usage`) — an invoice is computed
+  ! from it, which is a different kind of record from one a person reads while
+  ! working out what went wrong, and other token-metered calls write it too. Both
+  ! go out from one call here, so an adapter cannot record the attempt and forget
+  ! the charge.
+  !
+  ! Because a model reads the `logger` at reply time (not when it was built),
+  ! every record is stamped with the turn's session context automatically.
+//]
+
+namespace harpe.models
+
+import harpe.metering.Usage
+import harpe.logging.logger
+
+private[harpe] section ModelLog
+  //[ One attempt that came back with a reply. //]
+  def repliedEvent: String = "harpe.model.replied"
+
+  //[ One attempt the provider refused or could not complete. //]
+  def failedEvent: String = "harpe.model.failed"
+
+  //[ Record an attempt that came back with a reply, and what it will be billed as
+    !
+    ! Two records from one call: `harpe.model.replied` says the attempt succeeded
+    ! and is as attributable as its failed sibling, `harpe.metering.usage` carries
+    ! the counts. Thin on purpose — a `harpe.turn.answered` says no more — because
+    ! everything a charge needs is on the other record, typed.
+  //]
+  def logReplied(usage: Usage): Unit receives logger =
+    logger.log(repliedEvent, "provider" ~ usage.provider, "model" ~ usage.model)
+    Usage.record(usage)
+
+  //[ Record an attempt that failed, with what the provider said about it
+    !
+    ! `status` is the HTTP status, or 0 for a failure that never reached the
+    ! server. `retryable` is the classification the engine acts on, recorded so a
+    ! log reader can see WHY a request was retried or abandoned without inferring
+    ! it from the status. There is no `Usage`: an attempt that never returned has
+    ! no counts to bill.
+  //]
+  def logFailed(provider: String, model: String, error: String, status: Int, retryable: Bool)
+  : Unit receives logger =
+    logger.error:
+      failedEvent
+      error
+      "provider"  ~ provider
+      "model"     ~ model
+      "status"    ~ status
+      "retryable" ~ retryable
+end

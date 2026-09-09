@@ -35,7 +35,7 @@ The logging mechanism is built around three properties:
 Every logged event becomes an `Entry`:
 
 ```jo
-class Entry(time: Float, event: String, fields: Map[String, Value], context: List[Value])
+class Entry(time: Float, event: String, fields: Map[String, Value], context: List[String])
 
 type Value =
   (String | Float | Value.IntVal | Value.BoolVal | List[Value] | Map[String, Value])
@@ -53,8 +53,9 @@ end
   `harpe.model.replied` or `myagent.tools.weather.called`.
 - `fields` contains the facts specific to that event.
 - `context` is the ambient scopes the record was produced under — a session, a
-  turn, the tool call inside it — innermost first. Scopes are kept apart from
-  `fields`, so ambient context can never collide with a producer's own keys.
+  turn, the tool call inside it — outermost first, so the list is a path. Each is a string identifying
+  one unit of work (`"harpe.turn.id=209b1e14"`), kept apart from `fields` so
+  ambient context can never collide with a producer's own keys.
 
 `IntVal` and `BoolVal` are implementation adapters. At the call site, integers
 and booleans are passed directly, just like strings and floats. A field can also
@@ -67,8 +68,8 @@ stored.
 
 ## Where your events go
 
-The bundled drivers use `JsonlLogger` to append session events to each session's log.
-The application owns the file layout. These examples use
+`JsonlLogger` appends session events to each session's log. The application owns
+the file layout. These examples use
 `logs/sessions/<session>.jsonl` as a representative path:
 
 ```json
@@ -104,20 +105,11 @@ The main framework events are:
   approval the run was waiting on. `startswith("harpe.tools.runCode")` reads
   every program the agent tried, however it ended.
 - **`harpe.model.replied`** — one per attempt that came back with a reply:
-  `provider`, `model`, `inputTokens`, `outputTokens`, `cacheReadTokens`,
-  `cacheWriteTokens`. This is your token-usage feed for billing and auditing.
+  `provider` and `model`. What it cost rides on its own event, below.
 - **`harpe.model.failed`** — one per attempt that did not: the same `provider`
   and `model`, so a failed request is as attributable as a successful one, plus
   `error`, the HTTP `status` (0 when the request never reached the server), and
   `retryable`, the classification the engine acted on.
-
-  `inputTokens` is the total input the provider processed, cached tokens
-  included, and means the same thing on every provider — the adapters normalize
-  the counts, which providers report on different bases. The two cache fields
-  break that total down, so a price table applies the discounted cache rates to
-  them and the base rate to the remainder. Both read 0 when a provider reports no
-  cache detail, which is indistinguishable here from a provider that cached
-  nothing. See [Prompt Caching](/guides/prompt-caching/).
 - **`harpe.model.retried`** / **`harpe.model.gaveUp`** — what the engine DECIDED
   about a failed attempt, as distinct from the attempt itself. A retry carries
   `attempt` and `retryInSeconds`, a give-up carries `retries` (0 when the failure
@@ -126,6 +118,23 @@ The main framework events are:
 
 `startswith("harpe.model")` reads the whole story of talking to a model — what
 was attempted, and what the engine decided about it.
+
+- **`harpe.metering.usage`** — one per call billed in tokens: `provider`, `model`,
+  `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`. This is
+  your token-billing feed, and the one record here with a codec of its own
+  (`harpe.metering.Usage`) rather than an open set of fields — see [Explicit
+  contracts](#explicit-contracts-for-business-logic). A model reply writes one
+  beside its `harpe.model.replied`. Anything else counted the same way — an
+  embedding, a reranker — writes one too, and anything charged by some other
+  unit takes a name of its own.
+
+  `inputTokens` is the total input the provider processed, cached tokens
+  included, and means the same thing on every provider — the adapters normalize
+  the counts, which providers report on different bases. The two cache fields
+  break that total down, so a price table applies the discounted cache rates to
+  them and the base rate to the remainder. Both read 0 when a provider reports no
+  cache detail, which is indistinguishable here from a provider that cached
+  nothing. See [Prompt Caching](/guides/prompt-caching/).
 - **`harpe.tools.skills.read`** (`name`) and **`harpe.tools.skills.searched`**
   (`query`) — content reached through the skill tools.
 - **`harpe.turn.*`** — the conversation itself: `started`, `message`, and one of
@@ -213,7 +222,7 @@ same fields and event names. A few `jq` starting points:
 
 ```sh
 # token usage in one session
-jq -s 'map(select(.event=="harpe.model.replied"))
+jq -s 'map(select(.event=="harpe.metering.usage"))
        | {inTokens: (map(.fields.inputTokens) | add),
           outTokens: (map(.fields.outputTokens) | add)}' logs/sessions/<session>.jsonl
 
@@ -249,6 +258,16 @@ end
 how to turn `entry.fields` (including nested maps) into JSON. You can also **wrap**
 `JsonlLogger` instead of replacing it — see below.
 
+For two destinations rather than one, `TeeLogger` hands each entry to every
+logger it holds, in order:
+
+```jo
+val log = new TeeLogger([new JsonlLogger(path), new ViewLogger(capacity = 5000)])
+```
+
+That is how the [journal viewer](/concepts/observability/) reads a session as it
+runs without displacing the file.
+
 ## Building usage, billing, and stats
 
 The log is a stream of structured events keyed by name. A shared log can additionally
@@ -281,8 +300,20 @@ Every entry the meter sees carries a stable `event`. When the application uses
 `Logging.withContext`, the configured context appears as a scope in
 `entry.context`. Together, these identify the event shape and the session a
 shared destination should attribute it to.
-For billing, the `harpe.model.replied` events give you `inputTokens`/`outputTokens` per
-call already — apply your price table to turn them into cost.
+
+For token billing, don't pick the counts out by hand. Every model call writes a
+`harpe.metering.usage`, and `harpe.metering.Usage` reads its own record back —
+live in a meter, or offline over a stored journal, from the same entry either
+way.
+
+```jo
+if entry.event == Usage.event then
+  val usage = Usage.decode(entry)
+  cents = cents + rate(usage.provider, usage.model).charge(usage)
+```
+
+The field names live in one place, so a counter added to the record reaches your
+reader as a field on the value rather than as a key you have to learn about.
 
 **Charge for a new thing → log a new event.** Anything else you want to meter
 is just a new name you emit. To bill on, say, an external API a tool calls:
@@ -306,8 +337,8 @@ right trade for diagnostics, where a record is read by a person with `jq` and a
 missing field is an inconvenience.
 
 It is the wrong trade when real logic depends on the record. An invoice computed
-from `harpe.model.replied`, or a conversation replayed out of the log, is business
-logic reading a wire format, and an open wire gives it nothing to hold on to:
+from a token count, or a conversation replayed out of the log, is business logic
+reading a wire format, and an open wire gives it nothing to hold on to:
 
 - **Documentation.** The field list lives in whichever call site last emitted it.
   A consumer learns the shape by reading a producer, or by reading a sample record
@@ -325,22 +356,27 @@ file, so the two halves cannot drift apart. The contract stops being something
 everyone remembers and becomes something the compiler holds:
 
 ```jo
-class Charge(model: String, inputTokens: Int, outputTokens: Int, cents: Int)
+class SearchCall(vendor: String, queries: Int, vendorCost: Int)
 
-section ChargeLog
-  def chargedEvent: String = "myagent.billing.charged"
+section SearchLog
+  def searchedEvent: String = "myagent.tools.search"
 
-  def charged(charge: Charge): Unit receives logger =
-    logger.log:
-      chargedEvent
-      "model"        ~ charge.model
-      "inputTokens"  ~ charge.inputTokens
-      "outputTokens" ~ charge.outputTokens
-      "cents"        ~ charge.cents
+  def searched(call: SearchCall): Unit receives logger =
+    logger.logFields(searchedEvent, encode(call))
 
-  def decode(entry: Entry): Charge = ...
+  def encode(call: SearchCall): Map[String, Value] =
+    Map:
+      "vendor"     ~ call.vendor
+      "queries"    ~ call.queries
+      "vendorCost" ~ call.vendorCost
+
+  def decode(entry: Entry): SearchCall = ...
 end
 ```
+
+That is the `myagent.tools.search` line from earlier, grown up: the same event
+name, now with one place that says what it carries. `logFields` takes the map
+the encoder built, so the writer cannot spell a key differently from the reader.
 
 Three rules turn that from a convention into a contract:
 
@@ -354,27 +390,38 @@ Three rules turn that from a convention into a contract:
   of zero, which reads as a fact rather than as the failure it is.
 
 The point is not ceremony. It is that the contract can now only be broken on
-purpose. Change `Charge` and the codec stops compiling until both halves are
+purpose. Change `SearchCall` and the codec stops compiling until both halves are
 updated; on the open wire the same edit compiles, ships, and shows up later as a
 wrong number on an invoice with nothing to say when it started.
 
 `harpe.turns.TurnLog` is the worked example. It owns `harpe.turn.message` and the
 three terminators, encodes a `Message` into a record and decodes one back, and
-aborts naming the field when a record does not match. Everything else in the log
-stays open — only the records something is built on pay for a codec.
+aborts naming the field when a record does not match.
+
+The framework applies the same rule to the record you are most likely to invoice
+from: `harpe.metering.Usage` owns `harpe.metering.usage`, encodes one call's counts
+and decodes them back, and aborts on a missing one rather than billing a zero.
+Its own event, rather than a corner of the model's, is part of that — an attempt
+record is a diagnostic and grows a field whenever a diagnostic is wanted, and an
+invoice should not be reading the same shape. So the two records something is
+usually built on arrive with a contract already, and everything else in the log
+stays open — only what carries weight pays for a codec.
 
 ## Quick reference
 
 ```jo
 // emit (logger is in scope inside a tool handler)
 logger.log(event, "k" ~ v, ...)                    // a data event
+logger.logFields(event, fields)                     // the same, fields already a map
 logger.info(event, message, ...)                    // an informational message
 logger.warn(event, message, ...)                    // a warning
 logger.error(event, message, ...)                   // an error
 
 // install a Logger — where events go (in the driver's entry point)
 Logging.withLogger(myLogger, () => run())           // myLogger: any Logger
+Logging.withContext("myapp.session=42", () => ...)  // tag entries with a scope
 Logging.discard                                     // a no-op Logger (tests, logging off)
+new TeeLogger([first, second])                      // one entry, several destinations
 
 // write your own Logger
 interface Logger
@@ -382,7 +429,7 @@ interface Logger
   def close(): Unit
 end
 
-class Entry(time: Float, event: String, fields: Map[String, Value], context: List[Value])
+class Entry(time: Float, event: String, fields: Map[String, Value], context: List[String])
 ```
 
 Field values are `String`, `Int`, `Float`, `Bool`, `List[Value]`, or a nested
@@ -392,6 +439,18 @@ Use `Logging.withContext` when several sessions share one logging destination.
 Per-session destinations do not need that redundant scope. Nesting it is safe:
 each scope is added to `context` rather than over the one enclosing it, so a
 record keeps every scope it was produced under.
+
+A scope is a **string, and an identity** — stable for the unit of work it names
+and distinct between instances, by convention `"<dotted key>=<id>"`:
+
+```jo
+Logging.withContext("myapp.session=\{id}", () => runTurn())
+```
+
+Detail about the unit goes in the `fields` of the records produced under it,
+where it can be queried, rather than in the name of the scope. That is what lets
+a reader group a log by structure alone — see
+[Observability](/concepts/observability/).
 
 ## Turn history and transcript loading
 

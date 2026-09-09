@@ -10,8 +10,9 @@
   ! entries to different targets by `event` is just another `Logger` impl a
   ! driver can write, so none is provided.
   !
-  ! Backends need not be thread-safe: `Logging.withLogger` installs them behind
-  ! a lock (see Logging.jo), since runs are concurrent.
+  ! A BACKEND MUST BE THREAD SAFE. A turn's tools run concurrently and log as
+  ! they go, and a driver may bind this channel without any scope wrapping it, so
+  ! there is nowhere else the guarantee could come from.
 //]
 
 namespace harpe.logging
@@ -22,14 +23,26 @@ import harpe.util.Clock
   !
   ! Producers call `log`, the convenient front door — `logger.log("runs", "code" ~
   ! src, "exitCode" ~ n)` — which stamps the time, assembles the record, and hands
-  ! it to `logEntry`. Backends implement `logEntry` (and `close`, releasing any
+  ! it to `logEntry`. A producer whose fields are already a map calls `logFields`
+  ! for the same record. Backends implement `logEntry` (and `close`, releasing any
   ! resources at the end of the logging scope — `pass` if there are none).
 //]
 interface Logger
   def log(event: String, fields: ..(String ~ Value)): Unit =
     var map = Map.empty[String, Value]
     for k ~ v in fields do map = map.add(k, v)
-    logEntry(new Entry(Clock.now(), event, map, []))
+    logFields(event, map)
+
+  //[ Log a record whose fields are already a map — what a codec calls
+    !
+    ! `log` takes loose pairs because a producer types them at the call site. A
+    ! codec has assembled the map already (see `harpe.turns.TurnLog`), and
+    ! spreading it back into pairs to get here is the one step where a field
+    ! could go missing. The record is the same either way: stamped now, with no
+    ! scopes of its own — the ambient `ContextLogger` adds those.
+  //]
+  def logFields(event: String, fields: Map[String, Value]): Unit =
+    logEntry(new Entry(Clock.now(), event, fields, []))
 
   //[ Log a diagnostic message at a severity — the reserved-key convention on `Entry`
     !

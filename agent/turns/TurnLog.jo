@@ -21,7 +21,6 @@
 
 namespace harpe.turns
 
-import harpe.util.Clock
 import harpe.ffi.secrets
 import harpe.Model.*
 import harpe.Tool.*
@@ -42,14 +41,14 @@ section TurnLog
   def interruptedEvent: String = "harpe.turn.interrupted"
   def failedEvent: String      = "harpe.turn.failed"
 
-  //[ The scope every record inside one turn is tagged with.
+  //[ The scope key every record inside one turn is tagged with, as `turnKey=<id>`.
     !
     ! A turn is a UNIT OF WORK, not a stretch of the stream. Tagging says which
     ! turn a record belongs to instead of leaving a reader to infer it from what
     ! the record sits between — so nesting needs no depth counting, and a
     ! model's token counts can be attributed to the turn that spent them.
     !
-    ! Nested turns each add their own, innermost first, so a record carries its
+    ! Nested turns each add their own, outermost first, so a record carries its
     ! whole chain of turns and a roll-up needs no second lookup.
     !
     ! Dotted for the same reason an event name is: scopes are an open set that
@@ -62,29 +61,25 @@ section TurnLog
     ! TurnLog.contextLogger() in <the turn>`.
   //]
   def contextLogger(): Logger receives logger =
-    new ContextLogger(logger, Map(turnKey ~ secrets.token_hex(8)))
+    new ContextLogger(logger, "\{turnKey}=\{secrets.token_hex(8)}")
 
-  //[ The turns a record was produced under, innermost first. //]
+  //[ The turns a record was produced under, outermost first. //]
   def turnsOf(entry: Entry): List[String] =
+    val tag = turnKey + "="
     var ids: List[String] = []
-    for scope in entry.context do
-      match scope
-      case m: Map[String, Value] =>
-        match m.getOpt(turnKey)
-        case Some(s: String) => ids = ids + s
-        case _               => pass
-      case _ => pass
+    for scope in entry.context if scope.startsWith(tag) do
+      ids = ids + scope.substring(tag.size, scope.size)
     ids
 
   //[ The turn that produced this record — the innermost, when turns nest. //]
   def innerTurn(entry: Entry): String =
     val ids = turnsOf(entry)
-    if ids.isEmpty then "" else ids.get(0)
+    if ids.isEmpty then "" else ids.get(ids.size - 1)
 
   //[ The outermost turn this record was produced under. //]
   def outerTurn(entry: Entry): String =
     val ids = turnsOf(entry)
-    if ids.isEmpty then "" else ids.get(ids.size - 1)
+    if ids.isEmpty then "" else ids.get(0)
 
   //[ Does this event close a turn? One of exactly three outcomes. //]
   def isTerminator(event: String): Bool =
@@ -140,7 +135,7 @@ section TurnLog
     str(entry.fields, "error")
 
   private def emit(event: String, message: Message): Unit receives logger =
-    logger.logEntry(new Entry(Clock.now(), event, encodeMessage(message), []))
+    logger.logFields(event, encodeMessage(message))
 
   private def encodeMessage(message: Message): Map[String, Value] =
     match message

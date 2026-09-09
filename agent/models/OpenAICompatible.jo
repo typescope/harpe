@@ -14,6 +14,7 @@ import harpe.ffi.builtins
 
 import harpe.Model
 import harpe.Model.*
+import harpe.metering.Usage
 import harpe.Tool
 import harpe.Tool.*
 import harpe.logging.logger
@@ -174,8 +175,16 @@ private class CompatibleSession(
         if usage.isNone then py.none
         else builtins.getattrOr(usage, "prompt_tokens_details", py.none)
 
-      val cacheRead = if details.isNone then 0 else usageInt(details, "cached_tokens")
-      logReplied("openai-compatible", model, inTok, outTok, cacheRead, cacheWriteTokens = 0)
+      val used =
+        new Usage:
+          "openai-compatible"
+          model
+          inputTokens = inTok
+          outputTokens = outTok
+          cacheReadTokens = if details.isNone then 0 else Util.usageInt(details, "cached_tokens")
+          cacheWriteTokens = 0
+
+      ModelLog.logReplied(used)
 
       // Preserve the provider's complete assistant message, including unknown
       // extension fields. Failed requests never mutate `committed`.
@@ -184,7 +193,7 @@ private class CompatibleSession(
       messages.append(raw)
       committed = Some(messages)
 
-      Model.Reply(CompatibleChat.parseResponse(response), new Usage(inTok, outTok))
+      Model.Reply(CompatibleChat.parseResponse(response), used)
     case Err(err) => classifyError(err, "openai-compatible", model)
 end
 

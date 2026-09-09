@@ -5,7 +5,18 @@
 
 namespace harpe.models
 
+import harpe.ffi.builtins
+
 private section Util
+  //[ An optional integer counter off a provider's `usage` object
+    !
+    ! 0 when the provider omits the field or reports it as null, so a missing
+    ! counter reads as "nothing to report" rather than raising.
+  //]
+  def usageInt(usage: py.Dynamic, name: String): Int =
+    val raw = builtins.getattrOr(usage, name, py.none)
+    if raw.isNone then 0 else raw.asInt
+
   //[ Run `body` with the value entered from an SDK context manager.
     !
     ! Opening, entering, and running the body return Python failures as `Err`.

@@ -69,13 +69,19 @@ import harpe.util.File
   ! innermost first: the scope that produced the record, then the ones enclosing
   ! it.
   !
-  ! A scope is any `Value`. A producer that wants a reader to tell its scope
-  ! from another's names it — `{"harpe.tools.call": {...}}` — and one with an id and
-  ! nothing to name may push the id alone. Scopes are separate from `fields` at
-  ! the type level, so ambient context can never collide with a producer's own
-  ! key — `"context"` is reserved in the JSON.
+  ! A SCOPE IS A STRING, AND IT IS AN IDENTITY. What a reader does with context
+  ! is tell one unit of work from another, which needs the scope to be stable for
+  ! that unit and distinct between instances — so the type is the identity itself
+  ! rather than a record that might carry one. `"<dotted key>=<id>"` by
+  ! convention (`"harpe.turn.id=209b1e14"`), dotted for the reason event names
+  ! are: an application's scopes cannot collide with the framework's. Detail
+  ! about the unit belongs in the `fields` of the records produced under it,
+  ! where it is queryable, not in the name of the scope.
+  !
+  ! Scopes are separate from `fields` at the type level, so ambient context can
+  ! never collide with a producer's own key — `"context"` is reserved in the JSON.
 //]
-class Entry(time: Float, event: String, fields: Map[String, Value], context: List[Value])
+class Entry(time: Float, event: String, fields: Map[String, Value], context: List[String])
 
 section Entry
   //[ An entry as a JSON-able dict
@@ -98,7 +104,7 @@ section Entry
     for k ~ v in entry.fields.toList do fields.set(k, Value.toJson(v))
 
     val scopes = py.list()
-    for scope in entry.context do scopes.append(Value.toJson(scope))
+    for scope in entry.context do scopes.append(py.dynamic(scope))
 
     py.dict:
       "time"    ~ Clock.toRfc3339(entry.time)
@@ -115,9 +121,9 @@ section Entry
     val timestamp = Clock.fromRfc3339(d.get("time", "").asString)
     val event = d.get("event", "").asString
 
-    var context: List[Value] = []
+    var context: List[String] = []
     for item in d.get("context", py.list()).cast[py.List] do
-      context = context + Value.fromJson(item)
+      context = context + item.asString
 
     var fields = Map.empty[String, Value]
     val raw = d.get("fields", py.dict()).cast[py.Dict]

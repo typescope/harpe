@@ -1,0 +1,169 @@
+//[ Test.jo
+  !
+  ! A seeded journal, served, for looking at the viewer beside it.
+  !
+  ! The viewer is a UI: what it does well or badly is a thing you look at, and
+  ! looking needs a journal with the awkward shapes in it. This writes one — a
+  ! plain conversation, two sessions interleaved, and a lane of deliberate
+  ! extremes — so a change can be judged in a browser in a few seconds rather
+  ! than by waiting for an agent to happen to produce the shape in question.
+  !
+  ! IT DRIVES THE REAL PRODUCERS. The records come from `Journal`, `TurnLog` and
+  ! `Logging.withContext`, not from hand-written JSON, so the seed cannot drift
+  ! from the format the framework actually writes.
+  !
+  ! An entry point, not a suite: it is linked in by a module that declares no
+  ! sources of its own, the same way anything else here is reached.
+  !
+  !     [module.viewer]
+  !     src = []
+  !     links = [{ from = "jo.main", to = "harpe.observability.test" }]
+  !
+  !     jo run viewer          # http://127.0.0.1:8760
+//]
+
+namespace harpe.observability
+
+import harpe.metering.Usage
+import harpe.ffi.os
+import harpe.ffi.threading
+import harpe.logging.Logging
+import harpe.logging.Value
+import harpe.logging.logger
+import harpe.transcript.Journal
+import harpe.turns.TurnLog
+import harpe.util.Process
+import jo.IO.stdout
+
+//[ `s` repeated `n` times. //]
+private def repeat(s: String, n: Int): String =
+  var out = ""
+  var i = 0
+  while i < n do
+    out = out + s
+    i = i + 1
+  out
+
+//[ A `levels`-deep chain of single-key maps, ending in a scalar. //]
+private def deepChain(levels: Int): Value =
+  var v: Value = "bottom"
+  var i = levels
+  while i > 0 do
+    v = Map[String, Value]("level\{i}" ~ v)
+    i = i - 1
+  v
+
+//[ `n` small maps in a list — a branch far wider than anything worth showing. //]
+private def wideList(n: Int): Value =
+  var items: List[Value] = []
+  var i = 0
+  while i < n do
+    items = items + Map[String, Value]("i" ~ Value.IntVal(i), "label" ~ "row \{i}")
+    i = i + 1
+  items
+
+//[ A record with `n` fields, to see what a level of that many looks like. //]
+private def manyKeys(n: Int): Value =
+  var map = Map.empty[String, Value]
+  var i = 0
+  while i < n do
+    map = map.add("field\{i}", Value.IntVal(i))
+    i = i + 1
+  map
+
+private def scope(id: String): String = "app.session=\{id}"
+
+// ------------------------------------------------------------------- seeding
+
+private def alphaTurn(): Unit receives logger =
+  with logger = TurnLog.contextLogger() in
+    logger.log("harpe.turn.message", "role" ~ "user",
+               "text" ~ "Largest prime under 1234567, and profile the run")
+    logger.log("harpe.model.replied", "provider" ~ "openrouter", "model" ~ "nemotron-3-ultra")
+    Usage.record:
+      new Usage("openrouter", "nemotron-3-ultra", inputTokens = 2103,
+                outputTokens = 228, cacheReadTokens = 1920, cacheWriteTokens = 0)
+
+    Logging.withContext: "harpe.tools.call=call_7b31", () =>
+      logger.log:
+        "harpe.tools.runCode.ran"
+        "code" ~ "namespace sandbox.guest\n\ndef isPrime(n: Int): Bool =\n  n > 1\n"
+        "exitCode" ~ 0
+        "output" ~ "1234547"
+        "runSeconds" ~ 0.07
+        "profile" ~ Map[String, Value](
+          "phases" ~ Map[String, Value](
+            "compile" ~ Map[String, Value]("ms" ~ Value.IntVal(3250), "peakMb" ~ Value.IntVal(210)),
+            "run" ~ Map[String, Value]("ms" ~ Value.IntVal(70), "peakMb" ~ Value.IntVal(34))),
+          "sandbox" ~ "jo-0.13")
+
+    logger.log("harpe.turn.message", "role" ~ "assistant",
+               "text" ~ "The largest prime under 1234567 is **1234547**.")
+    TurnLog.answered()
+
+private def betaTurn(): Unit receives logger =
+  with logger = TurnLog.contextLogger() in
+    logger.log("harpe.turn.message", "role" ~ "user", "text" ~ "Summarise the corpus")
+    logger.error:
+      "harpe.model.failed"
+      "upstream refused the request"
+      "attempt" ~ 2
+      "response" ~ Map[String, Value](
+        "status" ~ Value.IntVal(429),
+        "headers" ~ Map[String, Value]("retry-after" ~ "12", "x-request-id" ~ "req_88f1"),
+        "body" ~ Map[String, Value]("error" ~ Map[String, Value](
+          "type" ~ "rate_limit",
+          "meta" ~ Map[String, Value]("window" ~ "1m", "limit" ~ Value.IntVal(60)))))
+    TurnLog.failed("provider exhausted after 2 attempts")
+
+//[ The shapes a viewer has to survive rather than render nicely. //]
+private def extremes(): Unit receives logger =
+  with logger = TurnLog.contextLogger() in
+    logger.log("viewer.extreme.longValue",
+               "note" ~ "a whole program in one field",
+               "code" ~ repeat("def step(n: Int): Int = n * 2 + 1\n", 4000))
+
+    logger.log("viewer.extreme.longKey",
+               "note" ~ "the key beside this one is 2000 characters",
+               repeat("k", 2000) ~ "short value",
+               "after" ~ "a field that must still be reachable")
+
+    logger.log("viewer.extreme.unbreakable",
+               "note" ~ "no whitespace to wrap on",
+               "token" ~ repeat("a", 40000))
+
+    logger.log("viewer.extreme.deep", "note" ~ "30 levels", "chain" ~ deepChain(30))
+    logger.log("viewer.extreme.wide", "note" ~ "800 entries", "rows" ~ wideList(800))
+    logger.log("viewer.extreme.manyKeys", "note" ~ "300 fields", "fields" ~ manyKeys(300))
+    TurnLog.answered()
+
+//[ One bracketed exchange in `session`, around `turn`. //]
+private def exchange(session: String, ask: String, turn: () => Unit receives logger): Unit receives logger =
+  Logging.withContext: scope(session), () =>
+    val journal = new Journal(logger)
+    journal.request(Journal.payload("text" ~ ask))
+    turn()
+    journal.response("turnEnd")
+
+private def seed(): Unit receives logger =
+  // Interleaved, because two conversations at once is the case a reader has to
+  // be able to separate.
+  exchange("alpha", "Largest prime under 1234567, and profile the run", () => alphaTurn())
+  exchange("beta", "Summarise the corpus", () => betaTurn())
+  exchange("extremes", "Stress the viewer", () => extremes())
+
+def test(): Unit receives stdout =
+  val viewLog = new ViewLogger(capacity = 5000)
+  with logger = viewLog in seed()
+
+  val host = os.getenv("HOST", "127.0.0.1")
+  val port = Int.parse(os.getenv("PORT", "8760")) rescue None => 8760
+  Viewer.start(viewLog, "seeded journal", host, port)
+
+  println ""
+  println "  seeded journal · http://\{host}:\{port}"
+  println "  a plain exchange, two sessions interleaved, and a lane of extremes"
+  println "  Ctrl-C to stop"
+
+  Process.shutdownOnSigint("\n  stopped.")
+  threading.Event().wait()

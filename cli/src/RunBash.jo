@@ -2,13 +2,31 @@
   !
   ! The trusted CLI asks the current user to approve the exact command before
   ! starting Bash.
+  !
+  ! It records what it ran. This is the least confined thing the agent can do —
+  ! arbitrary shell in the agent home, with none of `runCode`'s sandbox — so the
+  ! command and how it ended belong in the journal as fields something can query,
+  ! not only as prose inside a tool result.
 //]
 namespace harpe.cli
 
+import harpe.ffi.builtins
+import harpe.logging.logger
+import harpe.util.Clock
 import harpe.*
 import harpe.util.Process
 import harpe.util.Capped
 import harpe.util.Terminal
+
+//[ Two outcomes, two names: a run that finished has an `exitCode` and an
+  ! `output`, and one the cap stopped has neither. A command the user refused
+  ! ran nothing, and its refusal is already the tool's result.
+//]
+private def ranEvent: String      = "harpe.tools.runBash.ran"
+private def timedOutEvent: String = "harpe.tools.runBash.timedOut"
+
+//[ How long a command may run before it is stopped. //]
+private def timeoutSeconds: Int = 30
 
 //[ The `runBash` tool: its spec, and the command runner a route calls. //]
 class RunBashTool
@@ -26,11 +44,11 @@ class RunBashTool
   def toolset(): Toolset =
     Toolset.of: this, (i: Tool.ToolInput, interact: Interact) => run(i["command"], interact)
 
-  def run(command: String, interact: Interact): Tool.ToolOutcome receives appHome =
+  def run(command: String, interact: Interact): Tool.ToolOutcome receives appHome, logger =
     runBash(command, interact)
 end
 
-private def runBash(command: String, interact: Interact): Tool.ToolOutcome receives appHome =
+private def runBash(command: String, interact: Interact): Tool.ToolOutcome receives appHome, logger =
   if command.trim == "" then
     return new Tool.ToolOutcome("The command is empty.", "empty command", attachments = [])
 
@@ -45,15 +63,22 @@ private def runBash(command: String, interact: Interact): Tool.ToolOutcome recei
     new Tool.ToolOutcome("Approval was cancelled. The command was not run.", "approval cancelled", attachments = [])
 
   case Approvals.Approved =>
+    val started = Clock.now()
     val result = Process.runCapped(
       py.list("bash", "-lc", command),
-      30.0,
+      timeoutSeconds.toFloat,
       cwd = appHome
     )
+    val runSeconds = builtins.round(Clock.now() - started, 2)
 
     if result.timedOut then
+      logger.log:
+        timedOutEvent
+        "command"        ~ command
+        "timeoutSeconds" ~ timeoutSeconds
+
       new Tool.ToolOutcome:
-        "The command ran longer than 30 seconds and was stopped."
+        "The command ran longer than \{timeoutSeconds} seconds and was stopped."
         "command timed out"
         attachments = []
 
@@ -65,6 +90,13 @@ private def runBash(command: String, interact: Interact): Tool.ToolOutcome recei
         else if err == "" then out
         else out + "\n" + err
       val content = if combined == "" then "(the command produced no output)" else combined
+
+      logger.log:
+        ranEvent
+        "command"    ~ command
+        "runSeconds" ~ runSeconds
+        "exitCode"   ~ result.returnCode
+        "output"     ~ content
 
       if result.returnCode == 0 then
         new Tool.ToolOutcome(Tool.elide(content, 4000), "command completed", attachments = [])

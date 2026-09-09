@@ -62,9 +62,17 @@
 
 * { box-sizing: border-box; }
 
+/* The page itself does not scroll: the lanes do, each its own. A column of
+   header-then-lanes, sized by the flex box rather than by subtracting a guess at
+   the header's height from the viewport — which left a page scrollbar whenever
+   the guess was low. */
+html, body { height: 100%; }
+
 body {
   margin: 0;
-  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   color: var(--fg);
   font: 14px/1.5 var(--ui);
   -webkit-font-smoothing: antialiased;
@@ -75,8 +83,10 @@ body {
 
 /* One band, and deliberately dark in BOTH themes: it is app chrome, and a solid
    bar is what separates the tool from the journal it is showing you. Everything
-   the reader operates lives here, so the body stays light and undisturbed. */
-header {
+   the reader operates lives here, so the body stays light and undisturbed.
+   Scoped to the page's own bar: a `<header>` inside a lane or the raw dialog is
+   a heading, not chrome, and inheriting this made its text white on white. */
+body > header {
   position: sticky;
   top: 0;
   z-index: 10;
@@ -187,88 +197,156 @@ input[type=checkbox] { accent-color: var(--accent); margin: 0; }
 
 /* ------------------------------------------------------------------ body */
 
-main { padding: 16px 20px 50vh; }
-
-.placeholder { color: var(--faint); font-size: 13px; padding: 40px 0; text-align: center; }
-
-/* A turn: everything a driver bracketed, from its request to its response. */
-.turn {
-  --edge: var(--accent);
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--edge);
-  border-radius: 10px;
-  background: var(--panel);
-  margin-bottom: 16px;
+/* Lanes sit side by side and scroll horizontally, so a deep path stays
+   reachable without collapsing the levels above it. Each lane scrolls its own
+   rows, so following the live tail in one does not move the others. */
+/* A column, so anything about the journal as a whole — the aged-out notice, the
+   empty state — sits ABOVE the lanes rather than becoming a column beside them. */
+main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 0;
   overflow: hidden;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 6px 18px -12px rgb(0 0 0 / 0.30);
 }
-.turn.answered    { --edge: var(--ok); }
-.turn.failed      { --edge: var(--err); }
-.turn.interrupted { --edge: var(--warn); }
-.turn.running     { --edge: var(--accent); }
 
-.turn > .head {
+/* The tree, as a grid: a column per depth, a row per open branch, the root
+   lane spanning every row. Rows share the height so no branch is privileged. */
+.lanegrid {
+  display: grid;
+  grid-auto-rows: minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.lane {
+  /* Rows lay themselves out against THEIR LANE, not the window: a lane in a
+     four-deep tree is a few hundred pixels wide however large the screen is. */
+  container-type: inline-size;
+
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+}
+
+/* The root is context for the branches beside it, so it recedes. */
+.lane[data-path="[]"] { background: var(--wash); }
+
+/* Where a re-clicked context already is. */
+@keyframes findme {
+  from { box-shadow: inset 0 0 0 2px var(--accent); }
+  to   { box-shadow: inset 0 0 0 2px transparent; }
+}
+.lane.flash { animation: findme 1.2s ease-out; }
+
+/* A fixed height, because the headers sit side by side and must line up: only
+   the lanes past the first carry a close button, and it is taller than the text
+   it sits beside. */
+.lanehead {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 11px 14px;
+  gap: 8px;
+  flex: none;
+  height: 37px;
+  padding: 0 14px;
   border-bottom: 1px solid var(--line);
-  background:
-    linear-gradient(90deg,
-      color-mix(in srgb, var(--edge) 13%, transparent),
-      color-mix(in srgb, var(--edge) 3%, transparent) 55%,
-      transparent);
-}
+  font: 12px var(--ui);
 
-.turn > .head .prompt {
-  flex: 1;
+  /* A band, tinted by how deep the lane is, so the eye can tell one lane's
+     header from the next and read the depth off it — the grid puts depth in the
+     column, which says nothing once a branch wraps onto its own row. */
+  background: color-mix(in srgb,
+    var(--accent) calc(12% + var(--lane-depth, 0) * 7%), var(--panel));
+}
+.lanehead .all { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lanehead .n { color: var(--faint); font: 11px var(--mono); }
+.lanehead .close {
+  margin-left: auto;
+  font: 12px/1 var(--ui);
+  padding: 3px 7px;
+  color: var(--dim);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.lanehead .close:hover { color: var(--fg); }
+
+/* A modest tail, not a screenful: each lane scrolls itself now, and `follow`
+   scrolls to the bottom — a 40vh pad would carry the content off the top. */
+.rows { flex: 1; overflow-y: auto; padding: 10px 14px 24px; }
+
+/* ------------------------------------------------------------------ chips */
+
+/* The drill affordance. Collapsed to the innermost scope, because a whole path
+   on every line buries the log it annotates. */
+/* Nearly out of the way until the row is under the pointer, and pushed to the
+   right so it never begins where the record begins: the eye reads records down
+   the left edge, and a scope starting there competes for that line. Focus
+   reveals it too, so it stays reachable without a pointer. */
+.chips {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  justify-self: end;
   min-width: 0;
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
+  overflow: hidden;
+  opacity: 0.4;
+  transition: opacity 0.12s;
+}
+.row:hover .chips, .chips:focus-within { opacity: 1; }
+.chips .sep { color: var(--faint); font-size: 10px; }
+
+.chip, .caret {
+  font: 10.5px/1.5 var(--mono);
+  padding: 1px 6px;
+  max-width: 420px;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.badge {
-  font: 600 10.5px/1.5 var(--mono);
-  padding: 2px 9px;
-  border-radius: 20px;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: var(--dim);
-  background: color-mix(in srgb, var(--dim) 12%, transparent);
   white-space: nowrap;
+  color: var(--faint);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 20px;
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
 }
-.badge.answered    { color: var(--ok);     background: color-mix(in srgb, var(--ok) 15%, transparent); }
-.badge.failed      { color: var(--err);    background: color-mix(in srgb, var(--err) 15%, transparent); }
-.badge.interrupted { color: var(--warn);   background: color-mix(in srgb, var(--warn) 16%, transparent); }
-.badge.running     { color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
-.badge.running::before { content: "● "; animation: pulse 1.4s ease-in-out infinite; }
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
-
-/* Entries outside any bracket: machinery, and shown as such — no card, a flat
-   dimmer strip, so the eye skips it on the way to the next turn. */
-.loose {
-  margin-bottom: 16px;
-  padding: 2px 0;
-  border-left: 3px solid color-mix(in srgb, var(--infra) 45%, transparent);
-  border-radius: 0 10px 10px 0;
-  background: color-mix(in srgb, var(--infra) 7%, transparent);
+.row:hover .chip, .row:hover .caret {
+  color: var(--dim);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
 }
+.chip:hover, .caret:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.caret { padding: 1px 5px; background: none; }
 
-/* ---------------------------------------------------------------- entries */
+.placeholder { color: var(--faint); font-size: 13px; padding: 28px 20px; }
 
 .row {
   display: grid;
-  grid-template-columns: 68px 178px minmax(0, 1fr);
-  gap: 14px;
+  /* Every track may shrink to nothing: fixed widths for the time and event
+     starved the record of the little space a narrow lane has. The scope gets a
+     LINE OF ITS OWN under the record — a path is arbitrary text, and beside the
+     record it took width the record needed and truncated besides. */
+  grid-template-columns: minmax(0, 68px) minmax(0, 178px) minmax(0, 1fr) 34px;
+  gap: 4px 14px;
   padding: 6px 14px;
   border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
   align-items: baseline;
 }
+.row .time  { grid-area: 1 / 1; }
+.row .cat   { grid-area: 1 / 2; }
+.row .body  { grid-area: 1 / 3; }
+.row .raw   { grid-area: 1 / 4; }
+.row .chips { grid-area: 2 / 3 / 3 / 5; }
 .row:first-child { border-top: none; }
-.loose .row { border-radius: 8px; border: none; }
 .row:hover { background: color-mix(in srgb, var(--fg) 3%, transparent); }
 
 .time { font: 11.5px var(--mono); color: var(--faint); }
@@ -325,6 +403,52 @@ main { padding: 16px 20px 50vh; }
 .fields .k { color: var(--faint); }
 .fields + .fields { margin-top: 2px; }
 
+/* One line of a field tree, indented by its depth. `--d` carries the depth so
+   nesting is read off the left edge rather than off punctuation. */
+.leaf {
+  /* Indent stops growing past a point: nesting deeper than this is still
+     legible on the left, where an unbounded indent would push it off. */
+  padding-left: calc(min(var(--d, 0), 10) * 14px);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.leaf .v { color: var(--fg); }
+/* A key is a name, not content: bound it so a pathological one cannot push the
+   value off the line. The whole key is on `title`, and in the raw record. */
+.leaf .k, .pair .k {
+  display: inline-block;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+/* What a closed branch holds: `{4}` or `[2]`. */
+.brief { color: var(--faint); }
+
+.fold {
+  width: 13px;
+  margin-left: -13px;          /* in the gutter, so keys stay aligned */
+  font: 11px/1.5 var(--mono);
+  color: var(--faint);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.fold:hover { color: var(--accent); }
+
+/* The rest of a long branch, on request. */
+.wider {
+  font: 11.5px var(--ui);
+  color: var(--accent);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.wider:hover { text-decoration: underline; }
+
 /* Short scalars on one line, separated rather than stacked. */
 .fields.inline { display: flex; flex-wrap: wrap; gap: 3px 14px; white-space: normal; }
 .pair { white-space: nowrap; }
@@ -346,13 +470,109 @@ main { padding: 16px 20px 50vh; }
 }
 .more:hover { text-decoration: underline; }
 
-.empty { padding: 40px 0; text-align: center; color: var(--faint); font-size: 13px; }
+.empty { padding: 28px 0; color: var(--faint); font-size: 13px; }
+.gap {
+  flex: none;
+  padding: 8px 20px;
+  color: var(--faint);
+  font-size: 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+/* ------------------------------------------------- the raw-entry affordance */
+
+/* Out of the way until wanted: the journal is for reading, and every row
+   carrying a visible control would compete with the content. Focus reveals it
+   too, so it is reachable without a pointer. */
+.raw {
+  justify-self: end;
+  opacity: 0;
+  padding: 0 4px;
+  font: 11px/1.6 var(--mono);
+  color: var(--faint);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: opacity 0.12s, color 0.12s, border-color 0.12s;
+}
+.row:hover .raw, .raw:focus-visible { opacity: 1; }
+.raw:hover { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.raw:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 1px; }
+
+dialog#raw {
+  width: min(760px, 92vw);
+  max-height: 82vh;
+  padding: 0;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 24px 60px -20px rgb(0 0 0 / 0.45);
+}
+dialog#raw::backdrop { background: rgb(0 0 0 / 0.42); }
+
+dialog#raw header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  background: var(--wash);
+  border-bottom: 1px solid var(--line);
+}
+dialog#raw header .cat { flex: none; font: 600 12px var(--mono); color: var(--accent); }
+dialog#raw header .scope { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+dialog#raw button {
+  flex: none;
+  font: 13px/1 var(--ui);
+  padding: 5px 8px;
+  color: var(--dim);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+dialog#raw button:hover { color: var(--fg); }
+
+dialog#raw pre {
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  max-height: calc(82vh - 48px);
+  font: 12px/1.55 var(--mono);
+  white-space: pre;
+}
+
+/* A narrow LANE stacks: below this there is no width for columns, whatever the
+   window is doing. */
+@container (max-width: 620px) {
+  .row { grid-template-columns: 58px minmax(0, 1fr); }
+  .row .time  { grid-area: 1 / 1; }
+  .row .cat   { grid-area: 1 / 2; justify-self: start; }
+  .row .body  { grid-area: 2 / 2; }
+  .row .chips { grid-area: 3 / 2; justify-self: end; }
+  .row .raw   { grid-area: 2 / 1; justify-self: start; }
+}
 
 @media (max-width: 900px) {
   header { flex-wrap: wrap; gap: 10px 14px; }
   .search { order: 3; flex-basis: 100%; max-width: none; }
   .state { order: 2; }
+  /* Stacked, so here the PAGE is what scrolls. */
+  html, body { height: auto; }
+  body { display: block; overflow: visible; }
+  main { flex: none; min-height: 0; overflow: visible; display: block; }
+  /* No room for columns: the tree becomes a stack, in the order it was opened. */
+  .lanegrid { display: block; overflow: visible; }
+  .lane { border-right: none; border-bottom: 1px solid var(--line); }
+  .rows { overflow-y: visible; padding-bottom: 24px; }
   .row { grid-template-columns: 60px minmax(0, 1fr); }
   .row .cat { grid-column: 2; }
   .row .body { grid-column: 2; }
+  .row .chips { grid-column: 2; justify-self: start; }
+  /* No column to spare at this width, so it sits in the gutter under the time
+     rather than taking a line of its own. Hover-only here too. */
+  .row .raw { grid-column: 1; justify-self: start; }
 }

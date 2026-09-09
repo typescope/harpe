@@ -19,6 +19,7 @@ import harpe.context.SummarizingContext
 import harpe.transcript.Journal
 import harpe.models.echo
 import harpe.Model.*
+import harpe.metering.Usage
 import harpe.Tool.*
 import harpe.logging.logger
 import harpe.logging.Logger
@@ -29,18 +30,28 @@ import harpe.testing.test
 import harpe.testing.checkEquals
 
 
+// A reported usage. These tests read `inputTokens` and nothing else.
+private def used(inputTokens: Int): Usage =
+  new Usage:
+    "test"
+    "test-model"
+    inputTokens
+    outputTokens = 0
+    cacheReadTokens = 0
+    cacheWriteTokens = 0
+
 // A reply carrying only text (no tool calls).
 private def textReply(s: String): ReplyResult =
-  Reply(Assistant(s, []), new Usage(0, 0))
+  Reply(Assistant(s, []), used(0))
 
 // A reply asking to call the named tool once.
 private def toolReply(name: String): ReplyResult =
   val call = ToolCall: "id", name, ToolInput(py.dict())
-  Reply(Assistant("", [call]), new Usage(0, 0))
+  Reply(Assistant("", [call]), used(0))
 
 private def toolReplyWithUsage(name: String, inputTokens: Int): ReplyResult =
   val call = ToolCall: "id", name, ToolInput(py.dict())
-  Reply(Assistant("", [call]), new Usage(inputTokens, 0))
+  Reply(Assistant("", [call]), used(inputTokens))
 
 private def eventTag(e: TurnEvent): String =
   match e
@@ -404,7 +415,7 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
           step.set(0, n + 1)
           if n == 0 then
             val call = ToolCall("id", "echo", ToolInput(py.dict()))
-            Reply(Assistant("I will check.", [call]), new Usage(0, 0))
+            Reply(Assistant("I will check.", [call]), used(0))
           else textReply("Done.")
 
       checkEquals:

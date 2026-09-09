@@ -174,6 +174,28 @@ section Http
   def notFound(): py.List receives request =
     respond: "404 Not Found", "application/json", json.dumps(py.dict("error" ~ "not_found"))
 
+  //[ Stop `httpd` writing an access line per request to stderr
+    !
+    ! `wsgiref` logs every exchange, which a page that polls turns into a line a
+    ! second in whatever terminal the driver is using. Its handler calls
+    ! `log_message` for that, so pointing the name at a logger nobody has
+    ! configured drops the line. An unhandled exception still surfaces: that goes
+    ! to `wsgi.errors` rather than through `log_message`.
+    !
+    ! Separate from `server` because it is a caller's decision, like the banner
+    ! and the signal handler: a server answering a person wants its access log,
+    ! and one answering a poller does not.
+  //]
+  def quiet(httpd: py.Dynamic): Unit =
+    val wsgi = py.module("wsgiref.simple_server")
+    val discard = py.module("logging").getLogger("harpe.http").debug
+    val handler = builtins.newType:
+      "QuietWSGIRequestHandler"
+      py.tuple(wsgi.WSGIRequestHandler)
+      py.dict("log_message" ~ discard)
+
+    py.module("builtins").setattr(httpd, "RequestHandlerClass", handler)
+
   //[ A threaded WSGI server that binds the ambient request and calls `route`
     !
     ! One request per thread, so a page stays responsive while another request

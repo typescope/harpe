@@ -23,7 +23,7 @@
   ! driver's behalf without also deciding what a queued approval prompt should
   ! look like.
   !
-  ! `logger` is safe either way: `Logging.withLogger` installs a `SerialLogger`,
+  ! `logger` is safe either way: a `Logger` backend is thread safe by contract,
   ! so records from concurrent handlers never interleave.
 //]
 
@@ -86,20 +86,20 @@ section ToolCallExecutor
     // not identify a call and the id does. Stamped here rather than in the
     // parallel policy alone: a handler may run work on threads of its own under
     // either, and a record should mean the same thing however it was scheduled.
-    val callScope: Map[String, Value] = Map("id" ~ call.id, "tool" ~ toolName)
     val outcome =
       Logging.withContext:
-        Map(callContextKey ~ callScope)
+        "\{callContextKey}=\{call.id}"
         () => dispatch(call, tools, interact)
 
     interact.emit: TurnEvent.ToolCallEnded(toolName, outcome.summary)
 
     new ToolResult(call.id, outcome.result, outcome.attachments, outcome.success)
 
-  //[ The reserved sub-record key for the tool call a record was produced under.
+  //[ The reserved scope key for the tool call a record was produced under.
     !
     ! Dotted so an application's own scopes cannot collide with it, the same
-    ! reason event names are.
+    ! reason event names are. The id alone identifies the call; which tool ran is
+    ! in the records produced under it, where it can be queried.
   //]
   private def callContextKey: String = "harpe.tools.call"
 

@@ -23,6 +23,7 @@ import harpe.Interact
 import harpe.Approvals
 import harpe.Model
 import harpe.Model.*
+import harpe.metering.Usage
 import harpe.Tool
 import harpe.Tool.*
 import harpe.turns.TurnEvent
@@ -73,7 +74,10 @@ section ModelDriver
   //]
   class Turn(session: Session)
     private var recorder: RecordingInteract = new RecordingInteract
-    private var reported: Usage = new Usage(0, 0)
+    // A placeholder until the first reply lands — no assertion reads it.
+    private var reported: Usage =
+      new Usage("none", "none", inputTokens = 0, outputTokens = 0,
+                cacheReadTokens = 0, cacheWriteTokens = 0)
     private var delay: Float = 0.0
 
     //[ The chunks the last reply streamed, in arrival order. //]

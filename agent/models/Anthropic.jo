@@ -14,6 +14,7 @@ import harpe.ffi.builtins
 
 import harpe.Model
 import harpe.Model.*
+import harpe.metering.Usage
 import harpe.Tool
 import harpe.Tool.*
 import harpe.logging.logger
@@ -253,12 +254,19 @@ private class AnthropicSession(
       // the request actually processed. Reporting the bare field would undercount
       // a cache hit by the whole prefix — the usual case here, since the default
       // policy caches — starving both billing and the token-budget `Context`.
-      val cacheRead = usageInt(u, "cache_read_input_tokens")
-      val cacheWrite = usageInt(u, "cache_creation_input_tokens")
-      val inTok = usageInt(u, "input_tokens") + cacheRead + cacheWrite
-      val outTok = u.output_tokens.asInt
-      logReplied("anthropic", model, inTok, outTok, cacheRead, cacheWrite)
-      Reply(anthropicParseReply(response), new Usage(inTok, outTok))
+      val cacheRead = Util.usageInt(u, "cache_read_input_tokens")
+      val cacheWrite = Util.usageInt(u, "cache_creation_input_tokens")
+      val used =
+        new Usage:
+          "anthropic"
+          model
+          inputTokens = Util.usageInt(u, "input_tokens") + cacheRead + cacheWrite
+          outputTokens = u.output_tokens.asInt
+          cacheReadTokens = cacheRead
+          cacheWriteTokens = cacheWrite
+
+      ModelLog.logReplied(used)
+      Reply(anthropicParseReply(response), used)
 
     case Err(err) => classifyError(err, "anthropic", model)
 end

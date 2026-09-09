@@ -12,61 +12,62 @@ first live in a browser, then from the command line.
 
 ## The journal viewer
 
-Harpe ships a viewer for one session's journal. It is a module you declare, not
-code you write:
+A `Logger` is write-only, so nothing can show you a log while it is being
+written. `ViewLogger` is a `Logger` that keeps the last `capacity` entries in
+memory and lets them be read back. Tee it beside the backend you already had, so
+the file still gets everything:
 
-```toml
-[module.view]
-kind = "app"
-platform = "python"
-enable-ffi = true
-src = []
-depth = 2
-
-packages = [{ name = "harpe", version = "0.4" }]
-
-links = [
-  { from = "jo.main", to = "harpe.transcript.serve" },
-]
+```jo
+val viewLog = new ViewLogger(capacity = 5000)
+val log     = new TeeLogger([new JsonlLogger(sessionPath), viewLog])
 ```
 
-`src = []` is deliberate: every line of the viewer is harpe's, linked in as this
-module's entry point. The bundled drivers already declare it.
+`Viewer` serves that window as one route:
 
-```sh
-jo run view -- logs/sessions/20260821T091402-a3f1.jsonl
+```jo
+case Http.Get("/journal") => Viewer.respond(viewLog, title)
 ```
 
+An entry is visible the moment it is logged — no flush, no second process, no
+path to agree on.
+
+That one route is the whole integration. It answers with the page, or — when
+the page polls it back with the cursor it has reached — with the entries after
+it. The page is one self-contained response, so there is no stylesheet or
+script URL to route either: you choose a path, and the protocol stays between
+the page and the viewer. An agent with no HTTP server of its own takes
+`Viewer.start` instead, which binds a port on a daemon thread:
+
+```jo
+Viewer.start(viewLog, title, "127.0.0.1", port)
 ```
-  20260821T091402-a3f1.jsonl
-  Live at http://127.0.0.1:8760
-  Ctrl-C to stop
-```
 
-`HOST` and `PORT` override the defaults.
+That server is quiet: the page polls once a second, and `wsgiref` would
+otherwise write an access line per poll into whatever terminal the agent is
+using. Mounting the route on a server of your own, call `Http.quiet(httpd)` if
+you want the same. Unhandled exceptions still surface either way.
 
-## What it shows
+The framework provides the mechanism and stops there. Whether to expose a
+journal, on which port, behind which path, and to whom is a driver's decision —
+see [Before you expose it](#before-you-expose-it).
 
-![A journal for one session. Each bracketed turn is a card with a coloured left edge; inside it, timestamped rows pair an event chip with the record's content. Assistant messages, tool results, runCode executions and model calls are each tinted differently, and the header carries the filter, the turns-only and follow toggles, a live indicator, and the entry count.](/img/journal-viewer.png)
+## Lanes
 
-Turns are cards, opened by a `harpe.turn.request` and closed by its response,
-with an outcome badge — *answered*, *failed*, *interrupted*, or *running* — and a
-left edge in that outcome's colour. Records nothing bracketed (a subagent's turn,
-a maintenance job) render as a flat strip between cards, which is the same
-distinction `Journal.records` draws.
+The page groups by **structure alone**. A record's `context` **is** its path from
+the root — outermost scope first, the one that produced the record last — and a
+**lane is a path prefix**:
 
-Colour is meaning, not decoration: who spoke tints the message, and an event
-chip is coloured by its prefix, so `harpe.tools.*` reads differently from
-`harpe.turn.*` at a glance.
+- the leftmost lane is the empty prefix — every record, in arrival order
+- clicking a scope on a row opens a lane holding that scope's records and
+  everything nested under it
+- a lane one level deeper sits to its right: `all › session › turn › tool call`
 
-The page polls once a second and appends what it has not seen, so a turn appears
-as it happens. Filter from the header — it matches anywhere in a record, nested
-fields included. `/` focuses the filter, `t` toggles turns-only, `f` toggles
-follow.
+![The viewer drilling into a live journal. It opens on one lane, "all", holding every record in arrival order. Clicking a turn's scope opens a second lane beside it with that turn's records; clicking the tool call inside it opens a third. A second turn, opened from the leftmost lane, appears as a new row below rather than replacing anything, so both turns stay open at once. A record's raw JSON opens in a panel over the page.](/img/journal-lanes.gif)
 
 ## Reading it from the shell
 
-The viewer is one reader; the file is plain JSON lines, so `jq` is another:
+The viewer reads the live process. The file the teed `JsonlLogger` wrote outlives
+it, and is plain JSON lines, so `jq` reads a session that has already ended:
 
 ```sh
 # every turn the user actually had, with its outcome
@@ -76,15 +77,14 @@ jq -c 'select(.event|startswith("harpe.turn.request","harpe.turn.response"))' se
 jq -c 'select(.event=="harpe.tools.runCode.ran") | .fields | {exitCode, runSeconds}' session.jsonl
 
 # token spend for the session
-jq -s 'map(select(.event=="harpe.model.replied")) | {calls: length, input: (map(.fields.inputTokens)|add), output: (map(.fields.outputTokens)|add)}' session.jsonl
+jq -s 'map(select(.event=="harpe.metering.usage")) | {calls: length, input: (map(.fields.inputTokens)|add), output: (map(.fields.outputTokens)|add)}' session.jsonl
 
 # anything that went wrong
 jq -c 'select(.fields|has("error") or has("warning"))' session.jsonl
 ```
 
-Pointing `Journal` at the same `Logger` the turn's tools use — which the bundled
-drivers do — puts a tool's diagnostics in causal order beside the messages that
-caused them: the `runCode` record lands between the assistant message that
+Pointing `Journal` at the same `Logger` the turn's tools use puts a tool's
+diagnostics in causal order beside the messages that caused them: the `runCode` record lands between the assistant message that
 requested it and the tool result that came back. That ordering is the reason to
 keep one file rather than two, and it is a choice the driver makes, not
 something the framework imposes.
@@ -95,10 +95,12 @@ The viewer serves the journal's contents to anyone who can reach it, and a
 journal contains the full conversation: prompts, replies, tool output, file
 names. It has **no authentication**.
 
-It binds `127.0.0.1` by default, which is what you want. Setting `HOST=0.0.0.0`
-publishes a session's entire conversation to the network. Treat it as a
-developer tool on a machine you control, and reach a remote journal by copying
-the file or tunnelling the port rather than by opening one up.
+That is why the framework binds nothing on its own. A driver that mounts the
+route on a server it already runs is publishing it to everyone that server
+reaches, so gate it — an environment switch checked before the route is one
+shape — and keep `Viewer.start` on a loopback address. Reach a remote journal by
+tunnelling the port or copying the file the teed backend wrote, not by opening
+one up.
 
 ## See also
 

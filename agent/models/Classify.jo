@@ -21,7 +21,7 @@ import harpe.Tool.*
 
 //[ Classify a failed provider call: retryable (`Transient`) or not (`Fatal`).
   !
-  ! Records it too, as one `harpe.model` failure (see `logFailed`). This is the
+  ! Records it too, as one `harpe.model` failure (see `ModelLog.logFailed`). This is the
   ! only point that holds every fact about the failure at once — which model was
   ! asked, what the provider said, and whether that is worth retrying — so it is
   ! where the record is written. The `ReplyResult` it returns stays pure control
@@ -45,7 +45,7 @@ private def classifyError(err: py.Error, provider: String, model: String): Reply
       name.contains("Connection") || name.contains("Timeout")
 
   val detail = "\{name}: \{err.message}"
-  logFailed(provider, model, detail, status, transient)
+  ModelLog.logFailed(provider, model, detail, status, transient)
 
   if transient then
     match retryAfterOf(err)

@@ -24,17 +24,26 @@ class BrokerApprovals(path: String)
   view Approvals
 
   def request(title: String, detail: String): Approvals.Decision =
-    lock.acquire()
+    // Built before the lock: only the exchange on the shared client needs to be
+    // one at a time.
     val frame = Frame.of(json.dumps(py.dict(
       "service" ~ "approval",
       "title" ~ title,
       "detail" ~ detail
     )))
-    val response = client.request(frame)
+
+    lock.acquire()
+    val answered = py.try(client.request(frame))
     lock.release()
 
-    val body = json.loads(response.json).cast[py.Dict]
-    Approvals.fromWire(body.get("decision", "cancelled").asString)
+    // The lock is released before the failure travels: a broker that drops the
+    // connection must not leave every later approval waiting on a lock nobody
+    // holds any more.
+    match answered
+    case Err(error)   => abort error.message
+    case Ok(response) =>
+      val body = json.loads(response.json).cast[py.Dict]
+      Approvals.fromWire(body.get("decision", "cancelled").asString)
 end
 
 section BrokerApprovals

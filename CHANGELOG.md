@@ -2,6 +2,176 @@
 
 ## Unreleased
 
+The journal viewer is now something a driver mounts, not a second process you
+start. `harpe.observability.ViewLogger` is a `Logger` that retains the last
+`capacity` entries in memory and lets them be read back, which gives a
+write-only channel a read side, and `harpe.logging.TeeLogger` puts it beside the
+durable backend a driver already had rather than in front of it.
+`harpe.observability.Viewer` serves that window as one route — `Viewer.respond`
+answers with the self-contained page, or with the entries after the cursor the
+page polls it back with — so an agent already serving HTTP mounts it at a path
+of its own choosing, and one that is not takes `Viewer.start` to bind a port on
+a daemon thread. The cursor and envelope stay between the page and the viewer.
+An entry is visible the moment it is logged — no flush, no file path to agree
+on, no `jo run view` in another terminal.
+
+**`Model.Usage` is now `harpe.metering.Usage`, and it is a record rather than two
+counts.** It carries the `provider` and `model` that were asked and the
+`cacheReadTokens` / `cacheWriteTokens` that break `inputTokens` down, alongside
+the totals it had, so everything a charge is computed from is in one value — no
+joining a log record back to whichever model object happened to be in scope. An
+adapter states the facts once and passes the value to both `Reply` and
+`harpe.models.logReplied`, which takes a `Usage` rather than six loose
+arguments.
+
+**The class owns its record.** `Usage.event` is the name it is logged under,
+and `Usage.encode` / `Usage.decode` are the two halves of its codec, in one file
+with the class — the arrangement `TurnLog` already used, for the reason it
+gives: two hand-written halves that agree only by inspection is how a renamed
+key silently costs a reader every record. A driver billing off a stored journal
+reads `Usage.decode(entry)` rather than picking six keys out of a dict, so a
+counter added later arrives as a field on the value rather than as a key to
+learn about. A `Context` still sizes itself on `inputTokens` alone.
+
+The provider's own log events are `harpe.models.ModelLog` — `repliedEvent`,
+`failedEvent`, `logReplied`, `logFailed` — a section rather than four loose
+`private[harpe]` functions, named for the records it owns the way
+`harpe.turns.TurnLog` is. `usageInt` moved to the adapters' `Util`, which is
+package-private, since reading a counter off a provider's response is not a
+logging concern.
+
+`Logger.logFields(event, fields)` writes a record whose fields are already a
+`Map[String, Value]`, which is what a codec has. `log` is now the pair-taking
+front door over it, and `TurnLog` and `Usage` stopped assembling an `Entry` by
+hand to stamp the time themselves.
+
+**The counts have moved to `harpe.metering.usage`, their own event.**
+`harpe.model.replied` keeps `provider` and `model` and says only that an attempt
+succeeded — `startswith("harpe.model")` still reads the whole story of a
+request, and the record a person reads while debugging is now free to grow a
+field without changing the shape an invoice is computed from. Every call you pay
+for in tokens writes one `harpe.metering.usage`: a model reply writes it beside
+its attempt record, and so does anything else counted the same way — an
+embedding, a reranker. Work charged by some other unit takes a name of its own
+rather than this one, since a record with no `model` and no tokens is a second
+shape under one name. A biller reading `harpe.model.replied` for tokens must
+move to the new event; the fields themselves are unchanged.
+
+The package is new: `harpe.metering`. `Usage` belongs to neither the model
+interface that carries it, the adapters that produce it, nor the driver that
+charges for it — and it is named for what harpe does, which is count what a call
+consumed. Pricing it is the driver's, built on top.
+
+`harpe.transcript.serve` and the `[module.view]` block every agent declared to
+link it are gone with it. A journal that outlives its process is still a JSONL
+file and still `jq`'s job.
+
+`SerialLogger` is gone, and a `Logger` backend is now thread safe by contract.
+It was installed only by `Logging.withLogger`, and a driver that binds the
+`logger` channel directly — as the CLI agent does — never got it, so the promise
+that "backends need not be thread-safe" was already false where a turn's tools
+log concurrently. The guarantee moves to the backends, which is where the
+knowledge is: `JsonlLogger` locks its file, `ViewLogger` its window, and
+`NullLogger`, `TeeLogger` and `ContextLogger` own no state to protect.
+
+That also retires a deadlock. `SerialLogger` held its lock across the wrapped
+backend's `logEntry`, so a backend that raised once — a third-party one, which
+the docs invite — never released it and every later `log` call blocked forever.
+The same shape is fixed in `BrokerApprovals`, which held its lock across a broker
+round trip, and in `runCode`, which could fail in `mkdtemp` while holding a
+semaphore permit and retire it for the life of the process.
+
+**A scope is now a string, not a `Value`.** `Entry.context` is `List[String]`
+and `Logging.withContext` takes one scope string, by convention
+`"<dotted key>=<id>"` — `"harpe.turn.id=209b1e14"`, `"harpe.tools.call=call_678b92"`.
+What a reader does with context is tell one unit of work from another, which
+needs the scope to be an identity; making it a string is what stops a producer
+supplying something that is not one. Detail about the unit belongs in the fields
+of the records under it, where it is queryable: the tool-call scope carries the
+call id and no longer the tool name, which those records already name.
+
+Downstream this deletes rather than simplifies — the viewer's scope-comparison
+and label-derivation helpers both collapse to identity, and `jq` gets
+`select(.context | index("myapp.session=alpha"))`.
+
+BREAKING, with no migration: journals written before this carry object scopes,
+so they will not resume and their scopes render as raw JSON in the viewer.
+
+The page groups by structure alone. A record's `context` is its scope chain
+innermost-first, so reversed it is the path from the root, and a lane is a path
+prefix: the leftmost is every record in arrival order, and clicking a scope opens
+a lane holding that scope and everything nested under it — `all › session › turn
+› tool call`. No event name, no scope key and no record's position decides what a
+lane contains, so a producer can invent scopes and they nest correctly without
+the viewer learning about them. Concurrent conversations are handled by narrowing
+and nesting by drilling, so neither needs a rule.
+
+Opening a context never closes another: the lanes are a tree laid out as a grid,
+a branch to a row and a depth to a column, with the root spanning them all.
+Drilling grows a row rightward and opening something off that path starts a row
+below it, so two deep contexts — one session's turn beside another's — stay
+comparable. Re-clicking a context that is already open highlights it instead.
+
+That replaces the turn cards, their outcome badges, and the bracket pairing
+behind them. What remains of content knowledge is presentation that falls back —
+a message renders as speech, anything else as its fields — and none of it decides
+where a record goes. The viewer is therefore useful against any journal whose
+records carry scopes, not only an agent's.
+
+Following keeps its place. A render replaces the whole grid, so each lane's
+scroll position was lost every poll and `follow` re-pinned all of them to the
+end — a lane scrolled back through was dragged to the bottom a second later, and
+a lane opened by drilling showed the end of that context rather than its start.
+Positions now survive a render: a lane resumes following only once it is back at
+the end, and a newly opened lane begins at the start of the context asked for.
+
+A field whose value is a tree renders as a tree rather than as JSON text: a line
+per entry, indented by depth, each branch showing what it holds (`{4}`, `[2]`)
+and opening on demand. Pretty-printed JSON gave a small map and a deep tree the
+same shape and turned one nested field into thirty lines of braces. Clipping is
+now measured on the text a reader sees rather than on the markup, which had been
+truncating records that fit — a `runCode` record of 496 rendered characters was
+being cut because its markup ran to 942.
+
+Every row carries a `{...}` button, revealed on hover, that opens the record as
+the server sent it together with the path it sits at — which is the whole of what
+decides the lanes it appears in.
+
+`harpe.observability.test` serves a seeded journal for looking at the viewer by
+hand — a plain exchange, two interleaved sessions, and a lane of deliberate
+extremes — reached by a module declaring no sources of its own, which is what
+`jo run viewer` is here. It drives `Journal`, `TurnLog` and `Logging.withContext`
+rather than writing JSON, so the seed cannot drift from the format.
+
+A record's `context` is now stored OUTERMOST FIRST — it is the path from the
+root, written the direction paths are written, so the stored order is the order
+the lanes and chips read in. `ContextLogger` prepends where it appended, and
+`TurnLog.innerTurn`/`outerTurn` swap ends. Journals written before this have
+their context reversed.
+
+`Http.quiet` silences a WSGI server's per-request access log, which a page
+polling once a second would otherwise write into the terminal its driver is
+using. `Viewer.start` applies it, and a driver mounting the route on a server of
+its own can. Unhandled exceptions still surface. The provider test fixture drops
+its private copy of this.
+
+The framework binds nothing on its own: whether to expose a journal, where, and
+to whom is the driver's call, since the page has no authentication and carries
+whole conversations. The CLI agent serves it only when `JOURNAL_PORT` is set,
+and builds the tee only then, so an unwatched run keeps no second copy.
+
+The CLI agent's `runBash` records what it ran: `harpe.tools.runBash.ran` carries
+the `command`, `exitCode`, `runSeconds` and `output`, and
+`harpe.tools.runBash.timedOut` the `command` and the cap that stopped it. It is
+the least confined thing the agent can do and it was logging nothing, so a shell
+command was only ever prose inside a tool result. A command the user refused
+still records nothing, because nothing ran.
+
+**Templates**: `templates/` still pins the previous release, so `web` and
+`telegram` keep their `[module.view]` block for now. Retargeting them (RELEASE.md
+step 8) means dropping that block, teeing each session's `JsonlLogger` with a
+`ViewLogger`, and mounting the two routes behind a switch of the driver's own.
+
 The agent templates come back from `typescope/agents`, with that repository's
 history, and live under `templates/`. `jo-templates.jsonl` at the root names
 them, so `jo new --template typescope/harpe:web` replaces

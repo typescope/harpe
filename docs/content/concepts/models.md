@@ -207,6 +207,16 @@ The adapter classifies failures and reports token usage. The turn engine owns
 retry policy. A failed request does not commit pending tool results or mutate
 the accepted turn state.
 
+`harpe.metering.Usage` is the metered record of one call, and carries everything
+a charge is computed from — the `provider` and `model` that were asked,
+`inputTokens` and `outputTokens`, and the `cacheReadTokens`/`cacheWriteTokens`
+that break the input total down. The adapter writes the same value to the log as
+`harpe.metering.usage` — its own event, beside the `harpe.model.replied` that says
+the attempt succeeded — and `Usage.decode` reads it back, so a bill drawn from a
+journal months later is the value the loop saw. A `Context` sizing itself reads
+`inputTokens` and ignores the rest: caching changes what a prefix costs, never
+what it contains. See [Billing](/concepts/logging/#building-usage-billing-and-stats).
+
 ## Custom models
 
 Implement `Model` for another provider or a locally deployed model. Use

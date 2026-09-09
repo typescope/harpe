@@ -3,8 +3,9 @@
   ! Tests for the logging layer (`harpe.logging`): that `Logger.log` accepts bare
   ! typed pairs and assembles an `Entry` (via the `Value` adapters), that
   ! `JsonlLogger` appends every event to one file as well-formed JSON — with
-  ! `event` a field and values kept typed — and that `Logging.withLogger`
-  ! installs a `logger` that reaches producers.
+  ! `event` a field and values kept typed — that `Logging.withLogger`
+  ! installs a `logger` that reaches producers, and that `TeeLogger` fans one
+  ! entry out to several backends.
 //]
 
 namespace harpe.test.unit.LoggingTest
@@ -14,9 +15,11 @@ import harpe.ffi.builtins
 import harpe.ffi.json
 import harpe.ffi.tempfile
 import harpe.util.File
+import harpe.util.Process
 import harpe.*
 import harpe.logging.*
-import harpe.models.logReplied
+import harpe.models.ModelLog
+import harpe.metering.Usage
 import harpe.testing.thisSuite
 import harpe.testing.suite
 import harpe.testing.test
@@ -43,11 +46,24 @@ private class Capture
   view Logger
 
   var entries: List[Entry] = []
+  var closed: Bool = false
 
   def logEntry(entry: Entry): Unit = entries = entries + entry
 
-  def close(): Unit = pass
+  def close(): Unit = closed = true
 end
+
+// One producer thread's share of a concurrent run.
+private def hammer(jsonl: JsonlLogger, worker: Int, rounds: Int): Unit =
+  var i = 0
+  while i < rounds do
+    jsonl.log("harpe.test.concurrent", "worker" ~ worker, "i" ~ i)
+    i = i + 1
+
+// One call's usage, as an adapter would report it.
+private def billed: Usage =
+  new Usage("anthropic", "claude-x", inputTokens = 100, outputTokens = 20,
+            cacheReadTokens = 40, cacheWriteTokens = 12)
 
 // A producer: emits through the ambient `logger` channel.
 private def emitOne(): Unit receives logger =
@@ -55,7 +71,7 @@ private def emitOne(): Unit receives logger =
 
 //[ Write one record of every shape this suite asserts on, and read them back
   !
-  ! One file for all five, because that a single JSONL file carries every
+  ! One file for all six, because that a single JSONL file carries every
   ! event name is itself part of the contract.
 //]
 private def withRecords(body: List[py.Dict] => Unit): Unit =
@@ -65,7 +81,7 @@ private def withRecords(body: List[py.Dict] => Unit): Unit =
   jsonl.log("runs", "code" ~ "y", "exitCode" ~ 1)
   jsonl.log("tools", "name" ~ "read")
   jsonl.warn("harpe.test", "rate limited", "attempt" ~ 3)
-  with logger = jsonl in logReplied("anthropic", "claude-x", 100, 20, 0, 0)
+  with logger = jsonl in ModelLog.logReplied(billed)
   jsonl.close()
   body(readRecords(path))
 
@@ -95,7 +111,7 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
   suite: "JsonlLogger", () =>
     test: "writes every event to one file", () =>
       withRecords: all =>
-        check("all five", all.size == 5)
+        check("all six", all.size == 6)
         check("event is a field", all.get(0).get("event", "").asString == "runs")
         // Categories coexist, distinguished by the field (jq's job downstream).
         check("another event", all.get(2).get("event", "").asString == "tools")
@@ -121,13 +137,61 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
         check("message", fieldsOf(warnRec).get("warning", "").asString == "rate limited")
         check("extras kept", fieldsOf(warnRec).get("attempt", -1).asInt == 3)
 
-    test: "records model usage with its billing fields", () =>
+    // A backend is thread safe by contract, and this is the one that writes a
+    // file. It does NOT prove the lock is load-bearing — CPython serializes
+    // `write` on its own, so this passes without it — but it holds the backend
+    // to the contract: concurrent producers, every record present and parseable.
+    test: "keeps every line whole under concurrent producers", () =>
+      val path = os.path.join(tempfile.mkdtemp(), "concurrent.jsonl")
+      val jsonl = new JsonlLogger(path)
+      val workers = [0, 1, 2, 3, 4, 5, 6, 7]
+      val rounds = 50
+
+      var threads: List[py.Dynamic] = []
+      for n in workers do
+        val thread = Process.daemon(() => hammer(jsonl, n, rounds))
+        thread.start()
+        threads = threads + thread
+
+      for thread in threads do thread.join()
+      jsonl.close()
+
+      val all = readRecords(path)
+      check("every record arrived, none torn", all.size == workers.size * rounds)
+
+    test: "a reply records the attempt and the charge as two events", () =>
       withRecords: all =>
-        val usageRec = all.get(4)
-        check("event", usageRec.get("event", "").asString == "harpe.model.replied")
-        check("provider", fieldsOf(usageRec).get("provider", "").asString == "anthropic")
-        check("input tokens", fieldsOf(usageRec).get("inputTokens", -1).asInt == 100)
-        check("output tokens", fieldsOf(usageRec).get("outputTokens", -1).asInt == 20)
+        val attempt = all.get(4)
+        check("attempt event", attempt.get("event", "").asString == "harpe.model.replied")
+        check("attempt provider", fieldsOf(attempt).get("provider", "").asString == "anthropic")
+        check("attempt carries no counts", !fieldsOf(attempt).contains("inputTokens"))
+
+        val charge = all.get(5)
+        check("charge event", charge.get("event", "").asString == "harpe.metering.usage")
+        check("provider", fieldsOf(charge).get("provider", "").asString == "anthropic")
+        check("input tokens", fieldsOf(charge).get("inputTokens", -1).asInt == 100)
+        check("output tokens", fieldsOf(charge).get("outputTokens", -1).asInt == 20)
+
+  suite: "usage codec", () =>
+    test: "a logged usage reads back as the value that was written", () =>
+      val path = os.path.join(tempfile.mkdtemp(), "usage.jsonl")
+      val jsonl = new JsonlLogger(path)
+      with logger = jsonl in Usage.record(billed)
+      jsonl.close()
+
+      val back = Usage.decode(Entry.fromDict(readRecords(path).get(0)))
+      check("provider", back.provider == billed.provider)
+      check("model", back.model == billed.model)
+      check("input tokens", back.inputTokens == billed.inputTokens)
+      check("output tokens", back.outputTokens == billed.outputTokens)
+      check("cache reads", back.cacheReadTokens == billed.cacheReadTokens)
+      check("cache writes", back.cacheWriteTokens == billed.cacheWriteTokens)
+
+    test: "a record this codec did not write is refused, not read as zeroes", () =>
+      val entry = new Entry(0.0, Usage.event, Map[String, Value]("provider" ~ "anthropic"), [])
+      match py.try(Usage.decode(entry))
+      case Ok(_)  => check("aborts on a missing counter", false)
+      case Err(_) => check("aborts on a missing counter", true)
 
   suite: "the logger channel", () =>
     test: "withLogger installs it for the wrapped work", () =>
@@ -139,30 +203,30 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
       Logging.discard.log("runs", "code" ~ "z")
       check("silent", true)
 
-    test: "withContext nests context under its key, never flattening it", () =>
+    test: "withContext keeps the scope out of the record's own fields", () =>
       val path = os.path.join(tempfile.mkdtemp(), "ctx.jsonl")
       val emit: () => Unit receives logger = () => logger.log("harpe.web", "note" ~ "hi")
       val tagged: () => Unit receives logger =
-        () => Logging.withContext(Map("session" ~ "s1"), emit)
+        () => Logging.withContext("myapp.session=s1", emit)
       Logging.withLogger(new JsonlLogger(path), tagged)
 
       val ctxRec = readRecords(path).get(0)
-      val scope = ctxRec.get("context").cast[py.List].get(0).cast[py.Dict]
-      check("scoped", scope.get("session", "").asString == "s1")
+      val scope = ctxRec.get("context").cast[py.List].get(0).asString
+      check("scoped", scope == "myapp.session=s1")
       check("producer field untouched", fieldsOf(ctxRec).get("note", "").asString == "hi")
-      check("not flattened", !ctxRec.contains("session"))
+      check("not flattened into fields", !fieldsOf(ctxRec).contains("myapp.session"))
 
     // Nesting must not cost the record either scope. Records flow through the
     // INNER decorator first and the outer one last, so a mechanism that replaced
     // rather than accumulated would drop the scope that actually produced the
     // record, leaving nothing in the output to say it existed.
-    test: "nesting keeps every scope, innermost first", () =>
+    test: "nesting keeps every scope, outermost first", () =>
       val path = os.path.join(tempfile.mkdtemp(), "nested-ctx.jsonl")
       val emit: () => Unit receives logger = () => logger.log("harpe.web", "note" ~ "hi")
       val inner: () => Unit receives logger =
-        () => Logging.withContext(Map("scope" ~ "inner"), emit)
+        () => Logging.withContext("myapp.scope=inner", emit)
       val outer: () => Unit receives logger =
-        () => Logging.withContext(Map("scope" ~ "outer"), inner)
+        () => Logging.withContext("myapp.scope=outer", inner)
       Logging.withLogger(new JsonlLogger(path), outer)
 
       // The plainest statement of the loss, whatever shape the fix chooses: the
@@ -175,8 +239,33 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
         val list = scopes.cast[py.List]
         check("both scopes kept", list.size == 2)
         if list.size == 2 then
-          check("innermost first", list.get(0).cast[py.Dict].get("scope", "").asString == "inner")
-          check("outermost last", list.get(1).cast[py.Dict].get("scope", "").asString == "outer")
+          check("outermost first", list.get(0).asString == "myapp.scope=outer")
+          check("innermost last", list.get(1).asString == "myapp.scope=inner")
+
+  suite: "TeeLogger", () =>
+    test: "hands every entry to each of its loggers", () =>
+      val first = new Capture
+      val second = new Capture
+      val tee = new TeeLogger([first, second])
+
+      tee.log("runs", "code" ~ "x")
+      tee.log("tools", "name" ~ "read")
+
+      check("first got both", first.entries.size == 2)
+      check("second got both", second.entries.size == 2)
+      check("same entry", second.entries.get(1).event == "tools")
+
+    test: "closes all of them", () =>
+      val first = new Capture
+      val second = new Capture
+      new TeeLogger([first, second]).close()
+      check("first closed", first.closed)
+      check("second closed", second.closed)
+
+    test: "with no loggers it is a no-op", () =>
+      val tee = new TeeLogger([])
+      tee.log("runs", "code" ~ "x")
+      check("silent", true)
 
   suite: "audit codec", () =>
     test: "preserves the event, time, and field count", () =>
