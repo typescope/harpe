@@ -10,12 +10,39 @@ Everything you need is already recorded. Each turn writes a
 up the [transcript](/concepts/transcript/). This page is about *reading* it —
 first live in a browser, then from the command line.
 
-## The journal viewer
+## Three properties
 
-A `Logger` is write-only, so nothing can show you a log while it is being
-written. `ViewLogger` is a `Logger` that keeps the last `capacity` entries in
-memory and lets them be read back. Tee it beside the backend you already had, so
-the file still gets everything:
+The **log viewer** is a page that shows a live journal in a browser. It is built
+around three properties:
+
+- **Structural.** A record is structured data, so it is shown as structure rather
+  than as text. A field holding a nested map or list becomes an interactive tree.
+
+- **Contextual.** A record's `context` is its path from the root, and a lane is a
+  path prefix. Focus on a user, a session or a turn in a lane of its own, several
+  at once.
+
+- **Content-agnostic.** The viewer assumes only the structure of a log record,
+  never what it means. It works wherever the logging does, whatever the events and
+  scopes are called.
+
+## Lanes
+
+A record's `context` **is** its path from the root — outermost scope first, the
+one that produced the record last — and the lanes are that path's **prefixes**:
+
+- the leftmost lane is the empty prefix — every record, in arrival order
+- clicking a scope on a row opens a lane holding that scope's records and
+  everything nested under it
+- a lane one level deeper sits to its right: `all › session › turn › tool call`
+
+![The viewer drilling into a live journal. It opens on one lane, "all", holding every record in arrival order. Clicking a turn's scope opens a second lane beside it with that turn's records, and clicking the tool call inside it opens a third. A second turn, opened from the leftmost lane, appears as a new row below rather than replacing anything, so both turns stay open at once. A record's raw JSON opens in a panel over the page.](/img/journal-lanes.gif)
+
+## Integrate the log viewer
+
+`ViewLogger` is a `Logger` that keeps the last `capacity` entries in memory and
+lets them be read back. Tee it beside the backend you already had, so the file
+still gets everything:
 
 ```jo
 val viewLog = new ViewLogger(capacity = 5000)
@@ -31,38 +58,20 @@ case Http.Get("/journal") => Viewer.respond(viewLog, title)
 An entry is visible the moment it is logged — no flush, no second process, no
 path to agree on.
 
-That one route is the whole integration. It answers with the page, or — when
-the page polls it back with the cursor it has reached — with the entries after
-it. The page is one self-contained response, so there is no stylesheet or
-script URL to route either: you choose a path, and the protocol stays between
-the page and the viewer. An agent with no HTTP server of its own takes
-`Viewer.start` instead, which binds a port on a daemon thread:
+That one route is the whole integration: it answers with the page, and with the
+entries after the cursor when the page polls back. The page is self-contained, so
+there is nothing else to route.
+
+An agent with no HTTP server of its own takes `Viewer.start` instead, which binds
+a port on a daemon thread:
 
 ```jo
 Viewer.start(viewLog, title, "127.0.0.1", port)
 ```
 
-That server is quiet: the page polls once a second, and `wsgiref` would
-otherwise write an access line per poll into whatever terminal the agent is
-using. Mounting the route on a server of your own, call `Http.quiet(httpd)` if
-you want the same. Unhandled exceptions still surface either way.
-
 The framework provides the mechanism and stops there. Whether to expose a
 journal, on which port, behind which path, and to whom is a driver's decision —
 see [Before you expose it](#before-you-expose-it).
-
-## Lanes
-
-The page groups by **structure alone**. A record's `context` **is** its path from
-the root — outermost scope first, the one that produced the record last — and a
-**lane is a path prefix**:
-
-- the leftmost lane is the empty prefix — every record, in arrival order
-- clicking a scope on a row opens a lane holding that scope's records and
-  everything nested under it
-- a lane one level deeper sits to its right: `all › session › turn › tool call`
-
-![The viewer drilling into a live journal. It opens on one lane, "all", holding every record in arrival order. Clicking a turn's scope opens a second lane beside it with that turn's records; clicking the tool call inside it opens a third. A second turn, opened from the leftmost lane, appears as a new row below rather than replacing anything, so both turns stay open at once. A record's raw JSON opens in a panel over the page.](/img/journal-lanes.gif)
 
 ## Reading it from the shell
 

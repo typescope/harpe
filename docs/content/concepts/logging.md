@@ -265,7 +265,7 @@ logger it holds, in order:
 val log = new TeeLogger([new JsonlLogger(path), new ViewLogger(capacity = 5000)])
 ```
 
-That is how the [journal viewer](/concepts/observability/) reads a session as it
+That is how the [log viewer](/concepts/observability/) reads a session as it
 runs without displacing the file.
 
 ## Building usage, billing, and stats
