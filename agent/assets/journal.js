@@ -167,7 +167,7 @@ const rawButton = i =>
 // buries the log it annotates. Each chip drills to the prefix ending at it.
 function chips(e, i, key, prefix) {
   const rest = pathOf(e).slice(prefix.length);
-  if (rest.length === 0) return '<span class="chips"></span>';
+  if (rest.length === 0) return '';
 
   const open = expanded.has(key);
   const shown = open ? rest : rest.slice(-1);
@@ -251,10 +251,45 @@ function render() {
   });
 
   const cols = `grid-template-columns: ${depth ? 'minmax(240px, 0.9fr) ' : ''}repeat(${depth || 1}, minmax(240px, 1fr));`;
+  const before = scrollOf(el.lanes);
   el.lanes.innerHTML = gap + `<div class="lanegrid" style="${cols}">${html.join('')}</div>`;
+  restoreScroll(before);
+}
 
-  if (el.follow.checked)
-    for (const rows of el.lanes.querySelectorAll('.rows')) rows.scrollTop = rows.scrollHeight;
+// Where each lane was scrolled, keyed by the path it shows. A render replaces
+// the whole grid, so without this every poll would drop the reader wherever the
+// browser lands — which is what made `follow` re-scroll a lane a second after
+// they scrolled it themselves.
+function scrollOf(root) {
+  const state = new Map();
+  for (const lane of root.querySelectorAll('.lane')) {
+    const rows = lane.querySelector('.rows');
+    if (rows) state.set(lane.dataset.path, {
+      top: rows.scrollTop,
+      atEnd: rows.scrollHeight - rows.clientHeight - rows.scrollTop <= 8,
+    });
+  }
+  return state;
+}
+
+function restoreScroll(state) {
+  for (const lane of el.lanes.querySelectorAll('.lane')) {
+    const rows = lane.querySelector('.rows');
+    if (!rows) continue;
+    const was = state.get(lane.dataset.path);
+
+    // A lane that was not there a moment ago was just opened, so it shows the
+    // START of the context asked for. Only the root, which is a live tail
+    // rather than a context, opens at the newest record.
+    if (!was) {
+      if (el.follow.checked && lane.dataset.path === '[]') rows.scrollTop = rows.scrollHeight;
+      continue;
+    }
+
+    // Following means keeping up with the end, not dragging the reader there:
+    // a lane they scrolled back through keeps its place.
+    rows.scrollTop = was.atEnd && el.follow.checked ? rows.scrollHeight : was.top;
+  }
 }
 
 // Open the context this chip names. Opening NEVER closes anything: a path that

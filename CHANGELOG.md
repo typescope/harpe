@@ -71,6 +71,13 @@ a message renders as speech, anything else as its fields — and none of it deci
 where a record goes. The viewer is therefore useful against any journal whose
 records carry scopes, not only an agent's.
 
+Following keeps its place. A render replaces the whole grid, so each lane's
+scroll position was lost every poll and `follow` re-pinned all of them to the
+end — a lane scrolled back through was dragged to the bottom a second later, and
+a lane opened by drilling showed the end of that context rather than its start.
+Positions now survive a render: a lane resumes following only once it is back at
+the end, and a newly opened lane begins at the start of the context asked for.
+
 Every row carries a `{...}` button, revealed on hover, that opens the record as
 the server sent it together with the path it sits at — which is the whole of what
 decides the lanes it appears in.

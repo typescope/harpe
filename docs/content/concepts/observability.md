@@ -62,6 +62,8 @@ prefix**:
   everything nested under it
 - a lane one level deeper sits to its right: `all › session › turn › tool call`
 
+![The viewer drilling into a live journal. It opens on one lane, "all", holding every record in arrival order. Clicking a turn's scope opens a second lane beside it with that turn's records; clicking the tool call inside it opens a third. A second turn, opened from the leftmost lane, appears as a new row below rather than replacing anything, so both turns stay open at once. A record's raw JSON opens in a panel over the page.](/img/journal-lanes.gif)
+
 Nothing else decides what a lane contains. No event name, no scope key, no
 record's position — so a producer can invent scopes forever and they nest
 correctly without the viewer learning about them. Concurrent conversations are
@@ -73,9 +75,11 @@ all. Drilling deeper grows a row rightward; opening something off that path
 starts a row of its own below, so two deep contexts stay side by side and
 comparable — one session's turn against another's.
 
-Each row carries its innermost scope as a chip, relative to its lane, since the
-lane is already its prefix; the caret opens the rest of the path, and any chip on
-it opens that level. Clicking a context that is already on screen highlights it
+Each row carries its innermost scope as a chip on a line of its own beneath the
+record — a path is arbitrary text, and beside the record it took the width the
+record needed. The chip is relative to its lane, since the lane is already its
+prefix, so a record sitting at its lane's own level carries none; the caret opens
+the rest of the path, and any chip on it opens that level. Clicking a context that is already on screen highlights it
 rather than opening it twice. A lane's ✕ closes it and the rest of its own row,
 and Escape closes the most recently opened lane.
 
@@ -89,6 +93,34 @@ unit of work and distinct between instances is what the type means, not a
 convention a producer might miss. The one case no viewer can untangle is a
 driver running concurrent exchanges under *no* scope, because the log did not
 record which is which.
+
+## What a row shows
+
+Records render by what they carry, and every bit of that is presentation that
+falls back: a message reads as speech, a tool result as its contents, and
+anything else as its fields. Colour is meaning rather than decoration — who
+spoke tints the message, and an event is tinted by its prefix, so
+`harpe.tools.*` reads differently from `harpe.turn.*` at a glance. None of it
+decides where a record goes.
+
+Hovering a row reveals a `{...}` button that opens the record as the server sent
+it, with the path it sits at. What a lane contains is derived, so this is how you
+tell a wrong grouping from a wrong log.
+
+The page polls once a second and appends what it has not seen, so a record
+appears as it happens. Filter from the header — it matches anywhere in a record,
+nested fields included, and applies to every lane. `/` focuses the filter, `f`
+toggles follow.
+
+Following keeps up with the end rather than dragging you there: a lane you have
+scrolled back through holds its place, and resumes following when you return to
+the end. A lane you just opened starts at the *beginning* of that context, since
+that is what you asked to see — only the leftmost lane, which is a tail rather
+than a context, opens at the newest record.
+
+The retained window is bounded by `capacity`. A busy process pushes its oldest
+entries out, and the page says how many it lost rather than presenting the
+remainder as the whole journal. Nothing is lost from the teed backend.
 
 ## In the CLI agent
 

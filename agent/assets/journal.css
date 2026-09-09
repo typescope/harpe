@@ -213,6 +213,10 @@ main {
 }
 
 .lane {
+  /* Rows lay themselves out against THEIR LANE, not the window: a lane in a
+     four-deep tree is a few hundred pixels wide however large the screen is. */
+  container-type: inline-size;
+
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -260,27 +264,48 @@ main {
 }
 .lanehead .close:hover { color: var(--fg); }
 
-.rows { flex: 1; overflow-y: auto; padding: 10px 14px 40vh; }
+/* A modest tail, not a screenful: each lane scrolls itself now, and `follow`
+   scrolls to the bottom — a 40vh pad would carry the content off the top. */
+.rows { flex: 1; overflow-y: auto; padding: 10px 14px 24px; }
 
 /* ------------------------------------------------------------------ chips */
 
 /* The drill affordance. Collapsed to the innermost scope, because a whole path
    on every line buries the log it annotates. */
-.chips { display: flex; align-items: center; gap: 4px; justify-self: end; min-width: 0; }
+/* Nearly out of the way until the row is under the pointer, and pushed to the
+   right so it never begins where the record begins: the eye reads records down
+   the left edge, and a scope starting there competes for that line. Focus
+   reveals it too, so it stays reachable without a pointer. */
+.chips {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  justify-self: end;
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0.4;
+  transition: opacity 0.12s;
+}
+.row:hover .chips, .chips:focus-within { opacity: 1; }
 .chips .sep { color: var(--faint); font-size: 10px; }
 
 .chip, .caret {
   font: 10.5px/1.5 var(--mono);
   padding: 1px 6px;
-  max-width: 200px;
+  max-width: 420px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--dim);
-  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: var(--faint);
+  background: none;
   border: 1px solid transparent;
   border-radius: 20px;
   cursor: pointer;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+.row:hover .chip, .row:hover .caret {
+  color: var(--dim);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
 }
 .chip:hover, .caret:hover {
   color: var(--accent);
@@ -292,12 +317,21 @@ main {
 
 .row {
   display: grid;
-  grid-template-columns: 68px 178px minmax(0, 1fr) auto 34px;
-  gap: 14px;
+  /* Every track may shrink to nothing: fixed widths for the time and event
+     starved the record of the little space a narrow lane has. The scope gets a
+     LINE OF ITS OWN under the record — a path is arbitrary text, and beside the
+     record it took width the record needed and truncated besides. */
+  grid-template-columns: minmax(0, 68px) minmax(0, 178px) minmax(0, 1fr) 34px;
+  gap: 4px 14px;
   padding: 6px 14px;
   border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
   align-items: baseline;
 }
+.row .time  { grid-area: 1 / 1; }
+.row .cat   { grid-area: 1 / 2; }
+.row .body  { grid-area: 1 / 3; }
+.row .raw   { grid-area: 1 / 4; }
+.row .chips { grid-area: 2 / 3 / 3 / 5; }
 .row:first-child { border-top: none; }
 .row:hover { background: color-mix(in srgb, var(--fg) 3%, transparent); }
 
@@ -449,6 +483,17 @@ dialog#raw pre {
   max-height: calc(82vh - 48px);
   font: 12px/1.55 var(--mono);
   white-space: pre;
+}
+
+/* A narrow LANE stacks: below this there is no width for columns, whatever the
+   window is doing. */
+@container (max-width: 620px) {
+  .row { grid-template-columns: 58px minmax(0, 1fr); }
+  .row .time  { grid-area: 1 / 1; }
+  .row .cat   { grid-area: 1 / 2; justify-self: start; }
+  .row .body  { grid-area: 2 / 2; }
+  .row .chips { grid-area: 3 / 2; justify-self: end; }
+  .row .raw   { grid-area: 2 / 1; justify-self: start; }
 }
 
 @media (max-width: 900px) {
