@@ -76,9 +76,6 @@ jq -c 'select(.event|startswith("harpe.turn.request","harpe.turn.response"))' se
 # what the agent ran, and how each program ended
 jq -c 'select(.event=="harpe.tools.runCode.ran") | .fields | {exitCode, runSeconds}' session.jsonl
 
-# every shell command the CLI agent ran, with its status
-jq -r 'select(.event=="harpe.tools.runBash.ran") | .fields | "\(.exitCode)\t\(.command)"' session.jsonl
-
 # token spend for the session
 jq -s 'map(select(.event=="harpe.metering.usage")) | {calls: length, input: (map(.fields.inputTokens)|add), output: (map(.fields.outputTokens)|add)}' session.jsonl
 
@@ -86,9 +83,8 @@ jq -s 'map(select(.event=="harpe.metering.usage")) | {calls: length, input: (map
 jq -c 'select(.fields|has("error") or has("warning"))' session.jsonl
 ```
 
-Pointing `Journal` at the same `Logger` the turn's tools use — which the bundled
-drivers do — puts a tool's diagnostics in causal order beside the messages that
-caused them: the `runCode` record lands between the assistant message that
+Pointing `Journal` at the same `Logger` the turn's tools use puts a tool's
+diagnostics in causal order beside the messages that caused them: the `runCode` record lands between the assistant message that
 requested it and the tool result that came back. That ordering is the reason to
 keep one file rather than two, and it is a choice the driver makes, not
 something the framework imposes.
@@ -100,11 +96,11 @@ journal contains the full conversation: prompts, replies, tool output, file
 names. It has **no authentication**.
 
 That is why the framework binds nothing on its own. A driver that mounts the
-routes on a server it already runs is publishing them to everyone that server
-reaches, so gate them — the CLI agent's `JOURNAL_PORT` is one shape, an
-environment switch checked in the route is another — and keep `Viewer.start` on
-a loopback address. Reach a remote journal by tunnelling the port or copying the
-file the teed backend wrote, not by opening one up.
+route on a server it already runs is publishing it to everyone that server
+reaches, so gate it — an environment switch checked before the route is one
+shape — and keep `Viewer.start` on a loopback address. Reach a remote journal by
+tunnelling the port or copying the file the teed backend wrote, not by opening
+one up.
 
 ## See also
 

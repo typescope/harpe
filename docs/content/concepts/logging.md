@@ -68,8 +68,8 @@ stored.
 
 ## Where your events go
 
-The bundled drivers use `JsonlLogger` to append session events to each session's log.
-The application owns the file layout. These examples use
+`JsonlLogger` appends session events to each session's log. The application owns
+the file layout. These examples use
 `logs/sessions/<session>.jsonl` as a representative path:
 
 ```json
