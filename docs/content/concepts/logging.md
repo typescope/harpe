@@ -1,17 +1,10 @@
 +++
 title = "Logging"
 +++
-Harpe can write a **structured log** for selected operations, including every
-`runCode` execution and model call, plus anything you log from your own tools.
-Each event is a record with named, JSON-shaped fields rather than free text. This
-makes logs useful for usage reports, billing, and statistics.
-
-*Where* those events go is not fixed. A `Logger` — the thing you install once —
-decides the format and the destination. The framework ships one that appends JSON
-lines to a file, but you can point the same events at a database or a metrics
-service instead (see [Sending logs somewhere else](#sending-logs-somewhere-else)).
-The examples below use that JSON backend where they show concrete output. Swap
-in your own `Logger` and the events remain the same. Only their storage changes.
+Harpe ships a general and flexible **logging framework**. Harpe uses the
+framework to log every model call and every `runCode` execution. The framework is
+also intended to be used by user programs to collect and store all events of an
+application in a unified way.
 
 ## Three properties
 
@@ -30,7 +23,7 @@ The logging mechanism is built around three properties:
   ambient context such as the session or chat that produced them. Applications
   storing one file per session already carry that identity in the file path.
 
-## What a structured log entry is
+## The structure of a log entry
 
 Every logged event becomes an `Entry`:
 
@@ -61,86 +54,67 @@ end
 and booleans are passed directly, just like strings and floats. A field can also
 contain a list or nested map of `Value` values.
 
-Entries with the same `event` carry the same field names and meanings, so the
-name acts as the record's schema tag. Two records carrying different fields are
-two events and take two names. The `Logger` decides how this entry is encoded and
-stored.
-
 ## Where your events go
 
-`JsonlLogger` appends session events to each session's log. The application owns
-the file layout. These examples use
-`logs/sessions/<session>.jsonl` as a representative path:
+A `Logger` defines only the interface, not the implementation, so an
+implementation of it decides the storage format and the destination. The simplest
+logger just throws the records away, which is the logger behind
+`Logging.discard`. The framework ships `JsonlLogger` which appends JSON lines to a
+file:
 
 ```json
 {"time":"2024-07-09T16:00:00.400000Z","event":"harpe.tools.runCode.ran","fields":{"code":"…","exitCode":0,"compileSeconds":1.2,"runSeconds":0.3,"output":"…"},"context":[]}
 ```
 
-With events in a JSON file, read them with anything that speaks JSON — `jq` is quickest:
-
-```sh
-# every program the agent tried, newest last
-jq 'select(.event | startswith("harpe.tools.runCode"))' logs/sessions/<session>.jsonl
-
-# just the ones that did not compile
-jq 'select(.event=="harpe.tools.runCode.compileFailed")' logs/sessions/<session>.jsonl
-```
-
-Wherever the events go, each has the same shape: a **`time`**, an **`event`**,
-the event's own **`fields`**, and the **`context`** scopes it was produced
-under. Producer fields sit under `fields` rather than beside `time` and
-`event`, so a field may be named anything without colliding with the record's
-own keys.
 JSONL encodes `time` as an RFC 3339 UTC string. The backend-independent
 `Entry.time` remains epoch seconds, so database loggers can choose their native
 timestamp representation and indexes.
-The main framework events are:
 
-- **`harpe.tools.runCode.ran`** — a program that compiled and ran: `code`,
-  `compileSeconds`, `runSeconds`, `exitCode`, `output`.
-- **`harpe.tools.runCode.compileFailed`** — it did not compile: `code`,
-  `compileSeconds`, `compileError`.
-- **`harpe.tools.runCode.compileTimedOut`** / **`.timedOut`** /
-  **`.approvalTimedOut`** — a clock ran out during the build, the run, or the
-  approval the run was waiting on. `startswith("harpe.tools.runCode")` reads
-  every program the agent tried, however it ended.
-- **`harpe.model.replied`** — one per attempt that came back with a reply:
-  `provider` and `model`. What it cost rides on its own event, below.
-- **`harpe.model.failed`** — one per attempt that did not: the same `provider`
-  and `model`, so a failed request is as attributable as a successful one, plus
-  `error`, the HTTP `status` (0 when the request never reached the server), and
-  `retryable`, the classification the engine acted on.
-- **`harpe.model.retried`** / **`harpe.model.gaveUp`** — what the engine DECIDED
-  about a failed attempt, as distinct from the attempt itself. A retry carries
-  `attempt` and `retryInSeconds`, a give-up carries `retries` (0 when the failure
-  was never retryable). The failure they respond to is the `harpe.model.failed`
-  record just before them.
+To send them elsewhere, simply create a custom `Logger` and implement `logEntry`
+and `close`:
 
-`startswith("harpe.model")` reads the whole story of talking to a model — what
-was attempted, and what the engine decided about it.
+```jo
+class SqliteLogger(db: py.Dynamic)
+  view Logger
 
-- **`harpe.metering.usage`** — one per call billed in tokens: `provider`, `model`,
-  `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`. This is
-  your token-billing feed, and the one record here with a codec of its own
-  (`harpe.metering.Usage`) rather than an open set of fields — see [Explicit
-  contracts](#explicit-contracts-for-business-logic). A model reply writes one
-  beside its `harpe.model.replied`. Anything else counted the same way — an
-  embedding, a reranker — writes one too, and anything charged by some other
-  unit takes a name of its own.
+  def logEntry(entry: Entry): Unit =
+    // insert entry.time, entry.event, entry.fields, entry.context (serialize as you wish)
+    ...
 
-  `inputTokens` is the total input the provider processed, cached tokens
-  included, and means the same thing on every provider — the adapters normalize
-  the counts, which providers report on different bases. The two cache fields
-  break that total down, so a price table applies the discounted cache rates to
-  them and the base rate to the remainder. Both read 0 when a provider reports no
-  cache detail, which is indistinguishable here from a provider that cached
-  nothing. See [Prompt Caching](/guides/prompt-caching/).
-- **`harpe.tools.skills.read`** (`name`) and **`harpe.tools.skills.searched`**
-  (`query`) — content reached through the skill tools.
-- **`harpe.turn.*`** — the conversation itself: `started`, `message`, and one of
-  `answered` / `interrupted` / `failed`. The engine writes these on every turn,
-  so a [transcript](/concepts/transcript/) is a reading of the log rather than a
-  second place to record it.
+  def close(): Unit = db.close()
+end
+```
+
+To send logs to multiple destinations, use `TeeLogger`:
+
+```jo
+val log = new TeeLogger([new JsonlLogger(path), new ViewLogger(capacity = 5000)])
+```
+
+That is how the [log viewer](/concepts/observability/) shows the logs live
+without displacing the file.
+
+## Framework events
+
+The framework writes these itself, on every turn. Each name is stable, so a query
+written against one keeps working. The turn events are what make a
+[transcript](/concepts/transcript/) a reading of the log rather than a second
+place to record it.
+
+| Event | Fields | What it records |
+|---|---|---|
+| `harpe.tools.runCode.ran` | `code`, `compileSeconds`, `runSeconds`, `exitCode`, `output` | a program that compiled and ran |
+| `harpe.tools.runCode.compileFailed` | `code`, `compileSeconds`, `compileError` | it did not compile |
+| `harpe.tools.runCode.compileTimedOut` / `.timedOut` / `.approvalTimedOut` | | a clock ran out during the build, the run, or the approval the run was waiting on |
+| `harpe.model.replied` | `provider`, `model` | one attempt that came back with a reply |
+| `harpe.model.failed` | `provider`, `model`, `error`, `status`, `retryable` | one attempt that did not, as attributable as a successful one. `status` is 0 when the request never reached the server |
+| `harpe.model.retried` / `harpe.model.gaveUp` | `attempt`, `retryInSeconds` / `retries` | what the engine decided about the `harpe.model.failed` record just before it |
+| `harpe.metering.usage` | `provider`, `model`, `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens` | one call billed in tokens. The one record with a codec of its own — see [Explicit contracts](/guides/data-bus-and-contracts/) |
+| `harpe.tools.skills.read` / `.searched` | `name` / `query` | content reached through the skill tools |
+| `harpe.turn.request` / `harpe.turn.response` | `data` | the driver's brackets around one turn |
+| `harpe.turn.message` | `role`, and what that role carries | one message of the conversation, whoever said it |
+| `harpe.turn.answered` / `harpe.turn.interrupted` | | the terminator that closes a turn |
+| `harpe.turn.failed` | `error` | the same, for a turn that did not finish |
 
 ## Logging from your own tool
 
@@ -167,245 +141,6 @@ private def lookUp(city: String): ToolOutcome receives logger =
     "Sunny in \{city}"
     "weather · \{city}"
 ```
-
-Add the spec to the agent and the route to the turn:
-
-```jo
-val weatherTools =
-  Toolset.of: weather, (input: ToolInput, _: Interact) =>
-    lookUp(input["city"])
-
-val tools = runCode.toolset() ++ weatherTools
-```
-
-Now every call to your tool writes a `myagent.tools.weather.called` record. A
-per-session destination identifies the session through its path. A shared
-destination can attach a session scope with `Logging.withContext`.
-
-### What to log
-
-- **Facts as fields, bare.** `logger.log("myagent.tools.weather.called", "city" ~ city, "hits" ~ 3, "cached" ~ true)`.
-  Strings, numbers, and booleans go in directly — no wrappers.
-- **Messages with a severity.** For something an operator should notice, use the
-  helpers: `logger.info`, `logger.warn`, `logger.error`.
-
-  ```jo
-  logger.warn("myagent.model.retried", "rate limited, retrying", "attempt" ~ 3)
-  ```
-
-  The message lands under an `"info"`/`"warning"`/`"error"` key. Extra fields ride
-  alongside. Pull them out later with `jq 'select(.fields|has("error"))'`.
-
-### Naming your event
-
-An event name is a **stable, dotted name** whose LAST segment says what happened:
-`"myagent.tools.weather.called"`. Everything before it is a filter unit, so derive
-the prefix from the namespace the code lives in — that keeps it from colliding
-with the framework's `harpe.*` names and lets you read a whole subtree at once
-(`jq 'select(.event | startswith("myagent"))'`).
-
-If two of your records carry different fields, they are two events and want two
-names — a discriminator field standing in for that means the name stopped one
-segment short. Keep each stable once you have written queries against it: treat it
-as a data contract, not something to rename when you move code. Define it once as
-a constant near the tool:
-
-```jo
-private def weatherCalledEvent: String = "myagent.tools.weather.called"
-```
-
-## Reading and querying
-
-With JSONL storage, each event is one self-describing line, so ordinary tools
-answer most questions. A database backend supports equivalent queries over the
-same fields and event names. A few `jq` starting points:
-
-```sh
-# token usage in one session
-jq -s 'map(select(.event=="harpe.metering.usage"))
-       | {inTokens: (map(.fields.inputTokens) | add),
-          outTokens: (map(.fields.outputTokens) | add)}' logs/sessions/<session>.jsonl
-
-# all warnings and errors, across every event
-jq 'select(.fields|has("warning") or has("error"))' logs/sessions/<session>.jsonl
-```
-
-## Sending logs somewhere else
-
-To change where session events go, change the logger selected by the driver:
-
-```jo
-val sessionLog = new JsonlLogger(sessionPath)
-```
-
-Swap `JsonlLogger` for any `Logger` — including one you write. A `Logger` implements
-just `logEntry` (store one event) and `close`. An `entry` gives you `entry.time`,
-`entry.event`, `entry.fields`, and `entry.context` to persist however you like:
-
-```jo
-class SqliteLogger(db: py.Dynamic)
-  view Logger
-
-  def logEntry(entry: Entry): Unit =
-    // insert entry.time, entry.event, entry.fields, entry.context (serialize as you wish)
-    ...
-
-  def close(): Unit = db.close()
-end
-```
-
-`agent/logging/JsonlLogger.jo` is a complete `Logger` to copy from — it shows
-how to turn `entry.fields` (including nested maps) into JSON. You can also **wrap**
-`JsonlLogger` instead of replacing it — see below.
-
-For two destinations rather than one, `TeeLogger` hands each entry to every
-logger it holds, in order:
-
-```jo
-val log = new TeeLogger([new JsonlLogger(path), new ViewLogger(capacity = 5000)])
-```
-
-That is how the [log viewer](/concepts/observability/) reads a session as it
-runs without displacing the file.
-
-## Building usage, billing, and stats
-
-The log is a stream of structured events keyed by name. A shared log can additionally
-carry session context. Build reporting on it in one of two places.
-
-**Offline, over the stored events.** For dashboards, invoices, or audits, process
-the stored session events with `jq` or another reporting tool. Filter by event
-and aggregate the fields you care about.
-
-**Live, as a wrapping `Logger`.** For real-time metering, wrap `JsonlLogger` in a
-`Logger` that tallies as events flow through, then delegates so they're still
-stored:
-
-```jo
-class UsageMeter(inner: Logger, meter: Meter)
-  view Logger
-
-  def logEntry(entry: Entry): Unit =
-    meter.record(entry)      // update per-session counters / push to a metrics service
-    inner.logEntry(entry)    // and still persist
-
-  def close(): Unit = inner.close()
-end
-
-// in your driver's entry point:
-Logging.withLogger(new UsageMeter(new JsonlLogger(path), meter), () => serve())
-```
-
-Every entry the meter sees carries a stable `event`. When the application uses
-`Logging.withContext`, the configured context appears as a scope in
-`entry.context`. Together, these identify the event shape and the session a
-shared destination should attribute it to.
-
-For token billing, don't pick the counts out by hand. Every model call writes a
-`harpe.metering.usage`, and `harpe.metering.Usage` reads its own record back —
-live in a meter, or offline over a stored journal, from the same entry either
-way.
-
-```jo
-if entry.event == Usage.event then
-  val usage = Usage.decode(entry)
-  cents = cents + rate(usage.provider, usage.model).charge(usage)
-```
-
-The field names live in one place, so a counter added to the record reaches your
-reader as a field on the value rather than as a key you have to learn about.
-
-**Charge for a new thing → log a new event.** Anything else you want to meter
-is just a new name you emit. To bill on, say, an external API a tool calls:
-
-```jo
-logger.log("myagent.tools.search", "queries" ~ n, "vendorCost" ~ cost)
-```
-
-Your reports and your `UsageMeter` pick it up with no other change — a new signal
-is just a new event, and the wiring (one installed `Logger`) stays put.
-
-That openness is right while a number is something you watch. Once it is something
-you invoice from, give the record a codec — see
-[Explicit contracts for business logic](#explicit-contracts-for-business-logic).
-
-## Explicit contracts for business logic
-
-The log is deliberately open. Any producer can invent a name and any fields, and
-nothing validates them — that is what makes a new signal cost one line. It is the
-right trade for diagnostics, where a record is read by a person with `jq` and a
-missing field is an inconvenience.
-
-It is the wrong trade when real logic depends on the record. An invoice computed
-from a token count, or a conversation replayed out of the log, is business logic
-reading a wire format, and an open wire gives it nothing to hold on to:
-
-- **Documentation.** The field list lives in whichever call site last emitted it.
-  A consumer learns the shape by reading a producer, or by reading a sample record
-  and hoping it was typical.
-- **Contract.** Renaming a field is not a compile error. The producer changes, the
-  consumer goes on asking for a key nobody writes, and gets a default back instead
-  of a failure.
-- **Versioning.** A log outlives the code that wrote it. Nothing on a record says
-  which shape it was written in, so nothing downstream can decide what to do with
-  an old one.
-
-**For those records, declare the type.** Define a class for the domain data, and one
-module that owns the event name, the encoder, and the decoder — together, in one
-file, so the two halves cannot drift apart. The contract stops being something
-everyone remembers and becomes something the compiler holds:
-
-```jo
-class SearchCall(vendor: String, queries: Int, vendorCost: Int)
-
-section SearchLog
-  def searchedEvent: String = "myagent.tools.search"
-
-  def searched(call: SearchCall): Unit receives logger =
-    logger.logFields(searchedEvent, encode(call))
-
-  def encode(call: SearchCall): Map[String, Value] =
-    Map:
-      "vendor"     ~ call.vendor
-      "queries"    ~ call.queries
-      "vendorCost" ~ call.vendorCost
-
-  def decode(entry: Entry): SearchCall = ...
-end
-```
-
-That is the `myagent.tools.search` line from earlier, grown up: the same event
-name, now with one place that says what it carries. `logFields` takes the map
-the encoder built, so the writer cannot spell a key differently from the reader.
-
-Three rules turn that from a convention into a contract:
-
-- **One type, one event name.** The name is the record's schema tag, so a change of
-  shape is a change of name — never a `version` field, and never a discriminator
-  that lets one name mean two things.
-- **Encode and decode in one file.** Two hand-written halves that agree only by
-  inspection are how a renamed key silently costs you records.
-- **Decode fails loudly.** A field that is absent or at the wrong type means the
-  record did not come from this codec. Substituting an empty value bills a charge
-  of zero, which reads as a fact rather than as the failure it is.
-
-The point is not ceremony. It is that the contract can now only be broken on
-purpose. Change `SearchCall` and the codec stops compiling until both halves are
-updated; on the open wire the same edit compiles, ships, and shows up later as a
-wrong number on an invoice with nothing to say when it started.
-
-`harpe.turns.TurnLog` is the worked example. It owns `harpe.turn.message` and the
-three terminators, encodes a `Message` into a record and decodes one back, and
-aborts naming the field when a record does not match.
-
-The framework applies the same rule to the record you are most likely to invoice
-from: `harpe.metering.Usage` owns `harpe.metering.usage`, encodes one call's counts
-and decodes them back, and aborts on a missing one rather than billing a zero.
-Its own event, rather than a corner of the model's, is part of that — an attempt
-record is a diagnostic and grows a field whenever a diagnostic is wanted, and an
-invoice should not be reading the same shape. So the two records something is
-usually built on arrive with a contract already, and everything else in the log
-stays open — only what carries weight pays for a codec.
 
 ## Quick reference
 
@@ -451,19 +186,3 @@ Detail about the unit goes in the `fields` of the records produced under it,
 where it can be queried, rather than in the name of the scope. That is what lets
 a reader group a log by structure alone — see
 [Observability](/concepts/observability/).
-
-## Turn history and transcript loading
-
-The provided `Journal` transcript writes through this same channel.
-The framework emits a stable `harpe.turn.message` for every message in a turn
-and terminal `harpe.turn.answered` / `interrupted` / `failed` events. Each
-record also carries the turn that produced it as a `harpe.turn.id` scope in
-`context`, so records are grouped by that rather than by where they sit in the
-stream. Framework scope keys are dotted for the same reason event names are —
-an application's own scopes share the list and must not collide.
-
-Applications decide how session events are stored and correlated. Producers emit
-through `logger` without depending on that policy. `Journal.records` projects an
-ordered event stream into structured turns and outcomes. `Journal.load` derives
-the model's conversation history from an existing JSONL journal. See
-[Transcript](/concepts/transcript/) for the complete recording and replay model.
