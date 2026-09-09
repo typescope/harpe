@@ -11,11 +11,11 @@
   ! `fields` — so ambient context can never collide with a producer's own field.
   ! It is a string because a scope is an identity (see `Entry`).
   !
-  ! It APPENDS. Decorators wrap outward, so a record meets the innermost scope
-  ! first and the outermost last, and appending at each hop leaves the list in
-  ! that order — the scope that produced the record first, the broadest one
-  ! last. Nothing is replaced: two nested scopes both survive, which stamping
-  ! into one keyed field could not express.
+  ! It PREPENDS. Decorators wrap outward, so a record meets the innermost scope
+  ! first and the outermost last, and prepending at each hop leaves the list
+  ! outermost first — the same order the scopes were entered, and the order a
+  ! path is written. Nothing is replaced: two nested scopes both survive, which
+  ! stamping into one keyed field could not express.
 //]
 
 namespace harpe.logging
@@ -24,7 +24,7 @@ private[harpe] class ContextLogger(inner: Logger, scope: String)
   view Logger
 
   def logEntry(entry: Entry): Unit =
-    inner.logEntry(new Entry(entry.time, entry.event, entry.fields, entry.context + scope))
+    inner.logEntry(new Entry(entry.time, entry.event, entry.fields, [scope] ++ entry.context))
 
   // A scoped decorator does not own the wrapped logger's lifecycle.
   def close(): Unit = pass

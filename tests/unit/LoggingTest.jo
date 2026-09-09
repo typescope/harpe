@@ -188,7 +188,7 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
     // INNER decorator first and the outer one last, so a mechanism that replaced
     // rather than accumulated would drop the scope that actually produced the
     // record, leaving nothing in the output to say it existed.
-    test: "nesting keeps every scope, innermost first", () =>
+    test: "nesting keeps every scope, outermost first", () =>
       val path = os.path.join(tempfile.mkdtemp(), "nested-ctx.jsonl")
       val emit: () => Unit receives logger = () => logger.log("harpe.web", "note" ~ "hi")
       val inner: () => Unit receives logger =
@@ -207,8 +207,8 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
         val list = scopes.cast[py.List]
         check("both scopes kept", list.size == 2)
         if list.size == 2 then
-          check("innermost first", list.get(0).asString == "myapp.scope=inner")
-          check("outermost last", list.get(1).asString == "myapp.scope=outer")
+          check("outermost first", list.get(0).asString == "myapp.scope=outer")
+          check("innermost last", list.get(1).asString == "myapp.scope=inner")
 
   suite: "TeeLogger", () =>
     test: "hands every entry to each of its loggers", () =>

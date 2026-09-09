@@ -3,8 +3,8 @@
 // The server hands back whole entries the page has not seen yet, keyed by how
 // many have been logged.
 //
-// GROUPING IS STRUCTURAL AND KNOWS NOTHING. A record's `context` is its scope
-// chain innermost-first, so reversed it is the path from the root. A LANE IS A
+// GROUPING IS STRUCTURAL AND KNOWS NOTHING. A record's `context` IS its path
+// from the root, outermost first. A LANE IS A
 // PATH PREFIX: the leftmost lane is the empty prefix — every record, in arrival
 // order — and clicking a scope opens the lane one level deeper. That is the
 // whole model. No event name, no scope key and no record's position decides
@@ -249,9 +249,10 @@ function body(e, key) {
 
 // -------------------------------------------------------------------- paths
 
-// A record's path from the root. `context` is innermost-first (ContextLogger
-// appends outward), so reversing it gives the enclosing scopes in order.
-const pathOf = e => [...(e.context || [])].reverse();
+// A record's path from the root. `context` is already in that order —
+// outermost first — so the left-to-right of the lanes is the order the scopes
+// were entered.
+const pathOf = e => e.context || [];
 
 
 // Is `path` inside `prefix`? A lane holds a scope's records AND everything

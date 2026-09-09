@@ -49,7 +49,7 @@ section TurnLog
     ! the record sits between — so nesting needs no depth counting, and a
     ! model's token counts can be attributed to the turn that spent them.
     !
-    ! Nested turns each add their own, innermost first, so a record carries its
+    ! Nested turns each add their own, outermost first, so a record carries its
     ! whole chain of turns and a roll-up needs no second lookup.
     !
     ! Dotted for the same reason an event name is: scopes are an open set that
@@ -64,7 +64,7 @@ section TurnLog
   def contextLogger(): Logger receives logger =
     new ContextLogger(logger, "\{turnKey}=\{secrets.token_hex(8)}")
 
-  //[ The turns a record was produced under, innermost first. //]
+  //[ The turns a record was produced under, outermost first. //]
   def turnsOf(entry: Entry): List[String] =
     val tag = turnKey + "="
     var ids: List[String] = []
@@ -75,12 +75,12 @@ section TurnLog
   //[ The turn that produced this record — the innermost, when turns nest. //]
   def innerTurn(entry: Entry): String =
     val ids = turnsOf(entry)
-    if ids.isEmpty then "" else ids.get(0)
+    if ids.isEmpty then "" else ids.get(ids.size - 1)
 
   //[ The outermost turn this record was produced under. //]
   def outerTurn(entry: Entry): String =
     val ids = turnsOf(entry)
-    if ids.isEmpty then "" else ids.get(ids.size - 1)
+    if ids.isEmpty then "" else ids.get(0)
 
   //[ Does this event close a turn? One of exactly three outcomes. //]
   def isTerminator(event: String): Bool =

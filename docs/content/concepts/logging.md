@@ -53,7 +53,7 @@ end
   `harpe.model.replied` or `myagent.tools.weather.called`.
 - `fields` contains the facts specific to that event.
 - `context` is the ambient scopes the record was produced under — a session, a
-  turn, the tool call inside it — innermost first. Each is a string identifying
+  turn, the tool call inside it — outermost first, so the list is a path. Each is a string identifying
   one unit of work (`"harpe.turn.id=209b1e14"`), kept apart from `fields` so
   ambient context can never collide with a producer's own keys.
 

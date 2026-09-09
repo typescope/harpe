@@ -53,9 +53,9 @@ see [Before you expose it](#before-you-expose-it).
 
 ## Lanes
 
-The page groups by **structure alone**. A record's `context` is its scope chain
-innermost-first, so reversed it is the path from the root, and a **lane is a path
-prefix**:
+The page groups by **structure alone**. A record's `context` **is** its path from
+the root — outermost scope first, the one that produced the record last — and a
+**lane is a path prefix**:
 
 - the leftmost lane is the empty prefix — every record, in arrival order
 - clicking a scope on a row opens a lane holding that scope's records and
