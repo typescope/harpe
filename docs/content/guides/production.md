@@ -57,11 +57,46 @@ Define retention and deletion policies for prompts, outputs, files, generated
 programs and audit events. Restrict who can query or export them, and
 redact secrets and personal data.
 
+## Serving HTTP
+
+`Http.server` is `wsgiref`, the standard library's reference implementation. It
+is for development and tests: no read timeout, so a client that connects and
+stays silent holds a thread indefinitely, an accept backlog of five, and
+HTTP/1.0 with no keep-alive.
+
+Bind a real server to `Http.app` in your own code, so the framework keeps no
+dependency you did not choose:
+
+```jo
+val httpd = py.module("waitress").create_server:
+  Http.app(() => server.route())
+  host = host
+  port = port
+  threads = 32
+  channel_timeout = 3600
+  max_request_body_size = 26214400
+httpd.run()
+```
+
+Size `threads` for concurrency, not for request rate. A streaming response holds
+one worker for its whole life, so the pool needs room for every turn in flight
+and every open subscription at once — a fixed pool that runs out stops answering
+everything, including the page. Set `channel_timeout` above your longest quiet
+period, or a subscription waiting on a slow turn is closed underneath it.
+
+Set the server's own body limit as well as harpe's `Http.maxBodyBytes`. The
+framework refuses an oversized body before any route sees it, but it does so
+without draining what the client is still sending, so the transport-layer limit
+is what gives the client a clean answer.
+
+Run with `HARPE_HTTP_VALIDATE=1` in development to assert PEP 3333 conformance
+on every exchange.
+
 ## Test the boundaries
 
 - Test that forbidden capability use fails to compile.
 - Test authorization across users and tenants.
 - Test approval rejection, timeout, replay, and duplicate decisions.
-- Test malformed and oversized uploads.
+- Test malformed and oversized uploads, against both limits.
 - Test sandbox timeouts and resource limits.
 - Test restart behavior for sessions.

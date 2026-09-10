@@ -67,7 +67,7 @@ section Viewer
     if asked == "" then Http.respondHtml(page(title))
     else
       val seen = Int.parse(asked) rescue None => 0
-      Http.respond("200 OK", "application/json", events(viewLog, seen))
+      Http.respond(Http.Status.Success, Http.Mime.Json, events(viewLog, seen))
 
   private def page(title: String): String =
     val bundle = new py.resource.ResourceBundle("harpe")

@@ -14,6 +14,11 @@
   ! carry neither `environ` nor `startResponse`: they never touch either except
   ! through this file.
   !
+  ! `app` IS THE SEAM. It turns a route into a plain WSGI application, so a
+  ! deployment binds whichever server it likes — waitress, gunicorn, granian —
+  ! in its own code. `server` here is wsgiref, for development and tests only.
+  ! Nothing in this file depends on a package outside the standard library.
+  !
   ! Deliberately thin. Cookies, sessions, TLS detection and base-URL resolution
   ! are application policy, not plumbing, and belong to whoever needs them.
 //]
@@ -22,6 +27,7 @@ namespace harpe
 
 import harpe.ffi.json
 import harpe.ffi.builtins
+import harpe.ffi.os
 
 section Http
   //[ The verb, as a value rather than a string
@@ -37,6 +43,49 @@ section Http
   //]
   section Verb
     union Method = Get | Post | Put | Delete | Head | Options
+  end
+
+  //[ The status, as a value rather than a string
+    !
+    ! Same reason as the verb: `"200 0K"` is a string a compiler cannot refuse,
+    ! and a status line is written at every response site. These are the ones
+    ! this codebase answers with — add a case rather than passing a literal.
+  //]
+  section Status
+    union Code = Success | NotModified | BadRequest | Forbidden | NotFound | Conflict | TooLarge | ServerError | NotImplemented
+
+    //[ The status line WSGI expects. //]
+    def line(code: Code): String =
+      match code
+      case Success        => "200 OK"
+      case NotModified    => "304 Not Modified"
+      case BadRequest     => "400 Bad Request"
+      case Forbidden      => "403 Forbidden"
+      case NotFound       => "404 Not Found"
+      case Conflict       => "409 Conflict"
+      case TooLarge       => "413 Payload Too Large"
+      case ServerError    => "500 Internal Server Error"
+      case NotImplemented => "501 Not Implemented"
+  end
+
+  //[ The content type, with its charset settled here rather than at each site
+    !
+    ! `Other` carries a type resolved at runtime — a file's own, from
+    ! `File.mimeType`. Everything a handler names in source should be a case, so
+    ! that the charset decision is made once.
+  //]
+  section Mime
+    union Type = Html | Json | Ndjson | Text | Css | JavaScript | Other(value: String)
+
+    def value(kind: Type): String =
+      match kind
+      case Html       => "text/html; charset=utf-8"
+      case Json       => "application/json"
+      case Ndjson     => "application/x-ndjson"
+      case Text       => "text/plain; charset=utf-8"
+      case Css        => "text/css; charset=utf-8"
+      case JavaScript => "application/javascript; charset=utf-8"
+      case Other(raw) => raw
   end
 
   //[ One WSGI exchange: what was asked, and the callable that begins the answer
@@ -101,24 +150,52 @@ section Http
     else if raw == "OPTIONS" then Some(Verb.Options)
     else None
 
+  //[ The largest request body this plumbing will read
+    !
+    ! A guard against a runaway body, not a tuned limit. A body declaring more
+    ! than this is refused by `app` before any route sees it, and `readBody`
+    ! reads no further than this even if `CONTENT_LENGTH` lies. A driver wanting
+    ! larger uploads sets its server's own limit and streams them.
+    !
+    ! The refusal is written without draining what the client is still sending,
+    ! so a client mid-upload may see the connection close rather than read the
+    ! 413. That is the cheap answer, and the right one here: a deployment sets
+    ! its server's own limit too — waitress `max_request_body_size` — which
+    ! refuses at the transport layer where the body can be discarded properly.
+    ! This check is the backstop for a server that has no such limit.
+  //]
+  def maxBodyBytes: Int = 8388608   // 8 MiB
+
+  //[ A refusal written straight to WSGI, with no ambient request
+    !
+    ! For the two cases decided before a request can be bound or routed: an
+    ! unimplemented verb, and a body too large to read.
+  //]
+  private def refuse(startResponse: py.Dynamic, status: Status.Code, message: String): py.List =
+    py.call:
+      startResponse
+      Status.line(status)
+      py.list(py.tuple("Content-Type", Mime.value(Mime.Text)))
+    py.list(py.dynamic(message).encode())
+
   //[ A verb this server does not implement — TRACE, PATCH, something invented
     !
     ! 501 rather than 405: 405 says the method is wrong for this resource, and
-    ! this refusal is made before any path is looked at. It is also the one
-    ! response written without an ambient request, since refusing the verb is
-    ! precisely what stops one being built.
+    ! this refusal is made before any path is looked at. It is also one of the
+    ! two responses written without an ambient request, since refusing the verb
+    ! is precisely what stops one being built.
   //]
   def unsupportedMethod(startResponse: py.Dynamic): py.List =
-    py.call:
-      startResponse
-      "501 Not Implemented"
-      py.list(py.tuple("Content-Type", "text/plain; charset=utf-8"))
-    py.list(py.dynamic("not implemented").encode())
+    refuse(startResponse, Status.NotImplemented, "not implemented")
 
-  //[ Read and decode a request body using its CONTENT_LENGTH. //]
+  //[ What `CONTENT_LENGTH` claims, or zero. //]
+  private def declaredLength(environ: py.Dynamic): Int =
+    Int.parse(environ.get("CONTENT_LENGTH", "").asString) rescue None => 0
+
+  //[ Read and decode a request body, never past `maxBodyBytes`. //]
   def readBody(): String receives request =
-    val raw = request.environ.get("CONTENT_LENGTH", "").asString
-    val length = Int.parse(raw) rescue None => 0
+    val declared = declaredLength(request.environ)
+    val length = if declared > maxBodyBytes then maxBodyBytes else declared
     request.environ.get("wsgi.input").read(length).decode().asString
 
   //[ The request body as a JSON object, or an empty one
@@ -139,40 +216,113 @@ section Http
     val params = py.module("urllib.parse").parse_qs(qs).cast[py.Dict]
     if params.contains(key) then params.get(key).cast[py.List].get(0).asString else ""
 
-  //[ A complete, non-streamed response from a string body. //]
-  def respond(status: String, ctype: String, body: String): py.List receives request =
+  //[ A complete, non-streamed response from a string body
+    !
+    ! `no-store`, because everything answered this way is an agent's own reply,
+    ! a session list, or an error — none of it is a client's to keep. A file
+    ! that IS cacheable goes through `respondStatic`.
+  //]
+  def respond(status: Status.Code, kind: Mime.Type, body: String): py.List receives request =
     val headers = py.list:
-      py.tuple("Content-Type", ctype)
+      py.tuple("Content-Type", Mime.value(kind))
       py.tuple("Cache-Control", "no-store")
 
-    py.call(request.startResponse, status, headers)
+    py.call(request.startResponse, Status.line(status), headers)
     py.list(py.dynamic(body).encode())
 
   def respondHtml(body: String): py.List receives request =
-    respond("200 OK", "text/html; charset=utf-8", body)
+    respond(Status.Success, Mime.Html, body)
 
   def respondJson(dict: py.Dict): py.List receives request =
-    respond: "200 OK", "application/json", json.dumps(dict)
+    respond: Status.Success, Mime.Json, json.dumps(dict)
 
-  //[ A streamed response: the headers go out now, and the caller writes into the
-    ! returned callable as it has more to send.
+  //[ An asset that may be cached, answered with an `ETag` and a 304 when it can
+    !
+    ! For a page, stylesheet or script read from disk per request. The tag is
+    ! content-derived, so editing the file changes it and the browser refetches,
+    ! while an unchanged file costs a conditional request and no body at all.
+    ! `must-revalidate` keeps that check on every load, which is what makes
+    ! editing-without-restart safe to cache.
+  //]
+  def respondStatic(kind: Mime.Type, body: String): py.List receives request =
+    val tag = etag(body)
+    val cache = "public, max-age=0, must-revalidate"
+
+    if request.environ.get("HTTP_IF_NONE_MATCH", "").asString == tag then
+      py.call:
+        request.startResponse
+        Status.line(Status.NotModified)
+        py.list(py.tuple("ETag", tag), py.tuple("Cache-Control", cache))
+      py.list()
+
+    else
+      py.call:
+        request.startResponse
+        Status.line(Status.Success)
+        py.list:
+          py.tuple("Content-Type", Mime.value(kind))
+          py.tuple("ETag", tag)
+          py.tuple("Cache-Control", cache)
+      py.list(py.dynamic(body).encode())
+
+  //[ A content-derived entity tag. Not a digest anyone verifies — just a change detector. //]
+  private def etag(body: String): String =
+    val digest = py.module("hashlib").blake2b(py.dynamic(body).encode(), digest_size = 8)
+    "\"" + digest.hexdigest().asString + "\""
+
+  //[ A streamed response: headers go out now, and `produce` emits as it goes
     !
     ! How a long-running turn reaches the tab that asked for it, a line at a
-    ! time, instead of arriving whole at the end.
+    ! time, instead of arriving whole at the end. `produce` runs on this
+    ! request's thread and is handed an `emit` it calls per chunk.
+    !
+    ! Built on WSGI's `write` callable rather than a returned iterable, which
+    ! would need the producer to be pull-shaped — a turn pushes into a sink, so
+    ! the iterable form would mean a queue and a second thread per stream. Both
+    ! forms were measured to flush per chunk on waitress and wsgiref. The
+    ! callable is confined to this function, so a server that ever needs the
+    ! iterable form changes only here.
   //]
-  def beginStream(ctype: String): py.Dynamic receives request =
+  def stream(kind: Mime.Type, produce: (String => Unit) => Unit): py.List receives request =
     val headers = py.list:
-      py.tuple("Content-Type", ctype)
+      py.tuple("Content-Type", Mime.value(kind))
       py.tuple("Cache-Control", "no-cache")
-    py.call(request.startResponse, "200 OK", headers)
+      py.tuple("X-Accel-Buffering", "no")
+
+    val write = py.call(request.startResponse, Status.line(Status.Success), headers)
+    produce((chunk: String) => py.call(write, py.dynamic(chunk).encode()))
+    py.list()
 
   //[ A response whose body is bytes rather than text, with the caller's headers. //]
-  def respondBytes(status: String, headers: py.List, body: py.Dynamic): py.List receives request =
-    py.call(request.startResponse, status, headers)
+  def respondBytes(status: Status.Code, headers: py.List, body: py.Dynamic): py.List receives request =
+    py.call(request.startResponse, Status.line(status), headers)
     py.list(body)
 
   def notFound(): py.List receives request =
-    respond: "404 Not Found", "application/json", json.dumps(py.dict("error" ~ "not_found"))
+    respond: Status.NotFound, Mime.Json, json.dumps(py.dict("error" ~ "not_found"))
+
+  //[ A route as a plain WSGI application — the seam a deployment binds a server to
+    !
+    ! Two refusals happen here rather than in any route: a verb this plumbing
+    ! does not implement, and a body larger than `maxBodyBytes`. Both are
+    ! protocol-level answers that no handler should have to remember.
+    !
+    ! Set `HARPE_HTTP_VALIDATE` to wrap the result in `wsgiref.validate`, which
+    ! asserts PEP 3333 conformance on every exchange. Off by default: it is a
+    ! development check, and it costs.
+  //]
+  def app(route: () => py.List receives request): Any =
+    val plain = (environ: py.Dynamic, startResponse: py.Dynamic) =>
+      match requestFrom(environ, startResponse)
+      case None => unsupportedMethod(startResponse)
+      case Some(asked) =>
+        if declaredLength(environ) > maxBodyBytes then
+          refuse(startResponse, Status.TooLarge, "request body too large")
+        else
+          with request = asked in route()
+
+    if os.getenv("HARPE_HTTP_VALIDATE", "") == "" then plain
+    else py.module("wsgiref.validate").validator(plain)
 
   //[ Stop `httpd` writing an access line per request to stderr
     !
@@ -196,29 +346,38 @@ section Http
 
     py.module("builtins").setattr(httpd, "RequestHandlerClass", handler)
 
-  //[ A threaded WSGI server that binds the ambient request and calls `route`
+  //[ A threaded wsgiref server — FOR DEVELOPMENT AND TESTS
     !
-    ! One request per thread, so a page stays responsive while another request
-    ! is doing something slow — a long agent turn, a large file read. Whatever
-    ! the route touches must therefore be safe to touch concurrently; a server
-    ! that serializes work does so with its own lock, not by being single
-    ! threaded. `daemon_threads` lets Ctrl-C exit without joining in-flight
-    ! workers.
+    ! `wsgiref` is the standard library's reference implementation, built on
+    ! `http.server`, which its own documentation says is not for production: no
+    ! read timeout, so a client that connects and stays silent holds a thread
+    ! indefinitely, an accept backlog of five, and HTTP/1.0 with no keep-alive.
+    ! A deployment binds a real server to `app` instead, in its own code:
+    !
+    !     val httpd = py.module("waitress").create_server:
+    !       Http.app(() => server.route())
+    !       host = host
+    !       port = port
+    !       threads = 32
+    !
+    ! Sizing that pool is the deployment's, and a streaming response holds one
+    ! worker for its whole life — so it wants room for every turn and every open
+    ! subscription at once, not just the requests in flight.
+    !
+    ! One request per thread here, so a page stays responsive while another
+    ! request is doing something slow. Whatever the route touches must therefore
+    ! be safe to touch concurrently. `daemon_threads` lets Ctrl-C exit without
+    ! joining in-flight workers.
     !
     ! Returns the server rather than serving: the caller prints its banner,
     ! installs signal handlers, and decides when to `serve_forever`.
   //]
   def server(host: String, port: Int, route: () => py.List receives request): py.Dynamic =
-    val app = (environ: py.Dynamic, startResponse: py.Dynamic) =>
-      match requestFrom(environ, startResponse)
-      case None        => unsupportedMethod(startResponse)
-      case Some(asked) => with request = asked in route()
-
     val wsgi = py.module("wsgiref.simple_server")
     val threaded = builtins.newType:
       "ThreadingWSGIServer"
       py.tuple(py.module("socketserver").ThreadingMixIn, wsgi.WSGIServer)
       py.dict("daemon_threads" ~ true)
 
-    wsgi.make_server(host, port, app, server_class = threaded)
+    wsgi.make_server(host, port, app(route), server_class = threaded)
 end

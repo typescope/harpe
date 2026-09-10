@@ -1,0 +1,144 @@
+//[ HttpTest.jo
+  !
+  ! Unit tests for `harpe.Http`, driven over a real loopback server rather than
+  ! a faked `environ` — what a client sees on the wire is the contract, and a
+  ! hand-built environ only tests the fake.
+  !
+  ! The server here is `Http.server` (wsgiref), which is what it is for.
+//]
+
+namespace harpe.test.unit.HttpTest
+
+import harpe.Http
+import harpe.Http.request
+import harpe.util.Process
+import harpe.ffi.os
+import harpe.testing.thisSuite
+import harpe.testing.suite
+import harpe.testing.test
+import harpe.testing.check
+
+//[ Every path these tests ask for. `reached` records each `/echo` that got here. //]
+private def route(reached: py.List): py.List receives request =
+  match request
+  case Http.Get("/dynamic") => Http.respond(Http.Status.Success, Http.Mime.Json, "{}")
+  case Http.Get("/asset")   => Http.respondStatic(Http.Mime.Css, "body { margin: 0 }")
+
+  case Http.Get("/stream")  =>
+    Http.stream: Http.Mime.Ndjson, (emit: String => Unit) =>
+      emit("a\n")
+      emit("b\n")
+      emit("c\n")
+
+  case Http.Post("/echo") =>
+    reached.append(1)
+    Http.respond(Http.Status.Success, Http.Mime.Text, Http.readBody().size.toString)
+
+  case _ => Http.notFound()
+
+//[ One response, as a client saw it. //]
+private class Answer(status: Int, body: String, etag: String, cacheControl: String)
+
+//[ Serve `route` on an ephemeral port for the duration of `body`. //]
+private def served(body: (Int, py.List) => Unit): Unit =
+  val reached = py.list()
+  val httpd = Http.server("127.0.0.1", 0, () => route(reached))
+  Http.quiet(httpd)
+  val port = httpd.server_port.asInt
+
+  val thread = Process.daemon: () => httpd.serve_forever(poll_interval = 0.01)
+  thread.start()
+
+  val result = py.try: body(port, reached)
+  val _ = py.try: httpd.shutdown()
+  val _ = py.try: httpd.server_close()
+  val _ = py.try: thread.join(2.0)
+
+  match result
+  case Ok(_)    => pass
+  case Err(err) => abort err.message
+
+//[ One request, with optional headers and body. //]
+private def ask(port: Int, method: String, path: String, headers: py.Dict, payload: String): Answer =
+  val conn = py.module("http.client").HTTPConnection("127.0.0.1", port, timeout = 20.0)
+
+  if payload == "" then conn.request(method, path, headers = headers)
+  else conn.request(method, path, py.dynamic(payload).encode(), headers)
+
+  val response = conn.getresponse()
+  val answer = new Answer:
+    response.status.asInt
+    response.read().decode().asString
+    response.getheader("ETag", "").asString
+    response.getheader("Cache-Control", "").asString
+
+  conn.close()
+  answer
+
+private def get(port: Int, path: String): Answer =
+  ask(port, "GET", path, py.dict(), "")
+
+def httpSuite(): Unit receives thisSuite = suite: "http", () =>
+
+  test: "names a status line for every code", () =>
+    check("200", Http.Status.line(Http.Status.Success) == "200 OK")
+    check("304", Http.Status.line(Http.Status.NotModified) == "304 Not Modified")
+    check("413", Http.Status.line(Http.Status.TooLarge) == "413 Payload Too Large")
+    check("501", Http.Status.line(Http.Status.NotImplemented) == "501 Not Implemented")
+
+  test: "settles the charset once, per content type", () =>
+    check("html carries one", Http.Mime.value(Http.Mime.Html) == "text/html; charset=utf-8")
+    check("json carries none", Http.Mime.value(Http.Mime.Json) == "application/json")
+    check("a runtime type passes through", Http.Mime.value(Http.Mime.Other("image/png")) == "image/png")
+
+  test: "answers a dynamic response no-store", () =>
+    served: (port: Int, reached: py.List) =>
+      val answer = get(port, "/dynamic")
+      check("200", answer.status == 200)
+      check("not cacheable", answer.cacheControl == "no-store")
+      check("no etag", answer.etag == "")
+
+  test: "answers an asset with an etag, then 304 when it is unchanged", () =>
+    served: (port: Int, reached: py.List) =>
+      val first = get(port, "/asset")
+      check("200 first time", first.status == 200)
+      check("body arrives", first.body == "body { margin: 0 }")
+      check("carries an etag", first.etag != "")
+      check("revalidates", first.cacheControl == "public, max-age=0, must-revalidate")
+
+      val second = ask(port, "GET", "/asset", py.dict("If-None-Match" ~ first.etag), "")
+      check("304 second time", second.status == 304)
+      check("and no body", second.body == "")
+
+  test: "streams every chunk a producer emits", () =>
+    served: (port: Int, reached: py.List) =>
+      val answer = get(port, "/stream")
+      check("200", answer.status == 200)
+      check("all three chunks", answer.body == "a\nb\nc\n")
+
+  //[ The cap is enforced in `app`, so the route never runs.
+    !
+    ! What the client sees is the server's to decide: harpe answers 413 without
+    ! draining, so a client still uploading may read the status or may see the
+    ! connection close first. Both are correct, and neither is what this test
+    ! pins down — the contract is that the handler was never reached.
+  //]
+  test: "refuses a body larger than the cap, before the route sees it", () =>
+    served: (port: Int, reached: py.List) =>
+      val small = ask(port, "POST", "/echo", py.dict(), "hello")
+      check("a small body is read", small.status == 200 && small.body == "5")
+      check("and the route ran", reached.size == 1)
+
+      val oversized = py.dynamic("x").callDynamic("__mul__", Http.maxBodyBytes + 1).asString
+      val _ = py.try: ask(port, "POST", "/echo", py.dict(), oversized)
+      check("the route never ran", reached.size == 1)
+
+  test: "refuses a verb it does not implement with 501", () =>
+    served: (port: Int, reached: py.List) =>
+      val answer = ask(port, "TRACE", "/dynamic", py.dict(), "")
+      check("501", answer.status == 501)
+
+  test: "answers an unknown path with 404", () =>
+    served: (port: Int, reached: py.List) =>
+      val answer = get(port, "/nope")
+      check("404", answer.status == 404)

@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+**`Http.respond` and `Http.respondBytes` take a `Status.Code` and a `Mime.Type`
+rather than strings.** `Http.jo` already made this argument for the verb — a
+closed union refuses at the door what a string carries inward — and the status
+line was the half that never got it, so `"200 0K"` was a typo no compiler could
+see. `Http.Status.Code` names the nine statuses this codebase answers with, and
+`Http.Mime.Type` the six content types it writes in source, which settles each
+one's charset in a single place rather than at every call site.
+`Mime.Other` carries a type resolved at runtime, which is what a file's own is.
+
+**`Http.beginStream` is now `Http.stream`.** It handed back WSGI's raw `write`
+callable for the caller to push bytes into. It takes the producer instead —
+`Http.stream(Mime.Ndjson, emit => …)` — so the callable stays inside one
+function and a server that ever needs the iterable form changes only there. Both
+forms were measured to flush per chunk on waitress and wsgiref, so the callable
+stays: a turn pushes into a sink, and the iterable form would mean a queue and a
+second thread for every open stream.
+
+**`Http.app` turns a route into a plain WSGI application.** That is the seam a
+deployment binds its own server to — waitress, gunicorn, granian — in its own
+code, so the framework keeps no dependency outside the standard library.
+`Http.server` is still here and still `wsgiref`, which is what it is for:
+development and tests. Its doc comment now says so, and says what it lacks.
+
+`Http.app` also answers two things before any route runs: a verb this plumbing
+does not implement, and a body declaring more than `Http.maxBodyBytes` (8 MiB),
+which is a 413. `readBody` reads no further than that cap either, so a lying
+`CONTENT_LENGTH` costs nothing. Setting `HARPE_HTTP_VALIDATE` wraps the
+application in `wsgiref.validate`, which asserts PEP 3333 conformance on every
+exchange — a development check, off by default.
+
+**`Http.respondStatic` answers an asset with an `ETag`**, and a 304 when the
+client already has it. `Http.respond` sends `Cache-Control: no-store`, which is
+right for an agent's reply and wrong for a stylesheet — a page reading its
+assets from disk per request was re-sending them on every load. The tag is
+content-derived and the response is `must-revalidate`, so editing a file still
+takes effect with no restart, while an unchanged one costs a conditional request
+and no body at all.
+
+The templates pin the previous release and still call the old signatures.
+Moving them is part of the release, not of this change.
+
 The journal viewer is now something a driver mounts, not a second process you
 start. `harpe.observability.ViewLogger` is a `Logger` that retains the last
 `capacity` entries in memory and lets them be read back, which gives a

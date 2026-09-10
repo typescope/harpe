@@ -102,7 +102,7 @@ section ProviderFixture
 
     val index = requests.size - 1
     if index >= responses.size then
-      Http.respond("500 Internal Server Error", "text/plain", "unexpected request")
+      Http.respond(Http.Status.ServerError, Http.Mime.Text, "unexpected request")
     else
       val answer = responses.get(index)
       if answer.delaySeconds > 0.0 then py.module("time").sleep(answer.delaySeconds)
