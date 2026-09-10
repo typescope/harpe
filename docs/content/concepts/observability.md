@@ -38,7 +38,7 @@ one that produced the record last — and the lanes are that path's **prefixes**
 
 ## Integrate the log viewer
 
-`ViewLogger` is a `Logger` that keeps the last `capacity` entries in memory and
+`ViewLogger` is a `Logger` that keeps the last `N` (set by `capacity` parameter) entries in memory and
 lets them be read back. Tee it beside the backend you already had, so the file
 still gets everything:
 

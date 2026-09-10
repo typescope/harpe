@@ -1,8 +1,8 @@
 +++
 title = "Logging"
 +++
-Harpe ships a general and flexible **logging framework**. Harpe uses the
-framework to log every model call and every `runCode` execution. The framework is
+Harpe ships a general and flexible **logging framework**. It uses the
+framework to log every model call and `runCode` execution. The framework is
 also intended to be used by user programs to collect and store all events of an
 application in a unified way.
 
@@ -56,8 +56,8 @@ contain a list or nested map of `Value` values.
 
 ## Where your events go
 
-A `Logger` defines only the interface, not the implementation, so an
-implementation of it decides the storage format and the destination. The simplest
+A `Logger` defines only the interface, so an
+implementation decides the storage format and the destination. The simplest
 logger just throws the records away, which is the logger behind
 `Logging.discard`. The framework ships `JsonlLogger` which appends JSON lines to a
 file:
