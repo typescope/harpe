@@ -1,10 +1,7 @@
 +++
 title = "Usage and Billing"
 +++
-The [logging framework](/concepts/logging/) is designed to be able to carry
-business data, not only diagnostics — a [data
-bus](/guides/data-bus-and-contracts/) for anything an application needs to
-communicate and persist. Billing is made possible by the logging framework: every model call
+Billing is made possible by the logging framework: every model call
 writes a `harpe.metering.usage` record, and contextual logging says whose call it
 was.
 
