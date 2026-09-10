@@ -10,11 +10,11 @@ operations.
 ## Why specialized agents?
 
 A general-purpose agent asks to be trusted with broad authority. That is not an
-option where an action moves money, changes an official record, or touches a
+secure solution for transferring money, changing an official record, or touching a
 patient's file — finance, banking, government, health care.
 
-A specialized agent has one defined role, so its authority can be cut down to
-that role and checked. That is the
+A specialized agent has pre-defined roles, so its authority can be cut down to
+the roles and checked. That is the
 [**principle of least authority**](https://en.wikipedia.org/wiki/Principle_of_least_privilege)
 (PoLA), and we believe it is the only way to make an agent fit for high-stake
 critical infrastructure and sensitive data.
@@ -58,7 +58,7 @@ Anthropic
 tool-schema overhead, compose operations, and process intermediate data outside
 the model context.
 
-Harpe takes a specific position on the security consequence: LLM-generated code is
+Harpe takes a defending position on the security consequence: LLM-generated code is
 useful, but they should be confined to only permitted operations.
 Following PoLA, we think that granted authority should be explicit, narrow, and
 mechanically checked.
@@ -80,7 +80,7 @@ of rigorous modular reasoning:
 > free of risky operations, which constitutes the vast majority of a program) is
 > automatically verified by the implementation language's type checker.
 
-That is the benefit of a typed trust boundary: you pay once in designing the
+That is the benefit of a type-checked trust boundary: you pay once in designing the
 capability interfaces, and every program LLMs write against them is checked by the
 compiler rather than by a reviewer.
 
