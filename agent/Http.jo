@@ -27,7 +27,6 @@ namespace harpe
 
 import harpe.ffi.json
 import harpe.ffi.builtins
-import harpe.ffi.os
 
 section Http
   //[ The verb, as a value rather than a string
@@ -307,12 +306,15 @@ section Http
     ! does not implement, and a body larger than `maxBodyBytes`. Both are
     ! protocol-level answers that no handler should have to remember.
     !
-    ! Set `HARPE_HTTP_VALIDATE` to wrap the result in `wsgiref.validate`, which
-    ! asserts PEP 3333 conformance on every exchange. Off by default: it is a
-    ! development check, and it costs.
+    ! Thin on purpose. What it does is adapt a calling convention — `environ`
+    ! and `start_response` in, the ambient request bound, an iterable out — and
+    ! its worth is that it is separable, not that it is large. An exception
+    ! reaching the top of a route is deliberately left to the server, which
+    ! already answers 500 before the response begins and closes the connection
+    ! after it, and knows which of the two happened.
   //]
-  def app(route: () => py.List receives request): Any =
-    val plain = (environ: py.Dynamic, startResponse: py.Dynamic) =>
+  def app(route: () => py.List receives request): (py.Dynamic, py.Dynamic) => py.List =
+    (environ: py.Dynamic, startResponse: py.Dynamic) =>
       match requestFrom(environ, startResponse)
       case None => unsupportedMethod(startResponse)
       case Some(asked) =>
@@ -320,9 +322,6 @@ section Http
           refuse(startResponse, Status.TooLarge, "request body too large")
         else
           with request = asked in route()
-
-    if os.getenv("HARPE_HTTP_VALIDATE", "") == "" then plain
-    else py.module("wsgiref.validate").validator(plain)
 
   //[ Stop `httpd` writing an access line per request to stderr
     !
