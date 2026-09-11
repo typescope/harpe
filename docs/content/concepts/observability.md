@@ -27,10 +27,10 @@ it presents them structurally and contextually:
 ## Lanes
 
 Lanes in the log viewer enable contextual focusing.  A log item's `context`
-**is** a path of context ids from outermost scope to inner scopes.  The lanes
+**is** a path of context ids from outermost scope to inner scope.  The lanes
 are that path's **prefixes**:
 
-- the leftmost lane is the empty prefix — every record, in arrival order
+- the leftmost lane is the empty prefix, containing all records in arrival order
 - clicking a scope on a row opens a lane holding that scope's records and
   everything nested under it
 - a lane one level deeper sits to its right: `all › session › turn › tool call`
