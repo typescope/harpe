@@ -94,10 +94,9 @@ val log = new TeeLogger([new JsonlLogger(path), new ViewLogger(capacity = 5000)]
 That is how the [log viewer](/concepts/observability/) shows the logs live
 without displacing the file.
 
-## Framework events
+## Framework-defined events
 
-The framework writes these itself, on every turn. Each name is stable, so a query
-written against one keeps working. The turn events are what make a
+The framework writes these events on every turn. Each event name is predefined and can be used to query the logged events.
 [transcript](/concepts/transcript/) a reading of the log rather than a second
 place to record it.
 
@@ -118,8 +117,7 @@ place to record it.
 
 ## Logging from your own tool
 
-When you write a tool, the logger is already in scope inside the handler — just
-call it. Import the channel and pick an event name prefixed with your agent:
+When creating a tool, the logger is already in scope inside the handler.
 
 ```jo
 import harpe.logging.logger
