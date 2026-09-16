@@ -107,7 +107,7 @@ key never leaves the application.
 
 ## Try the demo
 
-The [Personalized Discounting project](https://github.com/typescope/personalized-discounting)
+The [Campaign Planner](https://github.com/typescope/campaign-planner) demo
 provides a customer-history view, a campaign policy editor, coupon proposals,
 owner approval, and run reports.
 
@@ -127,8 +127,8 @@ owner approves or rejects it.
 ![Draft coupons show individual discounts, minimum baskets, expiry dates, and reasons, with owner approval and rejection controls.](/img/personalized-discounting-proposals.png)
 
 ```sh
-git clone https://github.com/typescope/personalized-discounting.git
-cd personalized-discounting
+git clone https://github.com/typescope/campaign-planner.git
+cd campaign-planner
 pip install -r requirements.txt
 cp .env.example .env
 jo start
