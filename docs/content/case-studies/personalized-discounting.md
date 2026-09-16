@@ -53,39 +53,35 @@ discount, yet see only their purchase dates and amounts?**
 - **"Give the program a narrow API."** Right idea, but the program runs beside
   the full data, the access key, and the network. If it can reach around the
   API, the API protects nothing.
-- **"Run it in a sandbox."** A sandbox walls off the machine, not the data. It
-  helps only when paired with a narrow API, built and secured separately, which
-  incurs significant engineering overhead.
-
-What works is a narrow API that is scoped to the task, fixed before any program
-exists, and impossible for the program to reach around. It governs both what
-the program sees and what it does.
+- **"Export the data it needs, and sandbox the program."** Each policy
+  needs different fields and rows. One checks open coupons for a few late
+  customers, another for thousands, and the next never does. The export must
+  fetch everything, for every customer, just in case.
+- **"Sandbox the program and give it a tailored REST API."** This works, but it
+  adds a service to build, host, and secure beside the sandbox.
 
 ## The agentic solution
 
-The owner's application defines the narrow API as a Jo interface. The AI writes
-a Jo program against it, and Harpe compiles the program before running it.
+A narrow API is the right idea, as long as the program cannot reach around it.
+The approach taken by Harpe is to define the API as a Jo interface. The AI writes
+a Jo program against that interface, and the program is compiled before it runs.
+The interface is implemented separately in trusted code, which does the actual
+work on the data.
 
-The program cannot reach around the interface, because
-[all side effects are denied by default](/overview/compile-time-sandboxing/).
-Files, the network, the database, and Python do not exist in the program's
-compilation environment, so the program cannot even name them. It can use only
-what it receives: the `promotions` interface and printing. Anything else is a
-compile error.
-
-![The owner's application holds the store access key, the mapping from stand-in labels to real customer IDs, and approval. Names and addresses are never imported. A Jo interface, checked before the program runs, lets the AI-written program see stand-in labels, purchase dates, and basket amounts, and only save draft offers. Reading a name or calling anything else is rejected before the program runs.](/img/personalized-discounting-boundary.svg)
-
-This is the entire interface:
+This is an example interface:
 
 ```jo
-class Purchase(day: Int, month: Int, subtotalCents: Int)
+class Purchase(date: String, daysAgo: Int, subtotalCents: Int)
 class Customer(id: String, purchases: List[Purchase])
-class Campaign(today: Int, month: Int, currency: String, budgetCents: Int, maxOfferCents: Int)
+class Coupon(amountCents: Int, minimumSpendCents: Int, daysLeft: Option[Int])
+class Budget(currency: String, availableCents: Int, maxOfferCents: Int)
 class Offer(customerId: String, amountCents: Int, minimumSpendCents: Int, reason: String)
 
 interface Promotions
-  def campaign(): Campaign
+  def today(): String
+  def budget(): Budget
   def customers(): List[Customer]
+  def openCoupons(customerId: String): List[Coupon]
   def saveDrafts(offers: List[Offer]): String
 end
 
@@ -93,20 +89,30 @@ param promotions: Promotions
 defer def runTask(): Unit receives IO.stdout, promotions
 ```
 
-It is reviewed once, in version control, and it binds every program the AI will
-ever write.
+**What the program reads.** Each customer is a stand-in label, such as
+`customer-1`, with a list of purchase dates and amounts. `Customer` has no name,
+email, or store ID field, so a program that reads one does not compile. Coupons
+come one customer at a time, when a policy needs to know what that customer
+already holds. A `Coupon` has an amount, a minimum basket, and an expiry, but no
+code. No field holds text a customer typed, so a delivery note cannot steer the
+AI. The store import never fetches names or addresses in the first place.
 
-**What the program sees.** A customer is a stand-in label such as `customer-1`
-and a list of purchase dates and amounts. `Customer` has no name, email, or
-store ID field, so a program that reads one does not compile. The program reads
-no free text, so nothing a customer typed can steer the AI. The store import
-never fetches names or addresses in the first place.
-
-**What the program does.** Its only write is `saveDrafts`. The application
-checks each batch against the per-coupon limit and the budget, and generates the
+**What the program writes.** Its only write is `saveDrafts`. Your code checks
+each batch against the per-coupon limit and the budget, then generates the
 coupon codes. The owner approves each draft before it becomes a single-use
-coupon for that customer. No program can approve a draft, and the store access
-key never leaves the application.
+coupon for that customer. No program can approve a draft.
+
+**Why the program cannot go around the interface.** In Harpe,
+[all side effects are denied by default](/overview/compile-time-sandboxing/).
+Files, the network, the database, and Python are absent from the program's
+compilation environment, so the program cannot even name them. It can use only
+what `runTask` receives: the `promotions` interface and printing. Anything else
+is a compile error, and the store access key never leaves your code.
+
+![The program the AI wrote calls a Jo interface, checked at compile time. Through it the program reads stand-in labels, purchase dates, basket amounts, and open coupons without their codes, and writes only draft offers. Reading a name or calling the network, database, or approval fails to compile. Trusted code implements the interface and does the work on the data: it holds the store access key and the label mapping, checks limits and budget, and generates coupon codes. The owner approves each draft before it becomes a coupon.](/img/personalized-discounting-boundary.svg)
+
+Because the interface is the whole boundary, you review it once, in version
+control, and it binds every program the AI will ever write.
 
 ## Try the demo
 
