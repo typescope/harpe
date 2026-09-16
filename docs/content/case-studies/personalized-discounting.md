@@ -138,19 +138,6 @@ Shopify. No text written by the AI reaches a customer.
 Approval sets aside the full value of each coupon from the budget, in case every
 customer uses theirs.
 
-## What this does not claim
-
-The limits do not prove that the AI understood the rule or that an offer makes
-business sense. That is why the owner sees each calculation and decides.
-
-Purchase histories are still personal data. Anything the program prints can
-reach the AI provider. A stand-in label reduces what is shared. It does not make
-the data anonymous.
-
-Nor is Jo the only way to enforce these limits. A Python program in a sandbox,
-behind a separate service, can do the same. Jo writes the limits as types and
-checks them before the program runs.
-
 ## Try the demo
 
 The [Personalized Discounting project](https://github.com/typescope/personalized-discounting)
