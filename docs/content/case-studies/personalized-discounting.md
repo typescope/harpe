@@ -75,9 +75,9 @@ compile error.
 This is the entire interface:
 
 ```jo
-class Purchase(day: Int, subtotalCents: Int)
+class Purchase(day: Int, month: Int, subtotalCents: Int)
 class Customer(id: String, purchases: List[Purchase])
-class Campaign(today: Int, currency: String, budgetCents: Int, maxOfferCents: Int)
+class Campaign(today: Int, month: Int, currency: String, budgetCents: Int, maxOfferCents: Int)
 class Offer(customerId: String, amountCents: Int, minimumSpendCents: Int, reason: String)
 
 interface Promotions
