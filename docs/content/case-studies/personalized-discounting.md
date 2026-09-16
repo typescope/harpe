@@ -34,36 +34,34 @@ off" could even steer the AI that sets the discounts.
 **How can a program that AI wrote and nobody read compute each customer's
 discount, yet see only their purchase dates and amounts?**
 
-## Why today's safeguards fall short
+## Why the obvious fixes fall short
 
-**Code review does not scale.** The program is new for every request. Most shop
-owners are not programmers, and a platform cannot review a new program for
-every request from millions of shops. Shopify's help page for generated apps
-advises: "Test the app thoroughly before installing it." That leaves the review
-to the owner.
+- **"Tell the AI not to read personal data."** An instruction is a request, not a
+  limit. A long conversation can bury it, and a delivery note can argue against
+  it.
+- **"Have someone review the program."** Small shop owners are not programmers,
+  and no platform can review millions of one-off programs.
+- **"Use tool calls instead of a program."** The model would pull thousands of
+  order histories through its conversation and do the arithmetic itself. That is
+  slow, costly, and error-prone.
+- **"Rely on app permissions."** They are granted to an app at install. "Read
+  orders" covers every order and "create discounts" covers any discount, so a
+  program written for one rule inherits them all.
+- **"Give the program a narrow API."** Right idea, but the program runs beside
+  the full data, the access key, and the network. If it can reach around the
+  API, the API protects nothing.
+- **"Run it in a sandbox."** A sandbox walls off the machine, not the data. It
+  helps only when paired with a narrow API, built and secured separately, which
+  incurs significant engineering overhead.
 
-**Permissions are too coarse.** They are granted to an app when it is installed
-and cover everything the app may ever do. An app that may read orders reads
-every field in them. An app that may create discounts can create any discount,
-for anyone. A program written a moment ago for one rule inherits all of it.
-
-**A narrow view can be bypassed.** A developer could give the program a view
-with only dates and amounts. But the program runs next to the full data, the
-Shopify access key, and the network. The view helps only if the program cannot
-reach around it.
-
-So the limits must meet three conditions:
-
-- **Set before the program exists**, because nobody will read it.
-- **Fit this one task**, not everything an app may ever do.
-- **Impossible to reach around**, for any program the AI writes.
-
-They cover both what the program can see and what it can do.
+What works is a narrow API that is scoped to the task, fixed before any program
+exists, and impossible for the program to reach around. It governs both what
+the program sees and what it does.
 
 ## The agentic solution
 
-Harpe sets those limits first. The owner's application declares, as a Jo
-interface, what any program may see and do. The interface lists only what
+Harpe provides that API. Before any program exists, the owner's application
+declares, as a Jo interface, what a program may see and do. The interface lists only what
 discounting needs. The AI then writes a program in Jo, and Harpe checks it
 against the interface before running it. A program that reaches for anything
 else does not run.
