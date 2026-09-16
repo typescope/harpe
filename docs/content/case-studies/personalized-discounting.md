@@ -173,7 +173,7 @@ and generate apps.
 [Magento extensions](https://github.com/magendooro/magemcp) now let AI agents
 read and change orders through MCP tools.
 
-[Shopify Functions](https://shopify.dev/docs/apps/build/functions) use a
-similar idea for checkout logic written by developers. Each function declares
-the data it needs up front and runs in a sandbox. This case study applies the
-idea to programs that AI writes for a single request.
+[Shopify Functions](https://shopify.dev/docs/apps/build/functions) give custom
+code only the data it declares, with no network access, and apply its output
+rather than letting it act. A developer writes the function and chooses its
+input, and a WebAssembly sandbox enforces the limits at run time.
