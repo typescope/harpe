@@ -80,18 +80,6 @@ implementation while the program is suspended inside it. The program can neither
 observe nor skip it, because neither the approval nor the code performing it is
 in its vocabulary.
 
-![Sky in the browser. The user asks for a flight from New York City to Geneva,
-and the agent answers with the cheapest economy offers, numbered, each showing
-the airline, the airports and times, and the fare.](/img/flight-booker-search.png)
-
-![A Confirm booking dialog over the chat, listing the route, duration, airline,
-passenger name and total, with Reject and Approve
-buttons.](/img/flight-booker-confirm.png)
-
-![The reply after approval: booking confirmed, with the booking reference, order
-id, total charged, and a note that this is a test
-booking.](/img/flight-booker-booked.png)
-
 ## Three operations, one of them consequential
 
 Everything the agent can do to an airline is declared in `sandbox/API.jo`:
@@ -224,6 +212,10 @@ Then open [http://127.0.0.1:8765](http://127.0.0.1:8765) in your browser.
 Describe a trip — "a flight from London to New York on October 1st" — and Sky
 searches, presents the cheapest offers, and collects passenger details in
 conversation.
+
+![Sky in the browser. The user asks for a flight from New York City to London,
+and the agent answers with the cheapest economy offers, numbered, each showing
+the airline, the airports and times, and the fare.](/img/flight-booker-record.gif)
 
 ## What to customize
 
