@@ -57,8 +57,9 @@ discount, yet see only their purchase dates and amounts?**
   needs different fields and rows. One checks open coupons for a few late
   customers, another for thousands, and the next never does. The export must
   fetch everything, for every customer, just in case.
-- **"Sandbox the program and give it a tailored REST API."** This works, but it
-  adds a service to build, host, and secure beside the sandbox.
+- **"Sandbox the program and give it a tailored REST API."** This works, but the
+  API becomes a service to build, host, and secure, with its own keys and
+  permissions.
 
 ## The agentic solution
 
@@ -66,7 +67,9 @@ A narrow API is the right idea, as long as the program cannot reach around it.
 The approach taken by Harpe is to define the API as a Jo interface. The AI writes
 a Jo program against that interface, and the program is compiled before it runs.
 The interface is implemented separately in trusted code, which does the actual
-work on the data.
+work on the data. This implementation can use whatever access you already have,
+such as the store's database or its admin API. There is no extra service to
+host and no new key to issue.
 
 This is an example interface:
 
@@ -97,8 +100,8 @@ already holds. A `Coupon` has an amount, a minimum basket, and an expiry, but no
 code. No field holds text a customer typed, so a delivery note cannot steer the
 AI. The store import never fetches names or addresses in the first place.
 
-**What the program writes.** Its only write is `saveDrafts`. Your code checks
-each batch against the per-coupon limit and the budget, then generates the
+**What the program writes.** Its only write is `saveDrafts`. The implementation
+checks each batch against the per-coupon limit and the budget, then generates the
 coupon codes. The owner approves each draft before it becomes a single-use
 coupon for that customer. No program can approve a draft.
 
@@ -107,9 +110,14 @@ coupon for that customer. No program can approve a draft.
 Files, the network, the database, and Python are absent from the program's
 compilation environment, so the program cannot even name them. It can use only
 what `runTask` receives: the `promotions` interface and printing. Anything else
-is a compile error, and the store access key never leaves your code.
+is a compile error, and the store access key never leaves the implementation.
 
-![The program the AI wrote calls a Jo interface, checked at compile time. Through it the program reads stand-in labels, purchase dates, basket amounts, and open coupons without their codes, and writes only draft offers. Reading a name or calling the network, database, or approval fails to compile. Trusted code implements the interface and does the work on the data: it holds the store access key and the label mapping, checks limits and budget, and generates coupon codes. The owner approves each draft before it becomes a coupon.](/img/personalized-discounting-boundary.svg)
+The AI's program and the implementation run in the same process, so the
+compiler carries the whole boundary. That trust fits here. Only the owner prompts the AI,
+and nothing a customer typed reaches it, so no outsider can steer the AI toward
+an escape.
+
+![The program the AI wrote calls a Jo interface, checked at compile time. Through it the program reads stand-in labels, purchase dates, basket amounts, and open coupons without their codes, and writes only draft offers. Reading a name or calling the network, database, or approval fails to compile. The trusted implementation does the work on the data: it holds the store access key and the label mapping, checks limits and budget, and generates coupon codes. The owner approves each draft before it becomes a coupon.](/img/personalized-discounting-boundary.svg)
 
 Because the interface is the whole boundary, you review it once, in version
 control, and it binds every program the AI will ever write.
