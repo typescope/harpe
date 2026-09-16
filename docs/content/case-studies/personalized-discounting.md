@@ -112,10 +112,11 @@ compilation environment, so the program cannot even name them. It can use only
 what `runTask` receives: the `promotions` interface and printing. Anything else
 is a compile error, and the store access key never leaves the implementation.
 
-The AI's program and the implementation run in the same process, so the
-compiler carries the whole boundary. That trust fits here. Only the owner prompts the AI,
-and nothing a customer typed reaches it, so no outsider can steer the AI toward
-an escape.
+The AI-generated program and the implementation run in the same process, so
+the compiler carries the whole boundary. An attempt to reach around the
+interface fails to compile. Getting past the compiler would take a security
+vulnerability in the compiler itself. That is no easier to exploit than vulnerabilities in
+the web server the shop already exposes to the internet.
 
 ![The program the AI wrote calls a Jo interface, checked at compile time. Through it the program reads stand-in labels, purchase dates, basket amounts, and open coupons without their codes, and writes only draft offers. Reading a name or calling the network, database, or approval fails to compile. The trusted implementation does the work on the data: it holds the store access key and the label mapping, checks limits and budget, and generates coupon codes. The owner approves each draft before it becomes a coupon.](/img/personalized-discounting-boundary.svg)
 
