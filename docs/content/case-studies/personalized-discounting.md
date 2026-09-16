@@ -158,9 +158,6 @@ program for the sample policy without an AI key. **Let the AI write a program**
 needs a model key in `.env`. Then raise the budget from CHF 30 to CHF 40 and run
 again. The late regular the budget left out gets a coupon too.
 
-A version that connects to a Shopify development store is
-[shopify-campaign-planner](https://github.com/typescope/shopify-campaign-planner).
-
 The demo has not measured revenue. That would need a controlled campaign that
 compares repeat purchases and profit with and without offers. It is a local,
 single-owner prototype, not a production marketing service.
