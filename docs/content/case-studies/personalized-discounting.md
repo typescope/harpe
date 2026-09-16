@@ -8,7 +8,7 @@ order history, which is full of customers' private data.
 
 ## The problem
 
-A shop owner on Shopify asks an AI assistant for personalized discounts:
+A shop owner asks an AI assistant for personalized discounts:
 
 > Send a coupon to regulars who are late for their usual order. Make it about a
 > tenth of what they normally spend. Spend no more than CHF 500 in total.
@@ -44,9 +44,12 @@ discount, yet see only their purchase dates and amounts?**
 - **"Use tool calls instead of a program."** The model would pull thousands of
   order histories through its conversation and do the arithmetic itself. That is
   slow, costly, and error-prone.
-- **"Rely on app permissions."** They are granted to an app at install. "Read
-  orders" covers every order and "create discounts" covers any discount, so a
-  program written for one rule inherits them all.
+- **"Rely on API permissions."** Most commerce platforms grant them per
+  resource. A WooCommerce key is read, write, or both. A Magento integration is
+  granted by resource, such as orders. A key that reads orders reads the
+  addresses in them. Shopify is an exception: it hides names, emails, phones, and
+  addresses from apps not approved for them. No platform limits actions to the
+  task. "Create discounts" covers any discount, for anyone.
 - **"Give the program a narrow API."** Right idea, but the program runs beside
   the full data, the access key, and the network. If it can reach around the
   API, the API protects nothing.
@@ -70,7 +73,7 @@ compilation environment, so the program cannot even name them. It can use only
 what it receives: the `promotions` interface and printing. Anything else is a
 compile error.
 
-![The owner's application holds the Shopify access key, the mapping from stand-in labels to real customer IDs, and approval. Names and addresses are never imported. A Jo interface, checked before the program runs, lets the AI-written program see stand-in labels, purchase dates, and basket amounts, and only save draft offers. Reading a name or calling anything else is rejected before the program runs.](/img/personalized-discounting-boundary.svg)
+![The owner's application holds the store access key, the mapping from stand-in labels to real customer IDs, and approval. Names and addresses are never imported. A Jo interface, checked before the program runs, lets the AI-written program see stand-in labels, purchase dates, and basket amounts, and only save draft offers. Reading a name or calling anything else is rejected before the program runs.](/img/personalized-discounting-boundary.svg)
 
 This is the entire interface:
 
@@ -95,21 +98,22 @@ ever write.
 
 **What the program sees.** A customer is a stand-in label such as `customer-1`
 and a list of purchase dates and amounts. `Customer` has no name, email, or
-Shopify ID field, so a program that reads one does not compile. The program
-reads no free text, so nothing a customer typed can steer the AI. The Shopify
-import never fetches names or addresses in the first place.
+store ID field, so a program that reads one does not compile. The program reads
+no free text, so nothing a customer typed can steer the AI. The store import
+never fetches names or addresses in the first place.
 
 **What the program does.** Its only write is `saveDrafts`. The application
 checks each batch against the per-coupon limit and the budget, and generates the
 coupon codes. The owner approves each draft before it becomes a single-use
-coupon for that customer. No program can approve a draft, and the Shopify access
+coupon for that customer. No program can approve a draft, and the store access
 key never leaves the application.
 
 ## Try the demo
 
 The [Campaign Planner](https://github.com/typescope/campaign-planner) demo
-provides a customer-history view, a campaign policy editor, coupon proposals,
-owner approval, and run reports.
+runs this design against a Shopify development store. It provides a
+customer-history view, a campaign policy editor, coupon proposals, owner
+approval, and a view of every program the AI wrote.
 
 The customer view puts buying patterns side by side. Its labels are for the
 owner. The program receives only stand-in labels.
@@ -129,6 +133,7 @@ owner approves or rejects it.
 ```sh
 git clone https://github.com/typescope/campaign-planner.git
 cd campaign-planner
+python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 jo start
@@ -149,11 +154,14 @@ single-owner prototype, not a production marketing service.
 
 ## Related work
 
-Shopify supports
-[discounts for specific customers](https://shopify.dev/docs/api/admin-graphql/latest/input-objects/DiscountCodeBasicInput),
-and Sidekick can
+Shopify hides
+[protected customer data](https://shopify.dev/docs/apps/launch/protected-customer-data)
+from apps not approved for it, and Sidekick can
 [create discounts](https://help.shopify.com/en/manual/ai-powered-tools/sidekick/generate-content)
 and generate apps.
+[WooCommerce](https://developer.woocommerce.com/docs/features/mcp/) and
+[Magento extensions](https://github.com/magendooro/magemcp) now let AI agents
+read and change orders through MCP tools.
 
 [Shopify Functions](https://shopify.dev/docs/apps/build/functions) use a
 similar idea for checkout logic written by developers. Each function declares
