@@ -36,9 +36,9 @@ discount, yet see only their purchase dates and amounts?**
 
 ## Why the obvious fixes fall short
 
-- **"Tell the AI not to read personal data."** An instruction is a request, not a
-  limit. A long conversation can bury it, and a delivery note can argue against
-  it.
+- **"Tell the AI not to read personal data."** An instruction is a request, not
+  a limit. A long conversation can bury it, and a delivery note can argue
+  against it.
 - **"Have someone review the program."** Small shop owners are not programmers,
   and no platform can review millions of one-off programs.
 - **"Use tool calls instead of a program."** The model would pull thousands of
@@ -61,10 +61,10 @@ the program sees and what it does.
 ## The agentic solution
 
 Harpe provides that API. Before any program exists, the owner's application
-declares, as a Jo interface, what a program may see and do. The interface lists only what
-discounting needs. The AI then writes a program in Jo, and Harpe checks it
-against the interface before running it. A program that reaches for anything
-else does not run.
+declares, as a Jo interface, what a program may see and do. The interface lists
+only what discounting needs. The AI then writes a program in Jo, and Harpe
+checks it against the interface before running it. A program that reaches for
+anything else does not run.
 
 ![The owner's application holds the Shopify access key, the mapping from stand-in labels to real customer IDs, and approval. Names and addresses are never imported. A Jo interface, checked before the program runs, lets the AI-written program see stand-in labels, purchase dates, and basket amounts, and only save draft offers. Reading a name or calling anything else is rejected before the program runs.](/img/personalized-discounting-boundary.svg)
 
@@ -151,19 +151,6 @@ Nor is Jo the only way to enforce these limits. A Python program in a sandbox,
 behind a separate service, can do the same. Jo writes the limits as types and
 checks them before the program runs.
 
-## Related work
-
-Shopify supports
-[discounts for specific customers](https://shopify.dev/docs/api/admin-graphql/latest/input-objects/DiscountCodeBasicInput),
-and Sidekick can
-[create discounts](https://help.shopify.com/en/manual/ai-powered-tools/sidekick/generate-content)
-and generate apps.
-
-[Shopify Functions](https://shopify.dev/docs/apps/build/functions) use a
-similar idea for checkout logic written by developers. Each function declares
-the data it needs up front and runs in a sandbox. This case study applies the
-idea to programs that AI writes for a single request.
-
 ## Try the demo
 
 The [Personalized Discounting project](https://github.com/typescope/personalized-discounting)
@@ -204,3 +191,16 @@ store and create real coupons after approval.
 The demo has not measured revenue. That would need a controlled campaign that
 compares repeat purchases and profit with and without offers. It is a local,
 single-owner prototype, not a production marketing service.
+
+## Related work
+
+Shopify supports
+[discounts for specific customers](https://shopify.dev/docs/api/admin-graphql/latest/input-objects/DiscountCodeBasicInput),
+and Sidekick can
+[create discounts](https://help.shopify.com/en/manual/ai-powered-tools/sidekick/generate-content)
+and generate apps.
+
+[Shopify Functions](https://shopify.dev/docs/apps/build/functions) use a
+similar idea for checkout logic written by developers. Each function declares
+the data it needs up front and runs in a sandbox. This case study applies the
+idea to programs that AI writes for a single request.
