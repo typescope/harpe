@@ -67,9 +67,7 @@ A narrow API is the right idea, as long as the program cannot reach around it.
 The approach taken by Harpe is to define the API as a Jo interface. The AI writes
 a Jo program against that interface, and the program is compiled before it runs.
 The interface is implemented separately in trusted code, which does the actual
-work on the data. This implementation can use whatever access you already have,
-such as the store's database or its admin API. There is no extra service to
-host and no new key to issue.
+work on the data.
 
 This is an example interface:
 
@@ -115,8 +113,10 @@ is a compile error, and the store access key never leaves the implementation.
 The AI-generated program and the implementation run in the same process, so
 the compiler carries the whole boundary. An attempt to reach around the
 interface fails to compile. Getting past the compiler would take a security
-vulnerability in the compiler itself. That is no easier to exploit than vulnerabilities in
-the web server the shop already exposes to the internet.
+vulnerability in the compiler itself. That is no easier to exploit than
+vulnerabilities in the web server the shop already exposes to the internet. So
+the implementation can query the store's database directly, as the web server
+does, with no extra service to host and no new key to issue.
 
 ![The program the AI wrote calls a Jo interface, checked at compile time. Through it the program reads stand-in labels, purchase dates, basket amounts, and open coupons without their codes, and writes only draft offers. Reading a name or calling the network, database, or approval fails to compile. The trusted implementation does the work on the data: it holds the store access key and the label mapping, checks limits and budget, and generates coupon codes. The owner approves each draft before it becomes a coupon.](/img/personalized-discounting-boundary.svg)
 
