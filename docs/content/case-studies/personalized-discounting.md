@@ -60,96 +60,64 @@ the program sees and what it does.
 
 ## The agentic solution
 
-Harpe provides that API. Before any program exists, the owner's application
-declares, as a Jo interface, what a program may see and do. The interface lists
-only what discounting needs. The AI then writes a program in Jo, and Harpe
-checks it against the interface before running it. A program that reaches for
-anything else does not run.
+The owner's application defines the narrow API as a Jo interface. The AI writes
+a Jo program against it, and Harpe compiles the program before running it.
+
+The program cannot reach around the interface, because
+[all side effects are denied by default](/overview/compile-time-sandboxing/).
+Files, the network, the database, and Python do not exist in the program's
+compilation environment, so the program cannot even name them. It can use only
+what it receives: the `promotions` interface and printing. Anything else is a
+compile error.
 
 ![The owner's application holds the Shopify access key, the mapping from stand-in labels to real customer IDs, and approval. Names and addresses are never imported. A Jo interface, checked before the program runs, lets the AI-written program see stand-in labels, purchase dates, and basket amounts, and only save draft offers. Reading a name or calling anything else is rejected before the program runs.](/img/personalized-discounting-boundary.svg)
 
-For the owner, the flow stays simple. They write the promotion rule in plain
-language and ask for proposals. The program saves a draft coupon for each
-customer it selects, with:
+This is the entire interface:
 
-- The discount amount, minimum basket, and expiry.
-- A reason that shows the purchase figures behind the offer.
+```jo
+class Purchase(day: Int, subtotalCents: Int)
+class Customer(id: String, purchases: List[Purchase])
+class Campaign(today: Int, currency: String, budgetCents: Int, maxOfferCents: Int)
+class Offer(customerId: String, amountCents: Int, minimumSpendCents: Int, reason: String)
 
-A draft is not a real discount. The owner approves or rejects each one.
-Approval creates a single-use coupon that only that customer can use. Nothing
-is emailed.
+interface Promotions
+  def campaign(): Campaign
+  def customers(): List[Customer]
+  def saveDrafts(offers: List[Offer]): String
+end
 
-The owner can change a sentence and ask again. Each run keeps the rule and the
-customer data it used, so every reason points to specific evidence.
-
-## What the program can see
-
-The program must tell one customer's purchases from another's. It does not need
-to know who those customers are. It sees records like this:
-
-```text
-customer-1
-  50 days ago: CHF 60
-  40 days ago: CHF 65
-  30 days ago: CHF 55
+param promotions: Promotions
+defer def runTask(): Unit receives IO.stdout, promotions
 ```
 
-`customer-1` is a stand-in label, not the Shopify customer ID. Anyone with admin
-access can turn a Shopify ID back into a name. The owner's application keeps
-track of who `customer-1` is and uses that when the owner approves a coupon.
+It is reviewed once, in version control, and it binds every program the AI will
+ever write.
 
-| The program sees | The program cannot see |
-| --- | --- |
-| A stand-in customer label | Shopify customer ID |
-| Purchase dates | Name, email, phone number |
-| Basket amounts | Billing and shipping addresses |
-| The owner's rule and budget | Order notes, payment details |
+**What the program sees.** A customer is a stand-in label such as `customer-1`
+and a list of purchase dates and amounts. `Customer` has no name, email, or
+Shopify ID field, so a program that reads one does not compile. The program
+reads no free text, so nothing a customer typed can steer the AI. The Shopify
+import never fetches names or addresses in the first place.
 
-The only free text the program reads is the owner's rule. Nothing a customer
-typed can reach it.
-
-Two layers keep it this way. The Shopify import fetches only each order's date,
-amount, status, and customer ID, so names and addresses never enter the
-application. The program's interface then leaves out the Shopify IDs. It
-describes a customer as a label and a purchase history. A program that asks for
-`name` or `email` is rejected before it runs.
-
-## What the program can do
-
-The program may do four things:
-
-```text
-Read the campaign budget and limits
-Read the owner's rule
-Read the customer purchase histories
-Save draft offers with reasons
-```
-
-A program that tries anything else, such as opening the database, calling the
-network, or approving a draft, is rejected before it runs. The Shopify access
-key stays in the owner's application.
-
-The application checks every batch of drafts. Each offer must be for a customer
-in this run, stay under the per-coupon limit, and require a minimum basket of at
-least four times the discount. The whole batch must fit the budget. The
-application also creates the coupon code, and the AI's reason is never sent to
-Shopify. No text written by the AI reaches a customer.
-
-Approval sets aside the full value of each coupon from the budget, in case every
-customer uses theirs.
+**What the program does.** Its only write is `saveDrafts`. The application
+checks each batch against the per-coupon limit and the budget, and generates the
+coupon codes. The owner approves each draft before it becomes a single-use
+coupon for that customer. No program can approve a draft, and the Shopify access
+key never leaves the application.
 
 ## Try the demo
 
 The [Personalized Discounting project](https://github.com/typescope/personalized-discounting)
-provides a customer-history view, an editable rule, coupon proposals, owner
-approval, and run reports.
+provides a customer-history view, a campaign policy editor, coupon proposals,
+owner approval, and run reports.
 
 The customer view puts buying patterns side by side. Its labels are for the
 owner. The program receives only stand-in labels.
 
 ![The demo's customer-history page compares recent purchase dates and basket amounts for six synthetic customers.](/img/personalized-discounting-customers.png)
 
-The rule is plain text. Saving a change makes it the input to the next run.
+The owner creates a campaign by writing its policy in plain text. That text is
+the AI's prompt. The generated program never reads it.
 
 ![The policy editor describes how to estimate purchasing intervals, calculate individual offers, and allocate the campaign budget.](/img/personalized-discounting-policy.png)
 
@@ -168,9 +136,9 @@ jo start
 
 Open **http://127.0.0.1:8767**. The customers are made up. **Run sample
 policy** runs the included Jo program without an AI key. **Generate proposals**
-asks the configured AI to write and run a new program for the saved rule.
+asks the configured AI to write and run a new program for the policy.
 
-Try changing the rule so the budget goes first to customers who are furthest
+Try changing the policy so the budget goes first to customers who are furthest
 behind their usual schedule. Compare the recipients and reasons before approving
 any offer. The project README explains how to connect a Shopify development
 store and create real coupons after approval.
