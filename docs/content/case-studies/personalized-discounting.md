@@ -47,9 +47,7 @@ discount, yet see only their purchase dates and amounts?**
 - **"Rely on API permissions."** Most commerce platforms grant them per
   resource. A WooCommerce key is read, write, or both. A Magento integration is
   granted by resource, such as orders. A key that reads orders reads the
-  addresses in them. Shopify is an exception: it hides names, emails, phones, and
-  addresses from apps not approved for them. No platform limits actions to the
-  task. "Create discounts" covers any discount, for anyone.
+  addresses in them.
 - **"Give the program a narrow API."** Right idea, but the program runs beside
   the full data, the access key, and the network. If it can reach around the
   API, the API protects nothing.
