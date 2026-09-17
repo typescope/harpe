@@ -78,6 +78,18 @@ leniently, as browsers write them, and `Http.setCookie` builds a `Set-Cookie`
 that is always `HttpOnly` and `SameSite=Lax`. A second read of the body in one
 request aborts, where it used to come back empty and read as a missing body.
 
+**HEAD is refused with a 501 and no body**, like any verb `Http.app` does not
+implement, and `Http.Verb.Head` is gone. It used to reach the routes and match
+none of them. The refusal carries no body because waitress writes whatever body
+it is handed even for a HEAD, which a client keeping the connection open reads
+as its next response.
+
+**`Response.file(root, name, disposition)` serves a file under a directory.**
+`name` is the relative path a client sent. An empty or absolute name, a `..`
+segment, a symlink out of `root`, a directory and a missing file are all the
+same 404. The type is guessed from the name, `Content-Disposition` names the
+file in ASCII and UTF-8, and the response is revalidated.
+
 **`Response.revalidated` lets the browser keep a response**, and `Http.app`
 answers 304 with no body when it already has it. Every builder sends
 `Cache-Control: no-store`, which is right for an agent's reply and wrong for a

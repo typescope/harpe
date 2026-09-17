@@ -132,6 +132,37 @@ private def callBytes(wsgi: (py.Dynamic, py.Dynamic) => py.List, method: String,
 
   new Answer(status, answered, py.dynamic("").encode().join(chunks))
 
+//[ Files under `root`, named by the `name` query parameter. //]
+private def fileRoute(root: String): Response receives request =
+  val name = Http.queryParam("name").getOrElse("")
+  match request
+  case Http.Get("/download") => Response.file(root, name, Response.Attachment)
+  case Http.Get("/show")     => Response.file(root, name, Response.Inline)
+  case _                     => Response.notFound()
+
+//[ A directory of files to serve, beside one that must stay out of reach, for the length of `body`. //]
+private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.List) => Unit): Unit =
+  val os = py.module("os")
+  val scratch = py.module("tempfile").mkdtemp().asString
+  val root = scratch + "/root"
+  os.makedirs(root + "/css")
+  os.makedirs(scratch + "/outside")
+
+  val write = (path: String, text: String) => py.open(path, "wb").write(py.dynamic(text).encode())
+  write(root + "/hello.txt", "hi")
+  write(root + "/css/app.css", "body {}")
+  write(root + "/café.txt", "é")
+  write(root + "/blob.unknownext", "?")
+  write(scratch + "/outside/secret.txt", "secret")
+  os.symlink(scratch + "/outside/secret.txt", root + "/link")
+
+  val result = py.try(body(root, Http.app(settings, () => fileRoute(root))))
+  py.module("shutil").rmtree(scratch)
+
+  match result
+  case Ok(_)    => pass
+  case Err(err) => abort err.message
+
 //[ The application under test. `reached` records what its routes saw. //]
 private def appFor(chosen: Http.Settings, reached: py.List): (py.Dynamic, py.Dynamic) => py.List =
   Http.app(chosen, () => route(reached))
@@ -335,3 +366,41 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
   test: "answers an unknown path with 404", () =>
     check("404", get(appFor(settings, py.list()), "/nope").status == 404)
+
+  test: "refuses HEAD with a 501 and no body", () =>
+    val reached = py.list()
+    val wsgi = appFor(settings, reached)
+    for target in ["/dynamic", "/forever", "/nope"] do
+      val head = call(wsgi, "HEAD", target, [], "")
+      check("501 for \{target}", head.status == 501)
+      check("no body for \{target}", head.text == "" && headerOf(head, "Content-Length") == "0")
+    check("no route ran", reached.size == 0)
+
+  test: "serves a file under its root, revalidated and named", () =>
+    withFiles: (root: String, wsgi: (py.Dynamic, py.Dynamic) => py.List) =>
+      val hello = get(wsgi, "/download?name=hello.txt")
+      check("200", hello.status == 200 && hello.text == "hi")
+      check("typed from its name", headerOf(hello, "Content-Type") == "text/plain")
+      check("saved", headerOf(hello, "Content-Disposition") == "attachment; filename=\"hello.txt\"; filename*=UTF-8''hello.txt")
+      check("revalidated", headerOf(hello, "Cache-Control") == "private, no-cache" && headerOf(hello, "ETag") != "")
+
+      val nested = get(wsgi, "/show?name=css/app.css")
+      check("nested", nested.status == 200 && headerOf(nested, "Content-Type") == "text/css")
+      check("shown", headerOf(nested, "Content-Disposition") == "inline; filename=\"app.css\"; filename*=UTF-8''app.css")
+
+      val accented = get(wsgi, "/download?name=caf%C3%A9.txt")
+      check("a non-ASCII name", accented.status == 200)
+      check("named both ways", headerOf(accented, "Content-Disposition") == "attachment; filename=\"caf_.txt\"; filename*=UTF-8''caf%C3%A9.txt")
+
+      check("an unknown type", headerOf(get(wsgi, "/download?name=blob.unknownext"), "Content-Type") == "application/octet-stream")
+
+  test: "refuses a file name that leaves its root, or names no file", () =>
+    withFiles: (root: String, wsgi: (py.Dynamic, py.Dynamic) => py.List) =>
+      check("dot-dot", get(wsgi, "/download?name=../outside/secret.txt").status == 404)
+      check("dot-dot inside", get(wsgi, "/download?name=css/../../outside/secret.txt").status == 404)
+      check("absolute", get(wsgi, "/download?name=" + root + "/hello.txt").status == 404)
+      check("a symlink out", get(wsgi, "/download?name=link").status == 404)
+      check("a directory", get(wsgi, "/download?name=css").status == 404)
+      check("missing", get(wsgi, "/download?name=missing.txt").status == 404)
+      check("empty", get(wsgi, "/download?name=").status == 404)
+      check("a backslash", get(wsgi, "/download?name=css%5Capp.css").status == 404)

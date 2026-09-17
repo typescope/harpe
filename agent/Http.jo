@@ -32,21 +32,22 @@ namespace harpe
 import harpe.ffi.json
 import harpe.ffi.builtins
 import harpe.ffi.threading
+import harpe.ffi.os
+import harpe.util.File
 
 section Http
   //[ The verb, as a value rather than a string
     !
-    ! Closed on purpose: these six are what a server here understands, and
-    ! anything else is refused at the door rather than carried inward as a string
-    ! nothing will ever match. `Head` and `Options` are named because browsers,
-    ! proxies and health checkers really do send them — they match no route, but
-    ! they are a deliberate 404 rather than an accident of `method == "GET"`
-    ! being false.
+    ! Closed on purpose: these five are what a server here understands, and
+    ! anything else, HEAD included, is refused at the door with a 501 rather than
+    ! carried inward as a string nothing will ever match. `Options` is named
+    ! because browsers really do send it — it matches no route, but it is a
+    ! deliberate 404 rather than an accident of `method == "GET"` being false.
     !
     ! `Options` rather than `Option`, which is Jo's own.
   //]
   section Verb
-    union Method = Get | Post | Put | Delete | Head | Options
+    union Method = Get | Post | Put | Delete | Options
   end
 
   //[ The status, as a value rather than a string
@@ -239,6 +240,41 @@ section Http
     def stream(kind: Mime.Type, produce: (String => Bool) => Unit): Response =
       Stream(kind, produce)
 
+    //[ Whether a browser shows a file or saves it. //]
+    union Disposition = Inline | Attachment
+
+    //[ The file under `root` that `name` names, revalidated
+      !
+      ! `name` is a relative path, as a client sent it. A name that is empty,
+      ! absolute, has a `..` segment, or resolves outside `root` through a
+      ! symlink is a 404, and so is a directory or a missing file, so a client
+      ! cannot tell which. The type is guessed from the name. The whole file is
+      ! read into memory, which suits pages, assets and documents, not video.
+    //]
+    def file(root: String, name: String, disposition: Disposition): Response =
+      val target = resolve(root, name) rescue None => return notFound()
+      val kind = File.mimeType(target).getOrElse("application/octet-stream")
+      val shown = Header("Content-Disposition", dispositionValue(disposition, os.path.basename(name)))
+      revalidated(binary(Status.Success, Mime.Other(kind), [shown], File.readBytes(target)))
+
+    //[ The real path of `name` under `root`, or None when it is not a file inside it. //]
+    private def resolve(root: String, name: String): Option[String] =
+      val refused = name == "" || name.startsWith("/") || name.contains("\\") || name.contains("\u{0}")
+      if refused || name.split("/").contains("..") then return None
+
+      val base = os.path.realpath(root)
+      val target = os.path.realpath(os.path.join(base, name))
+      if target.startsWith(base + "/") && os.path.isfile(target) then Some(target) else None
+
+    //[ `inline` or `attachment`, naming the file both as ASCII and, per RFC 6266, as UTF-8. //]
+    private def dispositionValue(disposition: Disposition, filename: String): String =
+      val kind = match disposition
+                 case Inline     => "inline"
+                 case Attachment => "attachment"
+      val ascii = py.module("re").sub("[^ -~]|[\"\\\\]", "_", filename).asString
+      val encoded = py.module("urllib.parse").quote(filename, safe = "").asString
+      kind + "; filename=\"" + ascii + "\"; filename*=UTF-8''" + encoded
+
     //[ A content-derived entity tag. Not a digest anyone verifies — just a change detector. //]
     private def etag(body: py.Dynamic): String =
       val digest = py.module("hashlib").blake2b(body, digest_size = 8)
@@ -301,7 +337,6 @@ section Http
     else if raw == "POST" then Some(Verb.Post)
     else if raw == "PUT" then Some(Verb.Put)
     else if raw == "DELETE" then Some(Verb.Delete)
-    else if raw == "HEAD" then Some(Verb.Head)
     else if raw == "OPTIONS" then Some(Verb.Options)
     else None
 
@@ -516,8 +551,9 @@ section Http
     (environ: py.Dynamic, startResponse: py.Dynamic) => write(startResponse, answer(settings, environ, route))
 
   private def answer(settings: Settings, environ: py.Dynamic, route: () => Response receives request): Response =
-    val method = verb(environ.get("REQUEST_METHOD", "GET").asString) rescue None =>
-      return refuse(Status.NotImplemented, "not implemented")
+    val raw = environ.get("REQUEST_METHOD", "GET").asString
+    val method = verb(raw) rescue None =>
+      return if raw == "HEAD" then unsupportedHead() else refuse(Status.NotImplemented, "not implemented")
     val path = decodedPath(environ) rescue None =>
       return refuse(Status.BadRequest, "path is not UTF-8")
 
@@ -531,14 +567,23 @@ section Http
       val answered = with request = new Request(method, path, environ) in route()
       if unchanged(method, environ, answered) then notModified(answered) else answered
 
-  //[ Whether a successful GET or HEAD carries an `ETag` the client already holds
+  //[ The 501 for a HEAD, which must not carry a body
+    !
+    ! Waitress writes whatever body it is handed, even for a HEAD, and frames an
+    ! empty one as chunked, and either leaves bytes a client keeping the
+    ! connection open reads as its next response. A declared length of 0 is what
+    ! makes both servers send the headers alone.
+  //]
+  private def unsupportedHead(): Response =
+    Complete(Status.NotImplemented, [Header("Content-Length", "0")], py.dynamic("").encode())
+
+  //[ Whether a successful GET carries an `ETag` the client already holds
     !
     ! `If-None-Match` may list several tags, weak ones included, or be `*`.
   //]
   private def unchanged(method: Verb.Method, environ: py.Dynamic, response: Response): Bool =
-    val reads = method is Verb.Get || method is Verb.Head
     match response
-    case Complete(status, headers, _) if reads && status is Status.Success =>
+    case Complete(status, headers, _) if method is Verb.Get && status is Status.Success =>
       val tag = headerIn(headers, "ETag") rescue None => return false
       val held = environValue(environ, "HTTP_IF_NONE_MATCH") rescue None => return false
       val tags = held.split(",").map(t => t.trim).map(t => if t.startsWith("W/") then t.substring(2, t.size - 2) else t)
