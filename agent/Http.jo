@@ -9,7 +9,7 @@
   ! until it matters.
   !
   ! THE REQUEST IS AMBIENT. A server binds one per request and every function
-  ! here reads it, so a handler that wants the body asks for `Http.readBody()`
+  ! here reads it, so a handler that wants the body asks for `Http.readJson()`
   ! rather than being handed an `environ` to pass on. That is why route handlers
   ! carry neither `environ` nor `startResponse`: they never touch either except
   ! through this file.
@@ -19,8 +19,13 @@
   ! in its own code. `server` here is wsgiref, for development and tests only.
   ! Nothing in this file depends on a package outside the standard library.
   !
-  ! Deliberately thin. Cookies, sessions, TLS detection and base-URL resolution
-  ! are application policy, not plumbing, and belong to whoever needs them.
+  ! `app` ALSO GUARDS THE DOOR. Before any route runs it refuses an unknown verb,
+  ! a path that is not UTF-8, a `Host` the `Settings` do not name, a cross-site
+  ! write, and a body over the limit. Those are protocol answers every browser
+  ! facing app needs, and none of them is a route's to remember.
+  !
+  ! Deliberately thin. Sessions, authentication and base-URL resolution are
+  ! application policy, not plumbing, and belong to whoever needs them.
 //]
 
 namespace harpe
@@ -47,24 +52,47 @@ section Http
   //[ The status, as a value rather than a string
     !
     ! Same reason as the verb: `"200 0K"` is a string a compiler cannot refuse,
-    ! and a status line is written at every response site. These are the ones
-    ! this codebase answers with — add a case rather than passing a literal.
+    ! and a status line is written at every response site. Add a case rather
+    ! than passing a literal.
   //]
   section Status
-    union Code = Success | NotModified | BadRequest | Forbidden | NotFound | Conflict | TooLarge | ServerError | NotImplemented
+    union Code =
+        Success
+      | Created
+      | NoContent
+      | SeeOther
+      | NotModified
+      | BadRequest
+      | Unauthorized
+      | Forbidden
+      | NotFound
+      | Conflict
+      | TooLarge
+      | UnsupportedMediaType
+      | TooManyRequests
+      | ServerError
+      | NotImplemented
+      | Unavailable
 
     //[ The status line WSGI expects. //]
     def line(code: Code): String =
       match code
-      case Success        => "200 OK"
-      case NotModified    => "304 Not Modified"
-      case BadRequest     => "400 Bad Request"
-      case Forbidden      => "403 Forbidden"
-      case NotFound       => "404 Not Found"
-      case Conflict       => "409 Conflict"
-      case TooLarge       => "413 Payload Too Large"
-      case ServerError    => "500 Internal Server Error"
-      case NotImplemented => "501 Not Implemented"
+      case Success              => "200 OK"
+      case Created              => "201 Created"
+      case NoContent            => "204 No Content"
+      case SeeOther             => "303 See Other"
+      case NotModified          => "304 Not Modified"
+      case BadRequest           => "400 Bad Request"
+      case Unauthorized         => "401 Unauthorized"
+      case Forbidden            => "403 Forbidden"
+      case NotFound             => "404 Not Found"
+      case Conflict             => "409 Conflict"
+      case TooLarge             => "413 Payload Too Large"
+      case UnsupportedMediaType => "415 Unsupported Media Type"
+      case TooManyRequests      => "429 Too Many Requests"
+      case ServerError          => "500 Internal Server Error"
+      case NotImplemented       => "501 Not Implemented"
+      case Unavailable          => "503 Service Unavailable"
   end
 
   //[ The content type, with its charset settled here rather than at each site
@@ -74,30 +102,61 @@ section Http
     ! that the charset decision is made once.
   //]
   section Mime
-    union Type = Html | Json | Ndjson | Text | Css | JavaScript | Other(value: String)
+    union Type = Html | Json | Ndjson | EventStream | Text | Css | JavaScript | Other(value: String)
 
     def value(kind: Type): String =
       match kind
-      case Html       => "text/html; charset=utf-8"
-      case Json       => "application/json"
-      case Ndjson     => "application/x-ndjson"
-      case Text       => "text/plain; charset=utf-8"
-      case Css        => "text/css; charset=utf-8"
-      case JavaScript => "application/javascript; charset=utf-8"
-      case Other(raw) => raw
+      case Html        => "text/html; charset=utf-8"
+      case Json        => "application/json"
+      case Ndjson      => "application/x-ndjson"
+      case EventStream => "text/event-stream; charset=utf-8"
+      case Text        => "text/plain; charset=utf-8"
+      case Css         => "text/css; charset=utf-8"
+      case JavaScript  => "application/javascript; charset=utf-8"
+      case Other(raw)  => raw
   end
+
+  //[ Which `Host` names a request may carry
+    !
+    ! Checking it is what defeats DNS rebinding, where a hostile page points its
+    ! own name at a server on loopback and reads it as same-origin. `Named`
+    ! compares one name without its port, case-insensitively. `Unchecked` is for
+    ! a server whose proxy already checks. A server reached by several names, or
+    ! by a pattern, is a case to add here.
+  //]
+  section Host
+    union Policy =
+        Loopback
+      | Named(name: String)
+      | Unchecked
+  end
+
+  //[ Whether a browser on another site may send a write
+    !
+    ! `Refuse` answers 403 to a POST, PUT or DELETE a browser marks as
+    ! cross-site, which is CSRF protection with no token to thread through
+    ! forms. Clients that are not browsers send neither header it reads, so an
+    ! API client or a webhook still gets through.
+  //]
+  section CrossSite
+    union Policy = Refuse | Allow
+  end
+
+  //[ What `app` enforces before a route runs. //]
+  class Settings(maxBodyBytes: Int, hosts: Host.Policy, crossSite: CrossSite.Policy)
+
+  //[ One response header. A CR or LF in either part aborts, since it would split the response. //]
+  class Header(name: String, value: String)
 
   //[ One WSGI exchange: what was asked, and the callable that begins the answer
     !
-    ! `startResponse` is not part of the request, strictly — it is the response
-    ! side. It rides here because WSGI hands the two over together and they are
-    ! never wanted apart, and splitting them would put a second `receives` on
-    ! every handler to no end.
+    ! `startResponse` is the response side, and rides here because WSGI hands
+    ! the two over together. `path` is already decoded as UTF-8.
   //]
   class Request(method: Verb.Method, path: String, environ: py.Dynamic, startResponse: py.Dynamic)
 
   //[ Request patterns keep the verb and path test together at dispatch sites.
-    ! A plain string matches an exact path; Jo's regex strings retain their
+    ! A plain string matches an exact path. Jo's regex strings retain their
     ! normal capture behaviour when supplied as the `path` pattern.
   //]
   pattern Get(path: String): Partial[Request] =
@@ -105,6 +164,12 @@ section Http
 
   pattern Post(path: String): Partial[Request] =
     case asked if asked.method is Verb.Post then path = asked.path
+
+  pattern Put(path: String): Partial[Request] =
+    case asked if asked.method is Verb.Put then path = asked.path
+
+  pattern Delete(path: String): Partial[Request] =
+    case asked if asked.method is Verb.Delete then path = asked.path
 
   //[ A path split into its segments, for routing on the parts of one
     !
@@ -126,20 +191,6 @@ section Http
   //[ The request being served. Bound once per request by the server. //]
   param request: Request
 
-  //[ Read one out of what WSGI handed over, or None for a verb not implemented.
-    ! The only place a raw `REQUEST_METHOD` string is looked at.
-  //]
-  def requestFrom(environ: py.Dynamic, startResponse: py.Dynamic): Option[Request] =
-    match verb(environ.get("REQUEST_METHOD", "GET").asString)
-    case None => None
-    case Some(asked) =>
-      Some:
-        new Request:
-          asked
-          environ.get("PATH_INFO", "/").asString
-          environ
-          startResponse
-
   private def verb(raw: String): Option[Verb.Method] =
     if raw == "GET" then Some(Verb.Get)
     else if raw == "POST" then Some(Verb.Post)
@@ -149,91 +200,168 @@ section Http
     else if raw == "OPTIONS" then Some(Verb.Options)
     else None
 
-  //[ The largest request body this plumbing will read
+  //[ `PATH_INFO` as the client wrote it
     !
-    ! A guard against a runaway body, not a tuned limit. A body declaring more
-    ! than this is refused by `app` before any route sees it, and `readBody`
-    ! reads no further than this even if `CONTENT_LENGTH` lies. A driver wanting
-    ! larger uploads sets its server's own limit and streams them.
-    !
-    ! The refusal is written without draining what the client is still sending,
-    ! so a client mid-upload may see the connection close rather than read the
-    ! 413. That is the cheap answer, and the right one here: a deployment sets
-    ! its server's own limit too — waitress `max_request_body_size` — which
-    ! refuses at the transport layer where the body can be discarded properly.
-    ! This check is the backstop for a server that has no such limit.
+    ! PEP 3333 hands the path over as bytes decoded as Latin-1, so `/café`
+    ! arrives as `/cafÃ©`. Undoing that here is the only way a route can match a
+    ! non-ASCII segment. None when the bytes are not UTF-8.
   //]
-  def maxBodyBytes: Int = 8388608   // 8 MiB
+  private def decodedPath(environ: py.Dynamic): Option[String] =
+    val raw = py.dynamic(environ.get("PATH_INFO", "/"))
+    match py.try(raw.encode("latin-1").decode("utf-8").asString)
+    case Ok(path) => Some(path)
+    case Err(_)   => None
 
-  //[ A refusal written straight to WSGI, with no ambient request
-    !
-    ! For the two cases decided before a request can be bound or routed: an
-    ! unimplemented verb, and a body too large to read.
-  //]
+  //[ A refusal written straight to WSGI, before a request is bound. //]
   private def refuse(startResponse: py.Dynamic, status: Status.Code, message: String): py.List =
-    py.call:
-      startResponse
-      Status.line(status)
-      py.list(py.tuple("Content-Type", Mime.value(Mime.Text)))
-    py.list(py.dynamic(message).encode())
+    val headers = py.list:
+      py.tuple("Content-Type", Mime.value(Mime.Text))
+      py.tuple("Cache-Control", "no-store")
+      py.tuple("X-Content-Type-Options", "nosniff")
 
-  //[ A verb this server does not implement — TRACE, PATCH, something invented
-    !
-    ! 501 rather than 405: 405 says the method is wrong for this resource, and
-    ! this refusal is made before any path is looked at. It is also one of the
-    ! two responses written without an ambient request, since refusing the verb
-    ! is precisely what stops one being built.
-  //]
-  def unsupportedMethod(startResponse: py.Dynamic): py.List =
-    refuse(startResponse, Status.NotImplemented, "not implemented")
+    py.call(startResponse, Status.line(status), headers)
+    py.list(py.dynamic(message).encode())
 
   //[ What `CONTENT_LENGTH` claims, or zero. //]
   private def declaredLength(environ: py.Dynamic): Int =
     Int.parse(environ.get("CONTENT_LENGTH", "").asString) rescue None => 0
 
-  //[ Read and decode a request body, never past `maxBodyBytes`. //]
-  def readBody(): String receives request =
-    val declared = declaredLength(request.environ)
-    val length = if declared > maxBodyBytes then maxBodyBytes else declared
-    request.environ.get("wsgi.input").read(length).decode().asString
+  //[ The value of a WSGI environ key, or None when it is absent. //]
+  private def environValue(environ: py.Dynamic, key: String): Option[String] =
+    val found = environ.get(key)
+    if py.isNone(found) then None else Some(found.asString)
 
-  //[ The request body as a JSON object, or an empty one
+  //[ The environ key WSGI files a request header under. //]
+  private def environKey(name: String): String =
+    val key = py.dynamic(name).upper().asString.replace("-", "_")
+    if key == "CONTENT_TYPE" || key == "CONTENT_LENGTH" then key else "HTTP_" + key
+
+  //[ A `Host` or `Origin` authority reduced to its lower-case hostname, without port or brackets. //]
+  private def hostname(authority: String): Option[String] =
+    match py.try(py.module("urllib.parse").urlsplit("//" + authority).hostname)
+    case Ok(name) => if py.isNone(name) then None else Some(name.asString)
+    case Err(_)   => None
+
+  private def hostAllowed(environ: py.Dynamic, policy: Host.Policy): Bool =
+    match policy
+    case Host.Unchecked => true
+    case Host.Loopback  => nameIn(environ, ["localhost", "127.0.0.1", "::1"])
+    case Host.Named(name)  => nameIn(environ, [py.dynamic(name).lower().asString])
+
+  private def nameIn(environ: py.Dynamic, names: List[String]): Bool =
+    match environValue(environ, "HTTP_HOST")
+    case None => false
+    case Some(authority) =>
+      match hostname(authority)
+      case Some(name) => names.contains(name)
+      case None       => false
+
+  //[ Is this a write a browser sent from another site?
     !
-    ! A missing, empty, or malformed body yields `{}` rather than raising, so a
-    ! handler's own validation answers with its own 400 instead of the request
-    ! dying in a traceback. A client that sends nothing and a client that sends
-    ! `{}` are the same thing to every caller here.
+    ! Go's `CrossOriginProtection` algorithm. `Sec-Fetch-Site` decides when a
+    ! browser sent it. Otherwise an `Origin` must name the same authority as
+    ! `Host`. A request carrying neither did not come from a browser page.
   //]
-  def readJson(): py.Dict receives request =
-    match py.try(json.loads(readBody()))
-    case Ok(value) =>
-      if py.isInstance(value, builtins.dict) then value.cast[py.Dict] else py.dict()
-    case Err(_) => py.dict()
+  private def crossSiteWrite(method: Verb.Method, environ: py.Dynamic): Bool =
+    val writes = method is Verb.Post || method is Verb.Put || method is Verb.Delete
+    if !writes then false
+    else
+      match environValue(environ, "HTTP_SEC_FETCH_SITE")
+      case Some(site) => site != "same-origin" && site != "none"
+      case None =>
+        match environValue(environ, "HTTP_ORIGIN")
+        case None => false
+        case Some(origin) =>
+          val netloc = py.module("urllib.parse").urlsplit(origin).netloc.asString
+          val host = environValue(environ, "HTTP_HOST").getOrElse("")
+          py.dynamic(netloc).lower().asString != py.dynamic(host).lower().asString
 
-  def queryParam(key: String): String receives request =
+  //[ A request header, or None when the client did not send it. //]
+  def header(name: String): Option[String] receives request =
+    environValue(request.environ, environKey(name))
+
+  //[ The first value of a query parameter
+    !
+    ! None when the parameter is absent. `?q=` is `Some("")`, so a handler can
+    ! tell an empty value from a missing one.
+  //]
+  def queryParam(key: String): Option[String] receives request =
     val qs = request.environ.get("QUERY_STRING", "").asString
-    val params = py.module("urllib.parse").parse_qs(qs).cast[py.Dict]
-    if params.contains(key) then params.get(key).cast[py.List].get(0).asString else ""
+    val params = py.module("urllib.parse").parse_qs(qs, keep_blank_values = true).cast[py.Dict]
+    if params.contains(key) then Some(params.get(key).cast[py.List].get(0).asString) else None
+
+  //[ The request body as bytes
+    !
+    ! Reads exactly what `CONTENT_LENGTH` declares, with no cap of its own:
+    ! `app` has already refused a declaration over `Settings.maxBodyBytes`.
+  //]
+  def readBytes(): py.Dynamic receives request =
+    request.environ.get("wsgi.input").read(declaredLength(request.environ))
+
+  //[ The request body as text, or None when it is not UTF-8. //]
+  def readBody(): Option[String] receives request =
+    val bytes = readBytes()
+    match py.try(bytes.decode("utf-8").asString)
+    case Ok(text) => Some(text)
+    case Err(_)   => None
+
+  //[ The request body as a JSON object
+    !
+    ! None unless the request says `application/json` and the body parses to an
+    ! object. A handler answers that with its own 400. Requiring the content type
+    ! also makes a browser preflight any cross-site attempt to send it.
+  //]
+  def readJson(): Option[py.Dict] receives request =
+    val kind = header("Content-Type").getOrElse("")
+    val media = py.dynamic(kind.split(";").get(0).trim).lower().asString
+
+    if media != "application/json" then None
+    else
+      match readBody()
+      case None => None
+      case Some(text) =>
+        match py.try(json.loads(text))
+        case Ok(value) =>
+          if py.isInstance(value, builtins.dict) then Some(value.cast[py.Dict]) else None
+        case Err(_) => None
+
+  //[ Begin the response. Every one goes out with `nosniff`, so a browser never guesses a type. //]
+  private def start(status: Status.Code, fixed: py.List, headers: List[Header]): py.Dynamic receives request =
+    fixed.append(py.tuple("X-Content-Type-Options", "nosniff"))
+    for h in headers do
+      if h.name.contains("\r") || h.name.contains("\n") || h.value.contains("\r") || h.value.contains("\n") then
+        abort "header '\{h.name}' contains a line break"
+      fixed.append(py.tuple(h.name, h.value))
+
+    py.call(request.startResponse, Status.line(status), fixed)
 
   //[ A complete, non-streamed response from a string body
     !
-    ! `no-store`, because everything answered this way is an agent's own reply,
-    ! a session list, or an error — none of it is a client's to keep. A file
-    ! that IS cacheable goes through `respondStatic`.
+    ! `no-store`, because what is answered this way is dynamic and none of it is
+    ! a client's to keep. A file that IS cacheable goes through `respondStatic`.
+    ! `headers` are sent after `Content-Type` and `Cache-Control`.
   //]
-  def respond(status: Status.Code, kind: Mime.Type, body: String): py.List receives request =
-    val headers = py.list:
+  def respond(status: Status.Code, kind: Mime.Type, headers: List[Header], body: String): py.List receives request =
+    respondBytes(status, kind, headers, py.dynamic(body).encode())
+
+  //[ A complete response whose body is bytes, with the same headers as `respond`. //]
+  def respondBytes(status: Status.Code, kind: Mime.Type, headers: List[Header], body: py.Dynamic): py.List receives request =
+    val fixed = py.list:
       py.tuple("Content-Type", Mime.value(kind))
       py.tuple("Cache-Control", "no-store")
 
-    py.call(request.startResponse, Status.line(status), headers)
-    py.list(py.dynamic(body).encode())
+    val _ = start(status, fixed, headers)
+    py.list(body)
 
   def respondHtml(body: String): py.List receives request =
-    respond(Status.Success, Mime.Html, body)
+    respond(Status.Success, Mime.Html, [], body)
 
   def respondJson(dict: py.Dict): py.List receives request =
-    respond: Status.Success, Mime.Json, json.dumps(dict)
+    respond: Status.Success, Mime.Json, [], json.dumps(dict)
+
+  //[ A 303 to `location`, the redirect a browser follows with a GET after a form post. //]
+  def redirect(location: String): py.List receives request =
+    respond(Status.SeeOther, Mime.Text, [Header("Location", location)], "")
 
   //[ An asset that may be cached, answered with an `ETag` and a 304 when it can
     !
@@ -247,21 +375,17 @@ section Http
     val tag = etag(body)
     val cache = "public, max-age=0, must-revalidate"
 
-    if request.environ.get("HTTP_IF_NONE_MATCH", "").asString == tag then
-      py.call:
-        request.startResponse
-        Status.line(Status.NotModified)
-        py.list(py.tuple("ETag", tag), py.tuple("Cache-Control", cache))
+    if header("If-None-Match").getOrElse("") == tag then
+      val _ = start(Status.NotModified, py.list(py.tuple("ETag", tag), py.tuple("Cache-Control", cache)), [])
       py.list()
 
     else
-      py.call:
-        request.startResponse
-        Status.line(Status.Success)
-        py.list:
-          py.tuple("Content-Type", Mime.value(kind))
-          py.tuple("ETag", tag)
-          py.tuple("Cache-Control", cache)
+      val fixed = py.list:
+        py.tuple("Content-Type", Mime.value(kind))
+        py.tuple("ETag", tag)
+        py.tuple("Cache-Control", cache)
+
+      val _ = start(Status.Success, fixed, [])
       py.list(py.dynamic(body).encode())
 
   //[ A content-derived entity tag. Not a digest anyone verifies — just a change detector. //]
@@ -269,59 +393,106 @@ section Http
     val digest = py.module("hashlib").blake2b(py.dynamic(body).encode(), digest_size = 8)
     "\"" + digest.hexdigest().asString + "\""
 
+  //[ The write side of one stream, which stays closed once a write has failed. //]
+  private class Outlet(write: py.Dynamic)
+    var open: Bool = true
+
+    def emit(chunk: String): Bool =
+      if open then
+        match py.try(py.call(write, py.dynamic(chunk).encode()))
+        case Ok(_)  => pass
+        case Err(_) => open = false
+      open
+  end
+
   //[ A streamed response: headers go out now, and `produce` emits as it goes
     !
-    ! How a long-running turn reaches the tab that asked for it, a line at a
+    ! How a long-running turn reaches the tab that asked for it, a chunk at a
     ! time, instead of arriving whole at the end. `produce` runs on this
     ! request's thread and is handed an `emit` it calls per chunk.
+    !
+    ! `emit` answers whether the client is still there. A failed write means it
+    ! is not, whichever server raised which exception for it, so every later
+    ! `emit` returns false without writing and the producer can stop its work.
     !
     ! Built on WSGI's `write` callable rather than a returned iterable, which
     ! would need the producer to be pull-shaped — a turn pushes into a sink, so
     ! the iterable form would mean a queue and a second thread per stream. Both
-    ! forms were measured to flush per chunk on waitress and wsgiref. The
-    ! callable is confined to this function, so a server that ever needs the
-    ! iterable form changes only here.
+    ! forms were measured to flush per chunk on waitress and wsgiref.
   //]
-  def stream(kind: Mime.Type, produce: (String => Unit) => Unit): py.List receives request =
-    val headers = py.list:
+  def stream(kind: Mime.Type, produce: (String => Bool) => Unit): py.List receives request =
+    val fixed = py.list:
       py.tuple("Content-Type", Mime.value(kind))
       py.tuple("Cache-Control", "no-cache")
       py.tuple("X-Accel-Buffering", "no")
 
-    val write = py.call(request.startResponse, Status.line(Status.Success), headers)
-    produce((chunk: String) => py.call(write, py.dynamic(chunk).encode()))
+    val outlet = new Outlet(start(Status.Success, fixed, []))
+    produce(chunk => outlet.emit(chunk))
     py.list()
 
-  //[ A response whose body is bytes rather than text, with the caller's headers. //]
-  def respondBytes(status: Status.Code, headers: py.List, body: py.Dynamic): py.List receives request =
-    py.call(request.startResponse, Status.line(status), headers)
-    py.list(body)
+  //[ Server-sent event framing, for a `stream` of `Mime.EventStream`
+    !
+    ! The browser's `EventSource` reads these and reconnects on its own. Every
+    ! line of `data` becomes its own `data:` field, which the browser rejoins.
+  //]
+  section Sse
+    //[ An event the page listens for by `name`. //]
+    def event(name: String, data: String): String =
+      if name.contains("\r") || name.contains("\n") then abort "event name contains a line break"
+      "event: " + name + "\n" + fields(data)
+
+    //[ An unnamed event, delivered to `onmessage`. //]
+    def message(data: String): String = fields(data)
+
+    //[ A comment line, which keeps an idle stream open through a proxy's read timeout. //]
+    def keepalive(): String = ":\n\n"
+
+    private def fields(data: String): String =
+      val lines = data.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+      lines.map(line => "data: " + line + "\n").join("") + "\n"
+  end
 
   def notFound(): py.List receives request =
-    respond: Status.NotFound, Mime.Json, json.dumps(py.dict("error" ~ "not_found"))
+    respond: Status.NotFound, Mime.Json, [], json.dumps(py.dict("error" ~ "not_found"))
+
+  //[ A 400 naming what was wrong, short enough to sit on the right of a `rescue`:
+    !
+    !     val body = Http.readJson() rescue None => return Http.badRequest("expected a JSON object")
+  //]
+  def badRequest(detail: String): py.List receives request =
+    respond: Status.BadRequest, Mime.Json, [], json.dumps(py.dict("error" ~ "bad_request", "detail" ~ detail))
 
   //[ A route as a plain WSGI application — the seam a deployment binds a server to
     !
-    ! Two refusals happen here rather than in any route: a verb this plumbing
-    ! does not implement, and a body larger than `maxBodyBytes`. Both are
-    ! protocol-level answers that no handler should have to remember.
+    ! Refuses, in order and before the route runs: a verb not implemented (501,
+    ! not 405, because no path has been looked at), a path that is not UTF-8
+    ! (400), a `Host` the settings do not allow (400), a cross-site write (403),
+    ! and a body declaring more than `maxBodyBytes` (413).
     !
-    ! Thin on purpose. What it does is adapt a calling convention — `environ`
-    ! and `start_response` in, the ambient request bound, an iterable out — and
-    ! its worth is that it is separable, not that it is large. An exception
-    ! reaching the top of a route is deliberately left to the server, which
-    ! already answers 500 before the response begins and closes the connection
-    ! after it, and knows which of the two happened.
+    ! The 413 is written without draining what the client is still sending, so a
+    ! client mid-upload may see the connection close first. Set the server's own
+    ! limit too, which can discard the body properly.
+    !
+    ! An exception reaching the top of a route is left to the server, which
+    ! answers 500 before the response begins and closes the connection after.
   //]
-  def app(route: () => py.List receives request): (py.Dynamic, py.Dynamic) => py.List =
+  def app(settings: Settings, route: () => py.List receives request): (py.Dynamic, py.Dynamic) => py.List =
     (environ: py.Dynamic, startResponse: py.Dynamic) =>
-      match requestFrom(environ, startResponse)
-      case None => unsupportedMethod(startResponse)
-      case Some(asked) =>
-        if declaredLength(environ) > maxBodyBytes then
-          refuse(startResponse, Status.TooLarge, "request body too large")
-        else
-          with request = asked in route()
+      match verb(environ.get("REQUEST_METHOD", "GET").asString)
+      case None => refuse(startResponse, Status.NotImplemented, "not implemented")
+      case Some(method) =>
+        match decodedPath(environ)
+        case None => refuse(startResponse, Status.BadRequest, "path is not UTF-8")
+        case Some(path) =>
+          if !hostAllowed(environ, settings.hosts) then
+            refuse(startResponse, Status.BadRequest, "host not allowed")
+          else if settings.crossSite is CrossSite.Refuse && crossSiteWrite(method, environ) then
+            refuse(startResponse, Status.Forbidden, "cross-site request refused")
+          else if declaredLength(environ) > settings.maxBodyBytes then
+            refuse(startResponse, Status.TooLarge, "request body too large")
+          else
+            val asked = new Request(method, path, environ, startResponse)
+            with request = asked in route()
 
   //[ Stop `httpd` writing an access line per request to stderr
     !
@@ -354,10 +525,11 @@ section Http
     ! A deployment binds a real server to `app` instead, in its own code:
     !
     !     val httpd = py.module("waitress").create_server:
-    !       Http.app(() => server.route())
+    !       Http.app(settings, () => server.route())
     !       host = host
     !       port = port
     !       threads = 32
+    !       max_request_body_size = settings.maxBodyBytes
     !
     ! Sizing that pool is the deployment's, and a streaming response holds one
     ! worker for its whole life — so it wants room for every turn and every open
@@ -371,12 +543,12 @@ section Http
     ! Returns the server rather than serving: the caller prints its banner,
     ! installs signal handlers, and decides when to `serve_forever`.
   //]
-  def server(host: String, port: Int, route: () => py.List receives request): py.Dynamic =
+  def server(host: String, port: Int, settings: Settings, route: () => py.List receives request): py.Dynamic =
     val wsgi = py.module("wsgiref.simple_server")
     val threaded = builtins.newType:
       "ThreadingWSGIServer"
       py.tuple(py.module("socketserver").ThreadingMixIn, wsgi.WSGIServer)
       py.dict("daemon_threads" ~ true)
 
-    wsgi.make_server(host, port, app(route), server_class = threaded)
+    wsgi.make_server(host, port, app(settings, route), server_class = threaded)
 end

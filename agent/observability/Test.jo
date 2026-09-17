@@ -26,6 +26,7 @@ namespace harpe.observability
 
 import harpe.metering.Usage
 import harpe.ffi.os
+import harpe.Http
 import harpe.ffi.threading
 import harpe.logging.Logging
 import harpe.logging.Value
@@ -158,7 +159,7 @@ def test(): Unit receives stdout =
 
   val host = os.getenv("HOST", "127.0.0.1")
   val port = Int.parse(os.getenv("PORT", "8760")) rescue None => 8760
-  Viewer.start(viewLog, "seeded journal", host, port)
+  Viewer.start(viewLog, "seeded journal", host, port, Http.Host.Named(host))
 
   println ""
   println "  seeded journal · http://\{host}:\{port}"

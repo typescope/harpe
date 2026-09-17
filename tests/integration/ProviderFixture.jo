@@ -91,17 +91,19 @@ section ProviderFixture
     encoded
 
   private def serve(responses: List[Response], requests: py.List): py.List receives request =
+    val body = Http.readBody() rescue None => abort "the provider fixture was sent a body that is not UTF-8"
+
     val recorded = new RecordedRequest:
       request.environ.get("REQUEST_METHOD", "GET").asString
       request.path
       request.environ.get("QUERY_STRING", "").asString
-      Http.readBody()
+      body
       request.environ
     requests.append(recorded)
 
     val index = requests.size - 1
     if index >= responses.size then
-      Http.respond(Http.Status.ServerError, Http.Mime.Text, "unexpected request")
+      Http.respond(Http.Status.ServerError, Http.Mime.Text, [], "unexpected request")
     else
       val answer = responses.get(index)
       if answer.delaySeconds > 0.0 then py.module("time").sleep(answer.delaySeconds)
@@ -115,7 +117,8 @@ section ProviderFixture
   //]
   def withResponses(responses: List[Response], test: Server => Unit): Unit =
     val requests = py.list()
-    val httpd = Http.server("127.0.0.1", 0, () => serve(responses, requests))
+    val settings = new Http.Settings(maxBodyBytes = 67108864, hosts = Http.Host.Loopback, crossSite = Http.CrossSite.Refuse)
+    val httpd = Http.server("127.0.0.1", 0, settings, () => serve(responses, requests))
     Http.quiet(httpd)
     val port = httpd.server_port.asInt
     val server = new Server("http://127.0.0.1:\{port}", port, requests)

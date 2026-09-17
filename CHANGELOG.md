@@ -6,15 +6,25 @@
 rather than strings.** `Http.jo` already made this argument for the verb — a
 closed union refuses at the door what a string carries inward — and the status
 line was the half that never got it, so `"200 0K"` was a typo no compiler could
-see. `Http.Status.Code` names the nine statuses this codebase answers with, and
-`Http.Mime.Type` the six content types it writes in source, which settles each
-one's charset in a single place rather than at every call site.
+see. `Http.Status.Code` names the statuses a web application commonly answers
+with, and `Http.Mime.Type` the content types it writes in source, which settles
+each one's charset in a single place rather than at every call site.
 `Mime.Other` carries a type resolved at runtime, which is what a file's own is.
+
+Both also take a `List[Http.Header]`, sent after the content type, so a route can
+redirect, set a cookie or name a download without reaching into WSGI.
+`Http.redirect` is the 303 a form post wants. Every response carries
+`X-Content-Type-Options: nosniff`, and a header containing a line break aborts
+rather than splitting the response.
 
 **`Http.beginStream` is now `Http.stream`.** It handed back WSGI's raw `write`
 callable for the caller to push bytes into. It takes the producer instead —
 `Http.stream(Mime.Ndjson, emit => …)` — so the callable stays inside one
-function and a server that ever needs the iterable form changes only there. Both
+function and a server that ever needs the iterable form changes only there.
+`emit` returns whether the client is still there. wsgiref and waitress raise
+different exceptions for a closed connection, and the producer sees neither, only
+`false` from then on, so it can stop work nobody will read.
+`Mime.EventStream` and `Http.Sse` frame server-sent events. Both
 forms were measured to flush per chunk on waitress and wsgiref, so the callable
 stays: a turn pushes into a sink, and the iterable form would mean a queue and a
 second thread for every open stream.
@@ -25,12 +35,24 @@ code, so the framework keeps no dependency outside the standard library.
 `Http.server` is still here and still `wsgiref`, which is what it is for:
 development and tests. Its doc comment now says so, and says what it lacks.
 
-`Http.app` also answers two things before any route runs: a verb this plumbing
-does not implement, and a body declaring more than `Http.maxBodyBytes` (8 MiB),
-which is a 413. `readBody` reads no further than that cap either, so a lying
-`CONTENT_LENGTH` costs nothing. Setting `HARPE_HTTP_VALIDATE` wraps the
-application in `wsgiref.validate`, which asserts PEP 3333 conformance on every
-exchange — a development check, off by default.
+`Http.app` and `Http.server` take `Http.Settings`, and refuse before any route
+runs: a verb this plumbing does not implement (501), a path that is not UTF-8
+(400), a `Host` outside `settings.hosts` (400), a cross-site POST, PUT or DELETE
+under `CrossSite.Refuse` (403), and a body declaring more than
+`settings.maxBodyBytes` (413). The host check is what stops DNS rebinding from
+reading a loopback server, and the cross-site check is Go's
+`CrossOriginProtection`, which needs no token. The body readers read exactly
+what `CONTENT_LENGTH` declares, which `app` has already held to the limit.
+`Viewer.start` takes the host policy its caller binds for.
+
+**Request readers answer `Option` rather than a fallback.** `Http.queryParam`
+is None for an absent parameter and `Some("")` for an empty one. `Http.readJson`
+is None unless the request says `application/json` and the body is an object,
+where it used to answer `{}` for all of those alike. `Http.readBody` is None for
+a body that is not UTF-8, and `Http.readBytes` reads it raw. `Http.header` reads
+a request header. `Request.path` is decoded as UTF-8, where WSGI hands over
+Latin-1, so a route now matches `/café` as written. `Http.Put` and `Http.Delete`
+join the verb patterns.
 
 **`Http.respondStatic` answers an asset with an `ETag`**, and a 304 when the
 client already has it. `Http.respond` sends `Cache-Control: no-store`, which is

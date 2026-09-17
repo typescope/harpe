@@ -12,37 +12,71 @@ namespace harpe.test.unit.HttpTest
 import harpe.Http
 import harpe.Http.request
 import harpe.util.Process
-import harpe.ffi.os
+import harpe.ffi.json
 import harpe.testing.thisSuite
 import harpe.testing.suite
 import harpe.testing.test
 import harpe.testing.check
 
-//[ Every path these tests ask for. `reached` records each `/echo` that got here. //]
+//[ A body limit small enough that a test can exceed it cheaply. //]
+private def settings: Http.Settings =
+  new Http.Settings(maxBodyBytes = 1024, hosts = Http.Host.Loopback, crossSite = Http.CrossSite.Refuse)
+
+//[ Every path these tests ask for. `reached` records what a route saw. //]
 private def route(reached: py.List): py.List receives request =
   match request
-  case Http.Get("/dynamic") => Http.respond(Http.Status.Success, Http.Mime.Json, "{}")
+  case Http.Get("/dynamic") => Http.respond(Http.Status.Success, Http.Mime.Json, [], "{}")
   case Http.Get("/asset")   => Http.respondStatic(Http.Mime.Css, "body { margin: 0 }")
+  case Http.Get("/moved")   => Http.redirect("/dynamic")
 
-  case Http.Get("/stream")  =>
-    Http.stream: Http.Mime.Ndjson, (emit: String => Unit) =>
-      emit("a\n")
-      emit("b\n")
-      emit("c\n")
+  case Http.Get("/headed") =>
+    Http.respond(Http.Status.Created, Http.Mime.Text, [Http.Header("X-Trace", "abc")], Http.header("X-Asked").getOrElse("absent"))
+
+  case Http.Get("/query") =>
+    val shown = match Http.queryParam("q")
+                case Some(value) => "some:" + value
+                case None        => "none"
+    Http.respond(Http.Status.Success, Http.Mime.Text, [], shown)
+
+  case Http.Get(Http.Segments ["files", name]) => Http.respond(Http.Status.Success, Http.Mime.Text, [], name)
+
+  case Http.Get("/stream") =>
+    Http.stream: Http.Mime.Ndjson, (emit: String => Bool) =>
+      val _ = emit("a\n")
+      val _ = emit("b\n")
+      val _ = emit("c\n")
+
+  //[ Emits until the client is gone, then records whether a later emit still claims it is there. //]
+  case Http.Get("/forever") =>
+    Http.stream: Http.Mime.Text, (emit: String => Bool) =>
+      val chunk = py.dynamic("x").callDynamic("__mul__", 65536).asString
+      var sent = 0
+      while sent < 4096 && emit(chunk) do sent = sent + 1
+      reached.append(if emit("after") then "open" else "closed")
 
   case Http.Post("/echo") =>
     reached.append(1)
-    Http.respond(Http.Status.Success, Http.Mime.Text, Http.readBody().size.toString)
+    val text = Http.readBody() rescue None => return Http.badRequest("not utf-8")
+    Http.respond(Http.Status.Success, Http.Mime.Text, [], text.size.toString)
+
+  case Http.Post("/json") =>
+    Http.respondJson:
+      Http.readJson() rescue None => return Http.badRequest("bad json")
 
   case _ => Http.notFound()
 
 //[ One response, as a client saw it. //]
-private class Answer(status: Int, body: String, etag: String, cacheControl: String)
+private class Answer(status: Int, body: String, response: py.Dynamic)
+  def header(name: String): String = response.getheader(name, "").asString
+end
 
 //[ Serve `route` on an ephemeral port for the duration of `body`. //]
 private def served(body: (Int, py.List) => Unit): Unit =
+  servedWith(settings, body)
+
+private def servedWith(chosen: Http.Settings, body: (Int, py.List) => Unit): Unit =
   val reached = py.list()
-  val httpd = Http.server("127.0.0.1", 0, () => route(reached))
+  val httpd = Http.server("127.0.0.1", 0, chosen, () => route(reached))
   Http.quiet(httpd)
   val port = httpd.server_port.asInt
 
@@ -58,30 +92,30 @@ private def served(body: (Int, py.List) => Unit): Unit =
   case Ok(_)    => pass
   case Err(err) => abort err.message
 
-//[ One request, with optional headers and body. //]
-private def ask(port: Int, method: String, path: String, headers: py.Dict, payload: String): Answer =
+//[ One request, with headers and a body of bytes. //]
+private def send(port: Int, method: String, path: String, headers: py.Dict, payload: py.Dynamic): Answer =
   val conn = py.module("http.client").HTTPConnection("127.0.0.1", port, timeout = 20.0)
-
-  if payload == "" then conn.request(method, path, headers = headers)
-  else conn.request(method, path, py.dynamic(payload).encode(), headers)
+  conn.request(method, path, payload, headers)
 
   val response = conn.getresponse()
-  val answer = new Answer:
-    response.status.asInt
-    response.read().decode().asString
-    response.getheader("ETag", "").asString
-    response.getheader("Cache-Control", "").asString
-
+  val answer = new Answer(response.status.asInt, response.read().decode().asString, response)
   conn.close()
   answer
 
+private def ask(port: Int, method: String, path: String, headers: py.Dict, payload: String): Answer =
+  send(port, method, path, headers, py.dynamic(payload).encode())
+
 private def get(port: Int, path: String): Answer =
   ask(port, "GET", path, py.dict(), "")
+
+private def postJson(port: Int, payload: String): Answer =
+  ask(port, "POST", "/json", py.dict("Content-Type" ~ "application/json; charset=utf-8"), payload)
 
 def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
   test: "names a status line for every code", () =>
     check("200", Http.Status.line(Http.Status.Success) == "200 OK")
+    check("303", Http.Status.line(Http.Status.SeeOther) == "303 See Other")
     check("304", Http.Status.line(Http.Status.NotModified) == "304 Not Modified")
     check("413", Http.Status.line(Http.Status.TooLarge) == "413 Payload Too Large")
     check("501", Http.Status.line(Http.Status.NotImplemented) == "501 Not Implemented")
@@ -91,30 +125,98 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("json carries none", Http.Mime.value(Http.Mime.Json) == "application/json")
     check("a runtime type passes through", Http.Mime.value(Http.Mime.Other("image/png")) == "image/png")
 
-  test: "answers a dynamic response no-store", () =>
+  test: "frames server-sent events a line of data at a time", () =>
+    check("named", Http.Sse.event("turn", "a\nb") == "event: turn\ndata: a\ndata: b\n\n")
+    check("unnamed", Http.Sse.message("x") == "data: x\n\n")
+    check("carriage returns split too", Http.Sse.message("a\r\nb\rc") == "data: a\ndata: b\ndata: c\n\n")
+    check("keepalive is a comment", Http.Sse.keepalive() == ":\n\n")
+
+  test: "answers a dynamic response no-store and nosniff", () =>
     served: (port: Int, reached: py.List) =>
       val answer = get(port, "/dynamic")
       check("200", answer.status == 200)
-      check("not cacheable", answer.cacheControl == "no-store")
-      check("no etag", answer.etag == "")
+      check("not cacheable", answer.header("Cache-Control") == "no-store")
+      check("never sniffed", answer.header("X-Content-Type-Options") == "nosniff")
+      check("no etag", answer.header("ETag") == "")
+
+  test: "reads a request header and sends the route's own", () =>
+    served: (port: Int, reached: py.List) =>
+      val sent = ask(port, "GET", "/headed", py.dict("X-Asked" ~ "yes"), "")
+      check("status from the route", sent.status == 201)
+      check("request header read", sent.body == "yes")
+      check("response header written", sent.header("X-Trace") == "abc")
+
+      val missing = get(port, "/headed")
+      check("an absent header is None", missing.body == "absent")
+
+  test: "redirects with a 303 and a location", () =>
+    served: (port: Int, reached: py.List) =>
+      val answer = get(port, "/moved")
+      check("303", answer.status == 303)
+      check("location", answer.header("Location") == "/dynamic")
+
+  test: "tells an empty query parameter from a missing one", () =>
+    served: (port: Int, reached: py.List) =>
+      check("value", get(port, "/query?q=hi").body == "some:hi")
+      check("empty", get(port, "/query?q=").body == "some:")
+      check("missing", get(port, "/query").body == "none")
+
+  test: "routes a non-ASCII path as the client wrote it", () =>
+    served: (port: Int, reached: py.List) =>
+      val answer = get(port, "/files/caf%C3%A9")
+      check("200", answer.status == 200)
+      check("decoded as UTF-8", answer.body == "café")
+
+      check("bytes that are not UTF-8 are a 400", get(port, "/files/%FF").status == 400)
 
   test: "answers an asset with an etag, then 304 when it is unchanged", () =>
     served: (port: Int, reached: py.List) =>
       val first = get(port, "/asset")
       check("200 first time", first.status == 200)
       check("body arrives", first.body == "body { margin: 0 }")
-      check("carries an etag", first.etag != "")
-      check("revalidates", first.cacheControl == "public, max-age=0, must-revalidate")
+      check("carries an etag", first.header("ETag") != "")
+      check("revalidates", first.header("Cache-Control") == "public, max-age=0, must-revalidate")
 
-      val second = ask(port, "GET", "/asset", py.dict("If-None-Match" ~ first.etag), "")
+      val second = ask(port, "GET", "/asset", py.dict("If-None-Match" ~ first.header("ETag")), "")
       check("304 second time", second.status == 304)
       check("and no body", second.body == "")
+
+  test: "reads JSON only when it is labelled and is an object", () =>
+    served: (port: Int, reached: py.List) =>
+      val good = postJson(port, "{\"a\": 1}")
+      check("an object is read", good.status == 200 && json.loads(good.body).get("a").asInt == 1)
+
+      check("malformed is None", postJson(port, "{").status == 400)
+      check("a non-object is None", postJson(port, "[1]").status == 400)
+      check("an empty body is None", postJson(port, "").status == 400)
+
+      val unlabelled = ask(port, "POST", "/json", py.dict("Content-Type" ~ "text/plain"), "{\"a\": 1}")
+      check("the wrong content type is None", unlabelled.status == 400)
+
+  test: "reads a body that is not UTF-8 as None", () =>
+    served: (port: Int, reached: py.List) =>
+      val bytes = py.module("builtins").bytes(py.list(255, 254))
+      val answer = send(port, "POST", "/echo", py.dict(), bytes)
+      check("400", answer.status == 400)
+      check("naming why", json.loads(answer.body).get("detail").asString == "not utf-8")
 
   test: "streams every chunk a producer emits", () =>
     served: (port: Int, reached: py.List) =>
       val answer = get(port, "/stream")
       check("200", answer.status == 200)
       check("all three chunks", answer.body == "a\nb\nc\n")
+
+  test: "tells a producer once its client has gone", () =>
+    served: (port: Int, reached: py.List) =>
+      val socket = py.module("socket").create_connection(py.tuple("127.0.0.1", port))
+      socket.sendall(py.dynamic("GET /forever HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n").encode())
+      val _ = socket.recv(1024)
+      socket.close()
+
+      val clock = py.module("time")
+      val deadline = clock.monotonic().asFloat + 10.0
+      while reached.size == 0 && clock.monotonic().asFloat < deadline do clock.sleep(0.02)
+      check("emit reported the close", reached.size == 1 && reached.get(0).asString == "closed")
 
   //[ The cap is enforced in `app`, so the route never runs.
     !
@@ -129,9 +231,43 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
       check("a small body is read", small.status == 200 && small.body == "5")
       check("and the route ran", reached.size == 1)
 
-      val oversized = py.dynamic("x").callDynamic("__mul__", Http.maxBodyBytes + 1).asString
+      val oversized = py.dynamic("x").callDynamic("__mul__", settings.maxBodyBytes + 1).asString
       val _ = py.try: ask(port, "POST", "/echo", py.dict(), oversized)
       check("the route never ran", reached.size == 1)
+
+  test: "refuses a host the settings do not name", () =>
+    served: (port: Int, reached: py.List) =>
+      check("loopback by name", ask(port, "GET", "/dynamic", py.dict("Host" ~ "localhost:\{port}"), "").status == 200)
+      check("loopback v6", ask(port, "GET", "/dynamic", py.dict("Host" ~ "[::1]:\{port}"), "").status == 200)
+      check("a rebound name", ask(port, "GET", "/dynamic", py.dict("Host" ~ "attacker.example:\{port}"), "").status == 400)
+
+  test: "accepts only the one host it is named for, whatever its port or case", () =>
+    val named = new Http.Settings(maxBodyBytes = 1024, hosts = Http.Host.Named("Agent.Example.com"), crossSite = Http.CrossSite.Refuse)
+    servedWith: named, (port: Int, reached: py.List) =>
+      check("its name", ask(port, "GET", "/dynamic", py.dict("Host" ~ "agent.example.com:\{port}"), "").status == 200)
+      check("without a port", ask(port, "GET", "/dynamic", py.dict("Host" ~ "AGENT.EXAMPLE.COM"), "").status == 200)
+      check("another name", ask(port, "GET", "/dynamic", py.dict("Host" ~ "www.example.com"), "").status == 400)
+      check("loopback is not implied", ask(port, "GET", "/dynamic", py.dict("Host" ~ "127.0.0.1:\{port}"), "").status == 400)
+
+  test: "refuses a write a browser sent from another site", () =>
+    served: (port: Int, reached: py.List) =>
+      val host = "127.0.0.1:\{port}"
+      val crossSite = ask(port, "POST", "/echo", py.dict("Sec-Fetch-Site" ~ "cross-site"), "x")
+      check("cross-site by fetch metadata", crossSite.status == 403)
+
+      val sameOrigin = ask(port, "POST", "/echo", py.dict("Sec-Fetch-Site" ~ "same-origin"), "x")
+      check("same-origin by fetch metadata", sameOrigin.status == 200)
+
+      val foreign = ask(port, "POST", "/echo", py.dict("Origin" ~ "https://attacker.example"), "x")
+      check("a foreign origin", foreign.status == 403)
+
+      val own = ask(port, "POST", "/echo", py.dict("Origin" ~ "http://\{host}"), "x")
+      check("its own origin", own.status == 200)
+
+      check("no browser headers at all", ask(port, "POST", "/echo", py.dict(), "x").status == 200)
+
+      val read = ask(port, "GET", "/dynamic", py.dict("Sec-Fetch-Site" ~ "cross-site"), "")
+      check("a cross-site read is not a write", read.status == 200)
 
   test: "refuses a verb it does not implement with 501", () =>
     served: (port: Int, reached: py.List) =>

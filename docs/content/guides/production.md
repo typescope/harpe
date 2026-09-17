@@ -68,15 +68,24 @@ Bind a real server to `Http.app` in your own code, so the framework keeps no
 dependency you did not choose:
 
 ```jo
+val settings = new Http.Settings:
+  maxBodyBytes = 26214400
+  hosts = Http.Host.Named("agent.example.com")
+  crossSite = Http.CrossSite.Refuse
+
 val httpd = py.module("waitress").create_server:
-  Http.app(() => server.route())
+  Http.app(settings, () => server.route())
   host = host
   port = port
   threads = 32
   channel_timeout = 3600
-  max_request_body_size = 26214400
+  max_request_body_size = settings.maxBodyBytes
 httpd.run()
 ```
+
+Name the host your users type. A server on loopback uses `Http.Host.Loopback`,
+which still refuses a hostile name rebound to `127.0.0.1`. Keep
+`CrossSite.Refuse` unless browsers on other sites must write to the server.
 
 Size `threads` for concurrency, not for request rate. A streaming response holds
 one worker for its whole life, so the pool needs room for every turn in flight
@@ -84,13 +93,14 @@ and every open subscription at once — a fixed pool that runs out stops answeri
 everything, including the page. Set `channel_timeout` above your longest quiet
 period, or a subscription waiting on a slow turn is closed underneath it.
 
-Set the server's own body limit as well as harpe's `Http.maxBodyBytes`. The
-framework refuses an oversized body before any route sees it, but it does so
-without draining what the client is still sending, so the transport-layer limit
-is what gives the client a clean answer.
+Pass the same body limit to the server. The framework refuses an oversized
+body before any route sees it, but it does so without draining what the client
+is still sending, so the transport-layer limit is what gives the client a clean
+answer.
 
-Run with `HARPE_HTTP_VALIDATE=1` in development to assert PEP 3333 conformance
-on every exchange.
+A streaming producer should stop once `emit` returns `false`, since the client
+has gone. Behind a proxy with a read timeout, an event stream sends
+`Http.Sse.keepalive()` during quiet periods.
 
 ## Test the boundaries
 
