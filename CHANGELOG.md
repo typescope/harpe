@@ -73,10 +73,23 @@ a request header. `Request.path` is decoded as UTF-8, where WSGI hands over
 Latin-1, so a route now matches `/café` as written. `Http.Put` and `Http.Delete`
 join the verb patterns.
 
-`Http.readForm` reads what an HTML form posts, `Http.cookie` reads a cookie
-leniently, as browsers write them, and `Http.setCookie` builds a `Set-Cookie`
-that is always `HttpOnly` and `SameSite=Lax`. A second read of the body in one
-request aborts, where it used to come back empty and read as a missing body.
+`Http.readForm` reads what an HTML form posts, and `Http.cookie` reads a cookie
+leniently, as browsers write them. A second read of the body in one request
+aborts, where it used to come back empty and read as a missing body.
+
+**Cookies are written from `Response` and read from `Http`**, the same split as
+the rest: `Response.cookie(name, value, maxAgeSeconds, secure)` builds a
+`Set-Cookie` that is always `Path=/`, `HttpOnly` and `SameSite=Lax`, and answers
+a `Header` to pass in a response's headers. It was `Http.setCookie`.
+
+**`Response.signedCookie` and `Http.signedCookie` carry a value a client cannot
+change.** The cookie holds the value, its expiry and an HMAC-SHA256 over both
+and the cookie's name, so it cannot be altered or moved to another name, and the
+server enforces the expiry rather than trusting the browser's `Max-Age`. A
+missing, altered or expired cookie reads as None. The value is signed, not
+encrypted, so a user id belongs there and a secret does not, and nothing signed
+this way can be revoked before it expires. Where session state lives, and
+whether any exists, stays the application's: the cookie carries a string.
 
 **HEAD is refused with a 501 and no body**, like any verb `Http.app` does not
 implement, and `Http.Verb.Head` is gone. It used to reach the routes and match

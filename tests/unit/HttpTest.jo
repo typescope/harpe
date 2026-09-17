@@ -16,6 +16,9 @@ import harpe.testing.suite
 import harpe.testing.test
 import harpe.testing.check
 
+//[ The secret these tests sign cookies with. //]
+private def secret: String = "0123456789abcdef0123456789abcdef"
+
 //[ A body limit small enough that a test can exceed it cheaply. //]
 private def settings: Http.Settings =
   new Http.Settings(maxBodyBytes = 1024, hosts = Http.Host.Loopback, crossSite = Http.CrossSite.Refuse)
@@ -72,7 +75,21 @@ private def route(reached: py.List): Response receives request =
 
   case Http.Get("/cookie") =>
     val shown = Http.cookie("sid").getOrElse("absent")
-    Response.complete(Http.Status.Success, Http.Mime.Text, [Http.setCookie("sid", "abc123", maxAgeSeconds = 60, secure = true)], shown)
+    Response.complete(Http.Status.Success, Http.Mime.Text, [Response.cookie("sid", "abc123", maxAgeSeconds = 60, secure = true)], shown)
+
+  //[ The same, signed for a different cookie name, to show the name is signed. //]
+  case Http.Get("/signed-other") =>
+    val given = Http.queryParam("value").getOrElse("")
+    val header = Response.signedCookie("other", given, secret, maxAgeSeconds = 60, secure = true)
+    Response.complete(Http.Status.Success, Http.Mime.Text, [header], "issued")
+
+  //[ Signs `?value=` into a cookie, and reads back whatever cookie the request carries. //]
+  case Http.Get("/signed") =>
+    val given = Http.queryParam("value").getOrElse("")
+    val age = Int.parse(Http.queryParam("age").getOrElse("60")) rescue None => 60
+    val seen = Http.signedCookie("sid", secret).getOrElse("absent")
+    val header = Response.signedCookie("sid", given, secret, maxAgeSeconds = age, secure = true)
+    Response.complete(Http.Status.Success, Http.Mime.Text, [header], seen)
 
   case Http.Post("/json") =>
     Response.json:
@@ -182,6 +199,15 @@ private def postJson(wsgi: (py.Dynamic, py.Dynamic) => py.List, payload: String)
   call(wsgi, "POST", "/json", [Http.Header("Content-Type", "application/json; charset=utf-8")], payload)
 
 private def headerOf(answer: Answer, name: String): String = answer.header(name).getOrElse("")
+
+//[ The `name=value` a route's `Set-Cookie` wrote, without its attributes. //]
+private def issued(wsgi: (py.Dynamic, py.Dynamic) => py.List, target: String): String =
+  headerOf(get(wsgi, target), "Set-Cookie").split(";").get(0)
+
+//[ What `/signed` reads back when the request carries `cookie`. //]
+private def carrying(wsgi: (py.Dynamic, py.Dynamic) => py.List, cookie: String): String =
+  val named = if cookie.startsWith("sid=") then cookie else "sid=" + cookie
+  call(wsgi, "GET", "/signed?value=ignored", [Http.Header("Cookie", named)], "").text
 
 def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
@@ -297,7 +323,35 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("absent", get(wsgi, "/cookie").text == "absent")
     check("attributes", headerOf(sent, "Set-Cookie") == "sid=abc123; Path=/; Max-Age=60; HttpOnly; SameSite=Lax; Secure")
 
-  test: "reads a body that is not UTF-8 as None", () =>
+  test: "reads back a signed cookie, and refuses one that was altered", () =>
+    val wsgi = appFor(settings, py.list())
+    val cookie = issued(wsgi, "/signed?value=user-42")
+    check("it signs", cookie.startsWith("sid=") && cookie.split(".").size == 3)
+    check("read back", carrying(wsgi, cookie) == "user-42")
+
+    val parts = cookie.split(".")
+    val value = parts.get(0)
+    val expiry = parts.get(1)
+    val signature = parts.get(2)
+
+    check("an altered value", carrying(wsgi, value + "x." + expiry + "." + signature) == "absent")
+    check("an altered expiry", carrying(wsgi, value + "." + (Int.parse(expiry).getOrElse(0) + 600).toString + "." + signature) == "absent")
+    check("an altered signature", carrying(wsgi, value + "." + expiry + "." + signature.substring(0, signature.size - 1) + "A") == "absent")
+    check("a shape that is not three parts", carrying(wsgi, "sid=whatever") == "absent")
+
+  test: "refuses a signed cookie past its expiry, or signed for another name", () =>
+    val wsgi = appFor(settings, py.list())
+    check("expired", carrying(wsgi, issued(wsgi, "/signed?value=user-42&age=0")) == "absent")
+
+    // Signed under the name `other`, then presented as `sid`: the name is signed too.
+    val moved = issued(wsgi, "/signed-other?value=user-42")
+    check("moved to another name", carrying(wsgi, "sid=" + moved.split("=").get(1)) == "absent")
+
+  test: "signs a value a cookie cannot carry as it is, and refuses a weak secret", () =>
+    val wsgi = appFor(settings, py.list())
+    check("a non-ASCII value", carrying(wsgi, issued(wsgi, "/signed?value=caf%C3%A9")) == "café")
+    check("a short secret aborts", py.try(Response.signedCookie("sid", "v", "too short", 60, true)) is Err(_))
+
     val bytes = py.module("builtins").bytes(py.list(255, 254))
     val answer = callBytes(appFor(settings, py.list()), "POST", "/echo", [], bytes)
     check("400", answer.status == 400)
