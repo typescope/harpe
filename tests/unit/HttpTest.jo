@@ -61,11 +61,6 @@ private def route(reached: py.List): Response receives request =
     val text = Http.readBody() rescue None => return Response.badRequest("not utf-8")
     Response.complete(Http.Status.Success, Http.Mime.Text, [], text.size.toString)
 
-  case Http.Post("/form") =>
-    val form = Http.readForm() rescue None => return Response.badRequest("bad form")
-    val shown = form.get("name").getOrElse("absent") + "|" + form.get("note").getOrElse("absent") + "|" + form.get("x").getOrElse("absent")
-    Response.complete(Http.Status.Success, Http.Mime.Text, [], shown)
-
   case Http.Post("/twice") =>
     val _ = Http.readBytes()
     val second = match py.try(Http.readBytes())
@@ -305,13 +300,6 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     val unlabelled = call(wsgi, "POST", "/json", [Http.Header("Content-Type", "text/plain")], "{\"a\": 1}")
     check("the wrong content type is None", unlabelled.status == 400)
 
-  test: "reads a form, telling an empty field from a missing one", () =>
-    val wsgi = appFor(settings, py.list())
-    val form = [Http.Header("Content-Type", "application/x-www-form-urlencoded")]
-    check("decoded", call(wsgi, "POST", "/form", form, "name=caf%C3%A9&note=").text == "café||absent")
-    check("escapes that are not UTF-8", call(wsgi, "POST", "/form", form, "name=%FF").status == 400)
-    check("the wrong content type", call(wsgi, "POST", "/form", [], "name=x").status == 400)
-
   test: "refuses to read the body twice rather than answering empty", () =>
     val answer = call(appFor(settings, py.list()), "POST", "/twice", [], "x")
     check("aborts", answer.text == "the request body was already read")
@@ -336,7 +324,10 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
     check("an altered value", carrying(wsgi, value + "x." + expiry + "." + signature) == "absent")
     check("an altered expiry", carrying(wsgi, value + "." + (Int.parse(expiry).getOrElse(0) + 600).toString + "." + signature) == "absent")
-    check("an altered signature", carrying(wsgi, value + "." + expiry + "." + signature.substring(0, signature.size - 1) + "A") == "absent")
+    // A character the signature does not already end in, or "altering" it would change nothing.
+    val last = signature.substring(signature.size - 1, 1)
+    val flipped = signature.substring(0, signature.size - 1) + (if last == "A" then "B" else "A")
+    check("an altered signature", carrying(wsgi, value + "." + expiry + "." + flipped) == "absent")
     check("a shape that is not three parts", carrying(wsgi, "sid=whatever") == "absent")
 
   test: "refuses a signed cookie past its expiry, or signed for another name", () =>

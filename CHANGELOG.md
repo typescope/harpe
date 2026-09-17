@@ -73,9 +73,14 @@ a request header. `Request.path` is decoded as UTF-8, where WSGI hands over
 Latin-1, so a route now matches `/café` as written. `Http.Put` and `Http.Delete`
 join the verb patterns.
 
-`Http.readForm` reads what an HTML form posts, and `Http.cookie` reads a cookie
-leniently, as browsers write them. A second read of the body in one request
-aborts, where it used to come back empty and read as a missing body.
+`Http.cookie` reads a cookie leniently, as browsers write them. A second read of
+the body in one request aborts, where it used to come back empty and read as a
+missing body.
+
+**`Http` serves single-page applications and APIs**, which is now stated in
+`Http.jo`: JSON, streams, and files read from disk, where a page is a file. It
+renders no HTML and escapes nothing, so `Http.readForm` is gone — reading a
+posted form only makes sense beside the server-side rendering it does not do.
 
 **Cookies are written from `Response` and read from `Http`**, the same split as
 the rest: `Response.cookie(name, value, maxAgeSeconds, secure)` builds a
