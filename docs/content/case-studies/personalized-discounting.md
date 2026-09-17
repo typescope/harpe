@@ -91,12 +91,12 @@ AI.
 **What the program writes.** Its only write is `saveDrafts`. The implementation
 checks each batch against the per-coupon limit and the budget, then generates the
 coupon codes. The owner approves each draft before it becomes a single-use
-coupon for that customer. No program can approve a draft.
+coupon for that customer. The program cannot approve a draft.
 
-**Why the program cannot go around the interface.** In Harpe,
+**Why the program cannot bypass the interface.** In Harpe,
 [all side effects are denied by default](/overview/compile-time-sandboxing/).
 Files, the network, the database, and Python are absent from the program's
-compilation environment, so the program cannot even name them. It can use only
+compilation environment, so the program cannot even import and use them. It can use only
 what `runTask` receives: the `promotions` interface and printing. Anything else
 is a compile error, and the store access key never leaves the implementation.
 
