@@ -31,17 +31,15 @@ discount, yet see only their purchase dates and amounts?**
 ## Why the obvious fixes fall short
 
 - **"Tell the AI not to read personal data."** An instruction is a request, not
-  a limit. A long conversation can bury it, and a delivery note can argue
+  an enforcement. A long conversation can bury it, and a delivery note can argue
   against it.
 - **"Have someone review the program."** Small shop owners are not programmers,
-  and no platform can review millions of one-off programs.
+  and no platform can review millions of one-off programs manually.
 - **"Use tool calls instead of a program."** The model would pull thousands of
   order histories through its conversation and do the arithmetic itself. That is
   slow, costly, and error-prone.
 - **"Rely on API permissions."** Most commerce platforms grant them per
-  resource. A WooCommerce key is read, write, or both. A Magento integration is
-  granted by resource, such as orders. A key that reads orders reads the
-  addresses in them.
+  resource which does not protect private data embedded in order records from being read. That is the case for popular e-commerce systems such as WooCommerce and Magento.
 - **"Give the program a narrow API."** Right idea, but the program runs beside
   the full data, the access key, and the network. If it can reach around the
   API, the API protects nothing.
