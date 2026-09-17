@@ -78,6 +78,14 @@ private def route(reached: py.List): Response receives request =
     Response.json:
       Http.readJson() rescue None => return Response.badRequest("bad json")
 
+  case Http.Get("/boom") =>
+    abort "boom"
+
+  case Http.Get("/boom-stream") =>
+    Response.stream: Http.Mime.Text, (emit: String => Bool) =>
+      val _ = emit("started\n")
+      abort "stream boom"
+
   case _ => Response.notFound()
 
 //[ A response as a client would read it. //]
@@ -366,6 +374,11 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
   test: "answers an unknown path with 404", () =>
     check("404", get(appFor(settings, py.list()), "/nope").status == 404)
+
+  test: "lets a route's failure reach the server, which answers it", () =>
+    val wsgi = appFor(settings, py.list())
+    check("a route that raises", py.try(get(wsgi, "/boom")) is Err(_))
+    check("a stream that raises once its headers are out", py.try(get(wsgi, "/boom-stream")) is Err(_))
 
   test: "refuses HEAD with a 501 and no body", () =>
     val reached = py.list()

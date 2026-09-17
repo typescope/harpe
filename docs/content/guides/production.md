@@ -79,6 +79,10 @@ val server = py.module("waitress").create_server:
 server.run()
 ```
 
+A route that raises reaches the server, which answers 500 and logs it. Wrap your
+own routes to answer differently, and to log the failure with the session it
+belongs to, which only your application knows.
+
 Run one process. A server that keeps sessions, running turns or pending
 approvals in memory breaks when a second process answers half its requests.
 Scale with threads, or put each process behind sticky routing. With gunicorn,

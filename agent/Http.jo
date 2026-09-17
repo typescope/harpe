@@ -544,8 +544,9 @@ section Http
     ! client mid-upload may see the connection close first. Give the server its
     ! own limit too, which can discard the body properly.
     !
-    ! An exception reaching the top of a route is left to the server, which
-    ! answers 500 before the response begins and closes the connection after.
+    ! A route that raises is left to the server, which answers 500 and logs it.
+    ! An application wanting its own answer, logged with the session it belongs
+    ! to, wraps its own routes: only it knows that context.
   //]
   def app(settings: Settings, route: () => Response receives request): (py.Dynamic, py.Dynamic) => py.List =
     (environ: py.Dynamic, startResponse: py.Dynamic) => write(startResponse, answer(settings, environ, route))
