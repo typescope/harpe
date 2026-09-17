@@ -102,11 +102,18 @@ none of them. The refusal carries no body because waitress writes whatever body
 it is handed even for a HEAD, which a client keeping the connection open reads
 as its next response.
 
+**Every HTML response carries `Content-Security-Policy: frame-ancestors
+'self'`**, so another site cannot frame a page and collect a click meant for it.
+A route that must be framed sends a policy of its own, which is kept. JSON,
+streams and files that are not HTML carry none.
+
 **`Response.file(root, name, disposition)` serves a file under a directory.**
 `name` is the relative path a client sent. An empty or absolute name, a `..`
 segment, a symlink out of `root`, a directory and a missing file are all the
-same 404. The type is guessed from the name, `Content-Disposition` names the
-file in ASCII and UTF-8, and the response is revalidated.
+same 404. The type is guessed from the name, with `; charset=utf-8` added to
+text, JSON and JavaScript so a browser never guesses a page's encoding.
+`Content-Disposition` names the file in ASCII and UTF-8, and the response is
+revalidated.
 
 **`Response.revalidated` lets the browser keep a response**, and `Http.app`
 answers 304 with no body when it already has it. Every builder sends

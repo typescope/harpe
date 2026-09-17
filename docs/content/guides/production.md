@@ -104,8 +104,46 @@ any route sees it, but without draining what the client is still sending, so
 the server's own limit is what gives the client a clean answer.
 
 A streaming producer should stop once `emit` returns `false`, since the client
-has gone. Behind a proxy with a read timeout, an event stream sends
-`Http.Sse.keepalive()` during quiet periods.
+has gone.
+
+## Behind a reverse proxy
+
+A proxy changes what the application sees, and three of harpe's checks read
+exactly those values.
+
+**Pass the original `Host` through.** nginx's default `proxy_pass` replaces it
+with the upstream address, so `Http.Host.Named` refuses every request with a
+400, and an older browser's POST, which has no `Sec-Fetch-Site` for the
+cross-site check to read, gets a 403 from the `Origin` comparison:
+
+```nginx
+proxy_set_header Host $host;
+```
+
+**Match the proxy's limits to the application's.** nginx allows a 1 MB body by
+default, refusing an upload before `maxBodyBytes` is consulted, and closes a
+proxied connection idle for 60 seconds, which cuts a stream waiting on a slow
+turn:
+
+```nginx
+client_max_body_size 25m;
+proxy_read_timeout 3600s;
+```
+
+An event stream can also send `Http.Sse.keepalive()` during quiet periods.
+
+**Do not buffer a streamed response.** `Response.stream` sends
+`X-Accel-Buffering: no`, which nginx honours. Other proxies need their own
+setting, such as `proxy_buffering off`.
+
+**`Secure` cookies need TLS at the browser, not at the application.** The proxy
+terminates TLS, so `Response.cookie(…, secure = true)` is right in production
+even though the application only ever sees plain HTTP. In local development
+over `http://` on anything but `localhost`, that cookie will not come back.
+
+The client's IP and the original scheme arrive in `X-Forwarded-For` and
+`X-Forwarded-Proto`, which `Http.header` reads. Trust them only from a proxy you
+control.
 
 ## Test the boundaries
 

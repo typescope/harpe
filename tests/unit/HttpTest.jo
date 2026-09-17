@@ -68,6 +68,10 @@ private def route(reached: py.List): Response receives request =
                  case Err(err) => err.message
     Response.complete(Http.Status.Success, Http.Mime.Text, [], second)
 
+  case Http.Get("/framed") =>
+    val own = Http.Header("Content-Security-Policy", "frame-ancestors https://partner.example")
+    Response.complete(Http.Status.Success, Http.Mime.Html, [own], "<p>embedded</p>")
+
   case Http.Get("/cookie") =>
     val shown = Http.cookie("sid").getOrElse("absent")
     Response.complete(Http.Status.Success, Http.Mime.Text, [Response.cookie("sid", "abc123", maxAgeSeconds = 60, secure = true)], shown)
@@ -173,6 +177,7 @@ private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.List) => Uni
   write(root + "/css/app.css", "body {}")
   write(root + "/café.txt", "é")
   write(root + "/blob.unknownext", "?")
+  write(root + "/index.html", "<p>hi</p>")
   write(scratch + "/outside/secret.txt", "secret")
   os.symlink(scratch + "/outside/secret.txt", root + "/link")
 
@@ -311,6 +316,13 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("absent", get(wsgi, "/cookie").text == "absent")
     check("attributes", headerOf(sent, "Set-Cookie") == "sid=abc123; Path=/; Max-Age=60; HttpOnly; SameSite=Lax; Secure")
 
+  test: "lets only itself frame its pages, unless a route says otherwise", () =>
+    val wsgi = appFor(settings, py.list())
+    check("a page", headerOf(get(wsgi, "/page"), "Content-Security-Policy") == "frame-ancestors 'self'")
+    check("not JSON", get(wsgi, "/dynamic").header("Content-Security-Policy") is None)
+    check("not a stylesheet", get(wsgi, "/asset").header("Content-Security-Policy") is None)
+    check("a route's own policy is kept", headerOf(get(wsgi, "/framed"), "Content-Security-Policy") == "frame-ancestors https://partner.example")
+
   test: "reads back a signed cookie, and refuses one that was altered", () =>
     val wsgi = appFor(settings, py.list())
     val cookie = issued(wsgi, "/signed?value=user-42")
@@ -438,12 +450,12 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     withFiles: (root: String, wsgi: (py.Dynamic, py.Dynamic) => py.List) =>
       val hello = get(wsgi, "/download?name=hello.txt")
       check("200", hello.status == 200 && hello.text == "hi")
-      check("typed from its name", headerOf(hello, "Content-Type") == "text/plain")
+      check("typed from its name", headerOf(hello, "Content-Type").startsWith("text/plain"))
       check("saved", headerOf(hello, "Content-Disposition") == "attachment; filename=\"hello.txt\"; filename*=UTF-8''hello.txt")
       check("revalidated", headerOf(hello, "Cache-Control") == "private, no-cache" && headerOf(hello, "ETag") != "")
 
       val nested = get(wsgi, "/show?name=css/app.css")
-      check("nested", nested.status == 200 && headerOf(nested, "Content-Type") == "text/css")
+      check("nested", nested.status == 200 && headerOf(nested, "Content-Type") == "text/css; charset=utf-8")
       check("shown", headerOf(nested, "Content-Disposition") == "inline; filename=\"app.css\"; filename*=UTF-8''app.css")
 
       val accented = get(wsgi, "/download?name=caf%C3%A9.txt")
@@ -451,6 +463,11 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
       check("named both ways", headerOf(accented, "Content-Disposition") == "attachment; filename=\"caf_.txt\"; filename*=UTF-8''caf%C3%A9.txt")
 
       check("an unknown type", headerOf(get(wsgi, "/download?name=blob.unknownext"), "Content-Type") == "application/octet-stream")
+      check("a text file names its charset", headerOf(hello, "Content-Type") == "text/plain; charset=utf-8")
+
+      val page = get(wsgi, "/show?name=index.html")
+      check("an HTML file too", headerOf(page, "Content-Type") == "text/html; charset=utf-8")
+      check("and cannot be framed elsewhere", headerOf(page, "Content-Security-Policy") == "frame-ancestors 'self'")
 
   test: "refuses a file name that leaves its root, or names no file", () =>
     withFiles: (root: String, wsgi: (py.Dynamic, py.Dynamic) => py.List) =>

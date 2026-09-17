@@ -291,9 +291,18 @@ section Http
     //]
     def file(root: String, name: String, disposition: Disposition): Response =
       val target = resolve(root, name) rescue None => return notFound()
-      val kind = File.mimeType(target).getOrElse("application/octet-stream")
+      val guessed = File.mimeType(target).getOrElse("application/octet-stream")
       val shown = Header("Content-Disposition", dispositionValue(disposition, os.path.basename(name)))
-      revalidated(binary(Status.Success, Mime.Other(kind), [shown], File.readBytes(target)))
+      revalidated(binary(Status.Success, Mime.Other(charset(guessed)), [shown], File.readBytes(target)))
+
+    //[ A text type with its charset settled, as the `Mime` cases have theirs
+      !
+      ! `mimetypes` answers a bare `text/html`, and a browser left to guess the
+      ! encoding of a UTF-8 page renders it wrong.
+    //]
+    private def charset(kind: String): String =
+      val text = kind.startsWith("text/") || kind == "application/javascript" || kind == "application/json"
+      if text then kind + "; charset=utf-8" else kind
 
     //[ The real path of `name` under `root`, or None when it is not a file inside it. //]
     private def resolve(root: String, name: String): Option[String] =
@@ -672,8 +681,21 @@ section Http
         abort "header '\{h.name}' contains a line break"
       pairs.append(py.tuple(h.name, h.value))
     pairs.append(py.tuple("X-Content-Type-Options", "nosniff"))
+    if framable(headers) then pairs.append(py.tuple("Content-Security-Policy", "frame-ancestors 'self'"))
 
     py.call(startResponse, Status.line(status), pairs)
+
+  //[ Whether this response is a page another site could frame
+    !
+    ! HTML gets `frame-ancestors 'self'`, so a hostile page cannot put the
+    ! application in an invisible frame and collect a click meant for it. A
+    ! route that must be framed sends a policy of its own, which is kept.
+  //]
+  private def framable(headers: List[Header]): Bool =
+    val kind = headerIn(headers, "Content-Type").getOrElse("")
+    match headerIn(headers, "Content-Security-Policy")
+    case Some(_) => false
+    case None    => py.dynamic(kind).lower().asString.startsWith("text/html")
 
   //[ The write side of one stream, which stays closed once a write has failed. //]
   private class Outlet(write: py.Dynamic)
