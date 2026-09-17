@@ -59,13 +59,9 @@ redact secrets and personal data.
 
 ## Serving HTTP
 
-`Http.server` is `wsgiref`, the standard library's reference implementation. It
-is for development and tests: no read timeout, so a client that connects and
-stays silent holds a thread indefinitely, an accept backlog of five, and
-HTTP/1.0 with no keep-alive.
-
-Bind a real server to `Http.app` in your own code, so the framework keeps no
-dependency you did not choose:
+`Http.app` turns a route into a plain WSGI application. Run it on the WSGI
+server you choose, in development as in production. harpe installs none. With
+waitress, for example:
 
 ```jo
 val settings = new Http.Settings:
@@ -73,30 +69,35 @@ val settings = new Http.Settings:
   hosts = Http.Host.Named("agent.example.com")
   crossSite = Http.CrossSite.Refuse
 
-val httpd = py.module("waitress").create_server:
-  Http.app(settings, () => server.route())
+val server = py.module("waitress").create_server:
+  Http.app(settings, () => routes.route())
   host = host
   port = port
   threads = 32
   channel_timeout = 3600
   max_request_body_size = settings.maxBodyBytes
-httpd.run()
+server.run()
 ```
+
+Run one process. A server that keeps sessions, running turns or pending
+approvals in memory breaks when a second process answers half its requests.
+Scale with threads, or put each process behind sticky routing. With gunicorn,
+that means `--workers 1 --threads N`.
 
 Name the host your users type. A server on loopback uses `Http.Host.Loopback`,
 which still refuses a hostile name rebound to `127.0.0.1`. Keep
 `CrossSite.Refuse` unless browsers on other sites must write to the server.
 
-Size `threads` for concurrency, not for request rate. A streaming response holds
-one worker for its whole life, so the pool needs room for every turn in flight
-and every open subscription at once — a fixed pool that runs out stops answering
-everything, including the page. Set `channel_timeout` above your longest quiet
-period, or a subscription waiting on a slow turn is closed underneath it.
+Size the thread pool for concurrency, not for request rate. A streaming
+response holds one worker for its whole life, so the pool needs room for every
+turn in flight and every open subscription at once — a fixed pool that runs out
+stops answering everything, including the page. Set the idle timeout
+(`channel_timeout` in waitress) above your longest quiet period, or a
+subscription waiting on a slow turn is closed underneath it.
 
-Pass the same body limit to the server. The framework refuses an oversized
-body before any route sees it, but it does so without draining what the client
-is still sending, so the transport-layer limit is what gives the client a clean
-answer.
+Pass the server the same body limit. `Http.app` refuses an oversized body before
+any route sees it, but without draining what the client is still sending, so
+the server's own limit is what gives the client a clean answer.
 
 A streaming producer should stop once `emit` returns `false`, since the client
 has gone. Behind a proxy with a read timeout, an event stream sends

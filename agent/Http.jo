@@ -15,9 +15,8 @@
   ! through this file.
   !
   ! `app` IS THE SEAM. It turns a route into a plain WSGI application, so a
-  ! deployment binds whichever server it likes — waitress, gunicorn, granian —
-  ! in its own code. `server` here is wsgiref, for development and tests only.
-  ! Nothing in this file depends on a package outside the standard library.
+  ! deployment runs it on whichever WSGI server it chooses. harpe installs none. Nothing here depends on a package
+  ! outside the standard library.
   !
   ! `app` ALSO GUARDS THE DOOR. Before any route runs it refuses an unknown verb,
   ! a path that is not UTF-8, a `Host` the `Settings` do not name, a cross-site
@@ -32,6 +31,7 @@ namespace harpe
 
 import harpe.ffi.json
 import harpe.ffi.builtins
+import harpe.ffi.threading
 
 section Http
   //[ The verb, as a value rather than a string
@@ -53,7 +53,8 @@ section Http
     !
     ! Same reason as the verb: `"200 0K"` is a string a compiler cannot refuse,
     ! and a status line is written at every response site. Add a case rather
-    ! than passing a literal.
+    ! than passing a literal. `Other` is for a status decided at runtime, such
+    ! as one relayed from upstream.
   //]
   section Status
     union Code =
@@ -73,6 +74,7 @@ section Http
       | ServerError
       | NotImplemented
       | Unavailable
+      | Other(code: Int, reason: String)
 
     //[ The status line WSGI expects. //]
     def line(code: Code): String =
@@ -93,6 +95,7 @@ section Http
       case ServerError          => "500 Internal Server Error"
       case NotImplemented       => "501 Not Implemented"
       case Unavailable          => "503 Service Unavailable"
+      case Other(code, reason)  => "\{code} \{reason}"
   end
 
   //[ The content type, with its charset settled here rather than at each site
@@ -148,12 +151,114 @@ section Http
   //[ One response header. A CR or LF in either part aborts, since it would split the response. //]
   class Header(name: String, value: String)
 
-  //[ One WSGI exchange: what was asked, and the callable that begins the answer
+  //[ What a route answers with
     !
-    ! `startResponse` is the response side, and rides here because WSGI hands
-    ! the two over together. `path` is already decoded as UTF-8.
+    ! A value, so a route can be called and its answer inspected without a
+    ! server, and a wrapper can add to what it answers. `app` is the only place
+    ! one is written to WSGI, and it adds `X-Content-Type-Options: nosniff` to
+    ! every one.
+    !
+    ! `Complete` carries every header it sends, and the builders in `Response`
+    ! fill in `Content-Type` and `Cache-Control`. `Stream` answers 200 and hands
+    ! `produce` an `emit` once the headers are out.
   //]
-  class Request(method: Verb.Method, path: String, environ: py.Dynamic, startResponse: py.Dynamic)
+  union Response =
+      Complete(status: Status.Code, headers: List[Header], body: py.Dynamic)
+    | Stream(kind: Mime.Type, produce: (String => Bool) => Unit)
+
+  //[ The builders a route answers with. Import `harpe.Http.Response` and write `Response.html(…)`. //]
+  section Response
+    //[ A complete response from a text body
+      !
+      ! `no-store`, because what is answered this way is dynamic and none of it
+      ! is a client's to keep. One the browser may keep goes through `revalidated`.
+      ! `headers` are sent after `Content-Type` and `Cache-Control`.
+    //]
+    def complete(status: Status.Code, kind: Mime.Type, headers: List[Header], body: String): Response =
+      binary(status, kind, headers, py.dynamic(body).encode())
+
+    //[ A complete response from a binary body, with the same headers as `complete`. //]
+    def binary(status: Status.Code, kind: Mime.Type, headers: List[Header], body: py.Dynamic): Response =
+      val fixed = [Header("Content-Type", Mime.value(kind)), Header("Cache-Control", "no-store")]
+      Complete(status, fixed ++ headers, body)
+
+    def html(body: String): Response =
+      complete(Status.Success, Mime.Html, [], body)
+
+    def json(dict: py.Dict): Response =
+      complete(Status.Success, Mime.Json, [], jsonText(dict))
+
+    //[ A 303 to `location`, the redirect a browser follows with a GET after a form post. //]
+    def redirect(location: String): Response =
+      complete(Status.SeeOther, Mime.Text, [Header("Location", location)], "")
+
+    def notFound(): Response =
+      complete(Status.NotFound, Mime.Json, [], jsonText(py.dict("error" ~ "not_found")))
+
+    //[ A 400 naming what was wrong, short enough to sit on the right of a `rescue`:
+      !
+      !     val body = Http.readJson() rescue None => return Response.badRequest("expected a JSON object")
+    //]
+    def badRequest(detail: String): Response =
+      complete(Status.BadRequest, Mime.Json, [], jsonText(py.dict("error" ~ "bad_request", "detail" ~ detail)))
+
+    //[ `response`, which the user's browser may keep but must recheck on every load
+      !
+      !     Response.revalidated(Response.html(page()))
+      !
+      ! Adds a content-derived `ETag` and `Cache-Control: private, no-cache`. The
+      ! route still runs on every load, and `app` answers 304 only when the body
+      ! is byte-for-byte what the browser holds, so a copy is never stale and
+      ! never another user's. The one question at the call site: may this body
+      ! sit in the user's browser cache? A stream has no body to tag, so
+      ! revalidating one aborts.
+    //]
+    def revalidated(response: Response): Response =
+      match response
+      case Stream(_, _) => abort "a stream cannot be revalidated"
+      case Complete(status, headers, body) =>
+        val kept = headers.exclude(h => py.dynamic(h.name).lower().asString == "cache-control")
+        Complete(status, kept ++ [Header("Cache-Control", "private, no-cache"), Header("ETag", etag(body))], body)
+
+    //[ A streamed response, whose `produce` emits a chunk at a time
+      !
+      ! How a long-running turn reaches the tab that asked for it, instead of
+      ! arriving whole at the end. `produce` runs on the request's thread once
+      ! the headers are out.
+      !
+      ! `emit` answers whether the client is still there. A failed write means it
+      ! is not, whichever server raised which exception for it, so every later
+      ! `emit` returns false without writing and the producer can stop its work.
+      !
+      ! Written through WSGI's `write` callable rather than a returned iterable,
+      ! which would need the producer to be pull-shaped — a turn pushes into a
+      ! sink, so the iterable form would mean a queue and a second thread per
+      ! stream. Both forms were measured to flush per chunk on waitress and
+      ! wsgiref.
+    //]
+    def stream(kind: Mime.Type, produce: (String => Bool) => Unit): Response =
+      Stream(kind, produce)
+
+    //[ A content-derived entity tag. Not a digest anyone verifies — just a change detector. //]
+    private def etag(body: py.Dynamic): String =
+      val digest = py.module("hashlib").blake2b(body, digest_size = 8)
+      "\"" + digest.hexdigest().asString + "\""
+  end
+
+  //[ `dict` as JSON text. Outside `Response`, whose `json` would shadow the module. //]
+  private def jsonText(dict: py.Dict): String = json.dumps(dict)
+
+  //[ What was asked. `path` is already decoded as UTF-8. //]
+  class Request(method: Verb.Method, path: String, environ: py.Dynamic)
+    //[ Whether a reader has taken the body, which WSGI hands over as a stream read once. //]
+    var bodyTaken: Bool = false
+  end
+
+  //[ A decoded `application/x-www-form-urlencoded` body. //]
+  class Form(fields: py.Dict)
+    //[ The first value of a field, `Some("")` for one sent empty. //]
+    def get(name: String): Option[String] = firstValue(fields, name)
+  end
 
   //[ Request patterns keep the verb and path test together at dispatch sites.
     ! A plain string matches an exact path. Jo's regex strings retain their
@@ -212,15 +317,9 @@ section Http
     case Ok(path) => Some(path)
     case Err(_)   => None
 
-  //[ A refusal written straight to WSGI, before a request is bound. //]
-  private def refuse(startResponse: py.Dynamic, status: Status.Code, message: String): py.List =
-    val headers = py.list:
-      py.tuple("Content-Type", Mime.value(Mime.Text))
-      py.tuple("Cache-Control", "no-store")
-      py.tuple("X-Content-Type-Options", "nosniff")
-
-    py.call(startResponse, Status.line(status), headers)
-    py.list(py.dynamic(message).encode())
+  //[ A refusal made before a request is bound. //]
+  private def refuse(status: Status.Code, message: String): Response =
+    Response.complete(status, Mime.Text, [], message)
 
   //[ What `CONTENT_LENGTH` claims, or zero. //]
   private def declaredLength(environ: py.Dynamic): Int =
@@ -287,15 +386,63 @@ section Http
   //]
   def queryParam(key: String): Option[String] receives request =
     val qs = request.environ.get("QUERY_STRING", "").asString
-    val params = py.module("urllib.parse").parse_qs(qs, keep_blank_values = true).cast[py.Dict]
+    firstValue(py.module("urllib.parse").parse_qs(qs, keep_blank_values = true).cast[py.Dict], key)
+
+  private def firstValue(params: py.Dict, key: String): Option[String] =
     if params.contains(key) then Some(params.get(key).cast[py.List].get(0).asString) else None
+
+  //[ A cookie the client sent, or None
+    !
+    ! Parsed leniently, as browsers write them, rather than with `http.cookies`,
+    ! which drops every cookie once one on the same domain is malformed. The
+    ! first of two same-named cookies wins, which is the one with the longest
+    ! path.
+  //]
+  def cookie(name: String): Option[String] receives request =
+    val raw = header("Cookie") rescue None => return None
+
+    for chunk in raw.split(";") do
+      val pair = py.dynamic(chunk.trim).split("=", 1).cast[py.List]
+      if pair.size == 2 && pair.get(0).asString.trim == name then
+        val value = pair.get(1).asString.trim
+        val quoted = value.size >= 2 && value.startsWith("\"") && value.endsWith("\"")
+        return Some(if quoted then value.substring(1, value.size - 2) else value)
+
+    None
+
+  //[ A `Set-Cookie` header, with the attributes a session cookie wants
+    !
+    ! Always `Path=/`, `HttpOnly` and `SameSite=Lax`, so a script cannot read it
+    ! and a cross-site POST does not carry it. `secure` adds `Secure`, which
+    ! browsers accept on `http://localhost` too. A `maxAgeSeconds` of 0 deletes
+    ! the cookie. A name or value that would need quoting aborts.
+  //]
+  def setCookie(name: String, value: String, maxAgeSeconds: Int, secure: Bool): Header =
+    if !cookieSafe(name) || name == "" then abort "cookie name '\{name}' is not a token"
+    if !cookieSafe(value) then abort "cookie value for '\{name}' needs encoding"
+
+    val attributes = "; Path=/; Max-Age=\{maxAgeSeconds}; HttpOnly; SameSite=Lax"
+    Header("Set-Cookie", name + "=" + value + attributes + (if secure then "; Secure" else ""))
+
+  //[ Printable ASCII with none of the separators a cookie cannot carry unquoted. //]
+  private def cookieSafe(text: String): Bool =
+    !py.isNone(py.module("re").fullmatch("[!#-+\\--:<-\\[\\]-~]*", text))
+
+  //[ The media type of the body, lower-cased and without its parameters. //]
+  private def mediaType(): String receives request =
+    val kind = header("Content-Type").getOrElse("")
+    py.dynamic(kind.split(";").get(0).trim).lower().asString
 
   //[ The request body as bytes
     !
     ! Reads exactly what `CONTENT_LENGTH` declares, with no cap of its own:
-    ! `app` has already refused a declaration over `Settings.maxBodyBytes`.
+    ! `app` has already refused a declaration over `Settings.maxBodyBytes`. The
+    ! body is a stream, so a second read in one request aborts rather than
+    ! returning nothing.
   //]
   def readBytes(): py.Dynamic receives request =
+    if request.bodyTaken then abort "the request body was already read"
+    request.bodyTaken = true
     request.environ.get("wsgi.input").read(declaredLength(request.environ))
 
   //[ The request body as text, or None when it is not UTF-8. //]
@@ -312,125 +459,24 @@ section Http
     ! also makes a browser preflight any cross-site attempt to send it.
   //]
   def readJson(): Option[py.Dict] receives request =
-    val kind = header("Content-Type").getOrElse("")
-    val media = py.dynamic(kind.split(";").get(0).trim).lower().asString
+    if mediaType() != "application/json" then return None
+    val text = readBody() rescue None => return None
+    val value = py.try(json.loads(text)) rescue Err(_) => return None
+    if py.isInstance(value, builtins.dict) then Some(value.cast[py.Dict]) else None
 
-    if media != "application/json" then None
-    else
-      match readBody()
-      case None => None
-      case Some(text) =>
-        match py.try(json.loads(text))
-        case Ok(value) =>
-          if py.isInstance(value, builtins.dict) then Some(value.cast[py.Dict]) else None
-        case Err(_) => None
-
-  //[ Begin the response. Every one goes out with `nosniff`, so a browser never guesses a type. //]
-  private def start(status: Status.Code, fixed: py.List, headers: List[Header]): py.Dynamic receives request =
-    fixed.append(py.tuple("X-Content-Type-Options", "nosniff"))
-    for h in headers do
-      if h.name.contains("\r") || h.name.contains("\n") || h.value.contains("\r") || h.value.contains("\n") then
-        abort "header '\{h.name}' contains a line break"
-      fixed.append(py.tuple(h.name, h.value))
-
-    py.call(request.startResponse, Status.line(status), fixed)
-
-  //[ A complete, non-streamed response from a string body
+  //[ The request body as a form, what an HTML `<form method="post">` sends
     !
-    ! `no-store`, because what is answered this way is dynamic and none of it is
-    ! a client's to keep. A file that IS cacheable goes through `respondStatic`.
-    ! `headers` are sent after `Content-Type` and `Cache-Control`.
+    ! None unless the request says `application/x-www-form-urlencoded` and every
+    ! escape in it decodes as UTF-8.
   //]
-  def respond(status: Status.Code, kind: Mime.Type, headers: List[Header], body: String): py.List receives request =
-    respondBytes(status, kind, headers, py.dynamic(body).encode())
+  def readForm(): Option[Form] receives request =
+    if mediaType() != "application/x-www-form-urlencoded" then return None
+    val text = readBody() rescue None => return None
+    val urllib = py.module("urllib.parse")
+    val fields = py.try(urllib.parse_qs(text, keep_blank_values = true, errors = "strict").cast[py.Dict]) rescue Err(_) => return None
+    Some(new Form(fields))
 
-  //[ A complete response whose body is bytes, with the same headers as `respond`. //]
-  def respondBytes(status: Status.Code, kind: Mime.Type, headers: List[Header], body: py.Dynamic): py.List receives request =
-    val fixed = py.list:
-      py.tuple("Content-Type", Mime.value(kind))
-      py.tuple("Cache-Control", "no-store")
-
-    val _ = start(status, fixed, headers)
-    py.list(body)
-
-  def respondHtml(body: String): py.List receives request =
-    respond(Status.Success, Mime.Html, [], body)
-
-  def respondJson(dict: py.Dict): py.List receives request =
-    respond: Status.Success, Mime.Json, [], json.dumps(dict)
-
-  //[ A 303 to `location`, the redirect a browser follows with a GET after a form post. //]
-  def redirect(location: String): py.List receives request =
-    respond(Status.SeeOther, Mime.Text, [Header("Location", location)], "")
-
-  //[ An asset that may be cached, answered with an `ETag` and a 304 when it can
-    !
-    ! For a page, stylesheet or script read from disk per request. The tag is
-    ! content-derived, so editing the file changes it and the browser refetches,
-    ! while an unchanged file costs a conditional request and no body at all.
-    ! `must-revalidate` keeps that check on every load, which is what makes
-    ! editing-without-restart safe to cache.
-  //]
-  def respondStatic(kind: Mime.Type, body: String): py.List receives request =
-    val tag = etag(body)
-    val cache = "public, max-age=0, must-revalidate"
-
-    if header("If-None-Match").getOrElse("") == tag then
-      val _ = start(Status.NotModified, py.list(py.tuple("ETag", tag), py.tuple("Cache-Control", cache)), [])
-      py.list()
-
-    else
-      val fixed = py.list:
-        py.tuple("Content-Type", Mime.value(kind))
-        py.tuple("ETag", tag)
-        py.tuple("Cache-Control", cache)
-
-      val _ = start(Status.Success, fixed, [])
-      py.list(py.dynamic(body).encode())
-
-  //[ A content-derived entity tag. Not a digest anyone verifies — just a change detector. //]
-  private def etag(body: String): String =
-    val digest = py.module("hashlib").blake2b(py.dynamic(body).encode(), digest_size = 8)
-    "\"" + digest.hexdigest().asString + "\""
-
-  //[ The write side of one stream, which stays closed once a write has failed. //]
-  private class Outlet(write: py.Dynamic)
-    var open: Bool = true
-
-    def emit(chunk: String): Bool =
-      if open then
-        match py.try(py.call(write, py.dynamic(chunk).encode()))
-        case Ok(_)  => pass
-        case Err(_) => open = false
-      open
-  end
-
-  //[ A streamed response: headers go out now, and `produce` emits as it goes
-    !
-    ! How a long-running turn reaches the tab that asked for it, a chunk at a
-    ! time, instead of arriving whole at the end. `produce` runs on this
-    ! request's thread and is handed an `emit` it calls per chunk.
-    !
-    ! `emit` answers whether the client is still there. A failed write means it
-    ! is not, whichever server raised which exception for it, so every later
-    ! `emit` returns false without writing and the producer can stop its work.
-    !
-    ! Built on WSGI's `write` callable rather than a returned iterable, which
-    ! would need the producer to be pull-shaped — a turn pushes into a sink, so
-    ! the iterable form would mean a queue and a second thread per stream. Both
-    ! forms were measured to flush per chunk on waitress and wsgiref.
-  //]
-  def stream(kind: Mime.Type, produce: (String => Bool) => Unit): py.List receives request =
-    val fixed = py.list:
-      py.tuple("Content-Type", Mime.value(kind))
-      py.tuple("Cache-Control", "no-cache")
-      py.tuple("X-Accel-Buffering", "no")
-
-    val outlet = new Outlet(start(Status.Success, fixed, []))
-    produce(chunk => outlet.emit(chunk))
-    py.list()
-
-  //[ Server-sent event framing, for a `stream` of `Mime.EventStream`
+  //[ Server-sent event framing, for a `Response.stream` of `Mime.EventStream`
     !
     ! The browser's `EventSource` reads these and reconnects on its own. Every
     ! line of `data` becomes its own `data:` field, which the browser rejoins.
@@ -452,16 +498,6 @@ section Http
       lines.map(line => "data: " + line + "\n").join("") + "\n"
   end
 
-  def notFound(): py.List receives request =
-    respond: Status.NotFound, Mime.Json, [], json.dumps(py.dict("error" ~ "not_found"))
-
-  //[ A 400 naming what was wrong, short enough to sit on the right of a `rescue`:
-    !
-    !     val body = Http.readJson() rescue None => return Http.badRequest("expected a JSON object")
-  //]
-  def badRequest(detail: String): py.List receives request =
-    respond: Status.BadRequest, Mime.Json, [], json.dumps(py.dict("error" ~ "bad_request", "detail" ~ detail))
-
   //[ A route as a plain WSGI application — the seam a deployment binds a server to
     !
     ! Refuses, in order and before the route runs: a verb not implemented (501,
@@ -470,85 +506,125 @@ section Http
     ! and a body declaring more than `maxBodyBytes` (413).
     !
     ! The 413 is written without draining what the client is still sending, so a
-    ! client mid-upload may see the connection close first. Set the server's own
-    ! limit too, which can discard the body properly.
+    ! client mid-upload may see the connection close first. Give the server its
+    ! own limit too, which can discard the body properly.
     !
     ! An exception reaching the top of a route is left to the server, which
     ! answers 500 before the response begins and closes the connection after.
   //]
-  def app(settings: Settings, route: () => py.List receives request): (py.Dynamic, py.Dynamic) => py.List =
-    (environ: py.Dynamic, startResponse: py.Dynamic) =>
-      match verb(environ.get("REQUEST_METHOD", "GET").asString)
-      case None => refuse(startResponse, Status.NotImplemented, "not implemented")
-      case Some(method) =>
-        match decodedPath(environ)
-        case None => refuse(startResponse, Status.BadRequest, "path is not UTF-8")
-        case Some(path) =>
-          if !hostAllowed(environ, settings.hosts) then
-            refuse(startResponse, Status.BadRequest, "host not allowed")
-          else if settings.crossSite is CrossSite.Refuse && crossSiteWrite(method, environ) then
-            refuse(startResponse, Status.Forbidden, "cross-site request refused")
-          else if declaredLength(environ) > settings.maxBodyBytes then
-            refuse(startResponse, Status.TooLarge, "request body too large")
-          else
-            val asked = new Request(method, path, environ, startResponse)
-            with request = asked in route()
+  def app(settings: Settings, route: () => Response receives request): (py.Dynamic, py.Dynamic) => py.List =
+    (environ: py.Dynamic, startResponse: py.Dynamic) => write(startResponse, answer(settings, environ, route))
 
-  //[ Stop `httpd` writing an access line per request to stderr
+  private def answer(settings: Settings, environ: py.Dynamic, route: () => Response receives request): Response =
+    val method = verb(environ.get("REQUEST_METHOD", "GET").asString) rescue None =>
+      return refuse(Status.NotImplemented, "not implemented")
+    val path = decodedPath(environ) rescue None =>
+      return refuse(Status.BadRequest, "path is not UTF-8")
+
+    if !hostAllowed(environ, settings.hosts) then
+      refuse(Status.BadRequest, "host not allowed")
+    else if settings.crossSite is CrossSite.Refuse && crossSiteWrite(method, environ) then
+      refuse(Status.Forbidden, "cross-site request refused")
+    else if declaredLength(environ) > settings.maxBodyBytes then
+      refuse(Status.TooLarge, "request body too large")
+    else
+      val answered = with request = new Request(method, path, environ) in route()
+      if unchanged(method, environ, answered) then notModified(answered) else answered
+
+  //[ Whether a successful GET or HEAD carries an `ETag` the client already holds
     !
-    ! `wsgiref` logs every exchange, which a page that polls turns into a line a
-    ! second in whatever terminal the driver is using. Its handler calls
-    ! `log_message` for that, so pointing the name at a logger nobody has
-    ! configured drops the line. An unhandled exception still surfaces: that goes
-    ! to `wsgi.errors` rather than through `log_message`.
-    !
-    ! Separate from `server` because it is a caller's decision, like the banner
-    ! and the signal handler: a server answering a person wants its access log,
-    ! and one answering a poller does not.
+    ! `If-None-Match` may list several tags, weak ones included, or be `*`.
   //]
-  def quiet(httpd: py.Dynamic): Unit =
-    val wsgi = py.module("wsgiref.simple_server")
-    val discard = py.module("logging").getLogger("harpe.http").debug
-    val handler = builtins.newType:
-      "QuietWSGIRequestHandler"
-      py.tuple(wsgi.WSGIRequestHandler)
-      py.dict("log_message" ~ discard)
+  private def unchanged(method: Verb.Method, environ: py.Dynamic, response: Response): Bool =
+    val reads = method is Verb.Get || method is Verb.Head
+    match response
+    case Complete(status, headers, _) if reads && status is Status.Success =>
+      val tag = headerIn(headers, "ETag") rescue None => return false
+      val held = environValue(environ, "HTTP_IF_NONE_MATCH") rescue None => return false
+      val tags = held.split(",").map(t => t.trim).map(t => if t.startsWith("W/") then t.substring(2, t.size - 2) else t)
+      tags.contains("*") || tags.contains(tag)
+    case _ => false
 
-    py.module("builtins").setattr(httpd, "RequestHandlerClass", handler)
+  //[ The 304 for `response`: its validators and caching headers, and no body. //]
+  private def notModified(response: Response): Response =
+    match response
+    case Stream(_, _) => response
+    case Complete(_, headers, _) =>
+      val kept = headers.select(h => py.dynamic(h.name).lower().asString == "etag" || py.dynamic(h.name).lower().asString == "cache-control")
+      Complete(Status.NotModified, kept, py.dynamic("").encode())
 
-  //[ A threaded wsgiref server — FOR DEVELOPMENT AND TESTS
+  private def headerIn(headers: List[Header], name: String): Option[String] =
+    val wanted = py.dynamic(name).lower().asString
+    for h in headers do
+      if py.dynamic(h.name).lower().asString == wanted then return Some(h.value)
+    None
+
+  //[ Write `response` to WSGI. //]
+  private def write(startResponse: py.Dynamic, response: Response): py.List =
+    match response
+    case Complete(status, headers, body) =>
+      val _ = start(startResponse, status, headers)
+      py.list(body)
+
+    case Stream(kind, produce) =>
+      val headers = [Header("Content-Type", Mime.value(kind)), Header("Cache-Control", "no-cache"), Header("X-Accel-Buffering", "no")]
+      val outlet = new Outlet(start(startResponse, Status.Success, headers))
+      produce(chunk => outlet.emit(chunk))
+      py.list()
+
+  //[ Begin the response, with `nosniff` so a browser never guesses a type. Returns WSGI's `write`. //]
+  private def start(startResponse: py.Dynamic, status: Status.Code, headers: List[Header]): py.Dynamic =
+    val pairs = py.list()
+    for h in headers do
+      if h.name.contains("\r") || h.name.contains("\n") || h.value.contains("\r") || h.value.contains("\n") then
+        abort "header '\{h.name}' contains a line break"
+      pairs.append(py.tuple(h.name, h.value))
+    pairs.append(py.tuple("X-Content-Type-Options", "nosniff"))
+
+    py.call(startResponse, Status.line(status), pairs)
+
+  //[ The write side of one stream, which stays closed once a write has failed. //]
+  private class Outlet(write: py.Dynamic)
+    var open: Bool = true
+
+    def emit(chunk: String): Bool =
+      if open then
+        match py.try(py.call(write, py.dynamic(chunk).encode()))
+        case Ok(_)  => pass
+        case Err(_) => open = false
+      open
+  end
+
+  //[ A server running on a background thread: the port it bound, and how to stop it. //]
+  private[harpe] class Background(port: Int, stop: () => Unit)
+
+  //[ Serve `route` with wsgiref on a daemon thread — for harpe's own viewer and tests
     !
-    ! `wsgiref` is the standard library's reference implementation, built on
-    ! `http.server`, which its own documentation says is not for production: no
-    ! read timeout, so a client that connects and stays silent holds a thread
-    ! indefinitely, an accept backlog of five, and HTTP/1.0 with no keep-alive.
-    ! A deployment binds a real server to `app` instead, in its own code:
+    ! wsgiref is the standard library's reference server, with no read timeout,
+    ! an accept backlog of five and no keep-alive, so not for production. It is
+    ! here because the `harpe` package installs no server. A deployment runs
+    ! `app` on the WSGI server it chooses.
     !
-    !     val httpd = py.module("waitress").create_server:
-    !       Http.app(settings, () => server.route())
-    !       host = host
-    !       port = port
-    !       threads = 32
-    !       max_request_body_size = settings.maxBodyBytes
-    !
-    ! Sizing that pool is the deployment's, and a streaming response holds one
-    ! worker for its whole life — so it wants room for every turn and every open
-    ! subscription at once, not just the requests in flight.
-    !
-    ! One request per thread here, so a page stays responsive while another
-    ! request is doing something slow. Whatever the route touches must therefore
-    ! be safe to touch concurrently. `daemon_threads` lets Ctrl-C exit without
-    ! joining in-flight workers.
-    !
-    ! Returns the server rather than serving: the caller prints its banner,
-    ! installs signal handlers, and decides when to `serve_forever`.
+    ! Binds before returning, so a port already taken raises here. Port 0 binds
+    ! a free one, which `port` reports. Writes no access log.
   //]
-  def server(host: String, port: Int, settings: Settings, route: () => py.List receives request): py.Dynamic =
-    val wsgi = py.module("wsgiref.simple_server")
+  private[harpe] def serveInBackground(host: String, port: Int, settings: Settings, route: () => Response receives request): Background =
+    val simple = py.module("wsgiref.simple_server")
     val threaded = builtins.newType:
       "ThreadingWSGIServer"
-      py.tuple(py.module("socketserver").ThreadingMixIn, wsgi.WSGIServer)
+      py.tuple(py.module("socketserver").ThreadingMixIn, simple.WSGIServer)
       py.dict("daemon_threads" ~ true)
+    val quiet = builtins.newType:
+      "QuietWSGIRequestHandler"
+      py.tuple(simple.WSGIRequestHandler)
+      py.dict("log_message" ~ py.module("logging").getLogger("harpe.http").debug)
 
-    wsgi.make_server(host, port, app(settings, route), server_class = threaded)
+    val httpd = simple.make_server(host, port, app(settings, route), server_class = threaded, handler_class = quiet)
+    threading.Thread(target = () => httpd.serve_forever(poll_interval = 0.05), daemon = true).start()
+
+    new Background(httpd.server_port.asInt, () => shutdown(httpd))
+
+  private def shutdown(httpd: py.Dynamic): Unit =
+    httpd.shutdown()
+    httpd.server_close()
 end

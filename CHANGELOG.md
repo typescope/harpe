@@ -2,7 +2,23 @@
 
 ## Unreleased
 
-**`Http.respond` and `Http.respondBytes` take a `Status.Code` and a `Mime.Type`
+**A route answers with an `Http.Response` value rather than writing to WSGI.**
+Its type is `() => Http.Response receives Http.request`, where it was
+`() => py.List`. `Response` is `Complete(status, headers, body)` or
+`Stream(kind, produce)`, and `Http.app` is the only code that writes it, so no
+route signature mentions WSGI and `Request.startResponse` is gone. A route's
+answer can now be inspected, and a wrapper can add to it.
+`Http.Status.Other(code, reason)` carries a status decided at runtime, such as
+one relayed from upstream.
+
+The builders live in `Http.Response`, beside the type, so a route imports
+`harpe.Http.Response` and answers `Response.html(page)`. They were functions on
+`Http`, most of them named `respond*`:
+`Response.complete(status, kind, headers, body)`, `Response.binary`,
+`Response.html`, `Response.json`, `Response.stream`, `Response.redirect`,
+`Response.notFound` and `Response.badRequest`.
+
+**`Response.complete` and `Response.binary` take a `Status.Code` and a `Mime.Type`
 rather than strings.** `Http.jo` already made this argument for the verb — a
 closed union refuses at the door what a string carries inward — and the status
 line was the half that never got it, so `"200 0K"` was a typo no compiler could
@@ -13,13 +29,13 @@ each one's charset in a single place rather than at every call site.
 
 Both also take a `List[Http.Header]`, sent after the content type, so a route can
 redirect, set a cookie or name a download without reaching into WSGI.
-`Http.redirect` is the 303 a form post wants. Every response carries
+`Response.redirect` is the 303 a form post wants. Every response carries
 `X-Content-Type-Options: nosniff`, and a header containing a line break aborts
 rather than splitting the response.
 
-**`Http.beginStream` is now `Http.stream`.** It handed back WSGI's raw `write`
+**`Http.beginStream` is now `Response.stream`.** It handed back WSGI's raw `write`
 callable for the caller to push bytes into. It takes the producer instead —
-`Http.stream(Mime.Ndjson, emit => …)` — so the callable stays inside one
+`Response.stream(Mime.Ndjson, emit => …)` — so the callable stays inside one
 function and a server that ever needs the iterable form changes only there.
 `emit` returns whether the client is still there. wsgiref and waitress raise
 different exceptions for a closed connection, and the producer sees neither, only
@@ -29,21 +45,24 @@ forms were measured to flush per chunk on waitress and wsgiref, so the callable
 stays: a turn pushes into a sink, and the iterable form would mean a queue and a
 second thread for every open stream.
 
-**`Http.app` turns a route into a plain WSGI application.** That is the seam a
-deployment binds its own server to — waitress, gunicorn, granian — in its own
-code, so the framework keeps no dependency outside the standard library.
-`Http.server` is still here and still `wsgiref`, which is what it is for:
-development and tests. Its doc comment now says so, and says what it lacks.
+**`Http.app` turns a route into a plain WSGI application**, which a deployment
+runs on the WSGI server it chooses, so harpe installs none. The tests run it on
+waitress as well as wsgiref.
 
-`Http.app` and `Http.server` take `Http.Settings`, and refuse before any route
-runs: a verb this plumbing does not implement (501), a path that is not UTF-8
-(400), a `Host` outside `settings.hosts` (400), a cross-site POST, PUT or DELETE
-under `CrossSite.Refuse` (403), and a body declaring more than
-`settings.maxBodyBytes` (413). The host check is what stops DNS rebinding from
-reading a loopback server, and the cross-site check is Go's
-`CrossOriginProtection`, which needs no token. The body readers read exactly
-what `CONTENT_LENGTH` declares, which `app` has already held to the limit.
-`Viewer.start` takes the host policy its caller binds for.
+**`Http.server` is gone.** An application serves `Http.app` on the server it
+chose, in development as in production. harpe's own journal viewer and test
+fixtures use `Http.serveInBackground`, which is wsgiref on a daemon thread and
+private to harpe.
+
+`Http.app` takes `Http.Settings`, and refuses before any route runs: a verb this
+plumbing does not implement (501), a path that is not UTF-8 (400), a `Host`
+outside `settings.hosts` (400), a cross-site POST, PUT or DELETE under
+`CrossSite.Refuse` (403), and a body declaring more than `settings.maxBodyBytes`
+(413). The host check is what stops DNS rebinding from reading a loopback
+server, and the cross-site check is Go's `CrossOriginProtection`, which needs no
+token. The body readers read exactly what `CONTENT_LENGTH` declares, which `app`
+has already held to the limit. `Viewer.start` takes the host policy its caller
+binds for.
 
 **Request readers answer `Option` rather than a fallback.** `Http.queryParam`
 is None for an absent parameter and `Some("")` for an empty one. `Http.readJson`
@@ -54,13 +73,20 @@ a request header. `Request.path` is decoded as UTF-8, where WSGI hands over
 Latin-1, so a route now matches `/café` as written. `Http.Put` and `Http.Delete`
 join the verb patterns.
 
-**`Http.respondStatic` answers an asset with an `ETag`**, and a 304 when the
-client already has it. `Http.respond` sends `Cache-Control: no-store`, which is
-right for an agent's reply and wrong for a stylesheet — a page reading its
-assets from disk per request was re-sending them on every load. The tag is
-content-derived and the response is `must-revalidate`, so editing a file still
-takes effect with no restart, while an unchanged one costs a conditional request
-and no body at all.
+`Http.readForm` reads what an HTML form posts, `Http.cookie` reads a cookie
+leniently, as browsers write them, and `Http.setCookie` builds a `Set-Cookie`
+that is always `HttpOnly` and `SameSite=Lax`. A second read of the body in one
+request aborts, where it used to come back empty and read as a missing body.
+
+**`Response.revalidated` lets the browser keep a response**, and `Http.app`
+answers 304 with no body when it already has it. Every builder sends
+`Cache-Control: no-store`, which is right for an agent's reply and wrong for a
+stylesheet, and a page reading its assets from disk per request was re-sending
+them on every load. Wrapping any complete response, HTML included, adds a
+content-derived `ETag` and `Cache-Control: private, no-cache`. The route still
+runs on every load and a 304 means the body is byte-for-byte unchanged, so a copy
+is never stale and never another user's. Editing a file takes effect with no
+restart, while an unchanged one costs a conditional request and no body at all.
 
 The templates pin the previous release and still call the old signatures.
 Moving them is part of the release, not of this change.
@@ -211,12 +237,6 @@ root, written the direction paths are written, so the stored order is the order
 the lanes and chips read in. `ContextLogger` prepends where it appended, and
 `TurnLog.innerTurn`/`outerTurn` swap ends. Journals written before this have
 their context reversed.
-
-`Http.quiet` silences a WSGI server's per-request access log, which a page
-polling once a second would otherwise write into the terminal its driver is
-using. `Viewer.start` applies it, and a driver mounting the route on a server of
-its own can. Unhandled exceptions still surface. The provider test fixture drops
-its private copy of this.
 
 The framework binds nothing on its own: whether to expose a journal, where, and
 to whom is the driver's call, since the page has no authentication and carries

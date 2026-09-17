@@ -10,8 +10,6 @@ namespace harpe.cli.tests
 import harpe.Http
 import harpe.Http.request
 import harpe.ffi.json
-import harpe.util.Process
-import harpe.ffi.builtins
 
 section ProviderFixture
   //[ One scripted response
@@ -85,13 +83,7 @@ section ProviderFixture
     def requestJson: py.Dict = recorded(0).jsonBody
   end
 
-  private def encode(chunks: List[String]): py.List =
-    val encoded = py.list()
-    for chunk in chunks do
-      encoded.append(py.dynamic(chunk).encode("utf-8"))
-    encoded
-
-  private def serve(responses: List[Response], requests: py.List): py.List receives request =
+  private def serve(responses: List[Response], requests: py.List): Http.Response receives request =
     val body = Http.readBody() rescue None => abort "the provider fixture was sent a body that is not UTF-8"
 
     val recorded = new RecordedRequest:
@@ -104,27 +96,24 @@ section ProviderFixture
 
     val index = requests.size - 1
     if index >= responses.size then
-      Http.respond(Http.Status.ServerError, Http.Mime.Text, [], "unexpected request")
+      Http.Response.complete(Http.Status.ServerError, Http.Mime.Text, [], "unexpected request")
     else
       val answer = responses.get(index)
       if answer.delaySeconds > 0.0 then py.module("time").sleep(answer.delaySeconds)
-      py.call(request.startResponse, answer.status, answer.headers)
-      encode(answer.chunks)
+      Http.Complete(status(answer.status), headers(answer.headers), py.dynamic(answer.chunks.join("")).encode("utf-8"))
 
-  //[ Stop the server writing an access line per request to stderr
-    !
-    ! `wsgiref` logs every exchange, which would interleave with the test report.
-    ! Its handler calls `log_message` for that, so pointing the name at a logger
-    ! nobody has configured drops the line while leaving real errors alone.
-  //]
-  private def quieten(httpd: py.Dynamic): Unit =
-    val wsgi = py.module("wsgiref.simple_server")
-    val discard = py.module("logging").getLogger("harpe.test.fixture").debug
-    val quiet = builtins.newType:
-      "QuietWSGIRequestHandler"
-      py.tuple(wsgi.WSGIRequestHandler)
-      py.dict("log_message" ~ discard)
-    py.module("builtins").setattr(httpd, "RequestHandlerClass", quiet)
+  //[ A scripted status line such as `"529 Overloaded"`, which no standard status names. //]
+  private def status(line: String): Http.Status.Code =
+    val parts = py.dynamic(line).split(" ", 1).cast[py.List]
+    val code = Int.parse(parts.get(0).asString) rescue None => abort "a scripted status with no code: '\{line}'"
+    Http.Status.Other(code, parts.get(1).asString)
+
+  private def headers(pairs: py.List): List[Http.Header] =
+    var out: List[Http.Header] = []
+    for pair in pairs do
+      val fields = py.module("builtins").list(pair).cast[py.List]
+      out = out + Http.Header(fields.get(0).asString, fields.get(1).asString)
+    out
 
   //[ Run `test` against a local server with an ordered response script.
     !
@@ -134,17 +123,12 @@ section ProviderFixture
   def withResponses(responses: List[Response], test: Server => Unit): Unit =
     val requests = py.list()
     val settings = new Http.Settings(maxBodyBytes = 67108864, hosts = Http.Host.Loopback, crossSite = Http.CrossSite.Refuse)
-    val httpd = Http.server("127.0.0.1", 0, settings, () => serve(responses, requests))
-    quieten(httpd)
-    val port = httpd.server_port.asInt
+    val background = Http.serveInBackground("127.0.0.1", 0, settings, () => serve(responses, requests))
+    val port = background.port
     val server = new Server("http://127.0.0.1:\{port}", port, requests)
-    val thread = Process.daemon: () => httpd.serve_forever(poll_interval = 0.01)
-    thread.start()
 
     val result = py.try: test(server)
-    val _ = py.try: httpd.shutdown()
-    val _ = py.try: httpd.server_close()
-    val _ = py.try: thread.join(2.0)
+    val _ = py.try: background.stop()
 
     match result
     case Ok(_) => pass
