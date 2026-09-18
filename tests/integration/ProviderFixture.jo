@@ -122,8 +122,13 @@ section ProviderFixture
   //]
   def withResponses(responses: List[Response], test: Server => Unit): Unit =
     val requests = py.list()
-    val settings = new Http.Settings(maxBodyBytes = 67108864, hosts = Http.Host.Loopback, crossSite = Http.CrossSite.Refuse)
-    val background = Http.serveInBackground("127.0.0.1", 0, settings, () => serve(responses, requests))
+    val application = new Http.Application:
+      hosts = Http.Host.Loopback
+      routes = []
+      fallback = () => serve(responses, requests)
+      maxBodyBytes = 67108864
+
+    val background = Http.serveInBackground("127.0.0.1", 0, application)
     val port = background.port
     val server = new Server("http://127.0.0.1:\{port}", port, requests)
 

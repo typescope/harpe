@@ -99,8 +99,13 @@ section Viewer
     ! whatever terminal the driver was already using.
   //]
   def start(viewLog: ViewLogger, title: String, host: String, port: Int, hosts: Http.Host.Policy): Unit =
-    val settings = new Http.Settings(maxBodyBytes = 0, hosts = hosts, crossSite = Http.CrossSite.Refuse)
-    val _ = Http.serveInBackground(host, port, settings, () => route(viewLog, title))
+    val application = new Http.Application:
+      hosts = hosts
+      routes = []
+      fallback = () => route(viewLog, title)
+      maxBodyBytes = 0
+
+    val _ = Http.serveInBackground(host, port, application)
 
   private def route(viewLog: ViewLogger, title: String): Response receives request =
     match request
