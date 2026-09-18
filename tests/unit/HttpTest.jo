@@ -40,7 +40,11 @@ private def route(reached: py.List): Response receives request =
                 case None        => "none"
     Response.complete(Http.Status.Success, Http.Mime.Text, [], shown)
 
-  case Http.Get(Http.Segments ["files", name]) => Response.complete(Http.Status.Success, Http.Mime.Text, [], name)
+  //[ The parts of a path, split once, which is what replaced the `Segments` pattern. //]
+  case Http.Get(path) if path.startsWith("/files/") =>
+    match Http.segments(path)
+    case ["files", name] => Response.complete(Http.Status.Success, Http.Mime.Text, [], name)
+    case _               => Response.notFound()
 
   case Http.Get("/stream") =>
     Response.stream: Http.Mime.Ndjson, (emit: String => Bool) =>

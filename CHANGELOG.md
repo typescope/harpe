@@ -77,6 +77,15 @@ join the verb patterns.
 the body in one request aborts, where it used to come back empty and read as a
 missing body.
 
+**The `Http.Segments` pattern is gone**, and `Http.segments(path)` stays. The
+pattern split the path inside each case, so a route file that used it in twenty
+cases split twenty times: 328us, against 74us for a whole request, measured on
+Jo 0.13.4. A route that needs the parts of a path splits once and matches the
+list. In a single-page application a parameter travels as a query parameter or
+in the body anyway, uniformly, since the client builds every request. The verb
+patterns' doc comment also claimed a regex string worked as a path pattern. It
+never did — a string pattern is an exact comparison.
+
 **`Http` serves single-page applications and APIs**, which is now stated in
 `Http.jo`: JSON, streams, and files read from disk, where a page is a file. It
 renders no HTML and escapes nothing, so `Http.readForm` is gone — reading a
