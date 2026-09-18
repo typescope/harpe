@@ -230,6 +230,15 @@ private def echoed(reached: py.List): Response receives request =
   val text = Http.readBody() rescue None => return Response.badRequest("not utf-8")
   Response.complete(Http.Status.Success, Http.Mime.Text, [], text.size.toString)
 
+//[ Two routes claiming one verb and path, which no application may hold. //]
+private def clashing(): Application =
+  new Application:
+    host = Http.Host.Loopback
+    routes = List:
+      Router.Get("/api/info", () => Response.notFound())
+      Router.Get("/api/info", () => Response.notFound())
+    fallback = () => Response.notFound()
+
 //[ The application under test. `reached` records what its routes saw. //]
 private def appFor(reached: py.List): (py.Dynamic, py.Dynamic) => py.List =
   applicationFor(Http.Host.Loopback, reached).wsgi()
@@ -521,15 +530,9 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("the upload's", tabled(py.list()).ceiling == 4096)
     check("the application's, with no routes", applicationFor(Http.Host.Loopback, py.list()).ceiling == limit)
 
+  //[ The index is built when the `Application` is, so a clash is a startup failure. //]
   test: "refuses two routes claiming the same verb and path", () =>
-    val clashing = new Application:
-      host = Http.Host.Loopback
-      routes = List:
-        Router.Get("/api/info", () => Response.notFound())
-        Router.Get("/api/info", () => Response.notFound())
-      fallback = () => Response.notFound()
-
-    check("at construction", py.try(clashing.wsgi()) is Err(_))
+    check("at construction", py.try(clashing()) is Err(_))
 
   test: "refuses HEAD with a 501 and no body", () =>
     val reached = py.list()

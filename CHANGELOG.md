@@ -2,119 +2,64 @@
 
 ## Unreleased
 
-**A route answers with an `Http.Response` value rather than writing to WSGI.**
-Its type is `() => Http.Response receives Http.request`, where it was
-`() => py.List`. `Response` is `Complete(status, headers, body)` or
-`Stream(kind, produce)`, and `Http.app` is the only code that writes it, so no
-route signature mentions WSGI and `Request.startResponse` is gone. A route's
-answer can now be inspected, and a wrapper can add to it.
-`Http.Status.Other(code, reason)` carries a status decided at runtime, such as
-one relayed from upstream.
+**HTTP now lives in `harpe.server`, and an application is a value.** What was
+one `harpe.Http` file is six under `agent/server/`: `Http` (the protocol
+vocabulary — `Verb`, `Status`, `Mime`, `Host`, `CrossSite` — and the request
+readers), `Request` (the exchange and the ambient `request`), `Response`,
+`Router`, `Application`, and a wsgiref server harpe keeps for its own viewer and
+tests. `Http.server`, `Http.quiet` and `Http.app` are gone.
 
-The builders live in `Http.Response`, beside the type, so a route imports
-`harpe.Http.Response` and answers `Response.html(page)`. They were functions on
-`Http`, most of them named `respond*`:
-`Response.complete(status, kind, headers, body)`, `Response.binary`,
-`Response.html`, `Response.json`, `Response.stream`, `Response.redirect`,
-`Response.notFound` and `Response.badRequest`.
+```jo
+val application = new Application:
+  host = Http.Host.Named("agent.example.com")
+  routes = List:
+    Router.Get("/api/info", () => agent.info())
+    Router.Post("/api/upload", () => agent.upload(), maxBodyBytes = 26214400)
+    Router.Prefix("/assets/", () => agent.asset())
+  fallback = () => agent.page()
 
-**`Response.complete` and `Response.binary` take a `Status.Code` and a `Mime.Type`
-rather than strings.** `Http.jo` already made this argument for the verb — a
-closed union refuses at the door what a string carries inward — and the status
-line was the half that never got it, so `"200 0K"` was a typo no compiler could
-see. `Http.Status.Code` names the statuses a web application commonly answers
-with, and `Http.Mime.Type` the content types it writes in source, which settles
-each one's charset in a single place rather than at every call site.
-`Mime.Other` carries a type resolved at runtime, which is what a file's own is.
+py.module("waitress").create_server:
+  application.wsgi()
+  max_request_body_size = application.ceiling
+```
 
-Both also take a `List[Http.Header]`, sent after the content type, so a route can
-redirect, set a cookie or name a download without reaching into WSGI.
-`Response.redirect` is the 303 a form post wants. Every response carries
-`X-Content-Type-Options: nosniff`, and a header containing a line break aborts
-rather than splitting the response.
+**Routes are a table, so a route's policy sits with the route.** `Router.Get`,
+`Post`, `Put` and `Delete` name an exact path and `Router.Prefix` everything
+under one, each carrying its own `maxBodyBytes` — an upload route says so for
+itself instead of every route inheriting the largest limit in the application.
+`fallback` answers what no route claims, which is the page itself for a
+single-page application whose client routes on the path. Two routes claiming one
+verb and path abort when the `Application` is built. A path claimed under
+another verb answers 405 with `Allow`. An application that would rather dispatch
+in a `match` passes no routes and its own match as the `fallback`, using the
+`Http.Get`, `Post`, `Put` and `Delete` patterns as before.
 
-**`Http.beginStream` is now `Response.stream`.** It handed back WSGI's raw `write`
-callable for the caller to push bytes into. It takes the producer instead —
-`Response.stream(Mime.Ndjson, emit => …)` — so the callable stays inside one
-function and a server that ever needs the iterable form changes only there.
-`emit` returns whether the client is still there. wsgiref and waitress raise
-different exceptions for a closed connection, and the producer sees neither, only
-`false` from then on, so it can stop work nobody will read.
-`Mime.EventStream` and `Http.Sse` frame server-sent events. Both
-forms were measured to flush per chunk on waitress and wsgiref, so the callable
-stays: a turn pushes into a sink, and the iterable form would mean a queue and a
-second thread for every open stream.
-
-**`Http.app` turns a route into a plain WSGI application**, which a deployment
-runs on the WSGI server it chooses, so harpe installs none. The tests run it on
-waitress as well as wsgiref.
-
-**`Http.server` is gone.** An application serves `Http.app` on the server it
-chose, in development as in production. harpe's own journal viewer and test
-fixtures use `Http.serveInBackground`, which is wsgiref on a daemon thread and
-private to harpe.
-
-`Http.app` takes `Http.Settings`, and refuses before any route runs: a verb this
-plumbing does not implement (501), a path that is not UTF-8 (400), a `Host`
-outside `settings.hosts` (400), a cross-site POST, PUT or DELETE under
-`CrossSite.Refuse` (403), and a body declaring more than `settings.maxBodyBytes`
-(413). The host check is what stops DNS rebinding from reading a loopback
+**`application.wsgi()` is the seam a deployment binds its server to**, so harpe
+installs none. Before a route runs it refuses a verb it does not implement
+(501), a path that is not UTF-8 (400), a `Host` the application does not answer
+to (400), a cross-site POST, PUT or DELETE (403), and a body over that route's
+limit (413). The host check is what stops DNS rebinding from reading a loopback
 server, and the cross-site check is Go's `CrossOriginProtection`, which needs no
-token. The body readers read exactly what `CONTENT_LENGTH` declares, which `app`
-has already held to the limit. `Viewer.start` takes the host policy its caller
-binds for.
+token. `host` defaults to loopback, so a prototype runs as it is and a
+deployment that forgets to name its host is refused rather than quietly served.
 
-**Request readers answer `Option` rather than a fallback.** `Http.queryParam`
-is None for an absent parameter and `Some("")` for an empty one. `Http.readJson`
-is None unless the request says `application/json` and the body is an object,
-where it used to answer `{}` for all of those alike. `Http.readBody` is None for
-a body that is not UTF-8, and `Http.readBytes` reads it raw. `Http.header` reads
-a request header. `Request.path` is decoded as UTF-8, where WSGI hands over
-Latin-1, so a route now matches `/café` as written. `Http.Put` and `Http.Delete`
-join the verb patterns.
+**A route answers with a `Response` value rather than writing to WSGI.** Its
+type is `() => Response receives request`, where it was `() => py.List`.
+`Response` is `Complete(status, headers, body)` or `Stream(kind, produce)`, and
+`Application` is the only code that writes one out, so no route signature
+mentions WSGI and `Request.startResponse` is gone. A route's answer can be
+inspected, and a wrapper can add to it. The builders are `Response.complete`,
+`binary`, `html`, `json`, `file`, `stream`, `redirect`, `notFound` and
+`badRequest`; `Http.Status.Other(code, reason)` carries a status decided at
+runtime. Status lines and content types are closed unions rather than strings,
+so `"200 0K"` is a typo the compiler refuses, and each type's charset is settled
+in one place.
 
-`Http.cookie` reads a cookie leniently, as browsers write them. A second read of
-the body in one request aborts, where it used to come back empty and read as a
-missing body.
-
-**The `Http.Segments` pattern is gone**, and `Http.segments(path)` stays. The
-pattern split the path inside each case, so a route file that used it in twenty
-cases split twenty times: 328us, against 74us for a whole request, measured on
-Jo 0.13.4. A route that needs the parts of a path splits once and matches the
-list. In a single-page application a parameter travels as a query parameter or
-in the body anyway, uniformly, since the client builds every request. The verb
-patterns' doc comment also claimed a regex string worked as a path pattern. It
-never did — a string pattern is an exact comparison.
-
-**`Http` serves single-page applications and APIs**, which is now stated in
-`Http.jo`: JSON, streams, and files read from disk, where a page is a file. It
-renders no HTML and escapes nothing, so `Http.readForm` is gone — reading a
-posted form only makes sense beside the server-side rendering it does not do.
-
-**Cookies are written from `Response` and read from `Http`**, the same split as
-the rest: `Response.cookie(name, value, maxAgeSeconds, secure)` builds a
-`Set-Cookie` that is always `Path=/`, `HttpOnly` and `SameSite=Lax`, and answers
-a `Header` to pass in a response's headers. It was `Http.setCookie`.
-
-**`Response.signedCookie` and `Http.signedCookie` carry a value a client cannot
-change.** The cookie holds the value, its expiry and an HMAC-SHA256 over both
-and the cookie's name, so it cannot be altered or moved to another name, and the
-server enforces the expiry rather than trusting the browser's `Max-Age`. A
-missing, altered or expired cookie reads as None. The value is signed, not
-encrypted, so a user id belongs there and a secret does not, and nothing signed
-this way can be revoked before it expires. Where session state lives, and
-whether any exists, stays the application's: the cookie carries a string.
-
-**HEAD is refused with a 501 and no body**, like any verb `Http.app` does not
-implement, and `Http.Verb.Head` is gone. It used to reach the routes and match
-none of them. The refusal carries no body because waitress writes whatever body
-it is handed even for a HEAD, which a client keeping the connection open reads
-as its next response.
-
-**Every HTML response carries `Content-Security-Policy: frame-ancestors
-'self'`**, so another site cannot frame a page and collect a click meant for it.
-A route that must be framed sends a policy of its own, which is kept. JSON,
-streams and files that are not HTML carry none.
+**`Response.stream` hands its producer an `emit` that reports a gone client.**
+wsgiref and waitress raise different exceptions for a closed connection, and the
+producer sees neither, only `false` from then on, so it can stop work nobody
+will read. `Mime.EventStream` and `Sse` frame server-sent events, and
+`Sse.keepalive()` keeps an idle stream open through a proxy's read timeout.
 
 **`Response.file(root, name, disposition)` serves a file under a directory.**
 `name` is the relative path a client sent. An empty or absolute name, a `..`
@@ -124,15 +69,58 @@ text, JSON and JavaScript so a browser never guesses a page's encoding.
 `Content-Disposition` names the file in ASCII and UTF-8, and the response is
 revalidated.
 
-**`Response.revalidated` lets the browser keep a response**, and `Http.app`
+**`Response.revalidated` lets the browser keep a response**, and `Application`
 answers 304 with no body when it already has it. Every builder sends
 `Cache-Control: no-store`, which is right for an agent's reply and wrong for a
 stylesheet, and a page reading its assets from disk per request was re-sending
 them on every load. Wrapping any complete response, HTML included, adds a
 content-derived `ETag` and `Cache-Control: private, no-cache`. The route still
-runs on every load and a 304 means the body is byte-for-byte unchanged, so a copy
-is never stale and never another user's. Editing a file takes effect with no
-restart, while an unchanged one costs a conditional request and no body at all.
+runs on every load and a 304 means the body is byte-for-byte unchanged, so a
+copy
+is never stale and never another user's.
+
+**Request readers answer `Option` rather than a fallback.** `Http.queryParam` is
+None for an absent parameter and `Some("")` for an empty one. `Http.readJson` is
+None unless the request says `application/json` and the body is an object, where
+it used to answer `{}` for all of those alike. `Http.readBody` is None for a
+body
+that is not UTF-8, and `Http.readBytes` reads it raw; a second read of the body
+in one request aborts, where it used to come back empty. `Http.header` and
+`Http.cookie` read a header and a cookie, the cookie leniently, as browsers
+write
+them. `Request.path` is decoded as UTF-8, where WSGI hands over Latin-1, so a
+route matches `/café` as written.
+
+**Cookies are written from `Response` and read from `Http`.**
+`Response.cookie(name, value, maxAgeSeconds, secure)` builds a `Set-Cookie` that
+is always `Path=/`, `HttpOnly` and `SameSite=Lax`. `Response.signedCookie` and
+`Http.signedCookie` carry a value a client cannot change: the cookie holds the
+value, its expiry and an HMAC-SHA256 over both and the cookie's name, so it
+cannot be altered or moved to another name, and the server enforces the expiry
+rather than trusting the browser's `Max-Age`. The value is signed, not
+encrypted, so a user id belongs there and a secret does not, and nothing signed
+this way can be revoked before it expires. Where session state lives, and
+whether
+any exists, stays the application's.
+
+**Every response carries `X-Content-Type-Options: nosniff`**, and every HTML
+response `Content-Security-Policy: frame-ancestors 'self'`, so another site
+cannot frame a page and collect a click meant for it. A route that must be
+framed
+sends a policy of its own, which is kept.
+
+**HEAD is refused with a 501 and no body**, like any verb the application does
+not implement, and `Http.Verb.Head` is gone. The refusal carries no body because
+waitress writes whatever body it is handed even for a HEAD, which a client
+keeping the connection open reads as its next response.
+
+**`harpe.server` serves single-page applications and APIs**: JSON, streams, and
+files read from disk, where a page is a file. It renders no HTML and escapes
+nothing, so there is no form reader — that only makes sense beside the
+server-side rendering it does not do. The `Http.Segments` pattern is gone with
+it: it split the path inside each case, so twenty routes split twenty times
+(328us, against 74us for a whole request). A route that needs the parts of a
+path calls `Http.segments(path)` once and matches the list.
 
 The templates pin the previous release and still call the old signatures.
 Moving them is part of the release, not of this change.
@@ -150,7 +138,8 @@ a daemon thread. The cursor and envelope stay between the page and the viewer.
 An entry is visible the moment it is logged — no flush, no file path to agree
 on, no `jo run view` in another terminal.
 
-**`Model.Usage` is now `harpe.metering.Usage`, and it is a record rather than two
+**`Model.Usage` is now `harpe.metering.Usage`, and it is a record rather than
+two
 counts.** It carries the `provider` and `model` that were asked and the
 `cacheReadTokens` / `cacheWriteTokens` that break `inputTokens` down, alongside
 the totals it had, so everything a charge is computed from is in one value — no

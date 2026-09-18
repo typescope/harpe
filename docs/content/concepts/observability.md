@@ -61,8 +61,11 @@ An agent without its own HTTP server uses `Viewer.start` instead, which binds
 a port on a daemon thread:
 
 ```jo
-Viewer.start(viewLog, title, "127.0.0.1", port)
+Viewer.start(viewLog, title, "127.0.0.1", port, answersTo = Http.Host.Loopback)
 ```
+
+`answersTo` names what a browser may call the viewer, which is what refuses a
+hostile page that points its own name at `127.0.0.1`.
 
 The framework provides the mechanism and stops there. Whether to expose a
 journal, on which port, behind which path, and to whom is a driver's decision —
