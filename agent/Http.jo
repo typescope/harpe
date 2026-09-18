@@ -197,17 +197,18 @@ section Http
         maxBodyBytes: Int = 0): Route =
       new Route(Verb.Delete, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
 
-    //[ Every GET under `path`, which must end in `/` — the assets of a page
+    //[ Everything under `path`, which must end in `/` — the assets of a page
       !
       ! The handler reads `request.path` for the rest. The longest matching
       ! prefix wins, so `/assets/img/` can sit under `/assets/`.
     //]
-    def GetUnder(
+    def Prefix(
         path: String,
         handler: (() => Response receives request),
+        method: Verb.Method = Verb.Get,
         maxBodyBytes: Int = 0): Route =
       if !path.endsWith("/") then abort "a prefix route's path must end in '/': '\{path}'"
-      new Route(Verb.Get, path, prefix = true, maxBodyBytes = maxBodyBytes, handler = handler)
+      new Route(method, path, prefix = true, maxBodyBytes = maxBodyBytes, handler = handler)
   end
 
   //[ One application: its routes, and the policy `wsgi` enforces before any of them

@@ -215,7 +215,7 @@ private def tabled(reached: py.List): Http.Application =
       Http.Router.Post("/api/message", () => echoed(reached))
       Http.Router.Post("/api/upload", () => echoed(reached), maxBodyBytes = 4096)
       Http.Router.Delete("/api/session", () => Response.json(py.dict("ok" ~ true)))
-      Http.Router.GetUnder("/assets/", () => Response.complete(Http.Status.Success, Http.Mime.Text, [], "asset"))
+      Http.Router.Prefix("/assets/", () => Response.complete(Http.Status.Success, Http.Mime.Text, [], "asset"))
     fallback = () => Response.html("<p>the page</p>")
 
 private def info(): Response receives request = Response.json(py.dict("name" ~ "clair"))
