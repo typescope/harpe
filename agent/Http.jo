@@ -166,18 +166,35 @@ section Http
   //]
   section Router
     //[ One route. `maxBodyBytes` of 0 takes the application's own limit. //]
-    class Route(method: Verb.Method, path: String, prefix: Bool, maxBodyBytes: Int, handler: () => Response receives request)
+    class Route(
+          method: Verb.Method,
+          path: String,
+          prefix: Bool,
+          maxBodyBytes: Int,
+          handler: () => Response receives request)
 
-    def Get(path: String, handler: (() => Response receives request), maxBodyBytes: Int = 0): Route =
+    def Get(
+        path: String,
+        handler: (() => Response receives request),
+        maxBodyBytes: Int = 0): Route =
       new Route(Verb.Get, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
 
-    def Post(path: String, handler: (() => Response receives request), maxBodyBytes: Int = 0): Route =
+    def Post(
+        path: String,
+        handler: (() => Response receives request),
+        maxBodyBytes: Int = 0): Route =
       new Route(Verb.Post, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
 
-    def Put(path: String, handler: (() => Response receives request), maxBodyBytes: Int = 0): Route =
+    def Put(
+        path: String,
+        handler: (() => Response receives request),
+        maxBodyBytes: Int = 0): Route =
       new Route(Verb.Put, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
 
-    def Delete(path: String, handler: (() => Response receives request), maxBodyBytes: Int = 0): Route =
+    def Delete(
+        path: String,
+        handler: (() => Response receives request),
+        maxBodyBytes: Int = 0): Route =
       new Route(Verb.Delete, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
 
     //[ Every GET under `path`, which must end in `/` — the assets of a page
@@ -185,7 +202,10 @@ section Http
       ! The handler reads `request.path` for the rest. The longest matching
       ! prefix wins, so `/assets/img/` can sit under `/assets/`.
     //]
-    def GetUnder(path: String, handler: (() => Response receives request), maxBodyBytes: Int = 0): Route =
+    def GetUnder(
+        path: String,
+        handler: (() => Response receives request),
+        maxBodyBytes: Int = 0): Route =
       if !path.endsWith("/") then abort "a prefix route's path must end in '/': '\{path}'"
       new Route(Verb.Get, path, prefix = true, maxBodyBytes = maxBodyBytes, handler = handler)
   end
@@ -201,8 +221,12 @@ section Http
     ! small: an upload route says so for itself, and `ceiling` is what the
     ! server is given.
   //]
-  class Application(hosts: Host.Policy, routes: List[Router.Route], fallback: (() => Response receives request),
-                    maxBodyBytes: Int = 1048576, crossSite: CrossSite.Policy = CrossSite.Refuse)
+  class Application(
+        hosts: Host.Policy,
+        routes: List[Router.Route],
+        fallback: (() => Response receives request),
+        maxBodyBytes: Int = 1048576,
+        crossSite: CrossSite.Policy = CrossSite.Refuse)
     //[ This application as a WSGI application, which is what a server is given
       !
       ! The route table is indexed here, once, and two routes claiming one verb
