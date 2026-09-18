@@ -18,12 +18,13 @@ import harpe.server.Http
 import harpe.server.Http.Header
 import harpe.server.Http.Status
 import harpe.server.Http.Mime
-import harpe.server.Http.request
+import harpe.server.request
 
 //[ What a route answers with
   !
   ! A value, so a route can be called and its answer inspected without a
-  ! server, and a wrapper can add to what it answers. `app` is the only place
+  ! server, and a wrapper can add to what it answers. `Application` is the only
+  ! place
   ! one is written to WSGI, and it adds `X-Content-Type-Options: nosniff` to
   ! every one.
   !
@@ -108,7 +109,7 @@ section Response
     !     Response.revalidated(Response.html(page()))
     !
     ! Adds a content-derived `ETag` and `Cache-Control: private, no-cache`. The
-    ! route still runs on every load, and `app` answers 304 only when the body
+    ! route still runs on every load, and `Application` answers 304 only when the body
     ! is byte-for-byte what the browser holds, so a copy is never stale and
     ! never another user's. The one question at the call site: may this body
     ! sit in the user's browser cache? A stream has no body to tag, so

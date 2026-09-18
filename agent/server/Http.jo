@@ -33,6 +33,15 @@ import harpe.ffi.json
 import harpe.ffi.builtins
 import harpe.util.Clock
 
+//[ What was asked. `path` is already decoded as UTF-8. //]
+class Request(method: Http.Verb.Method, path: String, environ: py.Dynamic)
+  //[ Whether a reader has taken the body, which WSGI hands over as a stream read once. //]
+  var bodyTaken: Bool = false
+end
+
+//[ The request being served. Bound once per request by the server. //]
+param request: Request
+
 section Http
   //[ The verb, as a value rather than a string
     !
@@ -149,12 +158,6 @@ section Http
   //[ One response header. A CR or LF in either part aborts, since it would split the response. //]
   class Header(name: String, value: String)
 
-  //[ What was asked. `path` is already decoded as UTF-8. //]
-  class Request(method: Verb.Method, path: String, environ: py.Dynamic)
-    //[ Whether a reader has taken the body, which WSGI hands over as a stream read once. //]
-    var bodyTaken: Bool = false
-  end
-
   //[ Request patterns keep the verb and path test together at dispatch sites
     !
     ! The path is compared exactly, so every route is one string. A parameter
@@ -195,8 +198,6 @@ section Http
   def segments(path: String): List[String] =
     path.split("/").exclude(part => part == "")
 
-  //[ The request being served. Bound once per request by the server. //]
-  param request: Request
 
   private[harpe] def verb(raw: String): Option[Verb.Method] =
     if raw == "GET" then Some(Verb.Get)
@@ -375,7 +376,8 @@ section Http
   //[ The request body as bytes
     !
     ! Reads exactly what `CONTENT_LENGTH` declares, with no cap of its own:
-    ! `app` has already refused a declaration over `Settings.maxBodyBytes`. The
+    ! `Application.wsgi` has already refused a declaration over the route's own
+    ! limit. The
     ! body is a stream, so a second read in one request aborts rather than
     ! returning nothing.
   //]

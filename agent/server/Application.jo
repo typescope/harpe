@@ -24,8 +24,8 @@ import harpe.server.Http.Mime
 import harpe.server.Http.Header
 import harpe.server.Http.Host
 import harpe.server.Http.CrossSite
-import harpe.server.Http.Request
-import harpe.server.Http.request
+import harpe.server.Request
+import harpe.server.request
 import harpe.server.Response
 import harpe.server.Router
 
@@ -194,7 +194,7 @@ private[harpe] class Background(port: Int, stop: () => Unit)
   ! wsgiref is the standard library's reference server, with no read timeout,
   ! an accept backlog of five and no keep-alive, so not for production. It is
   ! here because the `harpe` package installs no server. A deployment runs
-  ! `app` on the WSGI server it chooses.
+  ! `wsgi` on the WSGI server it chooses.
   !
   ! Binds before returning, so a port already taken raises here. Port 0 binds
   ! a free one, which `port` reports. Writes no access log.
