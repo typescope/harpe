@@ -93,14 +93,14 @@ section Viewer
     ! a server that never came up. The thread is a daemon and the caller prints
     ! its own banner, so there is nothing to hand back. NO AUTHENTICATION: a
     ! journal holds every conversation it was given, so `host` belongs on a
-    ! loopback address, and `hosts` names what a browser may call it there.
+    ! loopback address, and `answersTo` names what a browser may call it there.
     !
     ! Quiet, because the page polls: an access log here is a line a second in
     ! whatever terminal the driver was already using.
   //]
-  def start(viewLog: ViewLogger, title: String, host: String, port: Int, hosts: Http.Host.Policy): Unit =
+  def start(viewLog: ViewLogger, title: String, host: String, port: Int, answersTo: Http.Host.Policy): Unit =
     val application = new Http.Application:
-      hosts = hosts
+      host = answersTo
       routes = []
       fallback = () => route(viewLog, title)
       maxBodyBytes = 0

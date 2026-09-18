@@ -23,9 +23,9 @@ private def secret: String = "0123456789abcdef0123456789abcdef"
 private def limit: Int = 1024
 
 //[ Everything under one `fallback`, which is how an application dispatches by pattern. //]
-private def applicationFor(hosts: Http.Host.Policy, reached: py.List): Http.Application =
+private def applicationFor(answersTo: Http.Host.Policy, reached: py.List): Http.Application =
   new Http.Application:
-    hosts = hosts
+    host = answersTo
     routes = []
     fallback = () => route(reached)
     maxBodyBytes = limit
@@ -193,7 +193,7 @@ private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.List) => Uni
   os.symlink(scratch + "/outside/secret.txt", root + "/link")
 
   val files = new Http.Application:
-    hosts = Http.Host.Loopback
+    host = Http.Host.Loopback
     routes = []
     fallback = () => fileRoute(root)
     maxBodyBytes = limit
@@ -208,7 +208,7 @@ private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.List) => Uni
 //[ An application wired as a table, which is how `Router` is meant to be used. //]
 private def tabled(reached: py.List): Http.Application =
   new Http.Application:
-    hosts = Http.Host.Loopback
+    host = Http.Host.Loopback
     maxBodyBytes = limit
     routes = List:
       Http.Router.Get("/api/info", info)
@@ -428,6 +428,16 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("413", call(wsgi, "POST", "/echo", [], oversized).status == 413)
     check("the route never ran", reached.size == 1)
 
+  test: "checks the host by default, without an application saying so", () =>
+    val plain = new Http.Application(routes = [], fallback = () => route(py.list()))
+
+    val wsgi = plain.wsgi()
+    check("loopback is what a prototype gets", get(wsgi, "/dynamic").status == 200)
+
+    val rebound = call(wsgi, "GET", "/dynamic", [Http.Header("Host", "attacker.example")], "")
+    check("another name is refused", rebound.status == 400)
+    check("and named in the answer", rebound.text.contains("attacker.example"))
+
   test: "refuses a host the settings do not name", () =>
     val wsgi = appFor(py.list())
     check("loopback by name", call(wsgi, "GET", "/dynamic", [Http.Header("Host", "localhost:8080")], "").status == 200)
@@ -508,7 +518,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
   test: "refuses two routes claiming the same verb and path", () =>
     val clashing = new Http.Application:
-      hosts = Http.Host.Loopback
+      host = Http.Host.Loopback
       routes = List:
         Http.Router.Get("/api/info", () => Response.notFound())
         Http.Router.Get("/api/info", () => Response.notFound())
