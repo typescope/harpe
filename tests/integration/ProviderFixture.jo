@@ -7,8 +7,13 @@
 
 namespace harpe.test.integration
 
-import harpe.Http
-import harpe.Http.request
+import harpe.server.Http
+import harpe.server.Response
+import harpe.server.Complete
+import harpe.server.Application
+import harpe.server.Router
+import harpe.server.serveInBackground
+import harpe.server.Http.request
 import harpe.ffi.json
 
 section ProviderFixture
@@ -19,14 +24,14 @@ section ProviderFixture
     ! statusless half of `Classify` — a failure that never became an HTTP
     ! status, and is classified by exception type instead.
   //]
-  class Response(status: String, headers: py.List, chunks: List[String], delaySeconds: Float = 0.0)
+  class Scripted(status: String, headers: py.List, chunks: List[String], delaySeconds: Float = 0.0)
 
-  def response(status: String, contentType: String, body: String): Response =
-    new Response(status, py.list(py.tuple("Content-Type", contentType)), [body])
+  def response(status: String, contentType: String, body: String): Scripted =
+    new Scripted(status, py.list(py.tuple("Content-Type", contentType)), [body])
 
   //[ A response the server sits on for `seconds` before sending anything. //]
-  def stalled(seconds: Float): Response =
-    new Response:
+  def stalled(seconds: Float): Scripted =
+    new Scripted:
       "200 OK"
       py.list(py.tuple("Content-Type", "text/event-stream"))
       ["data: [DONE]\n\n"]
@@ -38,8 +43,8 @@ section ProviderFixture
     ! scenario that has to act while a turn is mid-request — cancelling it, say —
     ! uses it to hold the turn where it wants it, rather than racing the reply.
   //]
-  def sse(body: String, delaySeconds: Float = 0.0): Response =
-    new Response:
+  def sse(body: String, delaySeconds: Float = 0.0): Scripted =
+    new Scripted:
       "200 OK"
       py.list:
         py.tuple("Content-Type", "text/event-stream")
@@ -83,7 +88,7 @@ section ProviderFixture
     def requestJson: py.Dict = recorded(0).jsonBody
   end
 
-  private def serve(responses: List[Response], requests: py.List): Http.Response receives request =
+  private def serve(responses: List[Scripted], requests: py.List): Response receives request =
     val body = Http.readBody() rescue None => abort "the provider fixture was sent a body that is not UTF-8"
 
     val recorded = new RecordedRequest:
@@ -96,11 +101,11 @@ section ProviderFixture
 
     val index = requests.size - 1
     if index >= responses.size then
-      Http.Response.complete(Http.Status.ServerError, Http.Mime.Text, [], "unexpected request")
+      Response.complete(Http.Status.ServerError, Http.Mime.Text, [], "unexpected request")
     else
       val answer = responses.get(index)
       if answer.delaySeconds > 0.0 then py.module("time").sleep(answer.delaySeconds)
-      Http.Complete(status(answer.status), headers(answer.headers), py.dynamic(answer.chunks.join("")).encode("utf-8"))
+      Complete(status(answer.status), headers(answer.headers), py.dynamic(answer.chunks.join("")).encode("utf-8"))
 
   //[ A scripted status line such as `"529 Overloaded"`, which no standard status names. //]
   private def status(line: String): Http.Status.Code =
@@ -120,15 +125,15 @@ section ProviderFixture
     ! Port zero avoids collisions. `serve_forever` permits retries and other
     ! multi-request flows; shutdown and join make the fixture lifetime explicit.
   //]
-  def withResponses(responses: List[Response], test: Server => Unit): Unit =
+  def withResponses(responses: List[Scripted], test: Server => Unit): Unit =
     val requests = py.list()
-    val application = new Http.Application:
+    val application = new Application:
       host = Http.Host.Loopback
       routes = []
       fallback = () => serve(responses, requests)
       maxBodyBytes = 67108864
 
-    val background = Http.serveInBackground("127.0.0.1", 0, application)
+    val background = serveInBackground("127.0.0.1", 0, application)
     val port = background.port
     val server = new Server("http://127.0.0.1:\{port}", port, requests)
 

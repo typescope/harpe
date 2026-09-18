@@ -1,15 +1,19 @@
 //[ HttpTest.jo
   !
-  ! Unit tests for `harpe.Http`. Nearly all of them call `Http.app` in memory,
-  ! through `call` below. The one that needs a client to hang up runs over a
-  ! real socket.
+  ! Unit tests for `harpe.server`. Nearly all of them call an `Application`'s
+  ! WSGI callable in memory, through `call` below. The one that needs a client
+  ! to hang up runs over a real socket.
 //]
 
 namespace harpe.test.unit.HttpTest
 
-import harpe.Http
-import harpe.Http.request
-import harpe.Http.Response
+import harpe.server.Http
+import harpe.server.Application
+import harpe.server.Router
+import harpe.server.serveInBackground
+import harpe.server.Http.request
+import harpe.server.Response
+import harpe.server.Sse
 import harpe.ffi.json
 import harpe.testing.thisSuite
 import harpe.testing.suite
@@ -23,8 +27,8 @@ private def secret: String = "0123456789abcdef0123456789abcdef"
 private def limit: Int = 1024
 
 //[ Everything under one `fallback`, which is how an application dispatches by pattern. //]
-private def applicationFor(answersTo: Http.Host.Policy, reached: py.List): Http.Application =
-  new Http.Application:
+private def applicationFor(answersTo: Http.Host.Policy, reached: py.List): Application =
+  new Application:
     host = answersTo
     routes = []
     fallback = () => route(reached)
@@ -192,7 +196,7 @@ private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.List) => Uni
   write(scratch + "/outside/secret.txt", "secret")
   os.symlink(scratch + "/outside/secret.txt", root + "/link")
 
-  val files = new Http.Application:
+  val files = new Application:
     host = Http.Host.Loopback
     routes = []
     fallback = () => fileRoute(root)
@@ -206,16 +210,16 @@ private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.List) => Uni
   case Err(err) => abort err.message
 
 //[ An application wired as a table, which is how `Router` is meant to be used. //]
-private def tabled(reached: py.List): Http.Application =
-  new Http.Application:
+private def tabled(reached: py.List): Application =
+  new Application:
     host = Http.Host.Loopback
     maxBodyBytes = limit
     routes = List:
-      Http.Router.Get("/api/info", info)
-      Http.Router.Post("/api/message", () => echoed(reached))
-      Http.Router.Post("/api/upload", () => echoed(reached), maxBodyBytes = 4096)
-      Http.Router.Delete("/api/session", () => Response.json(py.dict("ok" ~ true)))
-      Http.Router.Prefix("/assets/", () => Response.complete(Http.Status.Success, Http.Mime.Text, [], "asset"))
+      Router.Get("/api/info", info)
+      Router.Post("/api/message", () => echoed(reached))
+      Router.Post("/api/upload", () => echoed(reached), maxBodyBytes = 4096)
+      Router.Delete("/api/session", () => Response.json(py.dict("ok" ~ true)))
+      Router.Prefix("/assets/", () => Response.complete(Http.Status.Success, Http.Mime.Text, [], "asset"))
     fallback = () => Response.html("<p>the page</p>")
 
 private def info(): Response receives request = Response.json(py.dict("name" ~ "clair"))
@@ -262,10 +266,10 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("a runtime type passes through", Http.Mime.value(Http.Mime.Other("image/png")) == "image/png")
 
   test: "frames server-sent events a line of data at a time", () =>
-    check("named", Http.Sse.event("turn", "a\nb") == "event: turn\ndata: a\ndata: b\n\n")
-    check("unnamed", Http.Sse.message("x") == "data: x\n\n")
-    check("carriage returns split too", Http.Sse.message("a\r\nb\rc") == "data: a\ndata: b\ndata: c\n\n")
-    check("keepalive is a comment", Http.Sse.keepalive() == ":\n\n")
+    check("named", Sse.event("turn", "a\nb") == "event: turn\ndata: a\ndata: b\n\n")
+    check("unnamed", Sse.message("x") == "data: x\n\n")
+    check("carriage returns split too", Sse.message("a\r\nb\rc") == "data: a\ndata: b\ndata: c\n\n")
+    check("keepalive is a comment", Sse.keepalive() == ":\n\n")
 
   test: "answers a dynamic response no-store and nosniff", () =>
     val answer = get(appFor(py.list()), "/dynamic")
@@ -404,7 +408,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
   test: "tells a producer once its client has gone", () =>
     val reached = py.list()
-    val background = Http.serveInBackground("127.0.0.1", 0, applicationFor(Http.Host.Loopback, reached))
+    val background = serveInBackground("127.0.0.1", 0, applicationFor(Http.Host.Loopback, reached))
 
     val socket = py.module("socket").create_connection(py.tuple("127.0.0.1", background.port))
     socket.sendall(py.dynamic("GET /forever HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n").encode())
@@ -429,7 +433,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("the route never ran", reached.size == 1)
 
   test: "checks the host by default, without an application saying so", () =>
-    val plain = new Http.Application(routes = [], fallback = () => route(py.list()))
+    val plain = new Application(routes = [], fallback = () => route(py.list()))
 
     val wsgi = plain.wsgi()
     check("loopback is what a prototype gets", get(wsgi, "/dynamic").status == 200)
@@ -517,11 +521,11 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("the application's, with no routes", applicationFor(Http.Host.Loopback, py.list()).ceiling == limit)
 
   test: "refuses two routes claiming the same verb and path", () =>
-    val clashing = new Http.Application:
+    val clashing = new Application:
       host = Http.Host.Loopback
       routes = List:
-        Http.Router.Get("/api/info", () => Response.notFound())
-        Http.Router.Get("/api/info", () => Response.notFound())
+        Router.Get("/api/info", () => Response.notFound())
+        Router.Get("/api/info", () => Response.notFound())
       fallback = () => Response.notFound()
 
     check("at construction", py.try(clashing.wsgi()) is Err(_))

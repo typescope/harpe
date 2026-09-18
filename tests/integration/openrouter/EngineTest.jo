@@ -37,7 +37,7 @@ private def model(server: ProviderFixture.Server): Model =
   ! before it dispatches a tool. The Responses API streams the text as deltas
   ! and delivers the call whole, in the completed response's `output`.
 //]
-private def speaksThenCalls(): ProviderFixture.Response = ProviderFixture.sse:
+private def speaksThenCalls(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_pre","output_index":0,"content_index":0,"delta":"Let me look.","logprobs":[]}
 
@@ -72,7 +72,7 @@ private def speaksThenCalls(): ProviderFixture.Response = ProviderFixture.sse:
   data: [DONE]
   """
 
-private def says(text: String): ProviderFixture.Response = ProviderFixture.sse:
+private def says(text: String): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_said","output_index":0,"content_index":0,"delta":"\{text}","logprobs":[]}
 
@@ -101,21 +101,21 @@ private def says(text: String): ProviderFixture.Response = ProviderFixture.sse:
   data: [DONE]
   """
 
-private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
+private def unavailable(): ProviderFixture.Scripted = ProviderFixture.response:
   "503 Service Unavailable"
   "application/json"
   """
     {"error":{"message":"unavailable","type":"server_error","code":"server_error"}}
     """
 
-private def unauthorized(): ProviderFixture.Response = ProviderFixture.response:
+private def unauthorized(): ProviderFixture.Scripted = ProviderFixture.response:
   "401 Unauthorized"
   "application/json"
   """
     {"error":{"message":"bad key","type":"invalid_request_error","code":"invalid_api_key"}}
     """
 
-private def rateLimited(): ProviderFixture.Response = new ProviderFixture.Response:
+private def rateLimited(): ProviderFixture.Scripted = new ProviderFixture.Scripted:
   "429 Too Many Requests"
   py.list:
     py.tuple("Content-Type", "application/json")
@@ -130,7 +130,7 @@ private def rateLimited(): ProviderFixture.Response = new ProviderFixture.Respon
 //[ Two calls in one reply — what a provider does by default when the model
   ! asks for several things at once. The Responses API lists them in `output`.
 //]
-private def callsTwoTools(): ProviderFixture.Response = ProviderFixture.sse:
+private def callsTwoTools(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   data: {
     "type": "response.completed", "sequence_number": 1,
@@ -163,7 +163,7 @@ private def callsTwoTools(): ProviderFixture.Response = ProviderFixture.sse:
   data: [DONE]
   """
 
-private def callsOneTool(): ProviderFixture.Response = ProviderFixture.sse:
+private def callsOneTool(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   data: {
     "type": "response.completed", "sequence_number": 1,
@@ -200,7 +200,7 @@ private def toolResultIds(request: ProviderFixture.RecordedRequest): String =
   ids.join(",")
 
 //[ A reply that arrives in three pieces, so a scenario can stop after one. //]
-private def saysInPieces(): ProviderFixture.Response = ProviderFixture.sse:
+private def saysInPieces(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_slow","output_index":0,"content_index":0,"delta":"one","logprobs":[]}
 

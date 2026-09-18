@@ -1,0 +1,220 @@
+//[ Application.jo
+  !
+  ! One application: its routes, the policy enforced before any of them runs,
+  ! and the WSGI callable a server is given.
+  !
+  ! THE DOOR IS HERE. Before a route runs, `wsgi` refuses an unknown verb, a
+  ! path that is not UTF-8, a `Host` the application does not answer to, a
+  ! cross-site write, and a body over the route's limit. Those are protocol
+  ! answers every browser-facing application needs, and none of them is a
+  ! route's to remember.
+  !
+  ! `wsgi` is the seam a deployment binds its server to, so harpe installs
+  ! none. `serveInBackground` is wsgiref, for harpe's own viewer and tests.
+//]
+
+namespace harpe.server
+
+import harpe.ffi.builtins
+import harpe.ffi.threading
+import harpe.server.Http
+import harpe.server.Http.Verb
+import harpe.server.Http.Status
+import harpe.server.Http.Mime
+import harpe.server.Http.Header
+import harpe.server.Http.Host
+import harpe.server.Http.CrossSite
+import harpe.server.Http.Request
+import harpe.server.Http.request
+import harpe.server.Response
+import harpe.server.Router
+
+//[ One application: its routes, and the policy `wsgi` enforces before any of them
+  !
+  ! `fallback` answers what no route claims — the page itself, for a
+  ! single-page application whose client routes on the path. An application
+  ! that dispatches by pattern matching passes no routes and its own match as
+  ! the fallback.
+  !
+  ! `maxBodyBytes` is the limit for every route that names none. Keep it
+  ! small: an upload route says so for itself, and `ceiling` is what the
+  ! server is given.
+  !
+  ! `host` defaults to loopback, so a prototype on `127.0.0.1` runs as it is,
+  ! and a deployment that forgets to name its own host is refused rather than
+  ! quietly served — which is what stops a hostile page pointing its own name
+  ! at this server and reading it as same-origin.
+//]
+class Application(
+      routes: List[Router.Route],
+      fallback: (() => Response receives request),
+      host: Host.Policy = Host.Loopback,
+      maxBodyBytes: Int = 1048576,
+      crossSite: CrossSite.Policy = CrossSite.Refuse)
+  //[ This application as a WSGI application, which is what a server is given
+    !
+    ! The route table is indexed here, once, and two routes claiming one verb
+    ! and path abort rather than shadowing each other.
+  //]
+  def wsgi(): (py.Dynamic, py.Dynamic) => py.List =
+    val exact = py.dict()
+    for route in routes do
+      if !route.prefix then
+        val key = Http.verbName(route.method) + " " + route.path
+        if exact.contains(key) then abort "two routes claim '\{key}'"
+        exact.set(key, route)
+
+    (environ: py.Dynamic, startResponse: py.Dynamic) =>
+      Response.write(startResponse, answer(this, exact, environ))
+
+  //[ The largest body any route allows, which is the limit to give the server. //]
+  def ceiling: Int =
+    var most = maxBodyBytes
+    for route in routes do
+      if route.maxBodyBytes > most then most = route.maxBodyBytes
+    most
+end
+
+
+//[ A route as a plain WSGI application — the seam a deployment binds a server to
+  !
+  ! Refuses, in order and before the route runs: a verb not implemented (501,
+  ! not 405, because no path has been looked at), a path that is not UTF-8
+  ! (400), a `Host` the settings do not allow (400), a cross-site write (403),
+  ! and a body declaring more than `maxBodyBytes` (413).
+  !
+  ! The 413 is written without draining what the client is still sending, so a
+  ! client mid-upload may see the connection close first. Give the server its
+  ! own limit too, which can discard the body properly.
+  !
+  ! A route that raises is left to the server, which answers 500 and logs it.
+  ! An application wanting its own answer, logged with the session it belongs
+  ! to, wraps its own routes: only it knows that context.
+//]
+private def answer(application: Application, exact: py.Dict, environ: py.Dynamic): Response =
+  val raw = environ.get("REQUEST_METHOD", "GET").asString
+  val method = Http.verb(raw) rescue None =>
+    return if raw == "HEAD" then unsupportedHead() else refuse(Status.NotImplemented, "not implemented")
+  val path = Http.decodedPath(environ) rescue None =>
+    return refuse(Status.BadRequest, "path is not UTF-8")
+
+  if !Http.hostAllowed(environ, application.host) then
+    val sent = Http.environValue(environ, "HTTP_HOST").getOrElse("none")
+    return refuse(Status.BadRequest, "host '\{sent}' is not one this application answers to")
+  if application.crossSite is CrossSite.Refuse && Http.crossSiteWrite(method, environ) then
+    return refuse(Status.Forbidden, "cross-site request refused")
+
+  val found = routeFor(application, exact, method, path)
+  if Http.declaredLength(environ) > limitFor(application, found) then
+    return refuse(Status.TooLarge, "request body too large")
+
+  match found
+  case Some(route) => ran(route.handler, method, path, environ)
+  case None =>
+    val others = otherVerbs(application, method, path)
+    if others.size == 0 then ran(application.fallback, method, path, environ)
+    else
+      val headers = [Header("Allow", others.join(", "))]
+      Response.complete(Status.MethodNotAllowed, Mime.Text, headers, "method not allowed")
+
+//[ Run `handler` with the request bound, and answer 304 in place of a body the client holds. //]
+private def ran(handler: (() => Response receives request), method: Verb.Method, path: String, environ: py.Dynamic): Response =
+  val answered = with request = new Request(method, path, environ) in handler()
+  if unchanged(method, environ, answered) then notModified(answered) else answered
+
+//[ What this exchange may send: the route's own limit, or the application's. //]
+private def limitFor(application: Application, found: Option[Router.Route]): Int =
+  match found
+  case Some(route) => if route.maxBodyBytes == 0 then application.maxBodyBytes else route.maxBodyBytes
+  case None        => application.maxBodyBytes
+
+//[ The route for this exchange: an exact path first, then the longest prefix that covers it. //]
+private def routeFor(application: Application, exact: py.Dict, method: Verb.Method, path: String): Option[Router.Route] =
+  val key = Http.verbName(method) + " " + path
+  if exact.contains(key) then return Some(exact.get(key).cast[Router.Route])
+
+  var best: Option[Router.Route] = None
+  var longest = -1
+  for route in application.routes do
+    val covers = route.prefix && Http.verbName(route.method) == Http.verbName(method) && path.startsWith(route.path)
+    if covers && route.path.size > longest then
+      best = Some(route)
+      longest = route.path.size
+  best
+
+//[ The verbs another route claims this exact path under, which is what makes a 405 rather than the fallback. //]
+private def otherVerbs(application: Application, method: Verb.Method, path: String): List[String] =
+  var claimed: List[String] = []
+  for route in application.routes do
+    if !route.prefix && route.path == path && Http.verbName(route.method) != Http.verbName(method) then
+      claimed = claimed + Http.verbName(route.method)
+  claimed
+
+//[ A refusal made before a request is bound. //]
+private def refuse(status: Status.Code, message: String): Response =
+  Response.complete(status, Mime.Text, [], message)
+
+//[ The 501 for a HEAD, which must not carry a body
+  !
+  ! Waitress writes whatever body it is handed, even for a HEAD, and frames an
+  ! empty one as chunked, and either leaves bytes a client keeping the
+  ! connection open reads as its next response. A declared length of 0 is what
+  ! makes both servers send the headers alone.
+//]
+private def unsupportedHead(): Response =
+  Complete(Status.NotImplemented, [Header("Content-Length", "0")], py.dynamic("").encode())
+
+//[ Whether a successful GET carries an `ETag` the client already holds
+  !
+  ! `If-None-Match` may list several tags, weak ones included, or be `*`.
+//]
+private def unchanged(method: Verb.Method, environ: py.Dynamic, response: Response): Bool =
+  match response
+  case Complete(status, headers, _) if method is Verb.Get && status is Status.Success =>
+    val tag = Http.headerIn(headers, "ETag") rescue None => return false
+    val held = Http.environValue(environ, "HTTP_IF_NONE_MATCH") rescue None => return false
+    val tags = held.split(",").map(t => t.trim).map(t => if t.startsWith("W/") then t.substring(2, t.size - 2) else t)
+    tags.contains("*") || tags.contains(tag)
+  case _ => false
+
+//[ The 304 for `response`: its validators and caching headers, and no body. //]
+private def notModified(response: Response): Response =
+  match response
+  case Stream(_, _) => response
+  case Complete(_, headers, _) =>
+    val kept = headers.select(h => py.dynamic(h.name).lower().asString == "etag" || py.dynamic(h.name).lower().asString == "cache-control")
+    Complete(Status.NotModified, kept, py.dynamic("").encode())
+
+
+//[ A server running on a background thread: the port it bound, and how to stop it. //]
+private[harpe] class Background(port: Int, stop: () => Unit)
+
+//[ Serve `route` with wsgiref on a daemon thread — for harpe's own viewer and tests
+  !
+  ! wsgiref is the standard library's reference server, with no read timeout,
+  ! an accept backlog of five and no keep-alive, so not for production. It is
+  ! here because the `harpe` package installs no server. A deployment runs
+  ! `app` on the WSGI server it chooses.
+  !
+  ! Binds before returning, so a port already taken raises here. Port 0 binds
+  ! a free one, which `port` reports. Writes no access log.
+//]
+private[harpe] def serveInBackground(host: String, port: Int, application: Application): Background =
+  val simple = py.module("wsgiref.simple_server")
+  val threaded = builtins.newType:
+    "ThreadingWSGIServer"
+    py.tuple(py.module("socketserver").ThreadingMixIn, simple.WSGIServer)
+    py.dict("daemon_threads" ~ true)
+  val quiet = builtins.newType:
+    "QuietWSGIRequestHandler"
+    py.tuple(simple.WSGIRequestHandler)
+    py.dict("log_message" ~ py.module("logging").getLogger("harpe.http").debug)
+
+  val httpd = simple.make_server(host, port, application.wsgi(), server_class = threaded, handler_class = quiet)
+  threading.Thread(target = () => httpd.serve_forever(poll_interval = 0.05), daemon = true).start()
+
+  new Background(httpd.server_port.asInt, () => shutdown(httpd))
+
+private def shutdown(httpd: py.Dynamic): Unit =
+  httpd.shutdown()
+  httpd.server_close()

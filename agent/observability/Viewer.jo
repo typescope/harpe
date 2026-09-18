@@ -45,9 +45,12 @@ namespace harpe.observability
 
 import harpe.ffi.json
 import harpe.logging.Entry
-import harpe.Http
-import harpe.Http.request
-import harpe.Http.Response
+import harpe.server.Http
+import harpe.server.Application
+import harpe.server.Router
+import harpe.server.serveInBackground
+import harpe.server.Http.request
+import harpe.server.Response
 import jo.resource.*
 import jo.py.resource.*
 
@@ -99,13 +102,13 @@ section Viewer
     ! whatever terminal the driver was already using.
   //]
   def start(viewLog: ViewLogger, title: String, host: String, port: Int, answersTo: Http.Host.Policy): Unit =
-    val application = new Http.Application:
+    val application = new Application:
       host = answersTo
       routes = []
       fallback = () => route(viewLog, title)
       maxBodyBytes = 0
 
-    val _ = Http.serveInBackground(host, port, application)
+    val _ = serveInBackground(host, port, application)
 
   private def route(viewLog: ViewLogger, title: String): Response receives request =
     match request

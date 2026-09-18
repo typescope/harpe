@@ -1,0 +1,266 @@
+//[ Response.jo
+  !
+  ! What a route answers with, and how it is written to WSGI.
+  !
+  ! A value, so a route can be called and its answer inspected without a
+  ! server, and a wrapper can add to what it answers. `Application` is the only
+  ! place one is written out, and it is what adds `nosniff` and the framing
+  ! policy every response carries.
+//]
+
+namespace harpe.server
+
+import harpe.ffi.json
+import harpe.ffi.os
+import harpe.util.File
+import harpe.util.Clock
+import harpe.server.Http
+import harpe.server.Http.Header
+import harpe.server.Http.Status
+import harpe.server.Http.Mime
+import harpe.server.Http.request
+
+//[ What a route answers with
+  !
+  ! A value, so a route can be called and its answer inspected without a
+  ! server, and a wrapper can add to what it answers. `app` is the only place
+  ! one is written to WSGI, and it adds `X-Content-Type-Options: nosniff` to
+  ! every one.
+  !
+  ! `Complete` carries every header it sends, and the builders in `Response`
+  ! fill in `Content-Type` and `Cache-Control`. `Stream` answers 200 and hands
+  ! `produce` an `emit` once the headers are out.
+//]
+union Response =
+    Complete(status: Status.Code, headers: List[Header], body: py.Dynamic)
+  | Stream(kind: Mime.Type, produce: (String => Bool) => Unit)
+
+//[ The builders a route answers with. Import `harpe.server.Response` and write `Response.html(…)`. //]
+section Response
+  //[ A complete response from a text body
+    !
+    ! `no-store`, because what is answered this way is dynamic and none of it
+    ! is a client's to keep. One the browser may keep goes through `revalidated`.
+    ! `headers` are sent after `Content-Type` and `Cache-Control`.
+  //]
+  def complete(status: Status.Code, kind: Mime.Type, headers: List[Header], body: String): Response =
+    binary(status, kind, headers, py.dynamic(body).encode())
+
+  //[ A complete response from a binary body, with the same headers as `complete`. //]
+  def binary(status: Status.Code, kind: Mime.Type, headers: List[Header], body: py.Dynamic): Response =
+    val fixed = [Header("Content-Type", Mime.value(kind)), Header("Cache-Control", "no-store")]
+    Complete(status, fixed ++ headers, body)
+
+  def html(body: String): Response =
+    complete(Status.Success, Mime.Html, [], body)
+
+  def json(dict: py.Dict): Response =
+    complete(Status.Success, Mime.Json, [], jsonText(dict))
+
+  //[ A `Set-Cookie` header to send with a response
+    !
+    ! Always `Path=/`, `HttpOnly` and `SameSite=Lax`, so a script cannot read
+    ! it and a cross-site POST does not carry it. `secure` adds `Secure`,
+    ! which browsers accept on `http://localhost` too. A `maxAgeSeconds` of 0
+    ! deletes the cookie, which is what logging out sends. A name or value
+    ! that would need quoting aborts.
+    !
+    ! It answers a `Header`, not a `Response`, because a cookie rides with
+    ! whatever response the route is already building.
+  //]
+  def cookie(name: String, value: String, maxAgeSeconds: Int, secure: Bool): Header =
+    if !Http.cookieSafe(name) || name == "" then abort "cookie name '\{name}' is not a token"
+    if !Http.cookieSafe(value) then abort "cookie value for '\{name}' needs encoding"
+
+    val attributes = "; Path=/; Max-Age=\{maxAgeSeconds}; HttpOnly; SameSite=Lax"
+    Header("Set-Cookie", name + "=" + value + attributes + (if secure then "; Secure" else ""))
+
+  //[ The same, carrying a value `Http.signedCookie` will only read back unaltered
+    !
+    ! `maxAgeSeconds` sets both the browser's `Max-Age` and the expiry inside
+    ! the signature, so the two cannot drift. The value is signed, not
+    ! encrypted, and rides on every request, so keep it small and keep secrets
+    ! out of it. The secret is the application's, and must be at least 32
+    ! characters.
+  //]
+  def signedCookie(name: String, value: String, secret: String, maxAgeSeconds: Int, secure: Bool): Header =
+    val encoded = py.module("base64").urlsafe_b64encode(py.dynamic(value).encode()).decode().asString.replace("=", "")
+    val expiry = (Clock.now().toInt + maxAgeSeconds).toString
+    val signed = encoded + "." + expiry + "." + Http.signCookie(name, encoded, expiry, secret)
+    cookie(name, signed, maxAgeSeconds, secure)
+
+  //[ A 303 to `location`, the redirect a browser follows with a GET after a form post. //]
+  def redirect(location: String): Response =
+    complete(Status.SeeOther, Mime.Text, [Header("Location", location)], "")
+
+  def notFound(): Response =
+    complete(Status.NotFound, Mime.Json, [], jsonText(py.dict("error" ~ "not_found")))
+
+  //[ A 400 naming what was wrong, short enough to sit on the right of a `rescue`:
+    !
+    !     val body = Http.readJson() rescue None => return Response.badRequest("expected a JSON object")
+  //]
+  def badRequest(detail: String): Response =
+    complete(Status.BadRequest, Mime.Json, [], jsonText(py.dict("error" ~ "bad_request", "detail" ~ detail)))
+
+  //[ `response`, which the user's browser may keep but must recheck on every load
+    !
+    !     Response.revalidated(Response.html(page()))
+    !
+    ! Adds a content-derived `ETag` and `Cache-Control: private, no-cache`. The
+    ! route still runs on every load, and `app` answers 304 only when the body
+    ! is byte-for-byte what the browser holds, so a copy is never stale and
+    ! never another user's. The one question at the call site: may this body
+    ! sit in the user's browser cache? A stream has no body to tag, so
+    ! revalidating one aborts.
+  //]
+  def revalidated(response: Response): Response =
+    match response
+    case Stream(_, _) => abort "a stream cannot be revalidated"
+    case Complete(status, headers, body) =>
+      val kept = headers.exclude(h => py.dynamic(h.name).lower().asString == "cache-control")
+      Complete(status, kept ++ [Header("Cache-Control", "private, no-cache"), Header("ETag", etag(body))], body)
+
+  //[ A streamed response, whose `produce` emits a chunk at a time
+    !
+    ! How a long-running turn reaches the tab that asked for it, instead of
+    ! arriving whole at the end. `produce` runs on the request's thread once
+    ! the headers are out.
+    !
+    ! `emit` answers whether the client is still there. A failed write means it
+    ! is not, whichever server raised which exception for it, so every later
+    ! `emit` returns false without writing and the producer can stop its work.
+    !
+    ! Written through WSGI's `write` callable rather than a returned iterable,
+    ! which would need the producer to be pull-shaped — a turn pushes into a
+    ! sink, so the iterable form would mean a queue and a second thread per
+    ! stream. Both forms were measured to flush per chunk on waitress and
+    ! wsgiref.
+  //]
+  def stream(kind: Mime.Type, produce: (String => Bool) => Unit): Response =
+    Stream(kind, produce)
+
+  //[ Whether a browser shows a file or saves it. //]
+  union Disposition = Inline | Attachment
+
+  //[ The file under `root` that `name` names, revalidated
+    !
+    ! `name` is a relative path, as a client sent it. A name that is empty,
+    ! absolute, has a `..` segment, or resolves outside `root` through a
+    ! symlink is a 404, and so is a directory or a missing file, so a client
+    ! cannot tell which. The type is guessed from the name. The whole file is
+    ! read into memory, which suits pages, assets and documents, not video.
+  //]
+  def file(root: String, name: String, disposition: Disposition): Response =
+    val target = resolve(root, name) rescue None => return notFound()
+    val guessed = File.mimeType(target).getOrElse("application/octet-stream")
+    val shown = Header("Content-Disposition", dispositionValue(disposition, os.path.basename(name)))
+    revalidated(binary(Status.Success, Mime.Other(charset(guessed)), [shown], File.readBytes(target)))
+
+  //[ A text type with its charset settled, as the `Mime` cases have theirs
+    !
+    ! `mimetypes` answers a bare `text/html`, and a browser left to guess the
+    ! encoding of a UTF-8 page renders it wrong.
+  //]
+  private def charset(kind: String): String =
+    val text = kind.startsWith("text/") || kind == "application/javascript" || kind == "application/json"
+    if text then kind + "; charset=utf-8" else kind
+
+  //[ The real path of `name` under `root`, or None when it is not a file inside it. //]
+  private def resolve(root: String, name: String): Option[String] =
+    val refused = name == "" || name.startsWith("/") || name.contains("\\") || name.contains("\u{0}")
+    if refused || name.split("/").contains("..") then return None
+
+    val base = os.path.realpath(root)
+    val target = os.path.realpath(os.path.join(base, name))
+    if target.startsWith(base + "/") && os.path.isfile(target) then Some(target) else None
+
+  //[ `inline` or `attachment`, naming the file both as ASCII and, per RFC 6266, as UTF-8. //]
+  private def dispositionValue(disposition: Disposition, filename: String): String =
+    val kind = match disposition
+               case Inline     => "inline"
+               case Attachment => "attachment"
+    val ascii = py.module("re").sub("[^ -~]|[\"\\\\]", "_", filename).asString
+    val encoded = py.module("urllib.parse").quote(filename, safe = "").asString
+    kind + "; filename=\"" + ascii + "\"; filename*=UTF-8''" + encoded
+
+  //[ A content-derived entity tag. Not a digest anyone verifies — just a change detector. //]
+  private def etag(body: py.Dynamic): String =
+    val digest = py.module("hashlib").blake2b(body, digest_size = 8)
+    "\"" + digest.hexdigest().asString + "\""
+  //[ Write `response` to WSGI. //]
+  private[harpe] def write(startResponse: py.Dynamic, response: Response): py.List =
+    match response
+    case Complete(status, headers, body) =>
+      val _ = start(startResponse, status, headers)
+      py.list(body)
+
+    case Stream(kind, produce) =>
+      val headers = [Header("Content-Type", Mime.value(kind)), Header("Cache-Control", "no-cache"), Header("X-Accel-Buffering", "no")]
+      val outlet = new Outlet(start(startResponse, Status.Success, headers))
+      produce(chunk => outlet.emit(chunk))
+      py.list()
+
+  //[ Begin the response, with `nosniff` so a browser never guesses a type. Returns WSGI's `write`. //]
+  private def start(startResponse: py.Dynamic, status: Status.Code, headers: List[Header]): py.Dynamic =
+    val pairs = py.list()
+    for h in headers do
+      if h.name.contains("\r") || h.name.contains("\n") || h.value.contains("\r") || h.value.contains("\n") then
+        abort "header '\{h.name}' contains a line break"
+      pairs.append(py.tuple(h.name, h.value))
+    pairs.append(py.tuple("X-Content-Type-Options", "nosniff"))
+    if framable(headers) then pairs.append(py.tuple("Content-Security-Policy", "frame-ancestors 'self'"))
+
+    py.call(startResponse, Status.line(status), pairs)
+
+  //[ Whether this response is a page another site could frame
+    !
+    ! HTML gets `frame-ancestors 'self'`, so a hostile page cannot put the
+    ! application in an invisible frame and collect a click meant for it. A
+    ! route that must be framed sends a policy of its own, which is kept.
+  //]
+  private def framable(headers: List[Header]): Bool =
+    val kind = Http.headerIn(headers, "Content-Type").getOrElse("")
+    match Http.headerIn(headers, "Content-Security-Policy")
+    case Some(_) => false
+    case None    => py.dynamic(kind).lower().asString.startsWith("text/html")
+
+  //[ The write side of one stream, which stays closed once a write has failed. //]
+  private class Outlet(write: py.Dynamic)
+    var open: Bool = true
+
+    def emit(chunk: String): Bool =
+      if open then
+        match py.try(py.call(write, py.dynamic(chunk).encode()))
+        case Ok(_)  => pass
+        case Err(_) => open = false
+      open
+  end
+end
+
+//[ Server-sent event framing, for a `Response.stream` of `Mime.EventStream`
+  !
+  ! The browser's `EventSource` reads these and reconnects on its own. Every
+  ! line of `data` becomes its own `data:` field, which the browser rejoins.
+//]
+section Sse
+  //[ An event the page listens for by `name`. //]
+  def event(name: String, data: String): String =
+    if name.contains("\r") || name.contains("\n") then abort "event name contains a line break"
+    "event: " + name + "\n" + fields(data)
+
+  //[ An unnamed event, delivered to `onmessage`. //]
+  def message(data: String): String = fields(data)
+
+  //[ A comment line, which keeps an idle stream open through a proxy's read timeout. //]
+  def keepalive(): String = ":\n\n"
+
+  private def fields(data: String): String =
+    val lines = data.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    lines.map(line => "data: " + line + "\n").join("") + "\n"
+end
+
+
+//[ `dict` as JSON text. Outside `Response`, whose `json` would shadow the module. //]
+private def jsonText(dict: py.Dict): String = json.dumps(dict)
+
