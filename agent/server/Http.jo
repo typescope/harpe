@@ -33,15 +33,6 @@ import harpe.ffi.json
 import harpe.ffi.builtins
 import harpe.util.Clock
 
-//[ What was asked. `path` is already decoded as UTF-8. //]
-class Request(method: Http.Verb.Method, path: String, environ: py.Dynamic)
-  //[ Whether a reader has taken the body, which WSGI hands over as a stream read once. //]
-  var bodyTaken: Bool = false
-end
-
-//[ The request being served. Bound once per request by the server. //]
-param request: Request
-
 section Http
   //[ The verb, as a value rather than a string
     !
@@ -155,9 +146,6 @@ section Http
     union Policy = Refuse | Allow
   end
 
-  //[ One response header. A CR or LF in either part aborts, since it would split the response. //]
-  class Header(name: String, value: String)
-
   //[ Request patterns keep the verb and path test together at dispatch sites
     !
     ! The path is compared exactly, so every route is one string. A parameter
@@ -215,13 +203,6 @@ section Http
     case Verb.Put     => "PUT"
     case Verb.Delete  => "DELETE"
     case Verb.Options => "OPTIONS"
-
-  //[ The first header by this name, compared case-insensitively. //]
-  private[harpe] def headerIn(headers: List[Header], name: String): Option[String] =
-    val wanted = py.dynamic(name).lower().asString
-    for h in headers do
-      if py.dynamic(h.name).lower().asString == wanted then return Some(h.value)
-    None
 
   //[ `PATH_INFO` as the client wrote it
     !

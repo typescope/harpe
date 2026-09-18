@@ -8,6 +8,7 @@
 namespace harpe.cli.tests
 
 import harpe.server.Http
+import harpe.server.Header
 import harpe.server.Response
 import harpe.server.Complete
 import harpe.server.Application
@@ -113,11 +114,11 @@ section ProviderFixture
     val code = Int.parse(parts.get(0).asString) rescue None => abort "a scripted status with no code: '\{line}'"
     Http.Status.Other(code, parts.get(1).asString)
 
-  private def headers(pairs: py.List): List[Http.Header] =
-    var out: List[Http.Header] = []
+  private def headers(pairs: py.List): List[Header] =
+    var out: List[Header] = []
     for pair in pairs do
       val fields = py.module("builtins").list(pair).cast[py.List]
-      out = out + Http.Header(fields.get(0).asString, fields.get(1).asString)
+      out = out + Header(fields.get(0).asString, fields.get(1).asString)
     out
 
   //[ Run `test` against a local server with an ordered response script.

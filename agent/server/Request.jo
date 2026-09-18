@@ -1,0 +1,23 @@
+//[ Request.jo
+  !
+  ! One exchange, and the channel that carries it.
+  !
+  ! THE REQUEST IS AMBIENT. A server binds one per request and the readers in
+  ! `Http` take it apart, so a handler that wants the body asks for
+  ! `Http.readJson()` rather than being handed an `environ` to pass on. That is
+  ! why a route carries neither `environ` nor a way to start the response: it
+  ! never touches either.
+//]
+
+namespace harpe.server
+
+import harpe.server.Http
+
+//[ What was asked. `path` is already decoded as UTF-8. //]
+class Request(method: Http.Verb.Method, path: String, environ: py.Dynamic)
+  //[ Whether a reader has taken the body, which WSGI hands over as a stream read once. //]
+  var bodyTaken: Bool = false
+end
+
+//[ The request being served. Bound once per request by the server. //]
+param request: Request

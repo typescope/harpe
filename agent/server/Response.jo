@@ -15,10 +15,12 @@ import harpe.ffi.os
 import harpe.util.File
 import harpe.util.Clock
 import harpe.server.Http
-import harpe.server.Http.Header
 import harpe.server.Http.Status
 import harpe.server.Http.Mime
 import harpe.server.request
+
+//[ One response header. A CR or LF in either part aborts, since it would split the response. //]
+class Header(name: String, value: String)
 
 //[ What a route answers with
   !
@@ -189,54 +191,6 @@ section Response
   private def etag(body: py.Dynamic): String =
     val digest = py.module("hashlib").blake2b(body, digest_size = 8)
     "\"" + digest.hexdigest().asString + "\""
-  //[ Write `response` to WSGI. //]
-  private[harpe] def write(startResponse: py.Dynamic, response: Response): py.List =
-    match response
-    case Complete(status, headers, body) =>
-      val _ = start(startResponse, status, headers)
-      py.list(body)
-
-    case Stream(kind, produce) =>
-      val headers = [Header("Content-Type", Mime.value(kind)), Header("Cache-Control", "no-cache"), Header("X-Accel-Buffering", "no")]
-      val outlet = new Outlet(start(startResponse, Status.Success, headers))
-      produce(chunk => outlet.emit(chunk))
-      py.list()
-
-  //[ Begin the response, with `nosniff` so a browser never guesses a type. Returns WSGI's `write`. //]
-  private def start(startResponse: py.Dynamic, status: Status.Code, headers: List[Header]): py.Dynamic =
-    val pairs = py.list()
-    for h in headers do
-      if h.name.contains("\r") || h.name.contains("\n") || h.value.contains("\r") || h.value.contains("\n") then
-        abort "header '\{h.name}' contains a line break"
-      pairs.append(py.tuple(h.name, h.value))
-    pairs.append(py.tuple("X-Content-Type-Options", "nosniff"))
-    if framable(headers) then pairs.append(py.tuple("Content-Security-Policy", "frame-ancestors 'self'"))
-
-    py.call(startResponse, Status.line(status), pairs)
-
-  //[ Whether this response is a page another site could frame
-    !
-    ! HTML gets `frame-ancestors 'self'`, so a hostile page cannot put the
-    ! application in an invisible frame and collect a click meant for it. A
-    ! route that must be framed sends a policy of its own, which is kept.
-  //]
-  private def framable(headers: List[Header]): Bool =
-    val kind = Http.headerIn(headers, "Content-Type").getOrElse("")
-    match Http.headerIn(headers, "Content-Security-Policy")
-    case Some(_) => false
-    case None    => py.dynamic(kind).lower().asString.startsWith("text/html")
-
-  //[ The write side of one stream, which stays closed once a write has failed. //]
-  private class Outlet(write: py.Dynamic)
-    var open: Bool = true
-
-    def emit(chunk: String): Bool =
-      if open then
-        match py.try(py.call(write, py.dynamic(chunk).encode()))
-        case Ok(_)  => pass
-        case Err(_) => open = false
-      open
-  end
 end
 
 //[ Server-sent event framing, for a `Response.stream` of `Mime.EventStream`
@@ -263,5 +217,12 @@ end
 
 
 //[ `dict` as JSON text. Outside `Response`, whose `json` would shadow the module. //]
+//[ The first header by this name, compared case-insensitively. //]
+private[harpe] def headerIn(headers: List[Header], name: String): Option[String] =
+  val wanted = py.dynamic(name).lower().asString
+  for h in headers do
+    if py.dynamic(h.name).lower().asString == wanted then return Some(h.value)
+  None
+
 private def jsonText(dict: py.Dict): String = json.dumps(dict)
 
