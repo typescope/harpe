@@ -1,6 +1,18 @@
 # Changelog
 
-## 0.10.0 — 2026-09-20
+## 0.10.1 — 2026-09-20
+
+Everything below is this release. **Do not use 0.10.0**: it reached the
+registry built by an older Jo, whose artifact the current compiler cannot read.
+It cannot be withdrawn, so it is noted here instead.
+
+This release also requires **Jo 0.13.4 or later**. `List.prepend` is gone, so
+`FileSystem.list` and `PDF.outline` build their lists with `List.builder`, and
+the OCR backend is no longer an optional Python dependency — the compiler
+collects every import at top level and binds them eagerly, so `rapidocr` and
+`onnxruntime` are imported whether or not anything reaches the code that uses
+them. Both are in `requirements.txt` now.
+
 
 **HTTP now lives in `harpe.server`, and an application is a value.** What was
 one `harpe.Http` file is ten under `agent/server/`, each owning one side of

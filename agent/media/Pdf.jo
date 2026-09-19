@@ -46,15 +46,11 @@ private class PdfImpl(doc: py.Dynamic, root: String)
 
   def outline: List[PDF.Heading] =
     val items = builtins.list(doc.get_toc())
+    val headings = List.builder[PDF.Heading]
 
-    var result = List.empty[PDF.Heading]
-    var i = builtins.len(items) - 1
+    for item in items do headings.add(heading(item))
 
-    while i >= 0 do
-      result = result.prepend(heading(items.get(i)))
-      i = i - 1
-
-    result
+    headings.result
 
   def metadata: Map[String, String] =
     val dict = doc.callDynamic("get_metadata_dict", true).cast[py.Dict]

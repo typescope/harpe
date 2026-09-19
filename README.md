@@ -1,7 +1,7 @@
 # Harpe
 
 [![CI](https://github.com/typescope/harpe/actions/workflows/ci.yml/badge.svg)](https://github.com/typescope/harpe/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/release-v0.10.0-blue.svg)](https://github.com/typescope/harpe/releases/tag/v0.10.0)
+[![Release](https://img.shields.io/badge/release-v0.10.1-blue.svg)](https://github.com/typescope/harpe/releases/tag/v0.10.1)
 [![Docs](https://img.shields.io/badge/docs-harpe.typescope.ai-teal.svg)](https://harpe.typescope.ai)
 
 Harpe is an agent framework for [Jo](https://jo-lang.org/).

@@ -12,7 +12,8 @@ openai>=2.21
 # shipped CLI needs it too (it is also in cli/requirements.txt, for the agent)
 markdown-it-py
 
-# Optional OCR backend. The default test environment uses the Tesseract system
-# binary instead.
-# rapidocr>=3
-# onnxruntime>=1.22
+# The OCR backend. Not optional any more: the compiler collects every import at
+# top level and binds them eagerly, so the module is imported whether or not a
+# test reaches the code that uses it.
+rapidocr>=3
+onnxruntime>=1.22
