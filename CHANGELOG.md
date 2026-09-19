@@ -11,8 +11,8 @@ submitted form carries and `Multipart` the scan that reads one off the wire,
 `Util` is what both sides of a cookie share, and `Router`, `Application`,
 `Wsgi` and `Serve` declare routes, serve them, write them out, and run a
 wsgiref server for harpe's own viewer and tests. What an application chooses
-to accept is not the protocol's, so `Host` and `CrossSite` are `Application`'s. `Http.server`, `Http.quiet` and
-`Http.app` are gone.
+to accept is not the protocol's, so `Host` and `CrossSite` are
+`Application`'s. `Http.server`, `Http.quiet` and `Http.app` are gone.
 
 ```jo
 val application = new Application:
@@ -50,20 +50,22 @@ deployment that forgets to name its host is refused rather than quietly served.
 
 **A route answers with a `Response` value rather than writing to WSGI.** Its
 type is `() => Response receives request`, where it was `() => py.List`.
-`Response` is `Complete(status, headers, body)` or `Stream(kind, produce)`, and
+`Response` is `Complete(status, headers, body)` or `OnDisk(…)`, and
 `Application` is the only code that writes one out, so no route signature
 mentions WSGI and `Request.startResponse` is gone. A route's answer can be
 inspected, and a wrapper can add to it. The builders are `Response.complete`,
-`binary`, `html`, `json`, `file`, `stream`, `redirect`, `notFound` and
+`binary`, `html`, `json`, `file`, `redirect`, `notFound` and
 `badRequest`; `Http.Status.Other(code, reason)` carries a status decided at
 runtime. Status lines and content types are closed unions rather than strings,
 so `"200 0K"` is a typo the compiler refuses, and each type's charset is settled
 in one place.
 
-**`Response.stream` hands its producer an `emit` that reports a gone client.**
-wsgiref and waitress raise different exceptions for a closed connection, and the
-producer sees neither, only `false` from then on, so it can stop work nobody
-will read.
+**A response is whole, and nothing holds a connection open.** WSGI pins one
+worker thread for a response's whole life, so a route that produced output as
+it went would cost a thread for as long as the work took — and how long that is
+is exactly what a server cannot know. A page that follows work in progress
+polls a cursor instead, which `harpe.observability.Viewer` has always done and
+which costs a list slice per poll.
 
 **`Response.file(root, name, disposition)` serves a file under a directory.**
 `name` is the relative path a client sent. An empty or absolute name, a `..`
@@ -159,8 +161,8 @@ not implement, and `Http.Verb.Head` is gone. The refusal carries no body because
 waitress writes whatever body it is handed even for a HEAD, which a client
 keeping the connection open reads as its next response.
 
-**`harpe.server` serves single-page applications and APIs**: JSON, streams, and
-files read from disk, where a page is a file. It renders no HTML and escapes
+**`harpe.server` serves single-page applications and APIs**: JSON and files
+read from disk, where a page is a file. It renders no HTML and escapes
 nothing, so there is no form reader — that only makes sense beside the
 server-side rendering it does not do. The `Http.Segments` pattern is gone with
 it: it split the path inside each case, so twenty routes split twenty times

@@ -122,12 +122,16 @@ pointed at `127.0.0.1`, so a deployment that forgets to name its own host is
 refused rather than quietly served. Keep `crossSite` at `Refuse` unless
 browsers on other sites must write to the server.
 
-Size the thread pool for concurrency, not for request rate. A streaming
-response holds one worker for its whole life, so the pool needs room for every
-turn in flight and every open subscription at once — a fixed pool that runs out
-stops answering everything, including the page. Set the idle timeout
-(`channel_timeout` in waitress) above your longest quiet period, or a
-subscription waiting on a slow turn is closed underneath it.
+Size the thread pool for concurrency, not for request rate. WSGI pins one
+worker for a response's whole life, so the pool needs room for every request in
+flight at once, and a fixed pool that runs out stops answering everything,
+including the page.
+
+Keep every response short for the same reason. A route that waits on a running
+turn holds a worker for as long as the turn takes, which is exactly what a
+server cannot predict. Start the work on a worker of your own, have the route
+return at once, and let the page follow it by polling a cursor —
+`harpe.observability.Viewer` is that shape, and a poll costs a list slice.
 
 Pass the server the same body limit. `wsgi` refuses an oversized body before the
 route sees it, but without draining what the client is still sending, so the
@@ -139,9 +143,6 @@ declaration rather than as the bytes arrive. One that does not is None from
 than acting on an empty body it believes whole. Waitress de-chunks a chunked
 request and declares the length itself, so this is the servers that pass the
 chunks through.
-
-A streaming producer should stop once `emit` returns `false`, since the client
-has gone.
 
 ## Behind a reverse proxy
 
@@ -170,18 +171,11 @@ location /assets/ {
 ```
 
 **Match the proxy's limits to the application's.** nginx allows a 1 MB body by
-default, refusing an upload before `maxBodyBytes` is consulted, and closes a
-proxied connection idle for 60 seconds, which cuts a stream waiting on a slow
-turn:
+default, refusing an upload before `maxBodyBytes` is consulted:
 
 ```nginx
 client_max_body_size 25m;
-proxy_read_timeout 3600s;
 ```
-
-**Do not buffer a streamed response.** `Response.stream` sends
-`X-Accel-Buffering: no`, which nginx honours. Other proxies need their own
-setting, such as `proxy_buffering off`.
 
 **`Secure` cookies need TLS at the browser, not at the application.** The proxy
 terminates TLS, so the `secure = true` that `Response.cookie` defaults to is

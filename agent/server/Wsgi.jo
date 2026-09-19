@@ -5,11 +5,10 @@ import harpe.server.Http.Mime
 import harpe.server.Http.Header
 import harpe.server.Response
 import harpe.server.Complete
-import harpe.server.Stream
 import harpe.server.OnDisk
 
 //[ Writing a `Response` out to WSGI: the status line, the headers every
-  ! response carries, and the stream that pushes chunks as it goes.
+  ! response carries, and the body it hands back.
   !
   ! The only place in `harpe.server` that speaks WSGI's calling convention.
   ! `Application` hands it a response and gets back the iterable a server
@@ -25,12 +24,6 @@ private section Wsgi
     case Complete(status, headers, body) =>
       val _ = start(startResponse, status, headers)
       py.dynamic(py.list(body))
-
-    case Stream(kind, produce) =>
-      val headers = [Header("Content-Type", Mime.value(kind)), Header("Cache-Control", "no-cache"), Header("X-Accel-Buffering", "no")]
-      val outlet = new Outlet(start(startResponse, Status.Success, headers))
-      produce(chunk => outlet.emit(chunk))
-      py.dynamic(py.list())
 
     case OnDisk(status, headers, path, length) =>
       //[ Declared here rather than by the builder, so the length sent and the
@@ -73,16 +66,4 @@ private section Wsgi
     match Response.headerIn(headers, "Content-Security-Policy")
     case Some(_) => false
     case None    => py.dynamic(kind).lower().asString.startsWith("text/html")
-
-  //[ The write side of one stream, which stays closed once a write has failed. //]
-  class Outlet(write: py.Dynamic)
-    var open: Bool = true
-
-    def emit(chunk: String): Bool =
-      if open then
-        match py.try(py.call(write, py.dynamic(chunk).encode()))
-        case Ok(_)  => pass
-        case Err(_) => open = false
-      open
-  end
 end

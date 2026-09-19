@@ -17,9 +17,14 @@ import harpe.server.request
   ! `nosniff` and the framing policy every response carries.
   !
   ! `Complete` carries every header it sends, and the builders in `Response`
-  ! fill in `Content-Type` and `Cache-Control`. `Stream` answers 200 and hands
-  ! `produce` an `emit` once the headers are out. `OnDisk` names a file the
+  ! fill in `Content-Type` and `Cache-Control`. `OnDisk` names a file the
   ! server reads a block at a time, so its size is not its cost in memory.
+  !
+  ! EVERY RESPONSE IS WHOLE. Nothing here holds a connection open while it
+  ! produces: WSGI pins one worker thread for a response's whole life, so a
+  ! long one costs a thread nobody can reclaim, and how long it will run is
+  ! exactly what a server cannot know. A page that follows work in progress
+  ! polls a cursor instead, which `harpe.observability.Viewer` shows.
   !
   ! WHAT BELONGS HERE. Anything that constructs what goes back: the builders,
   ! the header values they set, the cookies they write. The protocol's own
@@ -27,7 +32,6 @@ import harpe.server.request
 //]
 union Response =
     Complete(status: Status.Code, headers: List[Header], body: py.Dynamic)
-  | Stream(kind: Mime.Type, produce: (String => Bool) => Unit)
   | OnDisk(status: Status.Code, headers: List[Header], path: String, length: Int)
 
 //[ The builders a route answers with. Import `harpe.server.Response` and write `Response.html(…)`. //]
@@ -117,25 +121,6 @@ section Response
   //]
   def badRequest(detail: String): Response =
     complete(Status.BadRequest, Mime.Json, JSON.dumps(py.dict("error" ~ "bad_request", "detail" ~ detail)))
-
-  //[ A streamed response, whose `produce` emits a chunk at a time
-    !
-    ! How a long-running turn reaches the tab that asked for it, instead of
-    ! arriving whole at the end. `produce` runs on the request's thread once
-    ! the headers are out.
-    !
-    ! `emit` answers whether the client is still there. A failed write means it
-    ! is not, whichever server raised which exception for it, so every later
-    ! `emit` returns false without writing and the producer can stop its work.
-    !
-    ! Written through WSGI's `write` callable rather than a returned iterable,
-    ! which would need the producer to be pull-shaped — a turn pushes into a
-    ! sink, so the iterable form would mean a queue and a second thread per
-    ! stream. Both forms were measured to flush per chunk on waitress and
-    ! wsgiref.
-  //]
-  def stream(kind: Mime.Type, produce: (String => Bool) => Unit): Response =
-    Stream(kind, produce)
 
   //[ Whether a browser shows a file or saves it. //]
   union Disposition = Inline | Attachment
