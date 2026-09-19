@@ -94,8 +94,10 @@ caching rule riding along. `Response.cookie` and `signedCookie` default to
 None for an absent parameter and `Some("")` for an empty one. `Request.json` is
 None unless the request says `application/json` and the body is an object, where
 it used to answer `{}` for all of those alike. `Request.body` is None for a body
-that is not UTF-8, and `Request.bytes` reads it raw; a second read of the body
-in one request aborts, where it used to come back empty. `Request.header` and
+that is not UTF-8, and `Request.bytes` reads it raw. Both are None when less of
+the body arrived than `Content-Length` declared, rather than handing back a
+truncated prefix that reads as a whole message. A second read of the body in one
+request aborts, where it used to come back empty. `Request.header` and
 `Request.cookie` read a header and a cookie, the cookie leniently, as browsers
 write them. `Request.path` is decoded as UTF-8, where WSGI hands over Latin-1,
 so a route matches `/café` as written.

@@ -195,6 +195,14 @@ private def withoutLength(wsgi: (py.Dynamic, py.Dynamic) => py.List, marked: Str
     py.dynamic("hello").encode()
     adjust
 
+//[ A POST declaring more body than it sends, as a client closing early leaves one.
+  ! The declaration stays under the route's limit, so it is the read that is
+  ! short rather than the request that is refused.
+//]
+private def overstating(wsgi: (py.Dynamic, py.Dynamic) => py.List, target: String, headers: List[Header], body: String): Answer =
+  val adjust = (environ: py.Dict) => environ.set("CONTENT_LENGTH", "500")
+  callWith(wsgi, "POST", target, headers, py.dynamic(body).encode(), adjust)
+
 private def callWith(
       wsgi: (py.Dynamic, py.Dynamic) => py.List,
       method: String,
@@ -548,6 +556,15 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     val bodyless = withoutLength(wsgi, marked = "nothing")
     check("a POST carrying no body is still served", bodyless.status == 200)
     check("and reads as empty", bodyless.text == "0")
+
+  test: "refuses a body shorter than the client declared, rather than truncating it", () =>
+    val json = [Header("Content-Type", "application/json")]
+    check("text", overstating(appFor(py.list()), "/echo", [], "hello").status == 400)
+    check("json", overstating(appFor(py.list()), "/json", json, "{\"a\": 1}").status == 400)
+
+    //[ The same body, honestly declared, still goes through. //]
+    val whole = call(appFor(py.list()), "POST", "/echo", [], "hello")
+    check("an honest declaration is read", whole.status == 200 && whole.text == "5")
 
   test: "refuses a body larger than the cap, before the route sees it", () =>
     val reached = py.list()

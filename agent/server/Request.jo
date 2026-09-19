@@ -230,22 +230,26 @@ section Request
     val kind = header("Content-Type").getOrElse("")
     py.dynamic(kind.split(";").get(0).trim).lower().asString
 
-  //[ The request body as bytes
+  //[ The request body as bytes, or None when less of it arrived than was declared
     !
     ! Reads exactly what `CONTENT_LENGTH` declares, with no cap of its own:
     ! `Application.wsgi` has already refused a declaration over the route's own
-    ! limit. The
-    ! body is a stream, so a second read in one request aborts rather than
+    ! limit. A client that sends less than it promised answers None rather than
+    ! a truncated buffer, since a prefix of a message reads as a whole one.
+    !
+    ! The body is a stream, so a second read in one request aborts rather than
     ! returning nothing.
   //]
-  def bytes(): py.Dynamic receives request =
+  def bytes(): Option[py.Dynamic] receives request =
     if request.bodyTaken then abort "the request body was already read"
     request.bodyTaken = true
-    request.environ.get("wsgi.input").read(declaredLength(request.environ))
+    val declared = declaredLength(request.environ)
+    val raw = request.environ.get("wsgi.input").read(declared)
+    if builtins.len(raw) == declared then Some(raw) else None
 
   //[ The request body as text, or None when it is not UTF-8. //]
   def body(): Option[String] receives request =
-    val raw = bytes()
+    val raw = bytes() rescue None => return None
     match py.try(raw.decode("utf-8").asString)
     case Ok(text) => Some(text)
     case Err(_)   => None
@@ -265,7 +269,8 @@ section Request
 
     val kind = header("Content-Type").getOrElse("")
     val framed = py.dynamic("Content-Type: \{kind}\r\nMIME-Version: 1.0\r\n\r\n").encode("utf-8")
-    val message = py.try: parsedParts(framed.callDynamic("__add__", bytes()))
+    val raw = bytes() rescue None => return None
+    val message = py.try: parsedParts(framed.callDynamic("__add__", raw))
     val parts = message rescue Err(_) => return None
 
     if !parts.is_multipart().asBool || builtins.len(parts.defects) > 0 then return None
