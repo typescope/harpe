@@ -15,6 +15,8 @@ import harpe.server.Serve
 import harpe.server.Request
 import harpe.server.request
 import harpe.server.Response
+import harpe.server.Multipart
+import harpe.ffi.os
 import harpe.server.Sse
 import harpe.ffi.json
 import harpe.testing.thisSuite
@@ -127,8 +129,14 @@ private def route(reached: py.List): Response receives request =
     val header = Response.signedCookie("sid", given, secret, maxAgeSeconds = age, secure = true)
     Response.complete(Http.Status.Success, Http.Mime.Text, seen, headers = [header])
 
+  //[ The route names the directory its files go in, or none to refuse them. //]
   case Request.Post("/upload") =>
-    val form = Request.multipart() rescue None => return Response.badRequest("expected multipart/form-data")
+    val into: String | None = match Request.query("into")
+                              case Some(dir) => dir
+                              case None      => None
+    val form = Request.multipart(into) rescue None =>
+      return Response.badRequest("expected multipart/form-data")
+
     val note = form.field("note").getOrElse("absent")
     val tags = form.all("tag").join("+")
     val files = form.files("file")
@@ -341,6 +349,15 @@ private def multipartBody(boundary: String, parts: List[String], file: py.Dynami
   val closing = py.dynamic("\r\n--" + boundary + "--\r\n").encode("utf-8")
   opening.callDynamic("__add__", fileHead).callDynamic("__add__", file).callDynamic("__add__", closing)
 
+//[ The same routes under a limit big enough for a real upload. //]
+private def roomyApp(): (py.Dynamic, py.Dynamic) => py.Dynamic =
+  val app = new Application:
+    host = Application.Host.Loopback
+    routes = []
+    fallback = () => route(py.list())
+    maxBodyBytes = 1048576
+  app.wsgi()
+
 //[ The application under test. `reached` records what its routes saw. //]
 private def appFor(reached: py.List): (py.Dynamic, py.Dynamic) => py.Dynamic =
   applicationFor(Application.Host.Loopback, reached).wsgi()
@@ -454,7 +471,8 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("the wrong content type is None", unlabelled.status == 400)
 
   test: "reads a multipart body, its fields and its files", () =>
-    val wsgi = appFor(py.list())
+    val wsgi = roomyApp()
+    val dir = py.module("tempfile").mkdtemp().asString
     val boundary = "----harpeBoundary42"
     val fields = ["Content-Disposition: form-data; name=\"note\"\r\n\r\nCaf\u{e9} \u{2615}",
                   "Content-Disposition: form-data; name=\"tag\"\r\n\r\na",
@@ -463,9 +481,65 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     val body = multipartBody(boundary, fields, file)
     val kind = [Header("Content-Type", "multipart/form-data; boundary=" + boundary)]
 
-    val answer = callBytes(wsgi, "POST", "/upload", kind, body)
+    val answer = callBytes(wsgi, "POST", "/upload?into=" + dir, kind, body)
     check("200", answer.status == 200)
     check("fields, files and their bytes", answer.text == "Café ☕|a+b|café.bin|image/png|6")
+    check("the file is in the route's directory", os.listdir(dir).size == 1)
+
+  //[ A delimiter can straddle any two reads, so the same body is scanned again
+    ! at every block size that splits one differently. A scanner that forgets to
+    ! hold back the bytes it cannot yet judge passes at 4096 and fails at 3.
+  //]
+  test: "finds a delimiter however the body is split across reads", () =>
+    val dir = py.module("tempfile").mkdtemp().asString
+    val wsgi = roomyApp()
+    val boundary = "----harpeBoundary42"
+    val payload = py.module("os").urandom(3000)
+    val fields = ["Content-Disposition: form-data; name=\"note\"\r\n\r\nhi"]
+    val body = multipartBody(boundary, fields, payload)
+    val kind = [Header("Content-Type", "multipart/form-data; boundary=" + boundary)]
+
+    for cap in [1, 2, 3, 7, 17, 64, 511, 4096] do
+      val source = py.module("io").BytesIO(body)
+      val short = (asked: Int) => source.read(if asked > cap then cap else asked)
+      val adjust = (environ: py.Dict) =>
+        environ.set("wsgi.input", py.module("types").SimpleNamespace(read = short))
+      val answer = callWith(wsgi, "POST", "/upload?into=" + dir, kind, body, adjust)
+
+      // The client's name is reported, the stored name is this scan's own.
+      check("read \{cap} at a time: the form", answer.status == 200 && answer.text == "hi||caf\u{e9}.bin|image/png|3000")
+      val landed = os.listdir(dir)
+      check("read \{cap} at a time: one file, named by the scan", landed.size == 1 && landed.get(0).asString != "caf\u{e9}.bin")
+      check("read \{cap} at a time: every byte of it", py.open(os.path.join(dir, landed.get(0).asString), "rb").read().callDynamic("__eq__", payload).asBool)
+      os.unlink(os.path.join(dir, landed.get(0).asString))
+
+  //[ A route that names no directory cannot be made to store a file. //]
+  test: "refuses every file when the route names no directory", () =>
+    val dir = py.module("tempfile").mkdtemp().asString
+    val boundary = "----harpeBoundary42"
+    val kind = [Header("Content-Type", "multipart/form-data; boundary=" + boundary)]
+    val fields = ["Content-Disposition: form-data; name=\"note\"\r\n\r\nkept"]
+    val body = multipartBody(boundary, fields, py.module("os").urandom(64))
+
+    val answer = callBytes(roomyApp(), "POST", "/upload", kind, body)
+    check("the fields still arrive", answer.status == 200 && answer.text == "kept||none")
+    check("and no file was written anywhere", os.listdir(dir).size == 0)
+
+  //[ A body that stops early takes back every file it had already written, so
+    ! None means nothing was stored — the contract `Request.saveTo` also keeps.
+  //]
+  test: "unwinds what it wrote when the body arrives short", () =>
+    val dir = py.module("tempfile").mkdtemp().asString
+    val boundary = "----harpeBoundary42"
+    val kind = [Header("Content-Type", "multipart/form-data; boundary=" + boundary)]
+    val whole = multipartBody(boundary, [], py.module("os").urandom(2048))
+    val cut = whole.callDynamic("__getitem__", py.call(py.module("builtins").slice, 0, 900))
+    val overstate = (environ: py.Dict) =>
+      environ.set("CONTENT_LENGTH", py.module("builtins").len(whole).asInt.toString)
+
+    val answer = callWith(roomyApp(), "POST", "/upload?into=" + dir, kind, cut, overstate)
+    check("refused", answer.status == 400)
+    check("and the directory is as it was", os.listdir(dir).size == 0)
 
   test: "refuses a body that is not multipart, or does not parse", () =>
     val wsgi = appFor(py.list())

@@ -6,7 +6,7 @@ import harpe.ffi.builtins
   ! one exchange.
   !
   ! WHAT BELONGS HERE. A type the protocol itself defines — a verb, a status, a
-  ! media type, a header, the shape of a multipart body — together with the
+  ! media type, a header — together with the
   ! support that makes it usable: the status line a code writes, the charset a
   ! content type settles, the spelling WSGI expects of a verb. What an
   ! application chooses to accept is not protocol, so `Host` and `CrossSite`
@@ -15,10 +15,10 @@ import harpe.ffi.builtins
   ! WHAT DOES NOT. Nothing here reads a request or builds a response. `Request`
   ! owns what came in, `Response` what goes back, and the test for an addition
   ! is whether it would still mean something in a program that never serves a
-  ! request. A reader of the body is `Request`'s even when the format is the
-  ! protocol's, which is why `Multipart` is defined here and
-  ! `Request.multipart()` decodes one. `Header` is here for the same reason: a
-  ! name and a value are the protocol's, and only `Response` builds one to send.
+  ! request. `Header` passes it: a name and a value are the protocol's, and only
+  ! `Response` builds one to send. A body format whose reader is inseparable
+  ! from its shape does not, which is why `Multipart` owns both its types and
+  ! the scan that fills them.
   !
   ! Closed unions rather than strings, because `"200 0K"` is a typo no compiler
   ! can refuse, and a second `405`-vs-`501` rule is the kind of difference
@@ -130,32 +130,6 @@ section Http
       case Css         => "text/css; charset=utf-8"
       case JavaScript  => "application/javascript; charset=utf-8"
       case Other(raw)  => raw
-  end
-
-  //[ One file a client sent in a `multipart/form-data` body
-    !
-    ! `field` is the form field it arrived under, `filename` what the client
-    ! called it — client-controlled, so sanitize it before storing anything.
-  //]
-  class Upload(field: String, filename: String, mime: String, bytes: py.Dynamic)
-    def size: Int = builtins.len(bytes)
-  end
-
-  //[ A decoded `multipart/form-data` body: its text fields, and its files. //]
-  class Multipart(values: py.Dict, uploads: List[Upload])
-    //[ The first text field by this name, `Some("")` for one sent empty. //]
-    def field(name: String): Option[String] =
-      if values.contains(name) then Some(values.get(name).cast[py.List].get(0).asString) else None
-
-    //[ Every text field by this name, for a form that repeats one. //]
-    def all(name: String): List[String] =
-      var found: List[String] = []
-      if values.contains(name) then
-        for value in values.get(name).cast[py.List] do found = found + value.asString
-      found
-
-    //[ The files sent under this field name. //]
-    def files(name: String): List[Upload] = uploads.select(one => one.field == name)
   end
 
   //[ The verb as WSGI spells it. //]

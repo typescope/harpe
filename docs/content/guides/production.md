@@ -92,12 +92,20 @@ names none — and let an upload route raise its own. `application.ceiling` is t
 largest of them, which is what the server should allow.
 
 Budget memory for the bodies a route holds, not just for the limit it names.
-`Request.bytes`, `body` and `json` hold the whole body, and `multipart` holds it
-twice while it parses, so the peak is roughly `concurrent uploads ×
-maxBodyBytes × 2`. A route whose upload belongs in a file calls
-`Request.saveTo`, which copies it a block at a time and never holds it.
-`Response.file` sends through the server's own file wrapper, so what it answers
-costs a block rather than the file's size.
+`Request.bytes`, `body` and `json` hold the whole body, so the peak for those
+is `concurrent requests × maxBodyBytes`.
+
+The readers that write to disk do not, and cost a block each however large the
+body is. `Request.multipart` writes every file into the directory the route
+names as the body arrives, `Request.saveTo` copies a whole body to a path, and
+`Response.file` sends through the server's own file wrapper. What an upload
+route budgets is that directory's disk, not this process's memory.
+
+Give the spool somewhere real. A file lands where the route says, so point an
+upload route at the filesystem it will keep the file on — a rename then costs
+nothing, where a directory on another device makes it a copy. Note that `/tmp`
+is a RAM-backed tmpfs on many systems, which would put the upload back in
+memory by another name.
 
 A route that raises reaches the server, which answers 500 and logs it. Wrap your
 own routes to answer differently, and to log the failure with the session it
@@ -126,7 +134,7 @@ route sees it, but without draining what the client is still sending, so the
 server's own limit is what gives the client a clean answer.
 
 A body must declare its length, since the limit is enforced from the
-declaration and nothing here streams a body. One that does not is None from
+declaration rather than as the bytes arrive. One that does not is None from
 `Request.body`, `json` and `multipart`, so the route answers its own 400 rather
 than acting on an empty body it believes whole. Waitress de-chunks a chunked
 request and declares the length itself, so this is the servers that pass the

@@ -6,8 +6,6 @@ import harpe.ffi.os
 import harpe.util.Clock
 import harpe.server.Http
 import harpe.server.Http.Verb
-import harpe.server.Http.Multipart
-import harpe.server.Http.Upload
 import harpe.server.Util
 
 //[ One exchange, the channel that carries it, and the readers that take it
@@ -19,8 +17,9 @@ import harpe.server.Util
   ! way to start the response: it never touches either.
   !
   ! WHAT BELONGS HERE. Anything that reads the exchange that came in. The
-  ! protocol's own types live in `Http`, so a reader of a body defined there —
-  ! `Http.Multipart` — is still written here.
+  ! protocol's own types live in `Http`. A body format with a reader of its own
+  ! lives with it, so `multipart` below is the door to `Multipart` and none of
+  ! the scanning.
 //]
 class Request(method: Http.Verb.Method, path: String, environ: py.Dynamic)
   //[ Whether a reader has taken the body, which WSGI hands over as a stream read once. //]
@@ -271,7 +270,7 @@ section Request
     ! replaced.
     !
     ! `path` is the route's to choose. A filename a client sent is not one: see
-    ! `Http.Upload`.
+    ! `Multipart.Upload`.
   //]
   def saveTo(path: String): Option[Int] receives request =
     if request.bodyTaken then abort "the request body was already read"
@@ -305,56 +304,35 @@ section Request
     case Ok(text) => Some(text)
     case Err(_)   => None
 
-  //[ The request body as a form with files, what `FormData` posts
+  //[ The request body as a form, with its files written into `fileStoreDir`
     !
-    ! None unless the request says `multipart/form-data` with a boundary and the
-    ! body parses cleanly. A part with a filename is an `Upload`, and one
-    ! without is a text field, decoded as UTF-8.
+    ! `fileStoreDir` is a directory the route owns. Each file is written there as it
+    ! arrives, under a generated name, and its `Upload` carries that path
+    ! beside the name the client sent. A route keeping a file renames it, which
+    ! costs nothing because the file is already on the route's own filesystem:
     !
-    ! The whole body is held in memory, twice over while it is parsed, and the
-    ! only cap is the route's own `maxBodyBytes` — which is the reason a route
-    ! carries one. Streaming parts to disk would be a different reader.
+    !     val form = Request.multipart(Session.dataDir(id)) rescue None =>
+    !       return Response.badRequest("expected a form")
+    !
+    ! None refuses every file part, which is what a route expecting only fields
+    ! says. A route wanting only some of the files deletes the rest.
+    !
+    ! None unless the request says `multipart/form-data` with a boundary and
+    ! the body scans cleanly. Every file already written is unlinked first, so
+    ! None means nothing was stored.
+    !
+    ! The body is read a block at a time and never held whole, so what a route
+    ! must budget is that directory's disk rather than this process's memory.
+    ! `Multipart` has the rest.
   //]
-  def multipart(): Option[Multipart] receives request =
+  def multipart(fileStoreDir: String | None): Option[Multipart.Form] receives request =
     if mediaType() != "multipart/form-data" then return None
+    if request.bodyTaken then abort "the request body was already read"
+    request.bodyTaken = true
+    if undeclaredBody(request.environ) then return None
 
-    val kind = header("Content-Type").getOrElse("")
-    val framed = py.dynamic("Content-Type: \{kind}\r\nMIME-Version: 1.0\r\n\r\n").encode("utf-8")
-    val raw = bytes() rescue None => return None
-    val message = py.try: parsedParts(framed.callDynamic("__add__", raw))
-    val parts = message rescue Err(_) => return None
-
-    if !parts.is_multipart().asBool || builtins.len(parts.defects) > 0 then return None
-
-    val values = py.dict()
-    var uploads: List[Upload] = []
-
-    for part in py.module("builtins").list(parts.iter_parts()).cast[py.List] do
-      val name = part.get_param("name", header = "content-disposition")
-      if py.isNone(name) || builtins.len(part.defects) > 0 then return None
-
-      val payload = part.get_payload(decode = true)
-      val filename = part.get_filename()
-
-      if py.isNone(filename) then
-        val text = py.try(payload.decode("utf-8").asString) rescue Err(_) => return None
-        if !values.contains(name.asString) then values.set(name.asString, py.list())
-        values.get(name.asString).cast[py.List].append(text)
-      else
-        val upload = new Upload:
-          name.asString
-          filename.asString
-          part.get_content_type().asString
-          payload
-
-        uploads = uploads + upload
-
-    Some(new Multipart(values, uploads))
-
-  //[ `raw` parsed as a MIME message, headers and all. //]
-  private def parsedParts(raw: py.Dynamic): py.Dynamic =
-    val parser = py.module("email.parser").BytesParser(policy = py.module("email.policy").HTTP)
-    parser.parsebytes(raw)
+    val mark = Multipart.boundary(header("Content-Type").getOrElse("")) rescue None => return None
+    Multipart.read(request.environ.get("wsgi.input"), mark, declaredLength(request.environ), fileStoreDir)
 
   //[ The request body as a JSON object
     !
