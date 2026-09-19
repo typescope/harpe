@@ -91,6 +91,14 @@ Keep `maxBodyBytes` small — it defaults to 1 MiB and covers every route that
 names none — and let an upload route raise its own. `application.ceiling` is the
 largest of them, which is what the server should allow.
 
+Budget memory for the bodies a route holds, not just for the limit it names.
+`Request.bytes`, `body` and `json` hold the whole body, and `multipart` holds it
+twice while it parses, so the peak is roughly `concurrent uploads ×
+maxBodyBytes × 2`. A route whose upload belongs in a file calls
+`Request.saveTo`, which copies it a block at a time and never holds it.
+`Response.file` sends through the server's own file wrapper, so what it answers
+costs a block rather than the file's size.
+
 A route that raises reaches the server, which answers 500 and logs it. Wrap your
 own routes to answer differently, and to log the failure with the session it
 belongs to, which only your application knows.

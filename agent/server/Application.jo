@@ -45,9 +45,9 @@ class Application(
   private val exact: py.Dict = Router.indexed(routes)
 
   //[ This application as a WSGI application, which is what a server is given. //]
-  def wsgi(): (py.Dynamic, py.Dynamic) => py.List =
+  def wsgi(): (py.Dynamic, py.Dynamic) => py.Dynamic =
     (environ: py.Dynamic, startResponse: py.Dynamic) =>
-      Wsgi.write(startResponse, answer(environ))
+      Wsgi.write(environ, startResponse, answer(environ))
 
   //[ The largest body any route allows, which is the limit to give the server. //]
   def ceiling: Int =

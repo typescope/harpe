@@ -74,6 +74,11 @@ text, JSON and JavaScript so a browser never guesses a page's encoding.
 `no-store`, since what it serves is the download the request had to be entitled
 to. The files a page needs are the proxy's to serve, and to cache.
 
+The file goes out through the server's own `wsgi.file_wrapper`, which may reach
+`sendfile` and never copy it through this process, so a response costs a block
+rather than the file's size. It is opened when the response is written rather
+than when it is built, since a response is a value that may never be sent.
+
 **A response is `no-store` unless its route says otherwise.** `Response.binary`
 and `Response.complete` add that rule only when `headers` names no
 `Cache-Control`, so a route that may be kept sends its own and no response
@@ -103,6 +108,12 @@ request aborts, where it used to come back empty. `Request.header` and
 `Request.cookie` read a header and a cookie, the cookie leniently, as browsers
 write them. `Request.path` is decoded as UTF-8, where WSGI hands over Latin-1,
 so a route matches `/café` as written.
+
+**`Request.saveTo(path)` writes an upload straight to a file**, a block at a
+time, and answers how many bytes that was. The readers above hold the whole
+body, and `multipart` holds it twice while it parses, so a route whose upload
+belongs on disk should reach for this instead. It is None in the same cases they
+are, and leaves nothing at `path` in either, so None means nothing was stored.
 
 **Cookies are written from `Response` and read from `Request`.**
 `Response.cookie(name, value, maxAgeSeconds)` builds a `Set-Cookie` that

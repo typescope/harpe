@@ -2,6 +2,7 @@ namespace harpe.server
 
 import harpe.ffi.json as JSON
 import harpe.ffi.builtins
+import harpe.ffi.os
 import harpe.util.Clock
 import harpe.server.Http
 import harpe.server.Http.Verb
@@ -101,9 +102,9 @@ section Request
     !
     ! A chunked request declares none, so the limit has nothing to read and
     ! `bytes` would take zero and hand a route an empty body — silently, which
-    ! is the worst answer available. It answers None instead, since nothing here
-    ! streams a body: the limit is enforced from the declaration, and the whole
-    ! body is held in memory once it is read.
+    ! is the worst answer available. It answers None instead, since the limit is
+    ! enforced from the declaration: `saveTo` copies a body a block at a time but
+    ! still reads exactly as far as it was told to.
     !
     ! `Transfer-Encoding` is the only mark read. `wsgi.input_terminated` says
     ! reading to EOF is safe, not that a body is coming — waitress sets it on
@@ -253,6 +254,49 @@ section Request
     val declared = declaredLength(request.environ)
     val raw = request.environ.get("wsgi.input").read(declared)
     if builtins.len(raw) == declared then Some(raw) else None
+
+  //[ How much of a body is read at once, and so what one costs in memory. //]
+  private def blockBytes: Int = 65536
+
+  //[ The request body written to `path`, and how many bytes that was
+    !
+    ! For an upload whose destination is a file: the body is copied a block at a
+    ! time, so a large one costs a block rather than its size. `bytes` and the
+    ! readers built on it hold the whole body, which is why a route that takes
+    ! uploads should reach for this instead.
+    !
+    ! None in the same cases `bytes` answers None — a body that declared no
+    ! length, and one that arrived short — and nothing is left at `path` in
+    ! either, so None means nothing was stored. Anything already there is
+    ! replaced.
+    !
+    ! `path` is the route's to choose. A filename a client sent is not one: see
+    ! `Http.Upload`.
+  //]
+  def saveTo(path: String): Option[Int] receives request =
+    if request.bodyTaken then abort "the request body was already read"
+    request.bodyTaken = true
+    if undeclaredBody(request.environ) then return None
+
+    val declared = declaredLength(request.environ)
+    val input = request.environ.get("wsgi.input")
+    val out = py.open(path, "wb")
+    var written = 0
+
+    while written < declared do
+      val asked = declared - written
+      val block = input.read(if asked > blockBytes then blockBytes else asked)
+      val got = builtins.len(block)
+      if got == 0 then break
+      out.write(block)
+      written = written + got
+
+    out.close()
+    if written == declared then return Some(written)
+
+    // A prefix of a message reads as a whole one, so leave nothing behind.
+    os.unlink(path)
+    None
 
   //[ The request body as text, or None when it is not UTF-8. //]
   def body(): Option[String] receives request =

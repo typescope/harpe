@@ -18,7 +18,8 @@ import harpe.server.request
   !
   ! `Complete` carries every header it sends, and the builders in `Response`
   ! fill in `Content-Type` and `Cache-Control`. `Stream` answers 200 and hands
-  ! `produce` an `emit` once the headers are out.
+  ! `produce` an `emit` once the headers are out. `OnDisk` names a file the
+  ! server reads a block at a time, so its size is not its cost in memory.
   !
   ! WHAT BELONGS HERE. Anything that constructs what goes back: the builders,
   ! the header values they set, the cookies they write. The protocol's own
@@ -27,6 +28,7 @@ import harpe.server.request
 union Response =
     Complete(status: Status.Code, headers: List[Header], body: py.Dynamic)
   | Stream(kind: Mime.Type, produce: (String => Bool) => Unit)
+  | OnDisk(status: Status.Code, headers: List[Header], path: String, length: Int)
 
 //[ The builders a route answers with. Import `harpe.server.Response` and write `Response.html(…)`. //]
 section Response
@@ -54,9 +56,13 @@ section Response
     ! would tell it to drop the copy it was just told is good.
   //]
   def binary(status: Status.Code, kind: Mime.Type, body: py.Dynamic, headers: List[Header] = NoHeaders): Response =
+    Complete(status, sent(status, kind, headers), body)
+
+  //[ The headers every builder sends: the type, the caching rule, then the caller's own. //]
+  private def sent(status: Status.Code, kind: Mime.Type, headers: List[Header]): List[Header] =
     val stated = status is Status.NotModified || headerIn(headers, "Cache-Control") is !None
     val rule = if stated then [] else [Header("Cache-Control", "no-store")]
-    Complete(status, [Header("Content-Type", Mime.value(kind))] ++ rule ++ headers, body)
+    [Header("Content-Type", Mime.value(kind))] ++ rule ++ headers
 
   def html(body: String, headers: List[Header] = NoHeaders): Response =
     complete(Status.Success, Mime.Html, body, headers)
@@ -139,8 +145,12 @@ section Response
     ! `name` is a relative path, as a client sent it. A name that is empty,
     ! absolute, has a `..` segment, or resolves outside `root` through a
     ! symlink is a 404, and so is a directory or a missing file, so a client
-    ! cannot tell which. The type is guessed from the name. The whole file is
-    ! read into memory, which suits pages, assets and documents, not video.
+    ! cannot tell which. The type is guessed from the name.
+    !
+    ! The server reads the file a block at a time, so a large one costs a block
+    ! rather than its size. It is opened when the response is written, not here,
+    ! since a response is a value that may never be sent — so a file deleted in
+    ! between raises then, and the server answers 500.
     !
     ! `no-store`, since what this answers is the download the request had to be
     ! entitled to. A proxy serves the files a page needs, and caches them there.
@@ -151,11 +161,11 @@ section Response
     val target = resolve(root, name) rescue None => return notFound()
     val guessed = File.mimeType(target).getOrElse("application/octet-stream")
     val shown = Header("Content-Disposition", dispositionValue(disposition, os.path.basename(name)))
-    binary:
+    OnDisk:
       Status.Success
-      Mime.Other(charset(guessed))
-      File.readBytes(target)
-      [shown] ++ headers
+      sent(Status.Success, Mime.Other(charset(guessed)), [shown] ++ headers)
+      target
+      os.path.getsize(target)
 
   //[ A text type with its charset settled, as the `Mime` cases have theirs
     !

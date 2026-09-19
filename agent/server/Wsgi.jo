@@ -6,6 +6,7 @@ import harpe.server.Http.Header
 import harpe.server.Response
 import harpe.server.Complete
 import harpe.server.Stream
+import harpe.server.OnDisk
 
 //[ Writing a `Response` out to WSGI: the status line, the headers every
   ! response carries, and the stream that pushes chunks as it goes.
@@ -15,18 +16,42 @@ import harpe.server.Stream
   ! expects.
 //]
 private section Wsgi
+  //[ How much of a file is read at once, and so what one costs in memory. //]
+  private def blockBytes: Int = 65536
+
   //[ Write `response` to WSGI. //]
-  def write(startResponse: py.Dynamic, response: Response): py.List =
+  def write(environ: py.Dynamic, startResponse: py.Dynamic, response: Response): py.Dynamic =
     match response
     case Complete(status, headers, body) =>
       val _ = start(startResponse, status, headers)
-      py.list(body)
+      py.dynamic(py.list(body))
 
     case Stream(kind, produce) =>
       val headers = [Header("Content-Type", Mime.value(kind)), Header("Cache-Control", "no-cache"), Header("X-Accel-Buffering", "no")]
       val outlet = new Outlet(start(startResponse, Status.Success, headers))
       produce(chunk => outlet.emit(chunk))
-      py.list()
+      py.dynamic(py.list())
+
+    case OnDisk(status, headers, path, length) =>
+      //[ Declared here rather than by the builder, so the length sent and the
+        ! file read cannot name different sizes. //]
+      val framed = headers ++ [Header("Content-Length", length.toString)]
+      val handle = py.open(path, "rb")
+      val _ = start(startResponse, status, framed)
+      blocks(environ, handle)
+
+  //[ `handle` as the iterable a server reads a block at a time, and closes
+    !
+    ! `wsgi.file_wrapper` is the server's own, which may reach `sendfile` and
+    ! never copy the file through this process at all. PEP 3333 leaves it
+    ! optional, so `wsgiref`'s is the fallback — the same iteration, without the
+    ! server's shortcut. Both carry the `close` a server must call, which is
+    ! what shuts the handle opened above.
+  //]
+  private def blocks(environ: py.Dynamic, handle: py.Dynamic): py.Dynamic =
+    val wrapper = environ.get("wsgi.file_wrapper")
+    if py.isNone(wrapper) then py.module("wsgiref.util").FileWrapper(handle, blockBytes)
+    else py.call(wrapper, handle, blockBytes)
 
   //[ Begin the response, with `nosniff` so a browser never guesses a type. Returns WSGI's `write`. //]
   def start(startResponse: py.Dynamic, status: Status.Code, headers: List[Header]): py.Dynamic =

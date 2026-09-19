@@ -142,6 +142,12 @@ private def route(reached: py.List): Response receives request =
     Response.json:
       Request.json() rescue None => return Response.badRequest("bad json")
 
+  //[ An upload spooled straight to the path the route chose, never held whole. //]
+  case Request.Post("/save") =>
+    match Request.saveTo(Request.query("into").getOrElse(""))
+    case Some(written) => Response.json(py.dict("written" ~ written))
+    case None          => Response.badRequest("no whole body")
+
   case Request.Get("/boom") =>
     abort "boom"
 
@@ -165,10 +171,10 @@ private class Answer(status: Int, headers: List[Header], bytes: py.Dynamic)
 end
 
 //[ Ask a WSGI application for `target` in memory, with no socket and no thread. //]
-private def call(wsgi: (py.Dynamic, py.Dynamic) => py.List, method: String, target: String, headers: List[Header], body: String): Answer =
+private def call(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, method: String, target: String, headers: List[Header], body: String): Answer =
   callBytes(wsgi, method, target, headers, py.dynamic(body).encode())
 
-private def callBytes(wsgi: (py.Dynamic, py.Dynamic) => py.List, method: String, target: String, headers: List[Header], body: py.Dynamic): Answer =
+private def callBytes(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, method: String, target: String, headers: List[Header], body: py.Dynamic): Answer =
   callWith:
     wsgi
     method
@@ -182,7 +188,7 @@ private def callBytes(wsgi: (py.Dynamic, py.Dynamic) => py.List, method: String,
   ! which is the only mark of a body still coming, or `wsgi.input_terminated`,
   ! which waitress sets on every request including one with no body at all.
 //]
-private def withoutLength(wsgi: (py.Dynamic, py.Dynamic) => py.List, marked: String): Answer =
+private def withoutLength(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, marked: String): Answer =
   val adjust = (environ: py.Dict) =>
     val _ = py.dynamic(environ).pop("CONTENT_LENGTH", py.none())
     if marked == "chunked" then environ.set("HTTP_TRANSFER_ENCODING", "chunked")
@@ -199,12 +205,12 @@ private def withoutLength(wsgi: (py.Dynamic, py.Dynamic) => py.List, marked: Str
   ! The declaration stays under the route's limit, so it is the read that is
   ! short rather than the request that is refused.
 //]
-private def overstating(wsgi: (py.Dynamic, py.Dynamic) => py.List, target: String, headers: List[Header], body: String): Answer =
+private def overstating(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, target: String, headers: List[Header], body: String): Answer =
   val adjust = (environ: py.Dict) => environ.set("CONTENT_LENGTH", "500")
   callWith(wsgi, "POST", target, headers, py.dynamic(body).encode(), adjust)
 
 private def callWith(
-      wsgi: (py.Dynamic, py.Dynamic) => py.List,
+      wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic,
       method: String,
       target: String,
       headers: List[Header],
@@ -234,7 +240,12 @@ private def callWith(
     py.dynamic(sent).extend(pairs)
     collect
 
-  for chunk in wsgi(py.dynamic(environ), py.dynamic(startResponse)) do chunks.append(chunk)
+  // Drained and then closed, as PEP 3333 obliges a server to do — which is what
+  // releases the handle behind a file response.
+  val returned = wsgi(py.dynamic(environ), py.dynamic(startResponse))
+  for chunk in py.module("builtins").list(returned).cast[py.List] do chunks.append(chunk)
+  val closer = py.module("builtins").getattr(returned, "close", py.none())
+  if !py.isNone(closer) then py.call(closer)
 
   val line = statuses.get(0).asString
   val status = Int.parse(line.split(" ").get(0)) rescue None => abort "a status line with no code: '\{line}'"
@@ -260,7 +271,7 @@ private def fileRoute(root: String): Response receives request =
   case _                     => Response.notFound()
 
 //[ A directory of files to serve, beside one that must stay out of reach, for the length of `body`. //]
-private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.List) => Unit): Unit =
+private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.Dynamic) => Unit): Unit =
   val os = py.module("os")
   val scratch = py.module("tempfile").mkdtemp().asString
   val root = scratch + "/root"
@@ -273,6 +284,8 @@ private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.List) => Uni
   write(root + "/café.txt", "é")
   write(root + "/blob.unknownext", "?")
   write(root + "/index.html", "<p>hi</p>")
+  // Larger than one block, so that reading it a block at a time is observable.
+  write(root + "/big.bin", py.dynamic("x").callDynamic("__mul__", 200000).asString)
   write(scratch + "/outside/secret.txt", "secret")
   os.symlink(scratch + "/outside/secret.txt", root + "/link")
 
@@ -329,23 +342,23 @@ private def multipartBody(boundary: String, parts: List[String], file: py.Dynami
   opening.callDynamic("__add__", fileHead).callDynamic("__add__", file).callDynamic("__add__", closing)
 
 //[ The application under test. `reached` records what its routes saw. //]
-private def appFor(reached: py.List): (py.Dynamic, py.Dynamic) => py.List =
+private def appFor(reached: py.List): (py.Dynamic, py.Dynamic) => py.Dynamic =
   applicationFor(Application.Host.Loopback, reached).wsgi()
 
-private def get(wsgi: (py.Dynamic, py.Dynamic) => py.List, target: String): Answer =
+private def get(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, target: String): Answer =
   call(wsgi, "GET", target, [], "")
 
-private def postJson(wsgi: (py.Dynamic, py.Dynamic) => py.List, payload: String): Answer =
+private def postJson(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, payload: String): Answer =
   call(wsgi, "POST", "/json", [Header("Content-Type", "application/json; charset=utf-8")], payload)
 
 private def headerOf(answer: Answer, name: String): String = answer.header(name).getOrElse("")
 
 //[ The `name=value` a route's `Set-Cookie` wrote, without its attributes. //]
-private def issued(wsgi: (py.Dynamic, py.Dynamic) => py.List, target: String): String =
+private def issued(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, target: String): String =
   headerOf(get(wsgi, target), "Set-Cookie").split(";").get(0)
 
 //[ What `/signed` reads back when the request carries `cookie`. //]
-private def carrying(wsgi: (py.Dynamic, py.Dynamic) => py.List, cookie: String): String =
+private def carrying(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, cookie: String): String =
   val named = if cookie.startsWith("sid=") then cookie else "sid=" + cookie
   call(wsgi, "GET", "/signed?value=ignored", [Header("Cookie", named)], "").text
 
@@ -570,6 +583,35 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     val whole = call(appFor(py.list()), "POST", "/echo", [], "hello")
     check("an honest declaration is read", whole.status == 200 && whole.text == "5")
 
+  //[ An upload's destination is a file, so its size should not be its cost in
+    ! memory. What that looks like from here: the body arrives at the path the
+    ! route chose, and a body that did not arrive whole leaves nothing there —
+    ! since a prefix of a message would read as a whole one.
+  //]
+  test: "spools a body to a file, and leaves nothing behind when it arrives short", () =>
+    val scratch = py.module("tempfile").mkdtemp().asString
+    val into = scratch + "/body.bin"
+    val exists = () => py.module("os").path.exists(into).asBool
+
+    val saved = call(appFor(py.list()), "POST", "/save?into=" + into, [], "hello")
+    check("written", saved.status == 200 && saved.text == "{\"written\": 5}")
+    check("as the client sent it", py.open(into, "rb").read().decode("utf-8").asString == "hello")
+
+    // Bigger than one block, so the copy loops rather than reading once.
+    val long = py.dynamic("y").callDynamic("__mul__", 150000).asString
+    val big = new Application:
+      host = Application.Host.Loopback
+      routes = []
+      fallback = () => route(py.list())
+      maxBodyBytes = 1048576
+    val spooled = call(big.wsgi(), "POST", "/save?into=" + into, [], long)
+    check("across blocks", spooled.status == 200 && spooled.text == "{\"written\": 150000}")
+    check("every one of them", py.module("os").path.getsize(into).asInt == 150000)
+
+    val short = overstating(appFor(py.list()), "/save?into=" + into, [], "hello")
+    check("a short body is refused", short.status == 400)
+    check("and stores nothing", !exists())
+
   test: "refuses a body larger than the cap, before the route sees it", () =>
     val reached = py.list()
     val wsgi = appFor(reached)
@@ -690,7 +732,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("no route ran", reached.size == 0)
 
   test: "serves a file under its root, typed and named", () =>
-    withFiles: (root: String, wsgi: (py.Dynamic, py.Dynamic) => py.List) =>
+    withFiles: (root: String, wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic) =>
       val hello = get(wsgi, "/download?name=hello.txt")
       check("200", hello.status == 200 && hello.text == "hi")
       check("typed from its name", headerOf(hello, "Content-Type").startsWith("text/plain"))
@@ -719,8 +761,38 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
       check("an HTML file too", headerOf(page, "Content-Type") == "text/html; charset=utf-8")
       check("and cannot be framed elsewhere", headerOf(page, "Content-Security-Policy") == "frame-ancestors 'self'")
 
+  //[ A file response must not cost its own size in memory, so the handle goes to
+    ! the server rather than the bytes. What that looks like from here: the
+    ! wrapper the server offered was called, with one block as its size, and the
+    ! handle it was given is closed once the response has been drained.
+  //]
+  test: "hands a file to the server's wrapper rather than reading it whole", () =>
+    withFiles: (root: String, wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic) =>
+      val blocks = py.list()
+      val handles = py.list()
+      val offer = (handle: py.Dynamic, size: py.Dynamic) =>
+        handles.append(handle)
+        blocks.append(size)
+        py.module("wsgiref.util").FileWrapper(handle, size)
+
+      val adjust = (environ: py.Dict) => environ.set("wsgi.file_wrapper", offer)
+      val big = callWith(wsgi, "GET", "/download?name=big.bin", [], py.dynamic("").encode(), adjust)
+
+      check("200", big.status == 200)
+      check("the whole file", big.text.size == 200000)
+      check("whose length is declared", headerOf(big, "Content-Length") == "200000")
+      check("through the server's own wrapper", blocks.size == 1)
+      check("a block at a time", blocks.get(0).asInt == 65536)
+      check("and the handle closed once sent", handles.get(0).closed.asBool)
+
+      // PEP 3333 leaves `wsgi.file_wrapper` optional, and nothing above supplies
+      // one, so this is the fallback carrying the same file.
+      val plain = get(wsgi, "/download?name=big.bin")
+      check("whole without a wrapper too", plain.text.size == 200000)
+      check("and still declared", headerOf(plain, "Content-Length") == "200000")
+
   test: "refuses a file name that leaves its root, or names no file", () =>
-    withFiles: (root: String, wsgi: (py.Dynamic, py.Dynamic) => py.List) =>
+    withFiles: (root: String, wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic) =>
       check("dot-dot", get(wsgi, "/download?name=../outside/secret.txt").status == 404)
       check("dot-dot inside", get(wsgi, "/download?name=css/../../outside/secret.txt").status == 404)
       check("absolute", get(wsgi, "/download?name=" + root + "/hello.txt").status == 404)
