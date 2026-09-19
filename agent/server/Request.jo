@@ -7,6 +7,7 @@ import harpe.util.Clock
 import harpe.server.Http
 import harpe.server.Http.Verb
 import harpe.server.Util
+import harpe.server.Form
 
 //[ One exchange, the channel that carries it, and the readers that take it
   ! apart. `path` is already decoded as UTF-8.
@@ -270,7 +271,7 @@ section Request
     ! replaced.
     !
     ! `path` is the route's to choose. A filename a client sent is not one: see
-    ! `Multipart.Upload`.
+    ! `Form.Upload`.
   //]
   def saveTo(path: String): Option[Int] receives request =
     if request.bodyTaken then abort "the request body was already read"
@@ -304,33 +305,61 @@ section Request
     case Ok(text) => Some(text)
     case Err(_)   => None
 
-  //[ The request body as a form, with its files written into `fileStoreDir`
+  //[ The request body as a form, in either encoding a browser sends
     !
-    ! `fileStoreDir` is a directory the route owns. Each file is written there as it
-    ! arrives, under a generated name, and its `Upload` carries that path
+    ! `multipart/form-data` carries files, `application/x-www-form-urlencoded`
+    ! cannot, and a route reads both the same way — which is what it wants,
+    ! since an HTML form switches to multipart the moment it grows a file input
+    ! and a webhook picks whichever it likes. `Form.files` is empty for the one
+    ! that carries none.
+    !
+    ! `fileStoreDir` is a directory the route owns. Each file is written there
+    ! as it arrives, under a generated name, and its `Upload` carries that path
     ! beside the name the client sent. A route keeping a file renames it, which
     ! costs nothing because the file is already on the route's own filesystem:
     !
-    !     val form = Request.multipart(Session.dataDir(id)) rescue None =>
+    !     val form = Request.form(Session.dataDir(id)) rescue None =>
     !       return Response.badRequest("expected a form")
     !
-    ! None refuses every file part, which is what a route expecting only fields
-    ! says. A route wanting only some of the files deletes the rest. An empty
-    ! string is neither, and aborts: joined onto a generated name it would write
-    ! into whatever the working directory happens to be.
+    ! It defaults to None, which refuses every file part — so `Request.form()`
+    ! reads a form that should carry none, and a route that never considered
+    ! files cannot be made to write one. A route wanting only some of the files
+    ! deletes the rest. An empty string is neither None nor a directory, and
+    ! aborts: joined onto a generated name it would write into whatever the
+    ! working directory happens to be.
     !
-    ! None unless the request says `multipart/form-data` with a boundary and
-    ! the body scans cleanly. Every file already written is unlinked first, so
-    ! None means nothing was stored.
+    ! None unless the request names one of those two types and the body reads
+    ! cleanly. Every file already written is unlinked first, so None means
+    ! nothing was stored.
     !
-    ! The body is read a block at a time and never held whole, so what a route
-    ! must budget is that directory's disk rather than this process's memory.
-    ! `Multipart` has the rest.
+    ! A browser MAY send either type cross-site without a preflight, where
+    ! `application/json` forces one. So what refuses a hostile page's POST here
+    ! is the `crossSite` check rather than the content type, and a route reading
+    ! a form should leave that check on. A webhook is not a browser and sends
+    ! neither header it reads, so it passes — which is why a webhook route must
+    ! verify its sender's own signature.
+    !
+    ! A multipart body is read a block at a time and never held whole, so what a
+    ! route must budget is that directory's disk rather than this process's
+    ! memory.
   //]
-  def multipart(fileStoreDir: String | None): Option[Multipart.Form] receives request =
+  def form(fileStoreDir: String | None = None): Option[Form] receives request =
     if fileStoreDir is "" then
       abort "an empty fileStoreDir writes to the working directory: name a directory, or pass None to refuse files"
-    if mediaType() != "multipart/form-data" then return None
+
+    match mediaType()
+    case "application/x-www-form-urlencoded" => urlencoded()
+    case "multipart/form-data"               => scanned(fileStoreDir)
+    case _                                   => None
+
+  //[ A `application/x-www-form-urlencoded` body, decoded as `query` decodes a URL's. //]
+  private def urlencoded(): Option[Form] receives request =
+    val text = body() rescue None => return None
+    val parsed = py.module("urllib.parse").parse_qs(text, keep_blank_values = true)
+    Some(new Form(parsed.cast[py.Dict], []))
+
+  //[ A `multipart/form-data` body, scanned as it arrives. //]
+  private def scanned(fileStoreDir: String | None): Option[Form] receives request =
     if request.bodyTaken then abort "the request body was already read"
     request.bodyTaken = true
     if undeclaredBody(request.environ) then return None

@@ -96,7 +96,7 @@ Budget memory for the bodies a route holds, not just for the limit it names.
 is `concurrent requests × maxBodyBytes`.
 
 The readers that write to disk do not, and cost a block each however large the
-body is. `Request.multipart` writes every file into the directory the route
+body is. `Request.form` writes every file into the directory the route
 names as the body arrives, `Request.saveTo` copies a whole body to a path, and
 `Response.file` sends through the server's own file wrapper. What an upload
 route budgets is that directory's disk, not this process's memory.
@@ -135,7 +135,7 @@ server's own limit is what gives the client a clean answer.
 
 A body must declare its length, since the limit is enforced from the
 declaration rather than as the bytes arrive. One that does not is None from
-`Request.body`, `json` and `multipart`, so the route answers its own 400 rather
+`Request.body`, `json` and `form`, so the route answers its own 400 rather
 than acting on an empty body it believes whole. Waitress de-chunks a chunked
 request and declares the length itself, so this is the servers that pass the
 chunks through.

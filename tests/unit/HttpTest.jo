@@ -15,7 +15,6 @@ import harpe.server.Serve
 import harpe.server.Request
 import harpe.server.request
 import harpe.server.Response
-import harpe.server.Multipart
 import harpe.ffi.os
 import harpe.server.Sse
 import harpe.ffi.json
@@ -134,7 +133,7 @@ private def route(reached: py.List): Response receives request =
     val into: String | None = match Request.query("into")
                               case Some(dir) => dir
                               case None      => None
-    val form = Request.multipart(into) rescue None =>
+    val form = Request.form(into) rescue None =>
       return Response.badRequest("expected multipart/form-data")
 
     val note = form.field("note").getOrElse("absent")
@@ -145,6 +144,12 @@ private def route(reached: py.List): Response receives request =
                   val one = files.get(0)
                   "\{one.filename}|\{one.mime}|\{one.size}"
     Response.complete(Http.Status.Success, Http.Mime.Text, "\{note}|\{tags}|\{shown}")
+
+  //[ A urlencoded body, as a webhook posts one. //]
+  case Request.Post("/form") =>
+    val form = Request.form() rescue None => return Response.badRequest("expected a form")
+    val tags = form.all("tag").join("+")
+    Response.complete(Http.Status.Success, Http.Mime.Text, "\{form.field("note").getOrElse("absent")}|\{tags}|\{form.files("any").size}")
 
   case Request.Post("/json") =>
     Response.json:
@@ -158,7 +163,7 @@ private def route(reached: py.List): Response receives request =
 
   //[ An empty directory is one nobody meant, so it aborts rather than writing to the CWD. //]
   case Request.Post("/upload-nowhere") =>
-    match py.try(Request.multipart(""))
+    match py.try(Request.form(""))
     case Ok(_)    => Response.complete(Http.Status.Success, Http.Mime.Text, "accepted")
     case Err(err) => Response.complete(Http.Status.Success, Http.Mime.Text, err.message)
 
@@ -475,6 +480,43 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
     val unlabelled = call(wsgi, "POST", "/json", [Header("Content-Type", "text/plain")], "{\"a\": 1}")
     check("the wrong content type is None", unlabelled.status == 400)
+
+  test: "reads a urlencoded form, only when it is labelled as one", () =>
+    val wsgi = appFor(py.list())
+    val urlencoded = [Header("Content-Type", "application/x-www-form-urlencoded")]
+
+    val answer = call(wsgi, "POST", "/form", urlencoded, "note=Caf%C3%A9+%E2%98%95&tag=a&tag=b")
+    check("percent-decoded, repeats kept, no files", answer.status == 200 && answer.text == "Caf\u{e9} \u{2615}|a+b|0")
+
+    val blank = call(wsgi, "POST", "/form", urlencoded, "note=")
+    check("an empty value is not an absent one", blank.status == 200 && blank.text == "||0")
+
+    val charset = [Header("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")]
+    check("a charset parameter is still the same type", call(wsgi, "POST", "/form", charset, "note=x").text == "x||0")
+
+    check("the wrong content type is None", call(wsgi, "POST", "/form", [Header("Content-Type", "application/json")], "note=x").status == 400)
+    check("an unlabelled body is None", call(wsgi, "POST", "/form", [], "note=x").status == 400)
+
+  //[ One route takes either encoding, which is what a form that grows a file
+    ! input needs: the browser switches to multipart and the route does not.
+  //]
+  test: "reads both form encodings through one route", () =>
+    val dir = py.module("tempfile").mkdtemp().asString
+    val wsgi = roomyApp()
+    val boundary = "----harpeBoundary42"
+
+    val simple = call(wsgi, "POST", "/upload?into=" + dir, [Header("Content-Type", "application/x-www-form-urlencoded")], "note=hi&tag=a&tag=b")
+    check("urlencoded: fields, and no files", simple.status == 200 && simple.text == "hi|a+b|none")
+    check("urlencoded: nothing was written", os.listdir(dir).size == 0)
+
+    val fields = ["Content-Disposition: form-data; name=\"note\"\r\n\r\nhi",
+                  "Content-Disposition: form-data; name=\"tag\"\r\n\r\na",
+                  "Content-Disposition: form-data; name=\"tag\"\r\n\r\nb"]
+    val body = multipartBody(boundary, fields, py.module("os").urandom(9))
+    val kind = [Header("Content-Type", "multipart/form-data; boundary=" + boundary)]
+    val withFile = callBytes(wsgi, "POST", "/upload?into=" + dir, kind, body)
+    check("multipart: the same fields, plus the file", withFile.status == 200 && withFile.text == "hi|a+b|caf\u{e9}.bin|image/png|9")
+    check("multipart: which was written", os.listdir(dir).size == 1)
 
   test: "reads a multipart body, its fields and its files", () =>
     val wsgi = roomyApp()

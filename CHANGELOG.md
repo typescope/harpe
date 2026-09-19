@@ -3,16 +3,16 @@
 ## Unreleased
 
 **HTTP now lives in `harpe.server`, and an application is a value.** What was
-one `harpe.Http` file is nine under `agent/server/`, each owning one side of
+one `harpe.Http` file is ten under `agent/server/`, each owning one side of
 the exchange: `Http` is the protocol's vocabulary (`Verb`, `Status`, `Mime`,
 `Header`), `Request` is what came in (the class, the ambient `request`, the
-patterns, the readers), `Response` is what goes back, `Multipart` is the shape
-of a form and the scan that reads one, `Util` is what both sides of a cookie
-share, and `Router`, `Application`, `Wsgi` and `Serve` declare routes, serve
-them, write them out, and run a wsgiref server for harpe's own viewer and
-tests. What an application chooses to accept is not
-the protocol's, so `Host` and `CrossSite` are `Application`'s. `Http.server`,
-`Http.quiet` and `Http.app` are gone.
+patterns, the readers), `Response` is what goes back, `Form` is what a
+submitted form carries and `Multipart` the scan that reads one off the wire,
+`Util` is what both sides of a cookie share, and `Router`, `Application`,
+`Wsgi` and `Serve` declare routes, serve them, write them out, and run a
+wsgiref server for harpe's own viewer and tests. What an application chooses
+to accept is not the protocol's, so `Host` and `CrossSite` are
+`Application`'s. `Http.server`, `Http.quiet` and `Http.app` are gone.
 
 ```jo
 val application = new Application:
@@ -116,20 +116,26 @@ body, so a route whose upload belongs on disk should reach for this instead. It
 is None in the same cases they are, and leaves nothing at `path` in either, so
 None means nothing was stored.
 
-**`multipart/form-data` is read as it arrives, and its files never sit in
-memory.** `harpe.server.Multipart` owns the shapes a form carries and the scan
-that fills them, and `Request.multipart(fileStoreDir)` is the door to it. A
-route names the directory its files go in, and each file is written there as
-the body arrives, under a generated name that cannot collide or escape, with
+**`Request.form(fileStoreDir)` reads a form in either encoding a browser
+sends.** `multipart/form-data` carries files and
+`application/x-www-form-urlencoded` cannot, and a route reads both the same way
+— which is what it wants, since an HTML form switches to multipart the moment
+it grows a file input and a webhook picks whichever it likes. Both answer a
+`Form`, whose `files` is empty for the encoding that carries none.
+
+`fileStoreDir` names a directory the route owns, and each file is written there
+as the body arrives, under a generated name that cannot collide or escape, with
 `Upload` carrying that path beside the name the client sent. A route keeps a
 file by renaming it, which costs nothing because it already sits on the route's
-own filesystem. `None` for `fileStoreDir` refuses every file part, which is what
-a route expecting only fields says.
+own filesystem. It defaults to None, which refuses every file part, so
+`Request.form()` reads a form that should carry none and a route that never
+considered files cannot be made to write one.
 
-The body is scanned a block at a time, so a form costs one block however large
-it is. A body that is malformed or that stops early unlinks every file the scan
-wrote and answers None, so None means nothing was stored, as it does for
-`saveTo`.
+A multipart body is scanned a block at a time and never held whole, so a form
+costs one block however large it is, and what a route budgets is that
+directory's disk rather than this process's memory. A body that is malformed
+or that stops early unlinks every file the scan wrote and answers None, so None
+means nothing was stored, as it does for `saveTo`.
 
 **Cookies are written from `Response` and read from `Request`.**
 `Response.cookie(name, value, maxAgeSeconds)` builds a `Set-Cookie` that

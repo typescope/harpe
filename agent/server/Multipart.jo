@@ -3,8 +3,10 @@ namespace harpe.server
 import harpe.ffi.builtins
 import harpe.ffi.os
 import harpe.ffi.secrets
+import harpe.server.Form
+import harpe.server.Form.Upload
 
-//[ `multipart/form-data`: what a form carries, and the scan that takes one apart.
+//[ `multipart/form-data`: the scan that takes one apart into a `Form`.
   !
   ! THE ROUTE SAYS WHICH DIRECTORY FILES GO IN. Each file part is written
   ! straight into it as the body arrives, under a generated name that cannot
@@ -24,7 +26,7 @@ import harpe.ffi.secrets
   ! The route owns what a successful scan wrote: the files are in its own
   ! directory, to rename or delete as it decides.
 //]
-section Multipart
+private section Multipart
   //[ How much of a body is read at once, and so what a scan costs in memory. //]
   private def blockBytes: Int = 65536
 
@@ -34,34 +36,8 @@ section Multipart
   //[ The most parts one body may carry, so a body cannot mint them without bound. //]
   private def maxParts: Int = 256
 
-  //[ One file a client sent, written into the route's directory
-    !
-    ! `path` is where it was written, under a name this scan generated.
-    ! `filename` is what the CLIENT called it, which is client-controlled and
-    ! is never what the file was stored as — build no path out of it. A route
-    ! keeping the file renames `path` to a name of its own choosing.
-  //]
-  class Upload(field: String, filename: String, mime: String, path: String, size: Int)
-
-  //[ A decoded `multipart/form-data` body: its text fields, and its files. //]
-  class Form(values: py.Dict, uploads: List[Upload])
-    //[ The first text field by this name, `Some("")` for one sent empty. //]
-    def field(name: String): Option[String] =
-      if values.contains(name) then Some(values.get(name).cast[py.List].get(0).asString) else None
-
-    //[ Every text field by this name, for a form that repeats one. //]
-    def all(name: String): List[String] =
-      var found: List[String] = []
-      if values.contains(name) then
-        for value in values.get(name).cast[py.List] do found = found + value.asString
-      found
-
-    //[ The files stored under this field name. //]
-    def files(name: String): List[Upload] = uploads.select(one => one.field == name)
-  end
-
   //[ The boundary a `Content-Type` names, or None when it names none. //]
-  private[server] def boundary(contentType: String): Option[String] =
+  def boundary(contentType: String): Option[String] =
     if contentType.contains("\r") || contentType.contains("\n") then return None
     val parsed = headersOf(py.dynamic("Content-Type: " + contentType + "\r\n\r\n").encode("utf-8"))
     val found = parsed.get_param("boundary", header = "content-type")
@@ -77,7 +53,7 @@ section Multipart
     ! when less of the body arrived than was declared. Every file already
     ! written is unlinked first.
   //]
-  private[server] def read(
+  def read(
         input: py.Dynamic,
         mark: String,
         declared: Int,
