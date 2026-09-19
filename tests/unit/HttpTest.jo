@@ -156,6 +156,12 @@ private def route(reached: py.List): Response receives request =
     case Some(written) => Response.json(py.dict("written" ~ written))
     case None          => Response.badRequest("no whole body")
 
+  //[ An empty directory is one nobody meant, so it aborts rather than writing to the CWD. //]
+  case Request.Post("/upload-nowhere") =>
+    match py.try(Request.multipart(""))
+    case Ok(_)    => Response.complete(Http.Status.Success, Http.Mime.Text, "accepted")
+    case Err(err) => Response.complete(Http.Status.Success, Http.Mime.Text, err.message)
+
   case Request.Get("/boom") =>
     abort "boom"
 
@@ -512,6 +518,15 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
       check("read \{cap} at a time: one file, named by the scan", landed.size == 1 && landed.get(0).asString != "caf\u{e9}.bin")
       check("read \{cap} at a time: every byte of it", py.open(os.path.join(dir, landed.get(0).asString), "rb").read().callDynamic("__eq__", payload).asBool)
       os.unlink(os.path.join(dir, landed.get(0).asString))
+
+  test: "refuses an empty directory rather than writing to the working directory", () =>
+    val boundary = "----harpeBoundary42"
+    val kind = [Header("Content-Type", "multipart/form-data; boundary=" + boundary)]
+    val body = multipartBody(boundary, [], py.module("os").urandom(8))
+
+    val answer = callBytes(roomyApp(), "POST", "/upload-nowhere", kind, body)
+    check("aborts, naming the fix", answer.text.startsWith("an empty fileStoreDir writes to the working directory"))
+    check("and wrote nothing here", !os.path.exists("caf_.bin"))
 
   //[ A route that names no directory cannot be made to store a file. //]
   test: "refuses every file when the route names no directory", () =>

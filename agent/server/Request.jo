@@ -315,7 +315,9 @@ section Request
     !       return Response.badRequest("expected a form")
     !
     ! None refuses every file part, which is what a route expecting only fields
-    ! says. A route wanting only some of the files deletes the rest.
+    ! says. A route wanting only some of the files deletes the rest. An empty
+    ! string is neither, and aborts: joined onto a generated name it would write
+    ! into whatever the working directory happens to be.
     !
     ! None unless the request says `multipart/form-data` with a boundary and
     ! the body scans cleanly. Every file already written is unlinked first, so
@@ -326,6 +328,8 @@ section Request
     ! `Multipart` has the rest.
   //]
   def multipart(fileStoreDir: String | None): Option[Multipart.Form] receives request =
+    if fileStoreDir is "" then
+      abort "an empty fileStoreDir writes to the working directory: name a directory, or pass None to refuse files"
     if mediaType() != "multipart/form-data" then return None
     if request.bodyTaken then abort "the request body was already read"
     request.bodyTaken = true
