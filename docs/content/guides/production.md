@@ -66,7 +66,7 @@ waitress, for example:
 
 ```jo
 val application = new Application:
-  host = Http.Host.Named("agent.example.com")
+  host = Application.Host.Named("agent.example.com")
   routes = List:
     Router.Get("/api/info", () => agent.info())
     Router.Post("/api/message", () => agent.message())
@@ -100,11 +100,11 @@ approvals in memory breaks when a second process answers half its requests.
 Scale with threads, or put each process behind sticky routing. With gunicorn,
 that means `--workers 1 --threads N`.
 
-Name the host your users type. `host` defaults to `Http.Host.Loopback`, which
-suits a prototype and refuses a hostile name pointed at `127.0.0.1`, so a
-deployment that forgets to name its own host is refused rather than quietly
-served. Keep `crossSite` at `Refuse` unless browsers on other sites must write
-to the server.
+Name the host your users type. `host` defaults to
+`Application.Host.Loopback`, which suits a prototype and refuses a hostile name
+pointed at `127.0.0.1`, so a deployment that forgets to name its own host is
+refused rather than quietly served. Keep `crossSite` at `Refuse` unless
+browsers on other sites must write to the server.
 
 Size the thread pool for concurrency, not for request rate. A streaming
 response holds one worker for its whole life, so the pool needs room for every
@@ -133,8 +133,8 @@ A proxy changes what the application sees, and three of harpe's checks read
 exactly those values.
 
 **Pass the original `Host` through.** nginx's default `proxy_pass` replaces it
-with the upstream address, so `Http.Host.Named` refuses every request with a
-400, and an older browser's POST, which has no `Sec-Fetch-Site` for the
+with the upstream address, so `Application.Host.Named` refuses every request
+with a 400, and an older browser's POST, which has no `Sec-Fetch-Site` for the
 cross-site check to read, gets a 403 from the `Origin` comparison:
 
 ```nginx

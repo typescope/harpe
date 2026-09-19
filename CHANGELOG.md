@@ -4,16 +4,18 @@
 
 **HTTP now lives in `harpe.server`, and an application is a value.** What was
 one `harpe.Http` file is eight under `agent/server/`, each owning one side of
-the exchange: `Http` is the vocabulary (`Verb`, `Status`, `Mime`, `Host`,
-`CrossSite`), `Request` is what came in (the class, the ambient `request`, the
-patterns, the readers), `Response` is what goes back, `Cookies` is what both
-sides of a cookie share, and `Router`, `Application`, `Wsgi` and `Serve` declare
-routes, serve them, write them out, and run a wsgiref server for harpe's own
-viewer and tests. `Http.server`, `Http.quiet` and `Http.app` are gone.
+the exchange: `Http` is the protocol's vocabulary (`Verb`, `Status`, `Mime`,
+`Header`, `Multipart`), `Request` is what came in (the class, the ambient
+`request`, the patterns, the readers), `Response` is what goes back, `Util` is
+what both sides of a cookie share, and `Router`, `Application`, `Wsgi` and
+`Serve` declare routes, serve them, write them out, and run a wsgiref server
+for harpe's own viewer and tests. What an application chooses to accept is not
+the protocol's, so `Host` and `CrossSite` are `Application`'s. `Http.server`,
+`Http.quiet` and `Http.app` are gone.
 
 ```jo
 val application = new Application:
-  host = Http.Host.Named("agent.example.com")
+  host = Application.Host.Named("agent.example.com")
   routes = List:
     Router.Get("/api/info", () => agent.info())
     Router.Post("/api/upload", () => agent.upload(), maxBodyBytes = 26214400)
@@ -145,7 +147,9 @@ durable backend a driver already had rather than in front of it.
 answers with the self-contained page, or with the entries after the cursor the
 page polls it back with — so an agent already serving HTTP mounts it at a path
 of its own choosing, and one that is not takes `Viewer.start` to bind a port on
-a daemon thread. The cursor and envelope stay between the page and the viewer.
+a daemon thread, whose `answersTo` defaults to `Application.Host.Loopback` as
+`Application`'s own `host` does. The cursor and envelope stay between the page
+and the viewer.
 An entry is visible the moment it is logged — no flush, no file path to agree
 on, no `jo run view` in another terminal.
 
