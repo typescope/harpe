@@ -1,24 +1,20 @@
-//[ Wsgi.jo
-  !
-  ! Writing a `Response` out to WSGI: the status line, the headers every
-  ! response carries, and the stream that pushes chunks as it goes.
-  !
-  ! The only place in `harpe.server` that speaks WSGI's calling convention.
-  ! `Application` hands it a response and gets back the iterable a server
-  ! expects.
-//]
-
 namespace harpe.server
 
 import harpe.server.Http
 import harpe.server.Http.Status
 import harpe.server.Http.Mime
 import harpe.server.Header
-import harpe.server.headerIn
 import harpe.server.Response
 import harpe.server.Complete
 import harpe.server.Stream
 
+//[ Writing a `Response` out to WSGI: the status line, the headers every
+  ! response carries, and the stream that pushes chunks as it goes.
+  !
+  ! The only place in `harpe.server` that speaks WSGI's calling convention.
+  ! `Application` hands it a response and gets back the iterable a server
+  ! expects.
+//]
 private section Wsgi
   //[ Write `response` to WSGI. //]
   def write(startResponse: py.Dynamic, response: Response): py.List =
@@ -52,8 +48,8 @@ private section Wsgi
     ! route that must be framed sends a policy of its own, which is kept.
   //]
   def framable(headers: List[Header]): Bool =
-    val kind = headerIn(headers, "Content-Type").getOrElse("")
-    match headerIn(headers, "Content-Security-Policy")
+    val kind = Response.headerIn(headers, "Content-Type").getOrElse("")
+    match Response.headerIn(headers, "Content-Security-Policy")
     case Some(_) => false
     case None    => py.dynamic(kind).lower().asString.startsWith("text/html")
 

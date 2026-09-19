@@ -1,38 +1,28 @@
-//[ Http.jo
-  !
-  ! The HTTP protocol, as values: the verb, the status, the content type, and
-  ! one request with the readers that take it apart.
-  !
-  ! Nothing here knows what an agent is. It exists because harpe serves HTTP in
-  ! more than one place — the journal viewer here, a driver's own pages — and
-  ! status lines, verb handling and body reading are worth having a single copy
-  ! of. A second `405`-vs-`501` rule is the kind of difference nobody notices
-  ! until it matters.
-  !
-  ! THE REQUEST IS AMBIENT. A server binds one per request and every function
-  ! here reads it, so a handler that wants the body asks for `Http.readJson()`
-  ! rather than being handed an `environ` to pass on. That is why route handlers
-  ! carry neither `environ` nor `startResponse`: they never touch either except
-  ! through this file.
-  !
-  ! FOR A SINGLE-PAGE APPLICATION OR AN API, not for server-rendered pages.
-  ! What it serves is JSON, streams, and files read from disk — a page is a
-  ! file. There is no template engine here, so nothing escapes HTML, and
-  ! anything interpolated into a page is the application's to escape.
-  !
-  ! The rest of the seam: `Response` is what a route answers with, `Router` and
-  ! `Application` are how routes are declared and served.
-  !
-  ! Deliberately thin. Sessions, authentication and base-URL resolution are
-  ! application policy, not plumbing, and belong to whoever needs them.
-//]
-
 namespace harpe.server
 
-import harpe.ffi.json
 import harpe.ffi.builtins
-import harpe.util.Clock
 
+//[ The protocol as values: what a program names in source, independent of any
+  ! one exchange.
+  !
+  ! WHAT BELONGS HERE. A type the protocol itself defines — a verb, a status, a
+  ! media type, the shape of a multipart body — together with the support that
+  ! makes it usable: the status line a code writes, the charset a content type
+  ! settles, the spelling WSGI expects of a verb. `Host` and `CrossSite` sit
+  ! here too: they name what an application may accept, not what any exchange
+  ! did.
+  !
+  ! WHAT DOES NOT. Nothing here reads a request or builds a response. `Request`
+  ! owns what came in, `Response` what goes back, and the test for an addition
+  ! is whether it would still mean something in a program that never serves a
+  ! request. A reader of the body is `Request`'s even when the format is the
+  ! protocol's, which is why `Multipart` is defined here and
+  ! `Request.multipart()` decodes one.
+  !
+  ! Closed unions rather than strings, because `"200 0K"` is a typo no compiler
+  ! can refuse, and a second `405`-vs-`501` rule is the kind of difference
+  ! nobody notices until it matters.
+//]
 section Http
   //[ The verb, as a value rather than a string
     !
@@ -144,6 +134,32 @@ section Http
   //]
   section CrossSite
     union Policy = Refuse | Allow
+  end
+
+  //[ One file a client sent in a `multipart/form-data` body
+    !
+    ! `field` is the form field it arrived under, `filename` what the client
+    ! called it — client-controlled, so sanitize it before storing anything.
+  //]
+  class Upload(field: String, filename: String, mime: String, bytes: py.Dynamic)
+    def size: Int = builtins.len(bytes)
+  end
+
+  //[ A decoded `multipart/form-data` body: its text fields, and its files. //]
+  class Multipart(values: py.Dict, uploads: List[Upload])
+    //[ The first text field by this name, `Some("")` for one sent empty. //]
+    def field(name: String): Option[String] =
+      if values.contains(name) then Some(values.get(name).cast[py.List].get(0).asString) else None
+
+    //[ Every text field by this name, for a form that repeats one. //]
+    def all(name: String): List[String] =
+      var found: List[String] = []
+      if values.contains(name) then
+        for value in values.get(name).cast[py.List] do found = found + value.asString
+      found
+
+    //[ The files sent under this field name. //]
+    def files(name: String): List[Upload] = uploads.select(one => one.field == name)
   end
 
   //[ The verb as WSGI spells it. //]

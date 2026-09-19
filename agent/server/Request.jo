@@ -1,25 +1,27 @@
-//[ Request.jo
-  !
-  ! One exchange, and the channel that carries it.
-  !
-  ! THE REQUEST IS AMBIENT. A server binds one per request and the readers in
-  ! `Http` take it apart, so a handler that wants the body asks for
-  ! `Http.readJson()` rather than being handed an `environ` to pass on. That is
-  ! why a route carries neither `environ` nor a way to start the response: it
-  ! never touches either.
-//]
-
 namespace harpe.server
 
-import harpe.ffi.json
+import harpe.ffi.json as JSON
 import harpe.ffi.builtins
 import harpe.util.Clock
 import harpe.server.Http
 import harpe.server.Http.Verb
 import harpe.server.Http.Host
+import harpe.server.Http.Multipart
+import harpe.server.Http.Upload
 import harpe.server.Util
 
-//[ What was asked. `path` is already decoded as UTF-8. //]
+//[ One exchange, the channel that carries it, and the readers that take it
+  ! apart. `path` is already decoded as UTF-8.
+  !
+  ! THE REQUEST IS AMBIENT. A server binds one per request, so a handler that
+  ! wants the body asks for `Request.json()` rather than being handed an
+  ! `environ` to pass on. That is why a route carries neither `environ` nor a
+  ! way to start the response: it never touches either.
+  !
+  ! WHAT BELONGS HERE. Anything that reads the exchange that came in. The
+  ! protocol's own types live in `Http`, so a reader of a body defined there —
+  ! `Http.Multipart` — is still written here.
+//]
 class Request(method: Http.Verb.Method, path: String, environ: py.Dynamic)
   //[ Whether a reader has taken the body, which WSGI hands over as a stream read once. //]
   var bodyTaken: Bool = false
@@ -234,6 +236,56 @@ section Request
     case Ok(text) => Some(text)
     case Err(_)   => None
 
+  //[ The request body as a form with files, what `FormData` posts
+    !
+    ! None unless the request says `multipart/form-data` with a boundary and the
+    ! body parses cleanly. A part with a filename is an `Upload`, and one
+    ! without is a text field, decoded as UTF-8.
+    !
+    ! The whole body is held in memory, twice over while it is parsed, and the
+    ! only cap is the route's own `maxBodyBytes` — which is the reason a route
+    ! carries one. Streaming parts to disk would be a different reader.
+  //]
+  def multipart(): Option[Multipart] receives request =
+    if mediaType() != "multipart/form-data" then return None
+
+    val kind = header("Content-Type").getOrElse("")
+    val framed = py.dynamic("Content-Type: \{kind}\r\nMIME-Version: 1.0\r\n\r\n").encode("utf-8")
+    val message = py.try: parsedParts(framed.callDynamic("__add__", bytes()))
+    val parts = message rescue Err(_) => return None
+
+    if !parts.is_multipart().asBool || builtins.len(parts.defects) > 0 then return None
+
+    val values = py.dict()
+    var uploads: List[Upload] = []
+
+    for part in py.module("builtins").list(parts.iter_parts()).cast[py.List] do
+      val name = part.get_param("name", header = "content-disposition")
+      if py.isNone(name) || builtins.len(part.defects) > 0 then return None
+
+      val payload = part.get_payload(decode = true)
+      val filename = part.get_filename()
+
+      if py.isNone(filename) then
+        val text = py.try(payload.decode("utf-8").asString) rescue Err(_) => return None
+        if !values.contains(name.asString) then values.set(name.asString, py.list())
+        values.get(name.asString).cast[py.List].append(text)
+      else
+        val upload = new Upload:
+          name.asString
+          filename.asString
+          part.get_content_type().asString
+          payload
+
+        uploads = uploads + upload
+
+    Some(new Multipart(values, uploads))
+
+  //[ `raw` parsed as a MIME message, headers and all. //]
+  private def parsedParts(raw: py.Dynamic): py.Dynamic =
+    val parser = py.module("email.parser").BytesParser(policy = py.module("email.policy").HTTP)
+    parser.parsebytes(raw)
+
   //[ The request body as a JSON object
     !
     ! None unless the request says `application/json` and the body parses to an
@@ -243,9 +295,6 @@ section Request
   def json(): Option[py.Dict] receives request =
     if mediaType() != "application/json" then return None
     val text = body() rescue None => return None
-    val value = py.try(parsed(text)) rescue Err(_) => return None
+    val value = py.try(JSON.loads(text)) rescue Err(_) => return None
     if py.isInstance(value, builtins.dict) then Some(value.cast[py.Dict]) else None
 end
-
-//[ `text` parsed as JSON. Outside `Request`, whose `json` would shadow the module. //]
-private def parsed(text: String): py.Dynamic = json.loads(text)

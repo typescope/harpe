@@ -11,7 +11,7 @@ import harpe.server.Http
 import harpe.server.Header
 import harpe.server.Application
 import harpe.server.Router
-import harpe.server.serveInBackground
+import harpe.server.Serve
 import harpe.server.Request
 import harpe.server.request
 import harpe.server.Response
@@ -106,6 +106,17 @@ private def route(reached: py.List): Response receives request =
     val seen = Request.signedCookie("sid", secret).getOrElse("absent")
     val header = Response.signedCookie("sid", given, secret, maxAgeSeconds = age, secure = true)
     Response.complete(Http.Status.Success, Http.Mime.Text, [header], seen)
+
+  case Request.Post("/upload") =>
+    val form = Request.multipart() rescue None => return Response.badRequest("expected multipart/form-data")
+    val note = form.field("note").getOrElse("absent")
+    val tags = form.all("tag").join("+")
+    val files = form.files("file")
+    val shown = if files.size == 0 then "none"
+                else
+                  val one = files.get(0)
+                  "\{one.filename}|\{one.mime}|\{one.size}"
+    Response.complete(Http.Status.Success, Http.Mime.Text, [], "\{note}|\{tags}|\{shown}")
 
   case Request.Post("/json") =>
     Response.json:
@@ -240,6 +251,16 @@ private def clashing(): Application =
       Router.Get("/api/info", () => Response.notFound())
     fallback = () => Response.notFound()
 
+//[ A `multipart/form-data` body, built the way a browser builds one. //]
+private def multipartBody(boundary: String, parts: List[String], file: py.Dynamic): py.Dynamic =
+  var text = ""
+  for part in parts do text = text + "--" + boundary + "\r\n" + part + "\r\n"
+
+  val opening = py.dynamic(text).encode("utf-8")
+  val fileHead = py.dynamic("--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"caf\u{e9}.bin\"\r\nContent-Type: image/png\r\n\r\n").encode("utf-8")
+  val closing = py.dynamic("\r\n--" + boundary + "--\r\n").encode("utf-8")
+  opening.callDynamic("__add__", fileHead).callDynamic("__add__", file).callDynamic("__add__", closing)
+
 //[ The application under test. `reached` records what its routes saw. //]
 private def appFor(reached: py.List): (py.Dynamic, py.Dynamic) => py.List =
   applicationFor(Http.Host.Loopback, reached).wsgi()
@@ -357,6 +378,32 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     val unlabelled = call(wsgi, "POST", "/json", [Header("Content-Type", "text/plain")], "{\"a\": 1}")
     check("the wrong content type is None", unlabelled.status == 400)
 
+  test: "reads a multipart body, its fields and its files", () =>
+    val wsgi = appFor(py.list())
+    val boundary = "----harpeBoundary42"
+    val fields = ["Content-Disposition: form-data; name=\"note\"\r\n\r\nCaf\u{e9} \u{2615}",
+                  "Content-Disposition: form-data; name=\"tag\"\r\n\r\na",
+                  "Content-Disposition: form-data; name=\"tag\"\r\n\r\nb"]
+    val file = py.module("builtins").bytes(py.list(255, 216, 13, 10, 0, 65))
+    val body = multipartBody(boundary, fields, file)
+    val kind = [Header("Content-Type", "multipart/form-data; boundary=" + boundary)]
+
+    val answer = callBytes(wsgi, "POST", "/upload", kind, body)
+    check("200", answer.status == 200)
+    check("fields, files and their bytes", answer.text == "Café ☕|a+b|café.bin|image/png|6")
+
+  test: "refuses a body that is not multipart, or does not parse", () =>
+    val wsgi = appFor(py.list())
+    val boundary = "----harpeBoundary42"
+    val file = py.module("builtins").bytes(py.list(65))
+    val body = multipartBody(boundary, [], file)
+
+    val wrongType = [Header("Content-Type", "application/json")]
+    check("the wrong content type", callBytes(wsgi, "POST", "/upload", wrongType, body).status == 400)
+
+    val wrongBoundary = [Header("Content-Type", "multipart/form-data; boundary=nope")]
+    check("a boundary that is not in the body", callBytes(wsgi, "POST", "/upload", wrongBoundary, body).status == 400)
+
   test: "refuses to read the body twice rather than answering empty", () =>
     val answer = call(appFor(py.list()), "POST", "/twice", [], "x")
     check("aborts", answer.text == "the request body was already read")
@@ -419,7 +466,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
   test: "tells a producer once its client has gone", () =>
     val reached = py.list()
-    val background = serveInBackground("127.0.0.1", 0, applicationFor(Http.Host.Loopback, reached))
+    val background = Serve.inBackground("127.0.0.1", 0, applicationFor(Http.Host.Loopback, reached))
 
     val socket = py.module("socket").create_connection(py.tuple("127.0.0.1", background.port))
     socket.sendall(py.dynamic("GET /forever HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n").encode())

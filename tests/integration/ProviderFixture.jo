@@ -13,7 +13,7 @@ import harpe.server.Response
 import harpe.server.Complete
 import harpe.server.Application
 import harpe.server.Router
-import harpe.server.serveInBackground
+import harpe.server.Serve
 import harpe.server.Request
 import harpe.server.request
 import harpe.ffi.json
@@ -135,7 +135,7 @@ section ProviderFixture
       fallback = () => serve(responses, requests)
       maxBodyBytes = 67108864
 
-    val background = serveInBackground("127.0.0.1", 0, application)
+    val background = Serve.inBackground("127.0.0.1", 0, application)
     val port = background.port
     val server = new Server("http://127.0.0.1:\{port}", port, requests)
 

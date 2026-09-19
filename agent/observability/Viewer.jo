@@ -48,7 +48,7 @@ import harpe.logging.Entry
 import harpe.server.Http
 import harpe.server.Application
 import harpe.server.Router
-import harpe.server.serveInBackground
+import harpe.server.Serve
 import harpe.server.Request
 import harpe.server.request
 import harpe.server.Response
@@ -109,7 +109,7 @@ section Viewer
       fallback = () => route(viewLog, title)
       maxBodyBytes = 0
 
-    val _ = serveInBackground(host, port, application)
+    val _ = Serve.inBackground(host, port, application)
 
   private def route(viewLog: ViewLogger, title: String): Response receives request =
     match request

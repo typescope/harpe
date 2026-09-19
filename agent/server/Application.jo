@@ -1,18 +1,3 @@
-//[ Application.jo
-  !
-  ! One application: its routes, the policy enforced before any of them runs,
-  ! and the WSGI callable a server is given.
-  !
-  ! THE DOOR IS HERE. Before a route runs, `wsgi` refuses an unknown verb, a
-  ! path that is not UTF-8, a `Host` the application does not answer to, a
-  ! cross-site write, and a body over the route's limit. Those are protocol
-  ! answers every browser-facing application needs, and none of them is a
-  ! route's to remember.
-  !
-  ! `wsgi` is the seam a deployment binds its server to, so harpe installs
-  ! none. `serveInBackground` is wsgiref, for harpe's own viewer and tests.
-//]
-
 namespace harpe.server
 
 import harpe.ffi.builtins
@@ -22,7 +7,6 @@ import harpe.server.Http.Verb
 import harpe.server.Http.Status
 import harpe.server.Http.Mime
 import harpe.server.Header
-import harpe.server.headerIn
 import harpe.server.Http.Host
 import harpe.server.Http.CrossSite
 import harpe.server.Request
@@ -31,21 +15,29 @@ import harpe.server.Response
 import harpe.server.Router
 import harpe.server.Wsgi
 
-//[ One application: its routes, and the policy `wsgi` enforces before any of them
+//[ One application: its routes, the policy enforced before any of them runs,
+  ! and the WSGI callable a server is given.
+  !
+  ! THE DOOR IS HERE. Before a route runs, `wsgi` refuses an unknown verb, a
+  ! path that is not UTF-8, a `Host` the application does not answer to, a
+  ! cross-site write, and a body over the route's limit. Those are protocol
+  ! answers every browser-facing application needs, and none of them is a
+  ! route's to remember.
   !
   ! `fallback` answers what no route claims — the page itself, for a
   ! single-page application whose client routes on the path. An application
   ! that dispatches by pattern matching passes no routes and its own match as
   ! the fallback.
   !
-  ! `maxBodyBytes` is the limit for every route that names none. Keep it
-  ! small: an upload route says so for itself, and `ceiling` is what the
-  ! server is given.
+  ! `maxBodyBytes` is the limit for every route that names none. Keep it small:
+  ! an upload route says so for itself, and `ceiling` is what the server is
+  ! given. `host` defaults to loopback, so a prototype on `127.0.0.1` runs as it
+  ! is, and a deployment that forgets to name its own host is refused rather
+  ! than quietly served — which is what stops a hostile page pointing its own
+  ! name at this server and reading it as same-origin.
   !
-  ! `host` defaults to loopback, so a prototype on `127.0.0.1` runs as it is,
-  ! and a deployment that forgets to name its own host is refused rather than
-  ! quietly served — which is what stops a hostile page pointing its own name
-  ! at this server and reading it as same-origin.
+  ! `wsgi` is the seam a deployment binds its server to, so harpe installs none.
+  ! `Serve` is wsgiref, for harpe's own viewer and tests.
 //]
 class Application(
       routes: List[Router.Route],
@@ -168,7 +160,7 @@ private section Answer
   def unchanged(method: Verb.Method, environ: py.Dynamic, response: Response): Bool =
     match response
     case Complete(status, headers, _) if method is Verb.Get && status is Status.Success =>
-      val tag = headerIn(headers, "ETag") rescue None => return false
+      val tag = Response.headerIn(headers, "ETag") rescue None => return false
       val held = Request.environValue(environ, "HTTP_IF_NONE_MATCH") rescue None => return false
       val tags = held.split(",").map(t => t.trim).map(t => if t.startsWith("W/") then t.substring(2, t.size - 2) else t)
       tags.contains("*") || tags.contains(tag)

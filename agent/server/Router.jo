@@ -1,12 +1,3 @@
-//[ Router.jo
-  !
-  ! The routes an application answers, declared as a table.
-  !
-  ! A table rather than a chain of patterns, so the policy of a route sits with
-  ! the route and `Application` can read it before the handler runs — which is
-  ! what makes a body limit per route possible at all.
-//]
-
 namespace harpe.server
 
 import harpe.server.Http
@@ -14,9 +5,13 @@ import harpe.server.Http.Verb
 import harpe.server.request
 import harpe.server.Response
 
-//[ Paths are compared exactly. `Prefix` is for the one path that carries a
-  ! parameter in a single-page application, an asset under a directory, and the
-  ! handler reads `request.path` for the rest.
+//[ The routes an application answers, declared as a table.
+  !
+  ! A table rather than a chain of patterns, so the policy of a route sits with
+  ! the route and `Application` can read it before the handler runs — which is
+  ! what makes a body limit per route possible at all.
+  !
+  ! Paths are compared exactly. `Prefix` is for the one path that carries a parameter in a single-page application, an asset under a directory, and the handler reads `request.path` for the rest.
 //]
 section Router
   //[ One route. `maxBodyBytes` of 0 takes the application's own limit. //]
