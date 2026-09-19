@@ -29,6 +29,7 @@ import harpe.server.Request
 import harpe.server.request
 import harpe.server.Response
 import harpe.server.Router
+import harpe.server.Wsgi
 
 //[ One application: its routes, and the policy `wsgi` enforces before any of them
   !
@@ -53,12 +54,12 @@ class Application(
       maxBodyBytes: Int = 1048576,
       crossSite: CrossSite.Policy = CrossSite.Refuse)
   //[ The exact routes, indexed once here, where two claiming one verb and path abort. //]
-  private val exact: py.Dict = indexed(routes)
+  private val exact: py.Dict = Router.indexed(routes)
 
   //[ This application as a WSGI application, which is what a server is given. //]
   def wsgi(): (py.Dynamic, py.Dynamic) => py.List =
     (environ: py.Dynamic, startResponse: py.Dynamic) =>
-      write(startResponse, answer(environ))
+      Wsgi.write(startResponse, answer(environ))
 
   //[ The largest body any route allows, which is the limit to give the server. //]
   def ceiling: Int =
@@ -85,25 +86,25 @@ class Application(
   private def answer(environ: py.Dynamic): Response =
     val raw = environ.get("REQUEST_METHOD", "GET").asString
     val method = Http.verb(raw) rescue None =>
-      return if raw == "HEAD" then unsupportedHead() else refuse(Status.NotImplemented, "not implemented")
+      return if raw == "HEAD" then Answer.unsupportedHead() else Answer.refuse(Status.NotImplemented, "not implemented")
     val path = Http.decodedPath(environ) rescue None =>
-      return refuse(Status.BadRequest, "path is not UTF-8")
+      return Answer.refuse(Status.BadRequest, "path is not UTF-8")
 
     if !Http.hostAllowed(environ, host) then
       val sent = Http.environValue(environ, "HTTP_HOST").getOrElse("none")
-      return refuse(Status.BadRequest, "host '\{sent}' is not one this application answers to")
+      return Answer.refuse(Status.BadRequest, "host '\{sent}' is not one this application answers to")
     if crossSite is CrossSite.Refuse && Http.crossSiteWrite(method, environ) then
-      return refuse(Status.Forbidden, "cross-site request refused")
+      return Answer.refuse(Status.Forbidden, "cross-site request refused")
 
     val found = routeFor(method, path)
     if Http.declaredLength(environ) > limitFor(found) then
-      return refuse(Status.TooLarge, "request body too large")
+      return Answer.refuse(Status.TooLarge, "request body too large")
 
     match found
-    case Some(route) => ran(route.handler, method, path, environ)
+    case Some(route) => Answer.ran(route.handler, method, path, environ)
     case None =>
       val others = otherVerbs(method, path)
-      if others.size == 0 then ran(fallback, method, path, environ)
+      if others.size == 0 then Answer.ran(fallback, method, path, environ)
       else
         val headers = [Header("Allow", others.join(", "))]
         Response.complete(Status.MethodNotAllowed, Mime.Text, headers, "method not allowed")
@@ -137,103 +138,47 @@ class Application(
     claimed
 end
 
-//[ The exact routes by "VERB path". //]
-private def indexed(routes: List[Router.Route]): py.Dict =
-  val exact = py.dict()
-  for route in routes do
-    if !route.prefix then
-      val key = Http.verbName(route.method) + " " + route.path
-      if exact.contains(key) then abort "two routes claim '\{key}'"
-      exact.set(key, route)
-  exact
-
-//[ Run `handler` with the request bound, and answer 304 in place of a body the client holds. //]
-private def ran(handler: (() => Response receives request), method: Verb.Method, path: String, environ: py.Dynamic): Response =
-  val answered = with request = new Request(method, path, environ) in handler()
-  if unchanged(method, environ, answered) then notModified(answered) else answered
+//[ Building the answer: the refusals, and what a route's own answer becomes. //]
+private section Answer
+  //[ Run `handler` with the request bound, and answer 304 in place of a body the client holds. //]
+  def ran(handler: (() => Response receives request), method: Verb.Method, path: String, environ: py.Dynamic): Response =
+    val answered = with request = new Request(method, path, environ) in handler()
+    if unchanged(method, environ, answered) then notModified(answered) else answered
 
 
 
-//[ Write `response` to WSGI. //]
-private def write(startResponse: py.Dynamic, response: Response): py.List =
-  match response
-  case Complete(status, headers, body) =>
-    val _ = start(startResponse, status, headers)
-    py.list(body)
+  //[ A refusal made before a request is bound. //]
+  def refuse(status: Status.Code, message: String): Response =
+    Response.complete(status, Mime.Text, [], message)
 
-  case Stream(kind, produce) =>
-    val headers = [Header("Content-Type", Mime.value(kind)), Header("Cache-Control", "no-cache"), Header("X-Accel-Buffering", "no")]
-    val outlet = new Outlet(start(startResponse, Status.Success, headers))
-    produce(chunk => outlet.emit(chunk))
-    py.list()
+  //[ The 501 for a HEAD, which must not carry a body
+    !
+    ! Waitress writes whatever body it is handed, even for a HEAD, and frames an
+    ! empty one as chunked, and either leaves bytes a client keeping the
+    ! connection open reads as its next response. A declared length of 0 is what
+    ! makes both servers send the headers alone.
+  //]
+  def unsupportedHead(): Response =
+    Complete(Status.NotImplemented, [Header("Content-Length", "0")], py.dynamic("").encode())
 
-//[ Begin the response, with `nosniff` so a browser never guesses a type. Returns WSGI's `write`. //]
-private def start(startResponse: py.Dynamic, status: Status.Code, headers: List[Header]): py.Dynamic =
-  val pairs = py.list()
-  for h in headers do
-    if h.name.contains("\r") || h.name.contains("\n") || h.value.contains("\r") || h.value.contains("\n") then
-      abort "header '\{h.name}' contains a line break"
-    pairs.append(py.tuple(h.name, h.value))
-  pairs.append(py.tuple("X-Content-Type-Options", "nosniff"))
-  if framable(headers) then pairs.append(py.tuple("Content-Security-Policy", "frame-ancestors 'self'"))
+  //[ Whether a successful GET carries an `ETag` the client already holds
+    !
+    ! `If-None-Match` may list several tags, weak ones included, or be `*`.
+  //]
+  def unchanged(method: Verb.Method, environ: py.Dynamic, response: Response): Bool =
+    match response
+    case Complete(status, headers, _) if method is Verb.Get && status is Status.Success =>
+      val tag = headerIn(headers, "ETag") rescue None => return false
+      val held = Http.environValue(environ, "HTTP_IF_NONE_MATCH") rescue None => return false
+      val tags = held.split(",").map(t => t.trim).map(t => if t.startsWith("W/") then t.substring(2, t.size - 2) else t)
+      tags.contains("*") || tags.contains(tag)
+    case _ => false
 
-  py.call(startResponse, Status.line(status), pairs)
-
-//[ Whether this response is a page another site could frame
-  !
-  ! HTML gets `frame-ancestors 'self'`, so a hostile page cannot put the
-  ! application in an invisible frame and collect a click meant for it. A
-  ! route that must be framed sends a policy of its own, which is kept.
-//]
-private def framable(headers: List[Header]): Bool =
-  val kind = headerIn(headers, "Content-Type").getOrElse("")
-  match headerIn(headers, "Content-Security-Policy")
-  case Some(_) => false
-  case None    => py.dynamic(kind).lower().asString.startsWith("text/html")
-
-//[ The write side of one stream, which stays closed once a write has failed. //]
-private class Outlet(write: py.Dynamic)
-  var open: Bool = true
-
-  def emit(chunk: String): Bool =
-    if open then
-      match py.try(py.call(write, py.dynamic(chunk).encode()))
-      case Ok(_)  => pass
-      case Err(_) => open = false
-    open
+  //[ The 304 for `response`: its validators and caching headers, and no body. //]
+  def notModified(response: Response): Response =
+    match response
+    case Stream(_, _) => response
+    case Complete(_, headers, _) =>
+      val kept = headers.select(h => py.dynamic(h.name).lower().asString == "etag" || py.dynamic(h.name).lower().asString == "cache-control")
+      Complete(Status.NotModified, kept, py.dynamic("").encode())
 end
-
-//[ A refusal made before a request is bound. //]
-private def refuse(status: Status.Code, message: String): Response =
-  Response.complete(status, Mime.Text, [], message)
-
-//[ The 501 for a HEAD, which must not carry a body
-  !
-  ! Waitress writes whatever body it is handed, even for a HEAD, and frames an
-  ! empty one as chunked, and either leaves bytes a client keeping the
-  ! connection open reads as its next response. A declared length of 0 is what
-  ! makes both servers send the headers alone.
-//]
-private def unsupportedHead(): Response =
-  Complete(Status.NotImplemented, [Header("Content-Length", "0")], py.dynamic("").encode())
-
-//[ Whether a successful GET carries an `ETag` the client already holds
-  !
-  ! `If-None-Match` may list several tags, weak ones included, or be `*`.
-//]
-private def unchanged(method: Verb.Method, environ: py.Dynamic, response: Response): Bool =
-  match response
-  case Complete(status, headers, _) if method is Verb.Get && status is Status.Success =>
-    val tag = headerIn(headers, "ETag") rescue None => return false
-    val held = Http.environValue(environ, "HTTP_IF_NONE_MATCH") rescue None => return false
-    val tags = held.split(",").map(t => t.trim).map(t => if t.startsWith("W/") then t.substring(2, t.size - 2) else t)
-    tags.contains("*") || tags.contains(tag)
-  case _ => false
-
-//[ The 304 for `response`: its validators and caching headers, and no body. //]
-private def notModified(response: Response): Response =
-  match response
-  case Stream(_, _) => response
-  case Complete(_, headers, _) =>
-    val kept = headers.select(h => py.dynamic(h.name).lower().asString == "etag" || py.dynamic(h.name).lower().asString == "cache-control")
-    Complete(Status.NotModified, kept, py.dynamic("").encode())

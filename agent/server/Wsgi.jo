@@ -1,0 +1,71 @@
+//[ Wsgi.jo
+  !
+  ! Writing a `Response` out to WSGI: the status line, the headers every
+  ! response carries, and the stream that pushes chunks as it goes.
+  !
+  ! The only place in `harpe.server` that speaks WSGI's calling convention.
+  ! `Application` hands it a response and gets back the iterable a server
+  ! expects.
+//]
+
+namespace harpe.server
+
+import harpe.server.Http
+import harpe.server.Http.Status
+import harpe.server.Http.Mime
+import harpe.server.Header
+import harpe.server.headerIn
+import harpe.server.Response
+import harpe.server.Complete
+import harpe.server.Stream
+
+private section Wsgi
+  //[ Write `response` to WSGI. //]
+  def write(startResponse: py.Dynamic, response: Response): py.List =
+    match response
+    case Complete(status, headers, body) =>
+      val _ = start(startResponse, status, headers)
+      py.list(body)
+
+    case Stream(kind, produce) =>
+      val headers = [Header("Content-Type", Mime.value(kind)), Header("Cache-Control", "no-cache"), Header("X-Accel-Buffering", "no")]
+      val outlet = new Outlet(start(startResponse, Status.Success, headers))
+      produce(chunk => outlet.emit(chunk))
+      py.list()
+
+  //[ Begin the response, with `nosniff` so a browser never guesses a type. Returns WSGI's `write`. //]
+  def start(startResponse: py.Dynamic, status: Status.Code, headers: List[Header]): py.Dynamic =
+    val pairs = py.list()
+    for h in headers do
+      if h.name.contains("\r") || h.name.contains("\n") || h.value.contains("\r") || h.value.contains("\n") then
+        abort "header '\{h.name}' contains a line break"
+      pairs.append(py.tuple(h.name, h.value))
+    pairs.append(py.tuple("X-Content-Type-Options", "nosniff"))
+    if framable(headers) then pairs.append(py.tuple("Content-Security-Policy", "frame-ancestors 'self'"))
+
+    py.call(startResponse, Status.line(status), pairs)
+
+  //[ Whether this response is a page another site could frame
+    !
+    ! HTML gets `frame-ancestors 'self'`, so a hostile page cannot put the
+    ! application in an invisible frame and collect a click meant for it. A
+    ! route that must be framed sends a policy of its own, which is kept.
+  //]
+  def framable(headers: List[Header]): Bool =
+    val kind = headerIn(headers, "Content-Type").getOrElse("")
+    match headerIn(headers, "Content-Security-Policy")
+    case Some(_) => false
+    case None    => py.dynamic(kind).lower().asString.startsWith("text/html")
+
+  //[ The write side of one stream, which stays closed once a write has failed. //]
+  class Outlet(write: py.Dynamic)
+    var open: Bool = true
+
+    def emit(chunk: String): Bool =
+      if open then
+        match py.try(py.call(write, py.dynamic(chunk).encode()))
+        case Ok(_)  => pass
+        case Err(_) => open = false
+      open
+  end
+end

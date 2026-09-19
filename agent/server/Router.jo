@@ -63,5 +63,18 @@ section Router
       maxBodyBytes: Int = 0): Route =
     if !path.endsWith("/") then abort "a prefix route's path must end in '/': '\{path}'"
     new Route(method, path, prefix = true, maxBodyBytes = maxBodyBytes, handler = handler)
-end
 
+  //[ The exact routes by "VERB path", for an `Application` to dispatch through
+    !
+    ! Two routes claiming one verb and path abort here, which is when the
+    ! `Application` holding them is built.
+  //]
+  private[server] def indexed(routes: List[Route]): py.Dict =
+    val exact = py.dict()
+    for route in routes do
+      if !route.prefix then
+        val key = Http.verbName(route.method) + " " + route.path
+        if exact.contains(key) then abort "two routes claim '\{key}'"
+        exact.set(key, route)
+    exact
+end

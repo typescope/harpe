@@ -218,7 +218,7 @@ end
 
 //[ `dict` as JSON text. Outside `Response`, whose `json` would shadow the module. //]
 //[ The first header by this name, compared case-insensitively. //]
-private[harpe] def headerIn(headers: List[Header], name: String): Option[String] =
+private[server] def headerIn(headers: List[Header], name: String): Option[String] =
   val wanted = py.dynamic(name).lower().asString
   for h in headers do
     if py.dynamic(h.name).lower().asString == wanted then return Some(h.value)

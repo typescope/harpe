@@ -187,7 +187,7 @@ section Http
     path.split("/").exclude(part => part == "")
 
 
-  private[harpe] def verb(raw: String): Option[Verb.Method] =
+  private[server] def verb(raw: String): Option[Verb.Method] =
     if raw == "GET" then Some(Verb.Get)
     else if raw == "POST" then Some(Verb.Post)
     else if raw == "PUT" then Some(Verb.Put)
@@ -196,7 +196,7 @@ section Http
     else None
 
   //[ The verb as WSGI spells it. //]
-  private[harpe] def verbName(method: Verb.Method): String =
+  private[server] def verbName(method: Verb.Method): String =
     match method
     case Verb.Get     => "GET"
     case Verb.Post    => "POST"
@@ -210,23 +210,23 @@ section Http
     ! arrives as `/cafÃ©`. Undoing that here is the only way a route can match a
     ! non-ASCII segment. None when the bytes are not UTF-8.
   //]
-  private[harpe] def decodedPath(environ: py.Dynamic): Option[String] =
+  private[server] def decodedPath(environ: py.Dynamic): Option[String] =
     val raw = py.dynamic(environ.get("PATH_INFO", "/"))
     match py.try(raw.encode("latin-1").decode("utf-8").asString)
     case Ok(path) => Some(path)
     case Err(_)   => None
 
   //[ What `CONTENT_LENGTH` claims, or zero. //]
-  private[harpe] def declaredLength(environ: py.Dynamic): Int =
+  private[server] def declaredLength(environ: py.Dynamic): Int =
     Int.parse(environ.get("CONTENT_LENGTH", "").asString) rescue None => 0
 
   //[ The value of a WSGI environ key, or None when it is absent. //]
-  private[harpe] def environValue(environ: py.Dynamic, key: String): Option[String] =
+  private[server] def environValue(environ: py.Dynamic, key: String): Option[String] =
     val found = environ.get(key)
     if py.isNone(found) then None else Some(found.asString)
 
   //[ The environ key WSGI files a request header under. //]
-  private[harpe] def environKey(name: String): String =
+  private[server] def environKey(name: String): String =
     val key = py.dynamic(name).upper().asString.replace("-", "_")
     if key == "CONTENT_TYPE" || key == "CONTENT_LENGTH" then key else "HTTP_" + key
 
@@ -236,7 +236,7 @@ section Http
     case Ok(name) => if py.isNone(name) then None else Some(name.asString)
     case Err(_)   => None
 
-  private[harpe] def hostAllowed(environ: py.Dynamic, policy: Host.Policy): Bool =
+  private[server] def hostAllowed(environ: py.Dynamic, policy: Host.Policy): Bool =
     match policy
     case Host.Unchecked => true
     case Host.Loopback  => nameIn(environ, ["localhost", "127.0.0.1", "::1"])
@@ -256,7 +256,7 @@ section Http
     ! browser sent it. Otherwise an `Origin` must name the same authority as
     ! `Host`. A request carrying neither did not come from a browser page.
   //]
-  private[harpe] def crossSiteWrite(method: Verb.Method, environ: py.Dynamic): Bool =
+  private[server] def crossSiteWrite(method: Verb.Method, environ: py.Dynamic): Bool =
     val writes = method is Verb.Post || method is Verb.Put || method is Verb.Delete
     if !writes then false
     else
@@ -338,7 +338,7 @@ section Http
     ! The NAME is signed too, so a cookie cannot be moved to another name — a
     ! value signed as one cookie replayed as another would otherwise pass.
   //]
-  private[harpe] def signCookie(name: String, value: String, expiry: String, secret: String): String =
+  private[server] def signCookie(name: String, value: String, expiry: String, secret: String): String =
     if secret.size < 32 then abort "a cookie secret must be at least 32 characters"
 
     val message = py.dynamic(name + "." + value + "." + expiry).encode()
@@ -346,11 +346,11 @@ section Http
     py.module("base64").urlsafe_b64encode(digest).decode().asString.replace("=", "")
 
   //[ Printable ASCII with none of the separators a cookie cannot carry unquoted. //]
-  private[harpe] def cookieSafe(text: String): Bool =
+  private[server] def cookieSafe(text: String): Bool =
     !py.isNone(py.module("re").fullmatch("[!#-+\\--:<-\\[\\]-~]*", text))
 
   //[ The media type of the body, lower-cased and without its parameters. //]
-  private[harpe] def mediaType(): String receives request =
+  private[server] def mediaType(): String receives request =
     val kind = header("Content-Type").getOrElse("")
     py.dynamic(kind.split(";").get(0).trim).lower().asString
 
