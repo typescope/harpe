@@ -85,19 +85,19 @@ class Application(
   //]
   private def answer(environ: py.Dynamic): Response =
     val raw = environ.get("REQUEST_METHOD", "GET").asString
-    val method = Http.verb(raw) rescue None =>
+    val method = Request.verb(raw) rescue None =>
       return if raw == "HEAD" then Answer.unsupportedHead() else Answer.refuse(Status.NotImplemented, "not implemented")
-    val path = Http.decodedPath(environ) rescue None =>
+    val path = Request.decodedPath(environ) rescue None =>
       return Answer.refuse(Status.BadRequest, "path is not UTF-8")
 
-    if !Http.hostAllowed(environ, host) then
-      val sent = Http.environValue(environ, "HTTP_HOST").getOrElse("none")
+    if !Request.hostAllowed(environ, host) then
+      val sent = Request.environValue(environ, "HTTP_HOST").getOrElse("none")
       return Answer.refuse(Status.BadRequest, "host '\{sent}' is not one this application answers to")
-    if crossSite is CrossSite.Refuse && Http.crossSiteWrite(method, environ) then
+    if crossSite is CrossSite.Refuse && Request.crossSiteWrite(method, environ) then
       return Answer.refuse(Status.Forbidden, "cross-site request refused")
 
     val found = routeFor(method, path)
-    if Http.declaredLength(environ) > limitFor(found) then
+    if Request.declaredLength(environ) > limitFor(found) then
       return Answer.refuse(Status.TooLarge, "request body too large")
 
     match found
@@ -169,7 +169,7 @@ private section Answer
     match response
     case Complete(status, headers, _) if method is Verb.Get && status is Status.Success =>
       val tag = headerIn(headers, "ETag") rescue None => return false
-      val held = Http.environValue(environ, "HTTP_IF_NONE_MATCH") rescue None => return false
+      val held = Request.environValue(environ, "HTTP_IF_NONE_MATCH") rescue None => return false
       val tags = held.split(",").map(t => t.trim).map(t => if t.startsWith("W/") then t.substring(2, t.size - 2) else t)
       tags.contains("*") || tags.contains(tag)
     case _ => false

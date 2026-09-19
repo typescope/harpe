@@ -10,7 +10,7 @@
   !     val viewLog = new ViewLogger(capacity = 5000)
   !     val log     = new TeeLogger([new JsonlLogger(path), viewLog])
   !
-  !     case Http.Get("/journal") => Viewer.respond(viewLog, title)
+  !     case Request.Get("/journal") => Viewer.respond(viewLog, title)
   !
   ! ONE ROUTE, because the protocol is nobody else's business. The page polls
   ! the path it was served from, so the `seen` cursor, the envelope it comes
@@ -49,6 +49,7 @@ import harpe.server.Http
 import harpe.server.Application
 import harpe.server.Router
 import harpe.server.serveInBackground
+import harpe.server.Request
 import harpe.server.request
 import harpe.server.Response
 import jo.resource.*
@@ -66,7 +67,7 @@ section Viewer
     ! session — and is the driver's to choose.
   //]
   def respond(viewLog: ViewLogger, title: String): Response receives request =
-    match Http.queryParam("seen")
+    match Request.query("seen")
     case None => Response.html(page(title))
     case Some(asked) =>
       val seen = Int.parse(asked) rescue None => 0
@@ -112,7 +113,7 @@ section Viewer
 
   private def route(viewLog: ViewLogger, title: String): Response receives request =
     match request
-    case Http.Get("/") => respond(viewLog, title)
+    case Request.Get("/") => respond(viewLog, title)
     case _             => Response.notFound()
 
   //[ One bundled asset, or a comment saying which one is missing. //]

@@ -51,7 +51,7 @@ val log     = new TeeLogger([new JsonlLogger(sessionPath), viewLog])
 `Viewer` serves that window as one route:
 
 ```jo
-case Http.Get("/journal") => Viewer.respond(viewLog, title)
+case Request.Get("/journal") => Viewer.respond(viewLog, title)
 ```
 
 The HTTP route is the whole integration point: it responds with a log events

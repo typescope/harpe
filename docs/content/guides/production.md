@@ -153,7 +153,7 @@ even though the application only ever sees plain HTTP. In local development
 over `http://` on anything but `localhost`, that cookie will not come back.
 
 The client's IP and the original scheme arrive in `X-Forwarded-For` and
-`X-Forwarded-Proto`, which `Http.header` reads. Trust them only from a proxy you
+`X-Forwarded-Proto`, which `Request.header` reads. Trust them only from a proxy you
 control.
 
 ## Test the boundaries

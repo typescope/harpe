@@ -14,6 +14,7 @@ import harpe.server.Complete
 import harpe.server.Application
 import harpe.server.Router
 import harpe.server.serveInBackground
+import harpe.server.Request
 import harpe.server.request
 import harpe.ffi.json
 
@@ -90,7 +91,7 @@ section ProviderFixture
   end
 
   private def serve(responses: List[Scripted], requests: py.List): Response receives request =
-    val body = Http.readBody() rescue None => abort "the provider fixture was sent a body that is not UTF-8"
+    val body = Request.body() rescue None => abort "the provider fixture was sent a body that is not UTF-8"
 
     val recorded = new RecordedRequest:
       request.environ.get("REQUEST_METHOD", "GET").asString

@@ -1,0 +1,28 @@
+//[ Util.jo
+  !
+  ! What both sides of an exchange share, and neither owns.
+  !
+  ! Today that is the two cookie rules: the characters a cookie may carry
+  ! unquoted, and the signature that makes its value unforgeable. `Request`
+  ! reads a signed cookie with one and `Response` writes it with both.
+//]
+
+namespace harpe.server
+
+private[server] section Util
+  //[ `HMAC-SHA256` over the cookie's name, value and expiry, base64url without padding
+    !
+    ! The NAME is signed too, so a cookie cannot be moved to another name — a
+    ! value signed as one cookie replayed as another would otherwise pass.
+  //]
+  def signCookie(name: String, value: String, expiry: String, secret: String): String =
+    if secret.size < 32 then abort "a cookie secret must be at least 32 characters"
+
+    val message = py.dynamic(name + "." + value + "." + expiry).encode()
+    val digest = py.module("hmac").digest(py.dynamic(secret).encode(), message, "sha256")
+    py.module("base64").urlsafe_b64encode(digest).decode().asString.replace("=", "")
+
+  //[ Printable ASCII with none of the separators a cookie cannot carry unquoted. //]
+  def cookieSafe(text: String): Bool =
+    !py.isNone(py.module("re").fullmatch("[!#-+\\--:<-\\[\\]-~]*", text))
+end

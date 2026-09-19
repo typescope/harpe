@@ -3,11 +3,13 @@
 ## Unreleased
 
 **HTTP now lives in `harpe.server`, and an application is a value.** What was
-one `harpe.Http` file is six under `agent/server/`: `Http` (the protocol
-vocabulary — `Verb`, `Status`, `Mime`, `Host`, `CrossSite` — and the request
-readers), `Request` (the exchange and the ambient `request`), `Response`,
-`Router`, `Application`, and a wsgiref server harpe keeps for its own viewer and
-tests. `Http.server`, `Http.quiet` and `Http.app` are gone.
+one `harpe.Http` file is eight under `agent/server/`, each owning one side of
+the exchange: `Http` is the vocabulary (`Verb`, `Status`, `Mime`, `Host`,
+`CrossSite`), `Request` is what came in (the class, the ambient `request`, the
+patterns, the readers), `Response` is what goes back, `Cookies` is what both
+sides of a cookie share, and `Router`, `Application`, `Wsgi` and `Serve` declare
+routes, serve them, write them out, and run a wsgiref server for harpe's own
+viewer and tests. `Http.server`, `Http.quiet` and `Http.app` are gone.
 
 ```jo
 val application = new Application:
@@ -32,7 +34,7 @@ single-page application whose client routes on the path. Two routes claiming one
 verb and path abort when the `Application` is built. A path claimed under
 another verb answers 405 with `Allow`. An application that would rather dispatch
 in a `match` passes no routes and its own match as the `fallback`, using the
-`Http.Get`, `Post`, `Put` and `Delete` patterns as before.
+`Request.Get`, `Post`, `Put` and `Delete` patterns as before.
 
 **`application.wsgi()` is the seam a deployment binds its server to**, so harpe
 installs none. Before a route runs it refuses a verb it does not implement
@@ -79,23 +81,21 @@ runs on every load and a 304 means the body is byte-for-byte unchanged, so a
 copy
 is never stale and never another user's.
 
-**Request readers answer `Option` rather than a fallback.** `Http.queryParam` is
-None for an absent parameter and `Some("")` for an empty one. `Http.readJson` is
+**Request readers answer `Option` rather than a fallback.** `Request.query` is
+None for an absent parameter and `Some("")` for an empty one. `Request.json` is
 None unless the request says `application/json` and the body is an object, where
-it used to answer `{}` for all of those alike. `Http.readBody` is None for a
-body
-that is not UTF-8, and `Http.readBytes` reads it raw; a second read of the body
-in one request aborts, where it used to come back empty. `Http.header` and
-`Http.cookie` read a header and a cookie, the cookie leniently, as browsers
-write
-them. `Request.path` is decoded as UTF-8, where WSGI hands over Latin-1, so a
-route matches `/café` as written.
+it used to answer `{}` for all of those alike. `Request.body` is None for a body
+that is not UTF-8, and `Request.bytes` reads it raw; a second read of the body
+in one request aborts, where it used to come back empty. `Request.header` and
+`Request.cookie` read a header and a cookie, the cookie leniently, as browsers
+write them. `Request.path` is decoded as UTF-8, where WSGI hands over Latin-1,
+so a route matches `/café` as written.
 
-**Cookies are written from `Response` and read from `Http`.**
+**Cookies are written from `Response` and read from `Request`.**
 `Response.cookie(name, value, maxAgeSeconds, secure)` builds a `Set-Cookie` that
 is always `Path=/`, `HttpOnly` and `SameSite=Lax`. `Response.signedCookie` and
-`Http.signedCookie` carry a value a client cannot change: the cookie holds the
-value, its expiry and an HMAC-SHA256 over both and the cookie's name, so it
+`Request.signedCookie` carry a value a client cannot change: the cookie holds
+the value, its expiry and an HMAC-SHA256 over both and the cookie's name, so it
 cannot be altered or moved to another name, and the server enforces the expiry
 rather than trusting the browser's `Max-Age`. The value is signed, not
 encrypted, so a user id belongs there and a secret does not, and nothing signed
@@ -120,7 +120,7 @@ nothing, so there is no form reader — that only makes sense beside the
 server-side rendering it does not do. The `Http.Segments` pattern is gone with
 it: it split the path inside each case, so twenty routes split twenty times
 (328us, against 74us for a whole request). A route that needs the parts of a
-path calls `Http.segments(path)` once and matches the list.
+path calls `Request.segments(path)` once and matches the list.
 
 The templates pin the previous release and still call the old signatures.
 Moving them is part of the release, not of this change.

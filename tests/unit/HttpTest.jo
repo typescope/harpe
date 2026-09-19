@@ -12,6 +12,7 @@ import harpe.server.Header
 import harpe.server.Application
 import harpe.server.Router
 import harpe.server.serveInBackground
+import harpe.server.Request
 import harpe.server.request
 import harpe.server.Response
 import harpe.server.Sse
@@ -38,82 +39,82 @@ private def applicationFor(answersTo: Http.Host.Policy, reached: py.List): Appli
 //[ Every path these tests ask for. `reached` records what a route saw. //]
 private def route(reached: py.List): Response receives request =
   match request
-  case Http.Get("/dynamic") => Response.complete(Http.Status.Success, Http.Mime.Json, [], "{}")
-  case Http.Get("/asset")   => Response.revalidated(Response.complete(Http.Status.Success, Http.Mime.Css, [], "body { margin: 0 }"))
-  case Http.Get("/page")    => Response.revalidated(Response.html("<p>" + Http.queryParam("v").getOrElse("one") + "</p>"))
-  case Http.Get("/moved")   => Response.redirect("/dynamic")
+  case Request.Get("/dynamic") => Response.complete(Http.Status.Success, Http.Mime.Json, [], "{}")
+  case Request.Get("/asset")   => Response.revalidated(Response.complete(Http.Status.Success, Http.Mime.Css, [], "body { margin: 0 }"))
+  case Request.Get("/page")    => Response.revalidated(Response.html("<p>" + Request.query("v").getOrElse("one") + "</p>"))
+  case Request.Get("/moved")   => Response.redirect("/dynamic")
 
-  case Http.Get("/headed") =>
-    Response.complete(Http.Status.Created, Http.Mime.Text, [Header("X-Trace", "abc")], Http.header("X-Asked").getOrElse("absent"))
+  case Request.Get("/headed") =>
+    Response.complete(Http.Status.Created, Http.Mime.Text, [Header("X-Trace", "abc")], Request.header("X-Asked").getOrElse("absent"))
 
-  case Http.Get("/query") =>
-    val shown = match Http.queryParam("q")
+  case Request.Get("/query") =>
+    val shown = match Request.query("q")
                 case Some(value) => "some:" + value
                 case None        => "none"
     Response.complete(Http.Status.Success, Http.Mime.Text, [], shown)
 
   //[ The parts of a path, split once, which is what replaced the `Segments` pattern. //]
-  case Http.Get(path) if path.startsWith("/files/") =>
-    match Http.segments(path)
+  case Request.Get(path) if path.startsWith("/files/") =>
+    match Request.segments(path)
     case ["files", name] => Response.complete(Http.Status.Success, Http.Mime.Text, [], name)
     case _               => Response.notFound()
 
-  case Http.Get("/stream") =>
+  case Request.Get("/stream") =>
     Response.stream: Http.Mime.Ndjson, (emit: String => Bool) =>
       val _ = emit("a\n")
       val _ = emit("b\n")
       val _ = emit("c\n")
 
   //[ Emits until the client is gone, then records whether a later emit still claims it is there. //]
-  case Http.Get("/forever") =>
+  case Request.Get("/forever") =>
     Response.stream: Http.Mime.Text, (emit: String => Bool) =>
       val chunk = py.dynamic("x").callDynamic("__mul__", 65536).asString
       var sent = 0
       while sent < 4096 && emit(chunk) do sent = sent + 1
       reached.append(if emit("after") then "open" else "closed")
 
-  case Http.Post("/echo") =>
+  case Request.Post("/echo") =>
     reached.append(1)
-    val text = Http.readBody() rescue None => return Response.badRequest("not utf-8")
+    val text = Request.body() rescue None => return Response.badRequest("not utf-8")
     Response.complete(Http.Status.Success, Http.Mime.Text, [], text.size.toString)
 
-  case Http.Post("/twice") =>
-    val _ = Http.readBytes()
-    val second = match py.try(Http.readBytes())
+  case Request.Post("/twice") =>
+    val _ = Request.bytes()
+    val second = match py.try(Request.bytes())
                  case Ok(_)    => "read twice"
                  case Err(err) => err.message
     Response.complete(Http.Status.Success, Http.Mime.Text, [], second)
 
-  case Http.Get("/framed") =>
+  case Request.Get("/framed") =>
     val own = Header("Content-Security-Policy", "frame-ancestors https://partner.example")
     Response.complete(Http.Status.Success, Http.Mime.Html, [own], "<p>embedded</p>")
 
-  case Http.Get("/cookie") =>
-    val shown = Http.cookie("sid").getOrElse("absent")
+  case Request.Get("/cookie") =>
+    val shown = Request.cookie("sid").getOrElse("absent")
     Response.complete(Http.Status.Success, Http.Mime.Text, [Response.cookie("sid", "abc123", maxAgeSeconds = 60, secure = true)], shown)
 
   //[ The same, signed for a different cookie name, to show the name is signed. //]
-  case Http.Get("/signed-other") =>
-    val given = Http.queryParam("value").getOrElse("")
+  case Request.Get("/signed-other") =>
+    val given = Request.query("value").getOrElse("")
     val header = Response.signedCookie("other", given, secret, maxAgeSeconds = 60, secure = true)
     Response.complete(Http.Status.Success, Http.Mime.Text, [header], "issued")
 
   //[ Signs `?value=` into a cookie, and reads back whatever cookie the request carries. //]
-  case Http.Get("/signed") =>
-    val given = Http.queryParam("value").getOrElse("")
-    val age = Int.parse(Http.queryParam("age").getOrElse("60")) rescue None => 60
-    val seen = Http.signedCookie("sid", secret).getOrElse("absent")
+  case Request.Get("/signed") =>
+    val given = Request.query("value").getOrElse("")
+    val age = Int.parse(Request.query("age").getOrElse("60")) rescue None => 60
+    val seen = Request.signedCookie("sid", secret).getOrElse("absent")
     val header = Response.signedCookie("sid", given, secret, maxAgeSeconds = age, secure = true)
     Response.complete(Http.Status.Success, Http.Mime.Text, [header], seen)
 
-  case Http.Post("/json") =>
+  case Request.Post("/json") =>
     Response.json:
-      Http.readJson() rescue None => return Response.badRequest("bad json")
+      Request.json() rescue None => return Response.badRequest("bad json")
 
-  case Http.Get("/boom") =>
+  case Request.Get("/boom") =>
     abort "boom"
 
-  case Http.Get("/boom-stream") =>
+  case Request.Get("/boom-stream") =>
     Response.stream: Http.Mime.Text, (emit: String => Bool) =>
       val _ = emit("started\n")
       abort "stream boom"
@@ -174,10 +175,10 @@ private def callBytes(wsgi: (py.Dynamic, py.Dynamic) => py.List, method: String,
 
 //[ Files under `root`, named by the `name` query parameter. //]
 private def fileRoute(root: String): Response receives request =
-  val name = Http.queryParam("name").getOrElse("")
+  val name = Request.query("name").getOrElse("")
   match request
-  case Http.Get("/download") => Response.file(root, name, Response.Attachment)
-  case Http.Get("/show")     => Response.file(root, name, Response.Inline)
+  case Request.Get("/download") => Response.file(root, name, Response.Attachment)
+  case Request.Get("/show")     => Response.file(root, name, Response.Inline)
   case _                     => Response.notFound()
 
 //[ A directory of files to serve, beside one that must stay out of reach, for the length of `body`. //]
@@ -227,7 +228,7 @@ private def info(): Response receives request = Response.json(py.dict("name" ~ "
 
 private def echoed(reached: py.List): Response receives request =
   reached.append(1)
-  val text = Http.readBody() rescue None => return Response.badRequest("not utf-8")
+  val text = Request.body() rescue None => return Response.badRequest("not utf-8")
   Response.complete(Http.Status.Success, Http.Mime.Text, [], text.size.toString)
 
 //[ Two routes claiming one verb and path, which no application may hold. //]
