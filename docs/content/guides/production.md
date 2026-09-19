@@ -179,8 +179,6 @@ client_max_body_size 25m;
 proxy_read_timeout 3600s;
 ```
 
-An event stream can also send `Sse.keepalive()` during quiet periods.
-
 **Do not buffer a streamed response.** `Response.stream` sends
 `X-Accel-Buffering: no`, which nginx honours. Other proxies need their own
 setting, such as `proxy_buffering off`.

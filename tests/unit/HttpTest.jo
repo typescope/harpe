@@ -16,7 +16,6 @@ import harpe.server.Request
 import harpe.server.request
 import harpe.server.Response
 import harpe.ffi.os
-import harpe.server.Sse
 import harpe.ffi.json
 import harpe.testing.thisSuite
 import harpe.testing.suite
@@ -404,12 +403,6 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("html carries one", Http.Mime.value(Http.Mime.Html) == "text/html; charset=utf-8")
     check("json carries none", Http.Mime.value(Http.Mime.Json) == "application/json")
     check("a runtime type passes through", Http.Mime.value(Http.Mime.Other("image/png")) == "image/png")
-
-  test: "frames server-sent events a line of data at a time", () =>
-    check("named", Sse.event("turn", "a\nb") == "event: turn\ndata: a\ndata: b\n\n")
-    check("unnamed", Sse.message("x") == "data: x\n\n")
-    check("carriage returns split too", Sse.message("a\r\nb\rc") == "data: a\ndata: b\ndata: c\n\n")
-    check("keepalive is a comment", Sse.keepalive() == ":\n\n")
 
   test: "answers a dynamic response no-store and nosniff", () =>
     val answer = get(appFor(py.list()), "/dynamic")

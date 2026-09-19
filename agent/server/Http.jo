@@ -118,14 +118,13 @@ section Http
     ! that the charset decision is made once.
   //]
   section Mime
-    union Type = Html | Json | Ndjson | EventStream | Text | Css | JavaScript | Other(value: String)
+    union Type = Html | Json | Ndjson | Text | Css | JavaScript | Other(value: String)
 
     def value(kind: Type): String =
       match kind
       case Html        => "text/html; charset=utf-8"
       case Json        => "application/json"
       case Ndjson      => "application/x-ndjson"
-      case EventStream => "text/event-stream; charset=utf-8"
       case Text        => "text/plain; charset=utf-8"
       case Css         => "text/css; charset=utf-8"
       case JavaScript  => "application/javascript; charset=utf-8"

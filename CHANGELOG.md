@@ -11,8 +11,8 @@ submitted form carries and `Multipart` the scan that reads one off the wire,
 `Util` is what both sides of a cookie share, and `Router`, `Application`,
 `Wsgi` and `Serve` declare routes, serve them, write them out, and run a
 wsgiref server for harpe's own viewer and tests. What an application chooses
-to accept is not the protocol's, so `Host` and `CrossSite` are
-`Application`'s. `Http.server`, `Http.quiet` and `Http.app` are gone.
+to accept is not the protocol's, so `Host` and `CrossSite` are `Application`'s. `Http.server`, `Http.quiet` and
+`Http.app` are gone.
 
 ```jo
 val application = new Application:
@@ -63,8 +63,7 @@ in one place.
 **`Response.stream` hands its producer an `emit` that reports a gone client.**
 wsgiref and waitress raise different exceptions for a closed connection, and the
 producer sees neither, only `false` from then on, so it can stop work nobody
-will read. `Mime.EventStream` and `Sse` frame server-sent events, and
-`Sse.keepalive()` keeps an idle stream open through a proxy's read timeout.
+will read.
 
 **`Response.file(root, name, disposition)` serves a file under a directory.**
 `name` is the relative path a client sent. An empty or absolute name, a `..`

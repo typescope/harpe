@@ -202,26 +202,3 @@ section Response
     None
 
 end
-
-//[ Server-sent event framing, for a `Response.stream` of `Mime.EventStream`
-  !
-  ! The browser's `EventSource` reads these and reconnects on its own. Every
-  ! line of `data` becomes its own `data:` field, which the browser rejoins.
-//]
-section Sse
-  //[ An event the page listens for by `name`. //]
-  def event(name: String, data: String): String =
-    if name.contains("\r") || name.contains("\n") then abort "event name contains a line break"
-    "event: " + name + "\n" + fields(data)
-
-  //[ An unnamed event, delivered to `onmessage`. //]
-  def message(data: String): String = fields(data)
-
-  //[ A comment line, which keeps an idle stream open through a proxy's read timeout. //]
-  def keepalive(): String = ":\n\n"
-
-  private def fields(data: String): String =
-    val lines = data.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    lines.map(line => "data: " + line + "\n").join("") + "\n"
-end
-
