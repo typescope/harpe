@@ -101,21 +101,23 @@ section Request
     !
     ! A chunked request declares none, so the limit has nothing to read and
     ! `bytes` would take zero and hand a route an empty body — silently, which
-    ! is the worst answer available. It is refused with a 411 instead, since
-    ! nothing here streams a body: the limit is enforced from the declaration,
-    ! and the whole body is held in memory once it is read.
+    ! is the worst answer available. It answers None instead, since nothing here
+    ! streams a body: the limit is enforced from the declaration, and the whole
+    ! body is held in memory once it is read.
     !
-    ! Waitress de-chunks and sets `CONTENT_LENGTH`, so this only catches the
-    ! servers that pass the chunks through, such as gunicorn, which marks the
-    ! stream with `wsgi.input_terminated` instead.
+    ! `Transfer-Encoding` is the only mark read. `wsgi.input_terminated` says
+    ! reading to EOF is safe, not that a body is coming — waitress sets it on
+    ! every request, so trusting it would refuse a bodyless POST or DELETE. A
+    ! request declaring neither has no body, which is what RFC 9112 says and
+    ! what waitress was measured to do, so it is read as the empty body it is.
+    !
+    ! Waitress also de-chunks and declares the length, so what is left here is
+    ! the servers that pass the chunks through.
   //]
-  private[server] def undeclaredBody(environ: py.Dynamic): Bool =
+  private def undeclaredBody(environ: py.Dynamic): Bool =
     match environValue(environ, "CONTENT_LENGTH")
     case Some(declared) if declared.trim != "" => false
-    case _ =>
-      val chunked = !py.isNone(environ.get("HTTP_TRANSFER_ENCODING"))
-      val terminated = py.try(environ.get("wsgi.input_terminated").asBool) rescue Err(_) => false
-      chunked || terminated
+    case _ => !py.isNone(environ.get("HTTP_TRANSFER_ENCODING"))
 
   //[ The value of a WSGI environ key, or None when it is absent. //]
   private[server] def environValue(environ: py.Dynamic, key: String): Option[String] =
@@ -230,7 +232,11 @@ section Request
     val kind = header("Content-Type").getOrElse("")
     py.dynamic(kind.split(";").get(0).trim).lower().asString
 
-  //[ The request body as bytes, or None when less of it arrived than was declared
+  //[ The request body as bytes, or None when it cannot be trusted whole
+    !
+    ! None when the body declared no length at all, and when less of it arrived
+    ! than was declared. Both would otherwise read as a body the route believes
+    ! complete.
     !
     ! Reads exactly what `CONTENT_LENGTH` declares, with no cap of its own:
     ! `Application.wsgi` has already refused a declaration over the route's own
@@ -243,6 +249,7 @@ section Request
   def bytes(): Option[py.Dynamic] receives request =
     if request.bodyTaken then abort "the request body was already read"
     request.bodyTaken = true
+    if undeclaredBody(request.environ) then return None
     val declared = declaredLength(request.environ)
     val raw = request.environ.get("wsgi.input").read(declared)
     if builtins.len(raw) == declared then Some(raw) else None

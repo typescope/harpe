@@ -117,10 +117,12 @@ Pass the server the same body limit. `wsgi` refuses an oversized body before the
 route sees it, but without draining what the client is still sending, so the
 server's own limit is what gives the client a clean answer.
 
-A body must declare its length. `wsgi` answers 411 to one that does not, since
-the limit is enforced from the declaration and nothing here streams a body.
-Waitress de-chunks a chunked request and declares the length itself, so this is
-the servers that pass the chunks through, gunicorn among them.
+A body must declare its length, since the limit is enforced from the
+declaration and nothing here streams a body. One that does not is None from
+`Request.body`, `json` and `multipart`, so the route answers its own 400 rather
+than acting on an empty body it believes whole. Waitress de-chunks a chunked
+request and declares the length itself, so this is the servers that pass the
+chunks through.
 
 A streaming producer should stop once `emit` returns `false`, since the client
 has gone.

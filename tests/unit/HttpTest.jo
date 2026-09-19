@@ -178,9 +178,9 @@ private def callBytes(wsgi: (py.Dynamic, py.Dynamic) => py.List, method: String,
     (environ: py.Dict) => pass
 
 //[ A POST whose environ declares no length, as a server passing chunks through
-  ! hands one over. `marked` is how that server says a body is still coming:
-  ! `Transfer-Encoding` on the request, `wsgi.input_terminated` on the stream —
-  ! which is gunicorn's spelling — or nothing at all, for a POST with no body.
+  ! hands one over. `marked` is what that environ carries: `Transfer-Encoding`,
+  ! which is the only mark of a body still coming, or `wsgi.input_terminated`,
+  ! which waitress sets on every request including one with no body at all.
 //]
 private def withoutLength(wsgi: (py.Dynamic, py.Dynamic) => py.List, marked: String): Answer =
   val adjust = (environ: py.Dict) =>
@@ -542,20 +542,24 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("emit reported the close", reached.size == 1 && reached.get(0).asString == "closed")
 
   //[ What a server that passes the chunks through hands over: a body, and no declared length. //]
-  test: "refuses a body that declares no length, rather than reading it as empty", () =>
+  test: "answers None for a body that declared no length, rather than reading it as empty", () =>
     val wsgi = appFor(py.list())
 
+    //[ The route reads None and answers its own 400, where it would once have seen an empty body. //]
     val chunked = withoutLength(wsgi, marked = "chunked")
-    check("411", chunked.status == 411)
-    check("and says why", chunked.text == "a request body must declare its length")
+    check("the route refuses it", chunked.status == 400)
 
+    //[ Waitress marks every request terminated, a bodyless POST included, so
+      ! the mark alone must not be read as a body. Measured, not assumed.
+    //]
     val terminated = withoutLength(wsgi, marked = "terminated")
-    check("a stream marked terminated too", terminated.status == 411)
+    check("a terminated stream alone is not a body", terminated.status == 200)
+    check("and reads as empty", terminated.text == "0")
 
-    //[ Nothing says a body is coming, so it is a POST that has none, and reads as empty. //]
+    //[ Nothing says a body is coming, so it is a POST that has none. //]
     val bodyless = withoutLength(wsgi, marked = "nothing")
     check("a POST carrying no body is still served", bodyless.status == 200)
-    check("and reads as empty", bodyless.text == "0")
+    check("and reads as empty too", bodyless.text == "0")
 
   test: "refuses a body shorter than the client declared, rather than truncating it", () =>
     val json = [Header("Content-Type", "application/json")]

@@ -59,9 +59,11 @@ section Http
     ! than passing a literal. `Other` is for a status decided at runtime, such
     ! as one relayed from upstream.
     !
-    ! `NotModified` is vocabulary an application spends itself: nothing here
-    ! answers a conditional request, so a route that wants one reads
-    ! `If-None-Match` and answers 304 on its own terms.
+    ! Some cases are vocabulary an application spends itself. Nothing here
+    ! answers a conditional request, so a route wanting a 304 reads
+    ! `If-None-Match` and answers on its own terms, and nothing answers 411,
+    ! since a body that declared no length reads as None rather than being
+    ! refused at the door.
   //]
   section Status
     union Code =
