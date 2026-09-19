@@ -10,7 +10,7 @@
   !     val viewLog = new ViewLogger(capacity = 5000)
   !     val log     = new TeeLogger([new JsonlLogger(path), viewLog])
   !
-  !     case Http.Get("/journal") => Viewer.respond(viewLog, title)
+  !     case Request.Get("/journal") => Viewer.respond(viewLog, title)
   !
   ! ONE ROUTE, because the protocol is nobody else's business. The page polls
   ! the path it was served from, so the `seen` cursor, the envelope it comes
@@ -45,9 +45,12 @@ namespace harpe.observability
 
 import harpe.ffi.json
 import harpe.logging.Entry
-import harpe.util.Process
-import harpe.Http
-import harpe.Http.request
+import harpe.server.Http
+import harpe.server.Application
+import harpe.server.Serve
+import harpe.server.Request
+import harpe.server.request
+import harpe.server.Response
 import jo.resource.*
 import jo.py.resource.*
 
@@ -62,12 +65,12 @@ section Viewer
     ! `title` names what this page is showing — an agent, a deployment, one
     ! session — and is the driver's to choose.
   //]
-  def respond(viewLog: ViewLogger, title: String): py.List receives request =
-    val asked = Http.queryParam("seen")
-    if asked == "" then Http.respondHtml(page(title))
-    else
+  def respond(viewLog: ViewLogger, title: String): Response receives request =
+    match Request.query("seen")
+    case None => Response.html(page(title))
+    case Some(asked) =>
       val seen = Int.parse(asked) rescue None => 0
-      Http.respond("200 OK", "application/json", events(viewLog, seen))
+      Response.complete(Http.Status.Success, Http.Mime.Json, events(viewLog, seen))
 
   private def page(title: String): String =
     val bundle = new py.resource.ResourceBundle("harpe")
@@ -93,21 +96,30 @@ section Viewer
     ! a server that never came up. The thread is a daemon and the caller prints
     ! its own banner, so there is nothing to hand back. NO AUTHENTICATION: a
     ! journal holds every conversation it was given, so `host` belongs on a
-    ! loopback address.
+    ! loopback address, and `answersTo` names what a browser may call it there,
+    ! defaulting to the loopback names for the same reason `Application` does.
     !
     ! Quiet, because the page polls: an access log here is a line a second in
-    ! whatever terminal the driver was already using. A driver mounting the route
-    ! on a server of its own decides that for itself, with `Http.quiet`.
+    ! whatever terminal the driver was already using.
   //]
-  def start(viewLog: ViewLogger, title: String, host: String, port: Int): Unit =
-    val httpd = Http.server: host, port, () => route(viewLog, title)
-    Http.quiet(httpd)
-    Process.daemon(() => httpd.serve_forever()).start()
+  def start(
+      viewLog: ViewLogger,
+      title: String,
+      host: String,
+      port: Int,
+      answersTo: Application.Host.Policy = Application.Host.Loopback): Unit =
+    val application = new Application:
+      host = answersTo
+      routes = []
+      fallback = () => route(viewLog, title)
+      maxBodyBytes = 0
 
-  private def route(viewLog: ViewLogger, title: String): py.List receives request =
+    val _ = Serve.inBackground(host, port, application)
+
+  private def route(viewLog: ViewLogger, title: String): Response receives request =
     match request
-    case Http.Get("/") => respond(viewLog, title)
-    case _             => Http.notFound()
+    case Request.Get("/") => respond(viewLog, title)
+    case _             => Response.notFound()
 
   //[ One bundled asset, or a comment saying which one is missing. //]
   private def asset(bundle: py.resource.ResourceBundle, rel: String): String =

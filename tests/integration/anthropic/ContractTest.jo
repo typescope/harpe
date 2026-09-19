@@ -22,7 +22,7 @@ import harpe.test.integration.ModelDriver
 private def model(server: ProviderFixture.Server) =
   anthropic("test-key", "test-model", Anthropic.NoCache, timeoutSeconds = 2, baseUrl = server.origin)
 
-private def toolResponse(): ProviderFixture.Response = ProviderFixture.sse:
+private def toolResponse(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   event: message_start
   data: {
@@ -53,7 +53,7 @@ private def toolResponse(): ProviderFixture.Response = ProviderFixture.sse:
   data: {"type":"message_stop"}
   """
 
-private def textResponse(text: String): ProviderFixture.Response = ProviderFixture.sse:
+private def textResponse(text: String): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   event: message_start
   data: {
@@ -84,7 +84,7 @@ private def textResponse(text: String): ProviderFixture.Response = ProviderFixtu
   data: {"type":"message_stop"}
   """
 
-private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
+private def unavailable(): ProviderFixture.Scripted = ProviderFixture.response:
   "529 Overloaded"
   "application/json"
   """
@@ -92,7 +92,7 @@ private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
     """
 
 //[ A reply cut off by the token limit, mid tool call. //]
-private def truncated(): ProviderFixture.Response = ProviderFixture.sse:
+private def truncated(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   event: message_start
   data: {
@@ -139,7 +139,7 @@ private def truncated(): ProviderFixture.Response = ProviderFixture.sse:
   ! rejects a tool result whose preceding assistant turn lost its thinking
   ! block, so the block has to come back verbatim, signature and all.
 //]
-private def thinksThenCalls(): ProviderFixture.Response = ProviderFixture.sse:
+private def thinksThenCalls(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   event: message_start
   data: {

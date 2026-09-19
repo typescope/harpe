@@ -21,7 +21,7 @@ import harpe.test.integration.ModelDriver
 private def model(server: ProviderFixture.Server) =
   openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 2)
 
-private def toolResponse(): ProviderFixture.Response = ProviderFixture.sse:
+private def toolResponse(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   data: {
     "id": "chat_tool", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
@@ -56,7 +56,7 @@ private def toolResponse(): ProviderFixture.Response = ProviderFixture.sse:
   data: [DONE]
   """
 
-private def textResponse(text: String): ProviderFixture.Response = ProviderFixture.sse:
+private def textResponse(text: String): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   data: {
     "id": "chat_text", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
@@ -74,7 +74,7 @@ private def textResponse(text: String): ProviderFixture.Response = ProviderFixtu
   data: [DONE]
   """
 
-private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
+private def unavailable(): ProviderFixture.Scripted = ProviderFixture.response:
   "503 Service Unavailable"
   "application/json"
   """
@@ -82,7 +82,7 @@ private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
     """
 
 //[ A reply cut off by the token limit, mid tool call. //]
-private def truncated(): ProviderFixture.Response = ProviderFixture.sse:
+private def truncated(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   data: {
     "id": "chat_cut", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
@@ -120,7 +120,7 @@ private def truncated(): ProviderFixture.Response = ProviderFixture.sse:
   ! that rebuild an assistant message field by field drop it, which is why this
   ! one re-sends the provider's own message object instead.
 //]
-private def reasonsThenCalls(): ProviderFixture.Response = ProviderFixture.sse:
+private def reasonsThenCalls(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   data: {
     "id": "chat_reason", "object": "chat.completion.chunk", "created": 0, "model": "test-model",

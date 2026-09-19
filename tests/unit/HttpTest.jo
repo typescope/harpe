@@ -1,0 +1,885 @@
+//[ HttpTest.jo
+  !
+  ! Unit tests for `harpe.server`. They call an `Application`'s WSGI callable in
+  ! memory, through `call` below, with no socket and no thread.
+//]
+
+namespace harpe.test.unit.HttpTest
+
+import harpe.server.Http
+import harpe.server.Http.Header
+import harpe.server.Application
+import harpe.server.Router
+import harpe.server.Request
+import harpe.server.request
+import harpe.server.Response
+import harpe.ffi.os
+import harpe.ffi.json
+import harpe.testing.thisSuite
+import harpe.testing.suite
+import harpe.testing.test
+import harpe.testing.check
+
+//[ The secret these tests sign cookies with. //]
+private def secret: String = "0123456789abcdef0123456789abcdef"
+
+//[ A body limit small enough that a test can exceed it cheaply. //]
+private def limit: Int = 1024
+
+//[ Everything under one `fallback`, which is how an application dispatches by pattern. //]
+private def applicationFor(answersTo: Application.Host.Policy, reached: py.List): Application =
+  new Application:
+    host = answersTo
+    routes = []
+    fallback = () => route(reached)
+    maxBodyBytes = limit
+
+//[ Every path these tests ask for. `reached` records what a route saw. //]
+private def route(reached: py.List): Response receives request =
+  match request
+  case Request.Get("/dynamic") => Response.complete(Http.Status.Success, Http.Mime.Json, "{}")
+  case Request.Get("/asset")   => Response.complete(Http.Status.Success, Http.Mime.Css, "body { margin: 0 }")
+  case Request.Get("/page")    => Response.html("<p>" + Request.query("v").getOrElse("one") + "</p>")
+  case Request.Get("/moved")   => Response.redirect("/dynamic")
+
+  //[ Conditional requests, done by the route
+    !
+    ! Nothing in `harpe.server` answers one, so this is what an application
+    ! writes when it wants a 304: a validator it can compute cheaply, checked
+    ! before the body is built. `reached` records that the build was skipped.
+  //]
+  case Request.Get("/versioned") =>
+    val tag = "\"v" + Request.query("v").getOrElse("1") + "\""
+    if Request.header("If-None-Match").getOrElse("") == tag then
+      Response.complete(Http.Status.NotModified, Http.Mime.Text, "", headers = [Header("ETag", tag)])
+    else
+      reached.append("built")
+      val rule = Header("Cache-Control", "private, no-cache")
+      Response.html("<p>built</p>", headers = [Header("ETag", tag), rule])
+
+  //[ A body the browser may keep, which is a route naming its own rule in place of `no-store`. //]
+  case Request.Get("/cached") =>
+    val own = Header("Cache-Control", "public, max-age=3600")
+    Response.complete(Http.Status.Success, Http.Mime.Css, "body { margin: 0 }", headers = [own])
+
+  case Request.Get("/headed") =>
+    Response.complete(Http.Status.Created, Http.Mime.Text, Request.header("X-Asked").getOrElse("absent"), headers = [Header("X-Trace", "abc")])
+
+  case Request.Get("/query") =>
+    val shown = match Request.query("q")
+                case Some(value) => "some:" + value
+                case None        => "none"
+    Response.complete(Http.Status.Success, Http.Mime.Text, shown)
+
+  //[ The parts of a path, split once, which is what replaced the `Segments` pattern. //]
+  case Request.Get(path) if path.startsWith("/files/") =>
+    match Request.segments(path)
+    case ["files", name] => Response.complete(Http.Status.Success, Http.Mime.Text, name)
+    case _               => Response.notFound()
+
+  case Request.Post("/echo") =>
+    reached.append(1)
+    val text = Request.body() rescue None => return Response.badRequest("not utf-8")
+    Response.complete(Http.Status.Success, Http.Mime.Text, text.size.toString)
+
+  case Request.Post("/twice") =>
+    val _ = Request.bytes()
+    val second = match py.try(Request.bytes())
+                 case Ok(_)    => "read twice"
+                 case Err(err) => err.message
+    Response.complete(Http.Status.Success, Http.Mime.Text, second)
+
+  case Request.Get("/framed") =>
+    val own = Header("Content-Security-Policy", "frame-ancestors https://partner.example")
+    Response.html("<p>embedded</p>", headers = [own])
+
+  case Request.Get("/cookie") =>
+    val shown = Request.cookie("sid").getOrElse("absent")
+    Response.complete(Http.Status.Success, Http.Mime.Text, shown, headers = [Response.cookie("sid", "abc123", maxAgeSeconds = 60, secure = true)])
+
+  //[ The same, signed for a different cookie name, to show the name is signed. //]
+  case Request.Get("/signed-other") =>
+    val given = Request.query("value").getOrElse("")
+    val header = Response.signedCookie("other", given, secret, maxAgeSeconds = 60, secure = true)
+    Response.complete(Http.Status.Success, Http.Mime.Text, "issued", headers = [header])
+
+  //[ Signs `?value=` into a cookie, and reads back whatever cookie the request carries. //]
+  case Request.Get("/signed") =>
+    val given = Request.query("value").getOrElse("")
+    val age = Int.parse(Request.query("age").getOrElse("60")) rescue None => 60
+    val seen = Request.signedCookie("sid", secret).getOrElse("absent")
+    val header = Response.signedCookie("sid", given, secret, maxAgeSeconds = age, secure = true)
+    Response.complete(Http.Status.Success, Http.Mime.Text, seen, headers = [header])
+
+  //[ The route names the directory its files go in, or none to refuse them. //]
+  case Request.Post("/upload") =>
+    val into: String | None = match Request.query("into")
+                              case Some(dir) => dir
+                              case None      => None
+    val form = Request.form(into) rescue None =>
+      return Response.badRequest("expected multipart/form-data")
+
+    val note = form.field("note").getOrElse("absent")
+    val tags = form.all("tag").join("+")
+    val files = form.files("file")
+    val shown = if files.size == 0 then "none"
+                else
+                  val one = files.get(0)
+                  "\{one.filename}|\{one.mime}|\{one.size}"
+    Response.complete(Http.Status.Success, Http.Mime.Text, "\{note}|\{tags}|\{shown}")
+
+  //[ A urlencoded body, as a webhook posts one. //]
+  case Request.Post("/form") =>
+    val form = Request.form() rescue None => return Response.badRequest("expected a form")
+    val tags = form.all("tag").join("+")
+    Response.complete(Http.Status.Success, Http.Mime.Text, "\{form.field("note").getOrElse("absent")}|\{tags}|\{form.files("any").size}")
+
+  case Request.Post("/json") =>
+    Response.json:
+      Request.json() rescue None => return Response.badRequest("bad json")
+
+  //[ An upload spooled straight to the path the route chose, never held whole. //]
+  case Request.Post("/save") =>
+    match Request.saveTo(Request.query("into").getOrElse(""))
+    case Some(written) => Response.json(py.dict("written" ~ written))
+    case None          => Response.badRequest("no whole body")
+
+  //[ An empty directory is one nobody meant, so it aborts rather than writing to the CWD. //]
+  case Request.Post("/upload-nowhere") =>
+    match py.try(Request.form(""))
+    case Ok(_)    => Response.complete(Http.Status.Success, Http.Mime.Text, "accepted")
+    case Err(err) => Response.complete(Http.Status.Success, Http.Mime.Text, err.message)
+
+  case Request.Get("/boom") =>
+    abort "boom"
+
+  case _ => Response.notFound()
+
+//[ A response as a client would read it. //]
+private class Answer(status: Int, headers: List[Header], bytes: py.Dynamic)
+  def text: String = bytes.decode("utf-8").asString
+
+  //[ The first header by this name, compared case-insensitively. //]
+  def header(name: String): Option[String] =
+    val wanted = py.dynamic(name).lower().asString
+    for h in headers do
+      if py.dynamic(h.name).lower().asString == wanted then return Some(h.value)
+    None
+end
+
+//[ Ask a WSGI application for `target` in memory, with no socket and no thread. //]
+private def call(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, method: String, target: String, headers: List[Header], body: String): Answer =
+  callBytes(wsgi, method, target, headers, py.dynamic(body).encode())
+
+private def callBytes(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, method: String, target: String, headers: List[Header], body: py.Dynamic): Answer =
+  callWith:
+    wsgi
+    method
+    target
+    headers
+    body
+    (environ: py.Dict) => pass
+
+//[ A POST whose environ declares no length, as a server passing chunks through
+  ! hands one over. `marked` is what that environ carries: `Transfer-Encoding`,
+  ! which is the only mark of a body still coming, or `wsgi.input_terminated`,
+  ! which waitress sets on every request including one with no body at all.
+//]
+private def withoutLength(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, marked: String): Answer =
+  val adjust = (environ: py.Dict) =>
+    val _ = py.dynamic(environ).pop("CONTENT_LENGTH", py.none())
+    if marked == "chunked" then environ.set("HTTP_TRANSFER_ENCODING", "chunked")
+    if marked == "terminated" then environ.set("wsgi.input_terminated", true)
+  callWith:
+    wsgi
+    "POST"
+    "/echo"
+    []
+    py.dynamic("hello").encode()
+    adjust
+
+//[ A POST declaring more body than it sends, as a client closing early leaves one.
+  ! The declaration stays under the route's limit, so it is the read that is
+  ! short rather than the request that is refused.
+//]
+private def overstating(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, target: String, headers: List[Header], body: String): Answer =
+  val adjust = (environ: py.Dict) => environ.set("CONTENT_LENGTH", "500")
+  callWith(wsgi, "POST", target, headers, py.dynamic(body).encode(), adjust)
+
+private def callWith(
+      wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic,
+      method: String,
+      target: String,
+      headers: List[Header],
+      body: py.Dynamic,
+      adjust: py.Dict => Unit): Answer =
+  val urllib = py.module("urllib.parse")
+  val parts = urllib.urlsplit(target)
+
+  val environ = py.dict()
+  py.module("wsgiref.util").setup_testing_defaults(environ)
+  environ.set("REQUEST_METHOD", method)
+  environ.set("PATH_INFO", urllib.unquote_to_bytes(parts.path).decode("latin-1"))
+  environ.set("QUERY_STRING", parts.query)
+  environ.set("CONTENT_LENGTH", py.module("builtins").len(body).asInt.toString)
+  environ.set("wsgi.input", py.module("io").BytesIO(body))
+  for h in headers do
+    val key = py.dynamic(h.name).upper().asString.replace("-", "_")
+    environ.set(if key == "CONTENT_TYPE" then key else "HTTP_" + key, h.value)
+  adjust(environ)
+
+  val statuses = py.list()
+  val sent = py.list()
+  val chunks = py.list()
+  val collect = (chunk: py.Dynamic) => chunks.append(chunk)
+  val startResponse = (line: py.Dynamic, pairs: py.Dynamic) =>
+    statuses.append(line)
+    py.dynamic(sent).extend(pairs)
+    collect
+
+  // Drained and then closed, as PEP 3333 obliges a server to do — which is what
+  // releases the handle behind a file response.
+  val returned = wsgi(py.dynamic(environ), py.dynamic(startResponse))
+  for chunk in py.module("builtins").list(returned).cast[py.List] do chunks.append(chunk)
+  val closer = py.module("builtins").getattr(returned, "close", py.none())
+  if !py.isNone(closer) then py.call(closer)
+
+  val line = statuses.get(0).asString
+  val status = Int.parse(line.split(" ").get(0)) rescue None => abort "a status line with no code: '\{line}'"
+
+  var answered: List[Header] = []
+  for pair in sent do
+    val fields = py.module("builtins").list(pair).cast[py.List]
+    answered = answered + Header(fields.get(0).asString, fields.get(1).asString)
+
+  new Answer(status, answered, py.dynamic("").encode().join(chunks))
+
+//[ Files under `root`, named by the `name` query parameter. //]
+private def fileRoute(root: String): Response receives request =
+  val name = Request.query("name").getOrElse("")
+  match request
+  case Request.Get("/download") => Response.file(root, name, Response.Attachment)
+  case Request.Get("/show")     => Response.file(root, name, Response.Inline)
+
+  //[ A file a route says the browser may keep, which the proxy would normally serve. //]
+  case Request.Get("/keepable") =>
+    val rule = Header("Cache-Control", "public, max-age=31536000, immutable")
+    Response.file(root, name, Response.Inline, headers = [rule])
+  case _                     => Response.notFound()
+
+//[ A directory of files to serve, beside one that must stay out of reach, for the length of `body`. //]
+private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.Dynamic) => Unit): Unit =
+  val os = py.module("os")
+  val scratch = py.module("tempfile").mkdtemp().asString
+  val root = scratch + "/root"
+  os.makedirs(root + "/css")
+  os.makedirs(scratch + "/outside")
+
+  val write = (path: String, text: String) => py.open(path, "wb").write(py.dynamic(text).encode())
+  write(root + "/hello.txt", "hi")
+  write(root + "/css/app.css", "body {}")
+  write(root + "/café.txt", "é")
+  write(root + "/blob.unknownext", "?")
+  write(root + "/index.html", "<p>hi</p>")
+  // Larger than one block, so that reading it a block at a time is observable.
+  write(root + "/big.bin", py.dynamic("x").callDynamic("__mul__", 200000).asString)
+  write(scratch + "/outside/secret.txt", "secret")
+  os.symlink(scratch + "/outside/secret.txt", root + "/link")
+
+  val files = new Application:
+    host = Application.Host.Loopback
+    routes = []
+    fallback = () => fileRoute(root)
+    maxBodyBytes = limit
+
+  val result = py.try(body(root, files.wsgi()))
+  py.module("shutil").rmtree(scratch)
+
+  match result
+  case Ok(_)    => pass
+  case Err(err) => abort err.message
+
+//[ An application wired as a table, which is how `Router` is meant to be used. //]
+private def tabled(reached: py.List): Application =
+  new Application:
+    host = Application.Host.Loopback
+    maxBodyBytes = limit
+    routes = List:
+      Router.Get("/api/info", info)
+      Router.Post("/api/message", () => echoed(reached))
+      Router.Post("/api/upload", () => echoed(reached), maxBodyBytes = 4096)
+      Router.Delete("/api/session", () => Response.json(py.dict("ok" ~ true)))
+      Router.Prefix("/assets/", () => Response.complete(Http.Status.Success, Http.Mime.Text, "asset"))
+    fallback = () => Response.html("<p>the page</p>")
+
+private def info(): Response receives request = Response.json(py.dict("name" ~ "clair"))
+
+private def echoed(reached: py.List): Response receives request =
+  reached.append(1)
+  val text = Request.body() rescue None => return Response.badRequest("not utf-8")
+  Response.complete(Http.Status.Success, Http.Mime.Text, text.size.toString)
+
+//[ Two routes claiming one verb and path, which no application may hold. //]
+private def clashing(): Application =
+  new Application:
+    host = Application.Host.Loopback
+    routes = List:
+      Router.Get("/api/info", () => Response.notFound())
+      Router.Get("/api/info", () => Response.notFound())
+    fallback = () => Response.notFound()
+
+//[ A `multipart/form-data` body, built the way a browser builds one. //]
+private def multipartBody(boundary: String, parts: List[String], file: py.Dynamic): py.Dynamic =
+  var text = ""
+  for part in parts do text = text + "--" + boundary + "\r\n" + part + "\r\n"
+
+  val opening = py.dynamic(text).encode("utf-8")
+  val fileHead = py.dynamic("--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"caf\u{e9}.bin\"\r\nContent-Type: image/png\r\n\r\n").encode("utf-8")
+  val closing = py.dynamic("\r\n--" + boundary + "--\r\n").encode("utf-8")
+  opening.callDynamic("__add__", fileHead).callDynamic("__add__", file).callDynamic("__add__", closing)
+
+//[ The same routes under a limit big enough for a real upload. //]
+private def roomyApp(): (py.Dynamic, py.Dynamic) => py.Dynamic =
+  val app = new Application:
+    host = Application.Host.Loopback
+    routes = []
+    fallback = () => route(py.list())
+    maxBodyBytes = 1048576
+  app.wsgi()
+
+//[ The application under test. `reached` records what its routes saw. //]
+private def appFor(reached: py.List): (py.Dynamic, py.Dynamic) => py.Dynamic =
+  applicationFor(Application.Host.Loopback, reached).wsgi()
+
+private def get(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, target: String): Answer =
+  call(wsgi, "GET", target, [], "")
+
+private def postJson(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, payload: String): Answer =
+  call(wsgi, "POST", "/json", [Header("Content-Type", "application/json; charset=utf-8")], payload)
+
+private def headerOf(answer: Answer, name: String): String = answer.header(name).getOrElse("")
+
+//[ The `name=value` a route's `Set-Cookie` wrote, without its attributes. //]
+private def issued(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, target: String): String =
+  headerOf(get(wsgi, target), "Set-Cookie").split(";").get(0)
+
+//[ What `/signed` reads back when the request carries `cookie`. //]
+private def carrying(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, cookie: String): String =
+  val named = if cookie.startsWith("sid=") then cookie else "sid=" + cookie
+  call(wsgi, "GET", "/signed?value=ignored", [Header("Cookie", named)], "").text
+
+def httpSuite(): Unit receives thisSuite = suite: "http", () =>
+
+  test: "names a status line for every code", () =>
+    check("200", Http.Status.line(Http.Status.Success) == "200 OK")
+    check("303", Http.Status.line(Http.Status.SeeOther) == "303 See Other")
+    check("304", Http.Status.line(Http.Status.NotModified) == "304 Not Modified")
+    check("413", Http.Status.line(Http.Status.TooLarge) == "413 Payload Too Large")
+    check("501", Http.Status.line(Http.Status.NotImplemented) == "501 Not Implemented")
+    check("one decided at runtime", Http.Status.line(Http.Status.Other(529, "Overloaded")) == "529 Overloaded")
+
+  test: "settles the charset once, per content type", () =>
+    check("html carries one", Http.Mime.value(Http.Mime.Html) == "text/html; charset=utf-8")
+    check("json carries none", Http.Mime.value(Http.Mime.Json) == "application/json")
+    check("a runtime type passes through", Http.Mime.value(Http.Mime.Other("image/png")) == "image/png")
+
+  test: "answers a dynamic response no-store and nosniff", () =>
+    val answer = get(appFor(py.list()), "/dynamic")
+    check("200", answer.status == 200)
+    check("not cacheable", headerOf(answer, "Cache-Control") == "no-store")
+    check("never sniffed", headerOf(answer, "X-Content-Type-Options") == "nosniff")
+    check("no etag", answer.header("ETag") is None)
+
+  test: "lets a route name its own caching rule, in place of no-store", () =>
+    val answer = get(appFor(py.list()), "/cached")
+    val rules = answer.headers.select(h => py.dynamic(h.name).lower().asString == "cache-control")
+    check("the route's own", headerOf(answer, "Cache-Control") == "public, max-age=3600")
+    check("and only one of it", rules.size == 1)
+
+  //[ The framework answers no conditional request, so this is the application doing it. //]
+  test: "lets a route answer a conditional request itself, before building the body", () =>
+    val reached = py.list()
+    val wsgi = applicationFor(Application.Host.Loopback, reached).wsgi()
+
+    val first = get(wsgi, "/versioned?v=7")
+    val tag = headerOf(first, "ETag")
+    check("200", first.status == 200 && first.text == "<p>built</p>")
+    check("built once", reached.size == 1)
+    check("its own caching rule", headerOf(first, "Cache-Control") == "private, no-cache")
+
+    val second = call: wsgi, "GET", "/versioned?v=7", [Header("If-None-Match", tag)], ""
+    check("304", second.status == 304 && second.text == "")
+    check("and no no-store to drop the copy it just kept", second.header("Cache-Control") is None)
+    check("and the body was never built", reached.size == 1)
+
+    val changed = call: wsgi, "GET", "/versioned?v=8", [Header("If-None-Match", tag)], ""
+    check("a new version builds again", changed.status == 200 && reached.size == 2)
+
+  test: "reads a request header and sends the route's own", () =>
+    val wsgi = appFor(py.list())
+    val sent = call(wsgi, "GET", "/headed", [Header("X-Asked", "yes")], "")
+    check("status from the route", sent.status == 201)
+    check("request header read", sent.text == "yes")
+    check("response header written", headerOf(sent, "X-Trace") == "abc")
+    check("an absent header is None", get(wsgi, "/headed").text == "absent")
+
+  test: "redirects with a 303 and a location", () =>
+    val answer = get(appFor(py.list()), "/moved")
+    check("303", answer.status == 303)
+    check("location", headerOf(answer, "Location") == "/dynamic")
+
+  test: "tells an empty query parameter from a missing one", () =>
+    val wsgi = appFor(py.list())
+    check("value", get(wsgi, "/query?q=hi").text == "some:hi")
+    check("empty", get(wsgi, "/query?q=").text == "some:")
+    check("missing", get(wsgi, "/query").text == "none")
+
+  test: "routes a non-ASCII path as the client wrote it", () =>
+    val wsgi = appFor(py.list())
+    val answer = get(wsgi, "/files/caf%C3%A9")
+    check("200", answer.status == 200)
+    check("decoded as UTF-8", answer.text == "café")
+    check("bytes that are not UTF-8 are a 400", get(wsgi, "/files/%FF").status == 400)
+
+  test: "reads JSON only when it is labelled and is an object", () =>
+    val wsgi = appFor(py.list())
+    val good = postJson(wsgi, "{\"a\": 1}")
+    check("an object is read", good.status == 200 && json.loads(good.text).get("a").asInt == 1)
+
+    check("malformed is None", postJson(wsgi, "{").status == 400)
+    check("a non-object is None", postJson(wsgi, "[1]").status == 400)
+    check("an empty body is None", postJson(wsgi, "").status == 400)
+
+    val unlabelled = call(wsgi, "POST", "/json", [Header("Content-Type", "text/plain")], "{\"a\": 1}")
+    check("the wrong content type is None", unlabelled.status == 400)
+
+  test: "reads a urlencoded form, only when it is labelled as one", () =>
+    val wsgi = appFor(py.list())
+    val urlencoded = [Header("Content-Type", "application/x-www-form-urlencoded")]
+
+    val answer = call(wsgi, "POST", "/form", urlencoded, "note=Caf%C3%A9+%E2%98%95&tag=a&tag=b")
+    check("percent-decoded, repeats kept, no files", answer.status == 200 && answer.text == "Caf\u{e9} \u{2615}|a+b|0")
+
+    val blank = call(wsgi, "POST", "/form", urlencoded, "note=")
+    check("an empty value is not an absent one", blank.status == 200 && blank.text == "||0")
+
+    val charset = [Header("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")]
+    check("a charset parameter is still the same type", call(wsgi, "POST", "/form", charset, "note=x").text == "x||0")
+
+    check("the wrong content type is None", call(wsgi, "POST", "/form", [Header("Content-Type", "application/json")], "note=x").status == 400)
+    check("an unlabelled body is None", call(wsgi, "POST", "/form", [], "note=x").status == 400)
+
+  //[ One route takes either encoding, which is what a form that grows a file
+    ! input needs: the browser switches to multipart and the route does not.
+  //]
+  test: "reads both form encodings through one route", () =>
+    val dir = py.module("tempfile").mkdtemp().asString
+    val wsgi = roomyApp()
+    val boundary = "----harpeBoundary42"
+
+    val simple = call(wsgi, "POST", "/upload?into=" + dir, [Header("Content-Type", "application/x-www-form-urlencoded")], "note=hi&tag=a&tag=b")
+    check("urlencoded: fields, and no files", simple.status == 200 && simple.text == "hi|a+b|none")
+    check("urlencoded: nothing was written", os.listdir(dir).size == 0)
+
+    val fields = ["Content-Disposition: form-data; name=\"note\"\r\n\r\nhi",
+                  "Content-Disposition: form-data; name=\"tag\"\r\n\r\na",
+                  "Content-Disposition: form-data; name=\"tag\"\r\n\r\nb"]
+    val body = multipartBody(boundary, fields, py.module("os").urandom(9))
+    val kind = [Header("Content-Type", "multipart/form-data; boundary=" + boundary)]
+    val withFile = callBytes(wsgi, "POST", "/upload?into=" + dir, kind, body)
+    check("multipart: the same fields, plus the file", withFile.status == 200 && withFile.text == "hi|a+b|caf\u{e9}.bin|image/png|9")
+    check("multipart: which was written", os.listdir(dir).size == 1)
+
+  test: "reads a multipart body, its fields and its files", () =>
+    val wsgi = roomyApp()
+    val dir = py.module("tempfile").mkdtemp().asString
+    val boundary = "----harpeBoundary42"
+    val fields = ["Content-Disposition: form-data; name=\"note\"\r\n\r\nCaf\u{e9} \u{2615}",
+                  "Content-Disposition: form-data; name=\"tag\"\r\n\r\na",
+                  "Content-Disposition: form-data; name=\"tag\"\r\n\r\nb"]
+    val file = py.module("builtins").bytes(py.list(255, 216, 13, 10, 0, 65))
+    val body = multipartBody(boundary, fields, file)
+    val kind = [Header("Content-Type", "multipart/form-data; boundary=" + boundary)]
+
+    val answer = callBytes(wsgi, "POST", "/upload?into=" + dir, kind, body)
+    check("200", answer.status == 200)
+    check("fields, files and their bytes", answer.text == "Café ☕|a+b|café.bin|image/png|6")
+    check("the file is in the route's directory", os.listdir(dir).size == 1)
+
+  //[ A delimiter can straddle any two reads, so the same body is scanned again
+    ! at every block size that splits one differently. A scanner that forgets to
+    ! hold back the bytes it cannot yet judge passes at 4096 and fails at 3.
+  //]
+  test: "finds a delimiter however the body is split across reads", () =>
+    val dir = py.module("tempfile").mkdtemp().asString
+    val wsgi = roomyApp()
+    val boundary = "----harpeBoundary42"
+    val payload = py.module("os").urandom(3000)
+    val fields = ["Content-Disposition: form-data; name=\"note\"\r\n\r\nhi"]
+    val body = multipartBody(boundary, fields, payload)
+    val kind = [Header("Content-Type", "multipart/form-data; boundary=" + boundary)]
+
+    for cap in [1, 2, 3, 7, 17, 64, 511, 4096] do
+      val source = py.module("io").BytesIO(body)
+      val short = (asked: Int) => source.read(if asked > cap then cap else asked)
+      val adjust = (environ: py.Dict) =>
+        environ.set("wsgi.input", py.module("types").SimpleNamespace(read = short))
+      val answer = callWith(wsgi, "POST", "/upload?into=" + dir, kind, body, adjust)
+
+      // The client's name is reported, the stored name is this scan's own.
+      check("read \{cap} at a time: the form", answer.status == 200 && answer.text == "hi||caf\u{e9}.bin|image/png|3000")
+      val landed = os.listdir(dir)
+      check("read \{cap} at a time: one file, named by the scan", landed.size == 1 && landed.get(0).asString != "caf\u{e9}.bin")
+      check("read \{cap} at a time: every byte of it", py.open(os.path.join(dir, landed.get(0).asString), "rb").read().callDynamic("__eq__", payload).asBool)
+      os.unlink(os.path.join(dir, landed.get(0).asString))
+
+  test: "refuses an empty directory rather than writing to the working directory", () =>
+    val boundary = "----harpeBoundary42"
+    val kind = [Header("Content-Type", "multipart/form-data; boundary=" + boundary)]
+    val body = multipartBody(boundary, [], py.module("os").urandom(8))
+
+    val answer = callBytes(roomyApp(), "POST", "/upload-nowhere", kind, body)
+    check("aborts, naming the fix", answer.text.startsWith("an empty fileStoreDir writes to the working directory"))
+    check("and wrote nothing here", !os.path.exists("caf_.bin"))
+
+  //[ A route that names no directory cannot be made to store a file. //]
+  test: "refuses every file when the route names no directory", () =>
+    val dir = py.module("tempfile").mkdtemp().asString
+    val boundary = "----harpeBoundary42"
+    val kind = [Header("Content-Type", "multipart/form-data; boundary=" + boundary)]
+    val fields = ["Content-Disposition: form-data; name=\"note\"\r\n\r\nkept"]
+    val body = multipartBody(boundary, fields, py.module("os").urandom(64))
+
+    val answer = callBytes(roomyApp(), "POST", "/upload", kind, body)
+    check("the fields still arrive", answer.status == 200 && answer.text == "kept||none")
+    check("and no file was written anywhere", os.listdir(dir).size == 0)
+
+  //[ A body that stops early takes back every file it had already written, so
+    ! None means nothing was stored — the contract `Request.saveTo` also keeps.
+  //]
+  test: "unwinds what it wrote when the body arrives short", () =>
+    val dir = py.module("tempfile").mkdtemp().asString
+    val boundary = "----harpeBoundary42"
+    val kind = [Header("Content-Type", "multipart/form-data; boundary=" + boundary)]
+    val whole = multipartBody(boundary, [], py.module("os").urandom(2048))
+    val cut = whole.callDynamic("__getitem__", py.call(py.module("builtins").slice, 0, 900))
+    val overstate = (environ: py.Dict) =>
+      environ.set("CONTENT_LENGTH", py.module("builtins").len(whole).asInt.toString)
+
+    val answer = callWith(roomyApp(), "POST", "/upload?into=" + dir, kind, cut, overstate)
+    check("refused", answer.status == 400)
+    check("and the directory is as it was", os.listdir(dir).size == 0)
+
+  test: "refuses a body that is not multipart, or does not parse", () =>
+    val wsgi = appFor(py.list())
+    val boundary = "----harpeBoundary42"
+    val file = py.module("builtins").bytes(py.list(65))
+    val body = multipartBody(boundary, [], file)
+
+    val wrongType = [Header("Content-Type", "application/json")]
+    check("the wrong content type", callBytes(wsgi, "POST", "/upload", wrongType, body).status == 400)
+
+    val wrongBoundary = [Header("Content-Type", "multipart/form-data; boundary=nope")]
+    check("a boundary that is not in the body", callBytes(wsgi, "POST", "/upload", wrongBoundary, body).status == 400)
+
+  test: "refuses to read the body twice rather than answering empty", () =>
+    val answer = call(appFor(py.list()), "POST", "/twice", [], "x")
+    check("aborts", answer.text == "the request body was already read")
+
+  test: "reads a cookie leniently and sets one with safe attributes", () =>
+    val wsgi = appFor(py.list())
+    val sent = call(wsgi, "GET", "/cookie", [Header("Cookie", "bad cookie; theme=dark; sid=\"xyz\"; sid=older")], "")
+    check("the first, unquoted, past a malformed one", sent.text == "xyz")
+    check("absent", get(wsgi, "/cookie").text == "absent")
+    check("attributes", headerOf(sent, "Set-Cookie") == "sid=abc123; Path=/; Max-Age=60; HttpOnly; SameSite=Lax; Secure")
+
+  test: "lets only itself frame its pages, unless a route says otherwise", () =>
+    val wsgi = appFor(py.list())
+    check("a page", headerOf(get(wsgi, "/page"), "Content-Security-Policy") == "frame-ancestors 'self'")
+    check("not JSON", get(wsgi, "/dynamic").header("Content-Security-Policy") is None)
+    check("not a stylesheet", get(wsgi, "/asset").header("Content-Security-Policy") is None)
+    check("a route's own policy is kept", headerOf(get(wsgi, "/framed"), "Content-Security-Policy") == "frame-ancestors https://partner.example")
+
+  test: "reads back a signed cookie, and refuses one that was altered", () =>
+    val wsgi = appFor(py.list())
+    val cookie = issued(wsgi, "/signed?value=user-42")
+    check("it signs", cookie.startsWith("sid=") && cookie.split(".").size == 3)
+    check("read back", carrying(wsgi, cookie) == "user-42")
+
+    val parts = cookie.split(".")
+    val value = parts.get(0)
+    val expiry = parts.get(1)
+    val signature = parts.get(2)
+
+    check("an altered value", carrying(wsgi, value + "x." + expiry + "." + signature) == "absent")
+    check("an altered expiry", carrying(wsgi, value + "." + (Int.parse(expiry).getOrElse(0) + 600).toString + "." + signature) == "absent")
+    // A character the signature does not already end in, or "altering" it would change nothing.
+    val last = signature.substring(signature.size - 1, 1)
+    val flipped = signature.substring(0, signature.size - 1) + (if last == "A" then "B" else "A")
+    check("an altered signature", carrying(wsgi, value + "." + expiry + "." + flipped) == "absent")
+    check("a shape that is not three parts", carrying(wsgi, "sid=whatever") == "absent")
+
+  test: "refuses a signed cookie past its expiry, or signed for another name", () =>
+    val wsgi = appFor(py.list())
+    check("expired", carrying(wsgi, issued(wsgi, "/signed?value=user-42&age=0")) == "absent")
+
+    // Signed under the name `other`, then presented as `sid`: the name is signed too.
+    val moved = issued(wsgi, "/signed-other?value=user-42")
+    check("moved to another name", carrying(wsgi, "sid=" + moved.split("=").get(1)) == "absent")
+
+  test: "signs a value a cookie cannot carry as it is, and refuses a weak secret", () =>
+    val wsgi = appFor(py.list())
+    check("a non-ASCII value", carrying(wsgi, issued(wsgi, "/signed?value=caf%C3%A9")) == "café")
+    check("a short secret aborts", py.try(Response.signedCookie("sid", "v", "too short", 60, true)) is Err(_))
+
+    val bytes = py.module("builtins").bytes(py.list(255, 254))
+    val answer = callBytes(appFor(py.list()), "POST", "/echo", [], bytes)
+    check("400", answer.status == 400)
+    check("naming why", json.loads(answer.text).get("detail").asString == "not utf-8")
+
+  //[ What a server that passes the chunks through hands over: a body, and no declared length. //]
+  test: "answers None for a body that declared no length, rather than reading it as empty", () =>
+    val wsgi = appFor(py.list())
+
+    //[ The route reads None and answers its own 400, where it would once have seen an empty body. //]
+    val chunked = withoutLength(wsgi, marked = "chunked")
+    check("the route refuses it", chunked.status == 400)
+
+    //[ Waitress marks every request terminated, a bodyless POST included, so
+      ! the mark alone must not be read as a body. Measured, not assumed.
+    //]
+    val terminated = withoutLength(wsgi, marked = "terminated")
+    check("a terminated stream alone is not a body", terminated.status == 200)
+    check("and reads as empty", terminated.text == "0")
+
+    //[ Nothing says a body is coming, so it is a POST that has none. //]
+    val bodyless = withoutLength(wsgi, marked = "nothing")
+    check("a POST carrying no body is still served", bodyless.status == 200)
+    check("and reads as empty too", bodyless.text == "0")
+
+  test: "refuses a body shorter than the client declared, rather than truncating it", () =>
+    val json = [Header("Content-Type", "application/json")]
+    check("text", overstating(appFor(py.list()), "/echo", [], "hello").status == 400)
+    check("json", overstating(appFor(py.list()), "/json", json, "{\"a\": 1}").status == 400)
+
+    //[ The same body, honestly declared, still goes through. //]
+    val whole = call(appFor(py.list()), "POST", "/echo", [], "hello")
+    check("an honest declaration is read", whole.status == 200 && whole.text == "5")
+
+  //[ An upload's destination is a file, so its size should not be its cost in
+    ! memory. What that looks like from here: the body arrives at the path the
+    ! route chose, and a body that did not arrive whole leaves nothing there —
+    ! since a prefix of a message would read as a whole one.
+  //]
+  test: "spools a body to a file, and leaves nothing behind when it arrives short", () =>
+    val scratch = py.module("tempfile").mkdtemp().asString
+    val into = scratch + "/body.bin"
+    val exists = () => py.module("os").path.exists(into).asBool
+
+    val saved = call(appFor(py.list()), "POST", "/save?into=" + into, [], "hello")
+    check("written", saved.status == 200 && saved.text == "{\"written\": 5}")
+    check("as the client sent it", py.open(into, "rb").read().decode("utf-8").asString == "hello")
+
+    // Bigger than one block, so the copy loops rather than reading once.
+    val long = py.dynamic("y").callDynamic("__mul__", 150000).asString
+    val big = new Application:
+      host = Application.Host.Loopback
+      routes = []
+      fallback = () => route(py.list())
+      maxBodyBytes = 1048576
+    val spooled = call(big.wsgi(), "POST", "/save?into=" + into, [], long)
+    check("across blocks", spooled.status == 200 && spooled.text == "{\"written\": 150000}")
+    check("every one of them", py.module("os").path.getsize(into).asInt == 150000)
+
+    val short = overstating(appFor(py.list()), "/save?into=" + into, [], "hello")
+    check("a short body is refused", short.status == 400)
+    check("and stores nothing", !exists())
+
+  test: "refuses a body larger than the cap, before the route sees it", () =>
+    val reached = py.list()
+    val wsgi = appFor(reached)
+    val small = call(wsgi, "POST", "/echo", [], "hello")
+    check("a small body is read", small.status == 200 && small.text == "5")
+    check("and the route ran", reached.size == 1)
+
+    val oversized = py.dynamic("x").callDynamic("__mul__", limit + 1).asString
+    check("413", call(wsgi, "POST", "/echo", [], oversized).status == 413)
+    check("the route never ran", reached.size == 1)
+
+  test: "checks the host by default, without an application saying so", () =>
+    val plain = new Application(routes = [], fallback = () => route(py.list()))
+
+    val wsgi = plain.wsgi()
+    check("loopback is what a prototype gets", get(wsgi, "/dynamic").status == 200)
+
+    val rebound = call(wsgi, "GET", "/dynamic", [Header("Host", "attacker.example")], "")
+    check("another name is refused", rebound.status == 400)
+    check("and named in the answer", rebound.text.contains("attacker.example"))
+
+  test: "refuses a host the settings do not name", () =>
+    val wsgi = appFor(py.list())
+    check("loopback by name", call(wsgi, "GET", "/dynamic", [Header("Host", "localhost:8080")], "").status == 200)
+    check("loopback v6", call(wsgi, "GET", "/dynamic", [Header("Host", "[::1]:8080")], "").status == 200)
+    check("a rebound name", call(wsgi, "GET", "/dynamic", [Header("Host", "attacker.example:8080")], "").status == 400)
+
+  test: "accepts only the one host it is named for, whatever its port or case", () =>
+    val wsgi = applicationFor(Application.Host.Named("Agent.Example.com"), py.list()).wsgi()
+    check("its name", call(wsgi, "GET", "/dynamic", [Header("Host", "agent.example.com:8080")], "").status == 200)
+    check("without a port", call(wsgi, "GET", "/dynamic", [Header("Host", "AGENT.EXAMPLE.COM")], "").status == 200)
+    check("another name", call(wsgi, "GET", "/dynamic", [Header("Host", "www.example.com")], "").status == 400)
+    check("loopback is not implied", call(wsgi, "GET", "/dynamic", [Header("Host", "127.0.0.1:8080")], "").status == 400)
+
+  test: "refuses a write a browser sent from another site", () =>
+    val wsgi = appFor(py.list())
+    val host = Header("Host", "127.0.0.1:8080")
+
+    val crossSite = call(wsgi, "POST", "/echo", [host, Header("Sec-Fetch-Site", "cross-site")], "x")
+    check("cross-site by fetch metadata", crossSite.status == 403)
+
+    val sameOrigin = call(wsgi, "POST", "/echo", [host, Header("Sec-Fetch-Site", "same-origin")], "x")
+    check("same-origin by fetch metadata", sameOrigin.status == 200)
+
+    val foreign = call(wsgi, "POST", "/echo", [host, Header("Origin", "https://attacker.example")], "x")
+    check("a foreign origin", foreign.status == 403)
+
+    val own = call(wsgi, "POST", "/echo", [host, Header("Origin", "http://127.0.0.1:8080")], "x")
+    check("its own origin", own.status == 200)
+
+    check("no browser headers at all", call(wsgi, "POST", "/echo", [host], "x").status == 200)
+
+    val read = call(wsgi, "GET", "/dynamic", [host, Header("Sec-Fetch-Site", "cross-site")], "")
+    check("a cross-site read is not a write", read.status == 200)
+
+  test: "refuses a verb it does not implement with 501", () =>
+    check("501", call(appFor(py.list()), "TRACE", "/dynamic", [], "").status == 501)
+
+  test: "answers an unknown path with 404", () =>
+    check("404", get(appFor(py.list()), "/nope").status == 404)
+
+  test: "lets a route's failure reach the server, which answers it", () =>
+    val wsgi = appFor(py.list())
+    check("a route that raises", py.try(get(wsgi, "/boom")) is Err(_))
+
+  test: "routes a table by verb and path, and falls back to the page", () =>
+    val wsgi = tabled(py.list()).wsgi()
+    check("a route", json.loads(get(wsgi, "/api/info").text).get("name").asString == "clair")
+    check("a prefix", get(wsgi, "/assets/app.css").text == "asset")
+    check("a longer path under the prefix", get(wsgi, "/assets/deep/app.css").text == "asset")
+    check("anything else is the page", get(wsgi, "/c/42").text == "<p>the page</p>")
+    check("and the page is HTML", headerOf(get(wsgi, "/c/42"), "Content-Type") == "text/html; charset=utf-8")
+
+  test: "answers 405 with Allow when another verb claims the path", () =>
+    val wsgi = tabled(py.list()).wsgi()
+    val answer = call(wsgi, "POST", "/api/info", [], "")
+    check("405", answer.status == 405)
+    check("naming the verb that works", headerOf(answer, "Allow") == "GET")
+    check("a path no route claims is the fallback, not a 405", get(wsgi, "/nothing").status == 200)
+
+  test: "holds each route to its own body limit", () =>
+    val reached = py.list()
+    val wsgi = tabled(reached).wsgi()
+    val big = py.dynamic("x").callDynamic("__mul__", 2048).asString
+
+    check("over the application's limit", call(wsgi, "POST", "/api/message", [], big).status == 413)
+    check("the route never ran", reached.size == 0)
+    check("under the upload's own limit", call(wsgi, "POST", "/api/upload", [], big).status == 200)
+    check("the upload ran", reached.size == 1)
+
+    val huge = py.dynamic("x").callDynamic("__mul__", 8192).asString
+    check("over the upload's limit too", call(wsgi, "POST", "/api/upload", [], huge).status == 413)
+    check("and that one did not run", reached.size == 1)
+
+  test: "reports the largest limit any route allows, for the server to match", () =>
+    check("the upload's", tabled(py.list()).ceiling == 4096)
+    check("the application's, with no routes", applicationFor(Application.Host.Loopback, py.list()).ceiling == limit)
+
+  //[ The index is built when the `Application` is, so a clash is a startup failure. //]
+  //[ Refused where the bad value came from, not at the write, so a route's answer can be trusted. //]
+  test: "refuses a header that would split the response, at construction", () =>
+    check("a newline in the value", py.try(Header("X-Note", "a\nb")) is Err(_))
+    check("a carriage return in the value", py.try(Header("X-Note", "a\rb")) is Err(_))
+    check("and one in the name", py.try(Header("X\nNote", "fine")) is Err(_))
+    check("an ordinary header is built", py.try(Header("X-Note", "fine")) is Ok(_))
+
+  test: "refuses two routes claiming the same verb and path", () =>
+    check("at construction", py.try(clashing()) is Err(_))
+
+  test: "refuses HEAD with a 501 and no body", () =>
+    val reached = py.list()
+    val wsgi = appFor(reached)
+    for target in ["/dynamic", "/forever", "/nope"] do
+      val head = call(wsgi, "HEAD", target, [], "")
+      check("501 for \{target}", head.status == 501)
+      check("no body for \{target}", head.text == "" && headerOf(head, "Content-Length") == "0")
+    check("no route ran", reached.size == 0)
+
+  test: "serves a file under its root, typed and named", () =>
+    withFiles: (root: String, wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic) =>
+      val hello = get(wsgi, "/download?name=hello.txt")
+      check("200", hello.status == 200 && hello.text == "hi")
+      check("typed from its name", headerOf(hello, "Content-Type").startsWith("text/plain"))
+      check("saved", headerOf(hello, "Content-Disposition") == "attachment; filename=\"hello.txt\"; filename*=UTF-8''hello.txt")
+      check("not a client's to keep", headerOf(hello, "Cache-Control") == "no-store")
+
+      val keepable = get(wsgi, "/keepable?name=css/app.css")
+      val rules = keepable.headers.select(h => py.dynamic(h.name).lower().asString == "cache-control")
+      check("unless the route says so", headerOf(keepable, "Cache-Control") == "public, max-age=31536000, immutable")
+      check("and then only its own", rules.size == 1)
+      check("still typed and named", headerOf(keepable, "Content-Type") == "text/css; charset=utf-8")
+      check("and no validator", hello.header("ETag") is None)
+
+      val nested = get(wsgi, "/show?name=css/app.css")
+      check("nested", nested.status == 200 && headerOf(nested, "Content-Type") == "text/css; charset=utf-8")
+      check("shown", headerOf(nested, "Content-Disposition") == "inline; filename=\"app.css\"; filename*=UTF-8''app.css")
+
+      val accented = get(wsgi, "/download?name=caf%C3%A9.txt")
+      check("a non-ASCII name", accented.status == 200)
+      check("named both ways", headerOf(accented, "Content-Disposition") == "attachment; filename=\"caf_.txt\"; filename*=UTF-8''caf%C3%A9.txt")
+
+      check("an unknown type", headerOf(get(wsgi, "/download?name=blob.unknownext"), "Content-Type") == "application/octet-stream")
+      check("a text file names its charset", headerOf(hello, "Content-Type") == "text/plain; charset=utf-8")
+
+      val page = get(wsgi, "/show?name=index.html")
+      check("an HTML file too", headerOf(page, "Content-Type") == "text/html; charset=utf-8")
+      check("and cannot be framed elsewhere", headerOf(page, "Content-Security-Policy") == "frame-ancestors 'self'")
+
+  //[ A file response must not cost its own size in memory, so the handle goes to
+    ! the server rather than the bytes. What that looks like from here: the
+    ! wrapper the server offered was called, with one block as its size, and the
+    ! handle it was given is closed once the response has been drained.
+  //]
+  test: "hands a file to the server's wrapper rather than reading it whole", () =>
+    withFiles: (root: String, wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic) =>
+      val blocks = py.list()
+      val handles = py.list()
+      val offer = (handle: py.Dynamic, size: py.Dynamic) =>
+        handles.append(handle)
+        blocks.append(size)
+        py.module("wsgiref.util").FileWrapper(handle, size)
+
+      val adjust = (environ: py.Dict) => environ.set("wsgi.file_wrapper", offer)
+      val big = callWith(wsgi, "GET", "/download?name=big.bin", [], py.dynamic("").encode(), adjust)
+
+      check("200", big.status == 200)
+      check("the whole file", big.text.size == 200000)
+      check("whose length is declared", headerOf(big, "Content-Length") == "200000")
+      check("through the server's own wrapper", blocks.size == 1)
+      check("a block at a time", blocks.get(0).asInt == 65536)
+      check("and the handle closed once sent", handles.get(0).closed.asBool)
+
+      // PEP 3333 leaves `wsgi.file_wrapper` optional, and nothing above supplies
+      // one, so this is the fallback carrying the same file.
+      val plain = get(wsgi, "/download?name=big.bin")
+      check("whole without a wrapper too", plain.text.size == 200000)
+      check("and still declared", headerOf(plain, "Content-Length") == "200000")
+
+  test: "refuses a file name that leaves its root, or names no file", () =>
+    withFiles: (root: String, wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic) =>
+      check("dot-dot", get(wsgi, "/download?name=../outside/secret.txt").status == 404)
+      check("dot-dot inside", get(wsgi, "/download?name=css/../../outside/secret.txt").status == 404)
+      check("absolute", get(wsgi, "/download?name=" + root + "/hello.txt").status == 404)
+      check("a symlink out", get(wsgi, "/download?name=link").status == 404)
+      check("a directory", get(wsgi, "/download?name=css").status == 404)
+      check("missing", get(wsgi, "/download?name=missing.txt").status == 404)
+      check("empty", get(wsgi, "/download?name=").status == 404)
+      check("a backslash", get(wsgi, "/download?name=css%5Capp.css").status == 404)

@@ -1,0 +1,57 @@
+namespace harpe.server
+
+import harpe.ffi.builtins
+import harpe.ffi.threading
+import harpe.server.Application
+
+//[ A wsgiref server on a daemon thread — FOR HARPE'S OWN VIEWER AND TESTS.
+  !
+  ! wsgiref is the standard library's reference server: no read timeout, an
+  ! accept backlog of five, no keep-alive. It is here because the `harpe`
+  ! package installs no server of its own. An application runs
+  ! `Application.wsgi()` on the WSGI server it chooses.
+//]
+private[harpe] section Serve
+  //[ A server running on a background thread: the port it bound, and how to stop it. //]
+  class Background(port: Int, stop: () => Unit)
+
+  //[ Serve `route` with wsgiref on a daemon thread — for harpe's own viewer and tests
+    !
+    ! wsgiref is the standard library's reference server, with no read timeout,
+    ! an accept backlog of five and no keep-alive, so not for production. It is
+    ! here because the `harpe` package installs no server. A deployment runs
+    ! `wsgi` on the WSGI server it chooses.
+    !
+    ! Binds before returning, so a port already taken raises here. Port 0 binds
+    ! a free one, which `port` reports. Writes no access log.
+  //]
+  def inBackground(host: String, port: Int, application: Application): Background =
+    val simple = py.module("wsgiref.simple_server")
+    val threaded = builtins.newType:
+      "ThreadingWSGIServer"
+      py.tuple(py.module("socketserver").ThreadingMixIn, simple.WSGIServer)
+      py.dict("daemon_threads" ~ true)
+    val quiet = builtins.newType:
+      "QuietWSGIRequestHandler"
+      py.tuple(simple.WSGIRequestHandler)
+      py.dict("log_message" ~ py.module("logging").getLogger("harpe.http").debug)
+
+    val httpd = simple.make_server:
+      host
+      port
+      application.wsgi()
+      server_class = threaded
+      handler_class = quiet
+
+    val serving = threading.Thread:
+      target = () => httpd.serve_forever(poll_interval = 0.05)
+      daemon = true
+
+    serving.start()
+
+    new Background(httpd.server_port.asInt, () => shutdown(httpd))
+
+  private def shutdown(httpd: py.Dynamic): Unit =
+    httpd.shutdown()
+    httpd.server_close()
+end

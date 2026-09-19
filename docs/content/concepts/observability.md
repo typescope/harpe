@@ -51,7 +51,7 @@ val log     = new TeeLogger([new JsonlLogger(sessionPath), viewLog])
 `Viewer` serves that window as one route:
 
 ```jo
-case Http.Get("/journal") => Viewer.respond(viewLog, title)
+case Request.Get("/journal") => Viewer.respond(viewLog, title)
 ```
 
 The HTTP route is the whole integration point: it responds with a log events
@@ -62,6 +62,14 @@ a port on a daemon thread:
 
 ```jo
 Viewer.start(viewLog, title, "127.0.0.1", port)
+```
+
+`answersTo` names what a browser may call the viewer, which is what refuses a
+hostile page that points its own name at `127.0.0.1`. It defaults to
+`Application.Host.Loopback`, so a viewer reached by another name says so:
+
+```jo
+Viewer.start(viewLog, title, host, port, answersTo = Application.Host.Named(host))
 ```
 
 The framework provides the mechanism and stops there. Whether to expose a

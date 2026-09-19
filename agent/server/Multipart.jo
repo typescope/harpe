@@ -1,0 +1,227 @@
+namespace harpe.server
+
+import harpe.ffi.builtins
+import harpe.ffi.os
+import harpe.ffi.secrets
+import harpe.server.Form
+import harpe.server.Form.Upload
+
+//[ `multipart/form-data`: the scan that takes one apart into a `Form`.
+  !
+  ! THE ROUTE SAYS WHICH DIRECTORY FILES GO IN. Each file part is written
+  ! straight into it as the body arrives, under a generated name that cannot
+  ! collide with another request's or escape the directory. There is no spool:
+  ! the file is already on the route's own filesystem, so a route keeping one
+  ! renames it, which costs nothing, and a route expecting no files at all
+  ! passes None and every file part is refused.
+  !
+  ! A BLOCK AT A TIME. The body is scanned as it arrives and never held whole,
+  ! so a form costs one block whatever its size. What an upload route budgets
+  ! is the destination's disk, not this process's memory.
+  !
+  ! NOTHING PARTIAL IS LEFT BEHIND. A body that is malformed, or that stops
+  ! early, unlinks every file this scan created and answers None — so None
+  ! means nothing was stored, the same contract `Request.saveTo` keeps.
+  !
+  ! The route owns what a successful scan wrote: the files are in its own
+  ! directory, to rename or delete as it decides.
+//]
+private section Multipart
+  //[ How much of a body is read at once, and so what a scan costs in memory. //]
+  private def blockBytes: Int = 65536
+
+  //[ The most one part's own headers may carry, so a body cannot buffer without bound. //]
+  private def maxHeaderBytes: Int = 16384
+
+  //[ The most parts one body may carry, so a body cannot mint them without bound. //]
+  private def maxParts: Int = 256
+
+  //[ The boundary a `Content-Type` names, or None when it names none. //]
+  def boundary(contentType: String): Option[String] =
+    if contentType.contains("\r") || contentType.contains("\n") then return None
+    val parsed = headersOf(py.dynamic("Content-Type: " + contentType + "\r\n\r\n").encode("utf-8"))
+    val found = parsed.get_param("boundary", header = "content-type")
+    if py.isNone(found) then None else Some(found.asString)
+
+  //[ Read `declared` bytes of a form from `input`, writing its files into `into`
+    !
+    ! A `fileStoreDir` of None refuses every file part: it is read past and not
+    ! stored, so a route expecting only fields cannot be made to write one.
+    !
+    ! None when the body is not a well-formed form, when a part is unnamed,
+    ! when the caps above are exceeded, when a text field is not UTF-8, and
+    ! when less of the body arrived than was declared. Every file already
+    ! written is unlinked first.
+  //]
+  def read(
+        input: py.Dynamic,
+        mark: String,
+        declared: Int,
+        fileStoreDir: String | None): Option[Form] =
+    val sep = py.dynamic("\r\n--" + mark).encode("utf-8")
+    val tail = builtins.len(sep) - 1
+    val reader = new Reader(input, declared)
+
+    val values = py.dict()
+    var uploads: List[Upload] = []
+    var made: List[String] = []
+
+    // The opening delimiter carries no leading CRLF, so the buffer starts with
+    // one and every delimiter is then found the same way.
+    reader.buf = py.dynamic("\r\n").encode("utf-8")
+
+    // The preamble, which is everything before the first delimiter.
+    var at = reader.find(sep)
+    while at < 0 do
+      if reader.size > tail then reader.buf = lastOf(reader.buf, tail)
+      if !reader.pull() then return undo(made)
+      at = reader.find(sep)
+    val _ = reader.take(at + builtins.len(sep))
+
+    while true do
+      if !reader.want(2) then return undo(made)
+      if ascii(upTo(reader.buf, 2)) == "--" then return Some(new Form(values, uploads))
+
+      // Transport padding, which RFC 2046 allows between a delimiter and its CRLF.
+      while reader.want(1) && isPadding(ascii(upTo(reader.buf, 1))) do
+        val _ = reader.take(1)
+      if !reader.want(2) || ascii(upTo(reader.buf, 2)) != "\r\n" then return undo(made)
+      val _ = reader.take(2)
+
+      if uploads.size + values.size >= maxParts then return undo(made)
+
+      val header = headerBlock(reader) rescue None => return undo(made)
+      val parsed = headersOf(header)
+      if builtins.len(parsed.defects) > 0 then return undo(made)
+
+      val named = parsed.get_param("name", header = "content-disposition")
+      if py.isNone(named) then return undo(made)
+      val sent = parsed.get_filename()
+      val field = named.asString
+      val filename = if py.isNone(sent) then "" else sent.asString
+
+      // A part with a filename is a file. With nowhere to put it, it is read
+      // past, so a route expecting fields alone never stores one.
+      var target: String | None = None
+      var handle: Option[py.Dynamic] = None
+      if filename != "" then
+        match fileStoreDir
+        case dir: String =>
+          val path = os.path.join(dir, secrets.token_hex(16))
+          target = path
+          handle = Some(py.open(path, "wb"))
+          made = made + path
+        case _ => pass
+
+      val kept = py.list()
+      var size = 0
+
+      // The part's body, which runs to the next delimiter.
+      while true do
+        val found = reader.find(sep)
+        val piece = if found >= 0 then reader.take(found)
+                    else if reader.size > tail then reader.take(reader.size - tail)
+                    else emptyBytes()
+
+        size = size + builtins.len(piece)
+        match handle
+        case Some(file) => file.write(piece)
+        case None       => if filename == "" then kept.append(piece)
+
+        if found >= 0 then
+          val _ = reader.take(builtins.len(sep))
+          break
+        if !reader.pull() then
+          closed(handle)
+          return undo(made)
+
+      closed(handle)
+
+      match target
+      case path: String =>
+        uploads = uploads + new Upload(field, filename, parsed.get_content_type().asString, path, size)
+      case _ =>
+        if filename == "" then
+          val joined = emptyBytes().callDynamic("join", kept)
+          val text = py.try(joined.decode("utf-8").asString) rescue Err(_) => return undo(made)
+          if !values.contains(field) then values.set(field, py.list())
+          values.get(field).cast[py.List].append(text)
+
+    // The loop above only leaves through a return.
+    None
+
+  //[ The body, pulled a block at a time, with a buffer holding what is not yet scanned. //]
+  private class Reader(input: py.Dynamic, declared: Int)
+    var buf: py.Dynamic = emptyBytes()
+    var left: Int = declared
+
+    def size: Int = builtins.len(buf)
+
+    def find(sep: py.Dynamic): Int = buf.callDynamic("find", sep).asInt
+
+    //[ One more block onto the buffer. False when the body is spent. //]
+    def pull(): Bool =
+      if left <= 0 then return false
+      val block = input.read(if left > blockBytes then blockBytes else left)
+      val got = builtins.len(block)
+      if got == 0 then return false
+      left = left - got
+      buf = buf.callDynamic("__add__", block)
+      true
+
+    //[ Whether the buffer holds `n` bytes, reading more until it does. //]
+    def want(n: Int): Bool =
+      while size < n do
+        if !pull() then return false
+      true
+
+    //[ The first `n` bytes, taken off the buffer. //]
+    def take(n: Int): py.Dynamic =
+      val head = upTo(buf, n)
+      buf = after(buf, n)
+      head
+  end
+
+  //[ One part's headers, up to the blank line that ends them. //]
+  private def headerBlock(reader: Reader): Option[py.Dynamic] =
+    val blank = py.dynamic("\r\n\r\n").encode("utf-8")
+    var at = reader.buf.callDynamic("find", blank).asInt
+    while at < 0 do
+      if reader.size > maxHeaderBytes then return None
+      if !reader.pull() then return None
+      at = reader.buf.callDynamic("find", blank).asInt
+    Some(reader.take(at + 4))
+
+  //[ `block` parsed as MIME headers, which `maxHeaderBytes` keeps small. //]
+  private def headersOf(block: py.Dynamic): py.Dynamic =
+    val parser = py.module("email.parser").BytesParser(policy = py.module("email.policy").HTTP)
+    parser.parsebytes(block)
+
+  //[ Undo every file this scan created, so None means nothing was stored. //]
+  private def undo(paths: List[String]): Option[Form] =
+    for path in paths do
+      val _ = py.try(os.unlink(path))
+    None
+
+  private def closed(handle: Option[py.Dynamic]): Unit =
+    match handle
+    case Some(file) => file.close()
+    case None       => pass
+
+  private def isPadding(ch: String): Bool = ch == " " || ch == "\t"
+
+  private def emptyBytes(): py.Dynamic = py.dynamic("").encode("utf-8")
+
+  private def ascii(data: py.Dynamic): String = data.decode("latin-1").asString
+
+  private def slicer: py.Dynamic = py.module("builtins").slice
+
+  private def upTo(data: py.Dynamic, n: Int): py.Dynamic =
+    data.callDynamic("__getitem__", py.call(slicer, 0, n))
+
+  private def after(data: py.Dynamic, n: Int): py.Dynamic =
+    data.callDynamic("__getitem__", py.call(slicer, n, py.none()))
+
+  private def lastOf(data: py.Dynamic, n: Int): py.Dynamic =
+    data.callDynamic("__getitem__", py.call(slicer, -n, py.none()))
+end

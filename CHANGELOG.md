@@ -2,6 +2,176 @@
 
 ## Unreleased
 
+**HTTP now lives in `harpe.server`, and an application is a value.** What was
+one `harpe.Http` file is ten under `agent/server/`, each owning one side of
+the exchange: `Http` is the protocol's vocabulary (`Verb`, `Status`, `Mime`,
+`Header`), `Request` is what came in (the class, the ambient `request`, the
+patterns, the readers), `Response` is what goes back, `Form` is what a
+submitted form carries and `Multipart` the scan that reads one off the wire,
+`Util` is what both sides of a cookie share, and `Router`, `Application`,
+`Wsgi` and `Serve` declare routes, serve them, write them out, and run a
+wsgiref server for harpe's own viewer and tests. What an application chooses
+to accept is not the protocol's, so `Host` and `CrossSite` are
+`Application`'s. `Http.server`, `Http.quiet` and `Http.app` are gone.
+
+```jo
+val application = new Application:
+  host = Application.Host.Named("agent.example.com")
+  routes = List:
+    Router.Get("/api/info", () => agent.info())
+    Router.Post("/api/upload", () => agent.upload(), maxBodyBytes = 26214400)
+    Router.Prefix("/assets/", () => agent.asset())
+  fallback = () => agent.page()
+
+py.module("waitress").create_server:
+  application.wsgi()
+  max_request_body_size = application.ceiling
+```
+
+**Routes are a table, so a route's policy sits with the route.** `Router.Get`,
+`Post`, `Put` and `Delete` name an exact path and `Router.Prefix` everything
+under one, each carrying its own `maxBodyBytes` — an upload route says so for
+itself instead of every route inheriting the largest limit in the application.
+`fallback` answers what no route claims, which is the page itself for a
+single-page application whose client routes on the path. Two routes claiming one
+verb and path abort when the `Application` is built. A path claimed under
+another verb answers 405 with `Allow`. An application that would rather dispatch
+in a `match` passes no routes and its own match as the `fallback`, using the
+`Request.Get`, `Post`, `Put` and `Delete` patterns as before.
+
+**`application.wsgi()` is the seam a deployment binds its server to**, so harpe
+installs none. Before a route runs it refuses a verb it does not implement
+(501), a path that is not UTF-8 (400), a `Host` the application does not answer
+to (400), a cross-site POST, PUT or DELETE (403), and a body over that route's
+limit (413). The host check is what stops DNS rebinding from reading a loopback
+server, and the cross-site check is Go's `CrossOriginProtection`, which needs no
+token. `host` defaults to loopback, so a prototype runs as it is and a
+deployment that forgets to name its host is refused rather than quietly served.
+
+**A route answers with a `Response` value rather than writing to WSGI.** Its
+type is `() => Response receives request`, where it was `() => py.List`.
+`Response` is `Complete(status, headers, body)` or `OnDisk(…)`, and
+`Application` is the only code that writes one out, so no route signature
+mentions WSGI and `Request.startResponse` is gone. A route's answer can be
+inspected, and a wrapper can add to it. The builders are `Response.complete`,
+`binary`, `html`, `json`, `file`, `redirect`, `notFound` and
+`badRequest`; `Http.Status.Other(code, reason)` carries a status decided at
+runtime. Status lines and content types are closed unions rather than strings,
+so `"200 0K"` is a typo the compiler refuses, and each type's charset is settled
+in one place.
+
+**A response is whole, and nothing holds a connection open.** WSGI pins one
+worker thread for a response's whole life, so a route that produced output as
+it went would cost a thread for as long as the work took — and how long that is
+is exactly what a server cannot know. A page that follows work in progress
+polls a cursor instead, which `harpe.observability.Viewer` has always done and
+which costs a list slice per poll.
+
+**`Response.file(root, name, disposition)` serves a file under a directory.**
+`name` is the relative path a client sent. An empty or absolute name, a `..`
+segment, a symlink out of `root`, a directory and a missing file are all the
+same 404. The type is guessed from the name, with `; charset=utf-8` added to
+text, JSON and JavaScript so a browser never guesses a page's encoding.
+`Content-Disposition` names the file in ASCII and UTF-8, and the response is
+`no-store`, since what it serves is the download the request had to be entitled
+to. The files a page needs are the proxy's to serve, and to cache.
+
+The file goes out through the server's own `wsgi.file_wrapper`, which may reach
+`sendfile` and never copy it through this process, so a response costs a block
+rather than the file's size. It is opened when the response is written rather
+than when it is built, since a response is a value that may never be sent.
+
+**A response is `no-store` unless its route says otherwise.** `Response.binary`
+and `Response.complete` add that rule only when `headers` names no
+`Cache-Control`, so a route that may be kept sends its own and no response
+carries two. Every response states a rule, one or the other, and a missing
+`Cache-Control` carries no meaning, since absence would leave a cache free to
+invent a freshness lifetime. A 304 states none, because it updates a stored
+response rather than being one, so absence there leaves the rule the client
+already holds. Nothing here answers a conditional request: `Status.NotModified`
+is vocabulary, and a route that wants a 304 reads `If-None-Match` and answers
+on its own terms.
+
+**A builder's extras have defaults.** `headers` comes last and defaults to
+`Response.NoHeaders`, so the common call names none: `complete` and `binary`
+take `(status, kind, body)`, `html` takes a body, `json` takes a dict and a
+`status` for a 201, and `redirect` and `file` take headers for a cookie or a
+caching rule riding along. `Response.cookie` and `signedCookie` default to
+`secure = true`.
+
+**Request readers answer `Option` rather than a fallback.** `Request.query` is
+None for an absent parameter and `Some("")` for an empty one. `Request.json` is
+None unless the request says `application/json` and the body is an object, where
+it used to answer `{}` for all of those alike. `Request.body` is None for a body
+that is not UTF-8, and `Request.bytes` reads it raw. Both are None when less of
+the body arrived than `Content-Length` declared, rather than handing back a
+truncated prefix that reads as a whole message. A second read of the body in one
+request aborts, where it used to come back empty. `Request.header` and
+`Request.cookie` read a header and a cookie, the cookie leniently, as browsers
+write them. `Request.path` is decoded as UTF-8, where WSGI hands over Latin-1,
+so a route matches `/café` as written.
+
+**`Request.saveTo(path)` writes an upload straight to a file**, a block at a
+time, and answers how many bytes that was. The readers above hold the whole
+body, so a route whose upload belongs on disk should reach for this instead. It
+is None in the same cases they are, and leaves nothing at `path` in either, so
+None means nothing was stored.
+
+**`Request.form(fileStoreDir)` reads a form in either encoding a browser
+sends.** `multipart/form-data` carries files and
+`application/x-www-form-urlencoded` cannot, and a route reads both the same way
+— which is what it wants, since an HTML form switches to multipart the moment
+it grows a file input and a webhook picks whichever it likes. Both answer a
+`Form`, whose `files` is empty for the encoding that carries none.
+
+`fileStoreDir` names a directory the route owns, and each file is written there
+as the body arrives, under a generated name that cannot collide or escape, with
+`Upload` carrying that path beside the name the client sent. A route keeps a
+file by renaming it, which costs nothing because it already sits on the route's
+own filesystem. It defaults to None, which refuses every file part, so
+`Request.form()` reads a form that should carry none and a route that never
+considered files cannot be made to write one.
+
+A multipart body is scanned a block at a time and never held whole, so a form
+costs one block however large it is, and what a route budgets is that
+directory's disk rather than this process's memory. A body that is malformed
+or that stops early unlinks every file the scan wrote and answers None, so None
+means nothing was stored, as it does for `saveTo`.
+
+**Cookies are written from `Response` and read from `Request`.**
+`Response.cookie(name, value, maxAgeSeconds)` builds a `Set-Cookie` that
+is always `Path=/`, `HttpOnly` and `SameSite=Lax`. `Response.signedCookie` and
+`Request.signedCookie` carry a value a client cannot change: the cookie holds
+the value, its expiry and an HMAC-SHA256 over both and the cookie's name, so it
+cannot be altered or moved to another name, and the server enforces the expiry
+rather than trusting the browser's `Max-Age`. The value is signed, not
+encrypted, so a user id belongs there and a secret does not, and nothing signed
+this way can be revoked before it expires. Where session state lives, and
+whether
+any exists, stays the application's.
+
+**Every response carries `X-Content-Type-Options: nosniff`**, and every HTML
+response `Content-Security-Policy: frame-ancestors 'self'`, so another site
+cannot frame a page and collect a click meant for it. A route that must be
+framed
+sends a policy of its own, which is kept.
+
+**HEAD is refused with a 501 and no body**, like any verb the application does
+not implement, and `Http.Verb.Head` is gone. The refusal carries no body because
+waitress writes whatever body it is handed even for a HEAD, which a client
+keeping the connection open reads as its next response.
+
+**`harpe.server` serves single-page applications and APIs**: JSON and files
+read from disk, where a page is a file. It renders no HTML and escapes
+nothing, so there is no form reader — that only makes sense beside the
+server-side rendering it does not do. The `Http.Segments` pattern is gone with
+it: it split the path inside each case, so twenty routes split twenty times
+(328us, against 74us for a whole request). A route that needs the parts of a
+path calls `Request.segments(path)` once and matches the list.
+
+The templates pin the previous release and still call the old signatures.
+Moving them is part of the release, not of this change.
+
 The journal viewer is now something a driver mounts, not a second process you
 start. `harpe.observability.ViewLogger` is a `Logger` that retains the last
 `capacity` entries in memory and lets them be read back, which gives a
@@ -11,11 +181,14 @@ durable backend a driver already had rather than in front of it.
 answers with the self-contained page, or with the entries after the cursor the
 page polls it back with — so an agent already serving HTTP mounts it at a path
 of its own choosing, and one that is not takes `Viewer.start` to bind a port on
-a daemon thread. The cursor and envelope stay between the page and the viewer.
+a daemon thread, whose `answersTo` defaults to `Application.Host.Loopback` as
+`Application`'s own `host` does. The cursor and envelope stay between the page
+and the viewer.
 An entry is visible the moment it is logged — no flush, no file path to agree
 on, no `jo run view` in another terminal.
 
-**`Model.Usage` is now `harpe.metering.Usage`, and it is a record rather than two
+**`Model.Usage` is now `harpe.metering.Usage`, and it is a record rather than
+two
 counts.** It carries the `provider` and `model` that were asked and the
 `cacheReadTokens` / `cacheWriteTokens` that break `inputTokens` down, alongside
 the totals it had, so everything a charge is computed from is in one value — no
@@ -148,12 +321,6 @@ root, written the direction paths are written, so the stored order is the order
 the lanes and chips read in. `ContextLogger` prepends where it appended, and
 `TurnLog.innerTurn`/`outerTurn` swap ends. Journals written before this have
 their context reversed.
-
-`Http.quiet` silences a WSGI server's per-request access log, which a page
-polling once a second would otherwise write into the terminal its driver is
-using. `Viewer.start` applies it, and a driver mounting the route on a server of
-its own can. Unhandled exceptions still surface. The provider test fixture drops
-its private copy of this.
 
 The framework binds nothing on its own: whether to expose a journal, where, and
 to whom is the driver's call, since the page has no authentication and carries

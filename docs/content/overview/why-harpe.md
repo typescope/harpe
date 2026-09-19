@@ -9,12 +9,12 @@ operations.
 
 ## Why specialized agents?
 
-A general-purpose agent asks to be trusted with broad authority. That is not an
+A general-purpose agent asks to be trusted with broad authority. That is not a
 secure solution for transferring money, changing an official record, or touching a
-patient's file — finance, banking, government, health care.
+patient's file.
 
-A specialized agent has pre-defined roles, so its authority can be cut down to
-the roles and checked. That is the
+A specialized agent has a pre-defined role, so its authority can be cut down to
+the role and checked. That is the
 [**principle of least authority**](https://en.wikipedia.org/wiki/Principle_of_least_privilege)
 (PoLA), and we believe it is the only way to make an agent fit for high-stake
 critical infrastructure and sensitive data.

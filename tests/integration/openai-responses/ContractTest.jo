@@ -25,7 +25,7 @@ private def model(server: ProviderFixture.Server) =
 private def stateless(server: ProviderFixture.Server) =
   openai("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2, store = false)
 
-private def toolResponse(): ProviderFixture.Response = ProviderFixture.sse:
+private def toolResponse(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   data: {
     "type": "response.completed",
@@ -53,7 +53,7 @@ private def toolResponse(): ProviderFixture.Response = ProviderFixture.sse:
   data: [DONE]
   """
 
-private def textResponse(): ProviderFixture.Response = ProviderFixture.sse:
+private def textResponse(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_done","output_index":0,"content_index":0,"delta":"do","logprobs":[]}
 
@@ -84,7 +84,7 @@ private def textResponse(): ProviderFixture.Response = ProviderFixture.sse:
   data: [DONE]
   """
 
-private def helloResponse(): ProviderFixture.Response = ProviderFixture.sse:
+private def helloResponse(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_test","output_index":0,"content_index":0,"delta":"hello","logprobs":[]}
 
@@ -113,7 +113,7 @@ private def helloResponse(): ProviderFixture.Response = ProviderFixture.sse:
   data: [DONE]
   """
 
-private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
+private def unavailable(): ProviderFixture.Scripted = ProviderFixture.response:
   "503 Service Unavailable"
   "application/json"
   """
@@ -121,7 +121,7 @@ private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
     """
 
 //[ A reply cut off by the token limit, mid tool call. //]
-private def truncated(): ProviderFixture.Response = ProviderFixture.sse:
+private def truncated(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_cut","output_index":0,"content_index":0,"delta":"Let me loo","logprobs":[]}
 
@@ -162,7 +162,7 @@ private def truncated(): ProviderFixture.Response = ProviderFixture.sse:
   ! Its `output` carries a reasoning item that stored mode must NOT replay: the
   ! server already holds it, and `previous_response_id` is what points at it.
 //]
-private def callsAgain(): ProviderFixture.Response = ProviderFixture.sse:
+private def callsAgain(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   data: {
     "type": "response.completed", "sequence_number": 1,
@@ -201,7 +201,7 @@ private def callsAgain(): ProviderFixture.Response = ProviderFixture.sse:
   ! Stored mode leaves this on the server. Stateless mode has to replay it, so
   ! it is the same wire shape read two different ways.
 //]
-private def reasonsThenCalls(): ProviderFixture.Response = ProviderFixture.sse:
+private def reasonsThenCalls(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   data: {
     "type": "response.completed", "sequence_number": 1,

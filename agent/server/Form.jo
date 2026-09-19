@@ -1,0 +1,39 @@
+namespace harpe.server
+
+//[ A submitted form: its text fields, and the files that came with it.
+  !
+  ! `Request.form` fills one from either encoding a form arrives in.
+  ! `application/x-www-form-urlencoded` carries no files, so `files` is empty
+  ! for one of those.
+  !
+  ! WHAT BELONGS HERE. What a form is, for either encoding. How one is taken
+  ! off the wire does not: that is `Multipart`'s for the encoding that needs a
+  ! scanner, and `Request.form`'s for the one that is a single decode.
+//]
+class Form(values: py.Dict, uploads: List[Form.Upload])
+  //[ The first text field by this name, `Some("")` for one sent empty. //]
+  def field(name: String): Option[String] =
+    if values.contains(name) then Some(values.get(name).cast[py.List].get(0).asString) else None
+
+  //[ Every text field by this name, for a form that repeats one. //]
+  def all(name: String): List[String] =
+    var found: List[String] = []
+    if values.contains(name) then
+      for value in values.get(name).cast[py.List] do found = found + value.asString
+    found
+
+  //[ The files stored under this field name. //]
+  def files(name: String): List[Form.Upload] = uploads.select(one => one.field == name)
+end
+
+//[ What a form carries besides its fields. //]
+section Form
+  //[ One file a client sent, written into the route's directory
+    !
+    ! `path` is where it was written, under a generated name. `filename` is
+    ! what the CLIENT called it, which is client-controlled and is never what
+    ! the file was stored as — build no path out of it. A route keeping the
+    ! file renames `path` to a name of its own choosing.
+  //]
+  class Upload(field: String, filename: String, mime: String, path: String, size: Int)
+end

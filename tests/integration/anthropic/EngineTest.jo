@@ -38,7 +38,7 @@ private def model(server: ProviderFixture.Server): Model =
   ! before it dispatches a tool. Anthropic sends the two as separate content
   ! blocks, and the call's arguments as one `input_json_delta`.
 //]
-private def speaksThenCalls(): ProviderFixture.Response = ProviderFixture.sse:
+private def speaksThenCalls(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   event: message_start
   data: {
@@ -78,7 +78,7 @@ private def speaksThenCalls(): ProviderFixture.Response = ProviderFixture.sse:
   data: {"type":"message_stop"}
   """
 
-private def says(text: String): ProviderFixture.Response = ProviderFixture.sse:
+private def says(text: String): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   event: message_start
   data: {
@@ -109,21 +109,21 @@ private def says(text: String): ProviderFixture.Response = ProviderFixture.sse:
   data: {"type":"message_stop"}
   """
 
-private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
+private def unavailable(): ProviderFixture.Scripted = ProviderFixture.response:
   "529 Overloaded"
   "application/json"
   """
     {"type":"error","error":{"type":"overloaded_error","message":"busy"}}
     """
 
-private def unauthorized(): ProviderFixture.Response = ProviderFixture.response:
+private def unauthorized(): ProviderFixture.Scripted = ProviderFixture.response:
   "401 Unauthorized"
   "application/json"
   """
     {"type":"error","error":{"type":"authentication_error","message":"bad key"}}
     """
 
-private def rateLimited(): ProviderFixture.Response = new ProviderFixture.Response:
+private def rateLimited(): ProviderFixture.Scripted = new ProviderFixture.Scripted:
   "429 Too Many Requests"
   py.list:
     py.tuple("Content-Type", "application/json")
@@ -138,7 +138,7 @@ private def rateLimited(): ProviderFixture.Response = new ProviderFixture.Respon
 //[ Two calls in one reply — what a provider does by default when the model
   ! asks for several things at once. Anthropic gives each its own content block.
 //]
-private def callsTwoTools(): ProviderFixture.Response = ProviderFixture.sse:
+private def callsTwoTools(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   event: message_start
   data: {
@@ -178,7 +178,7 @@ private def callsTwoTools(): ProviderFixture.Response = ProviderFixture.sse:
   data: {"type":"message_stop"}
   """
 
-private def callsOneTool(): ProviderFixture.Response = ProviderFixture.sse:
+private def callsOneTool(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   event: message_start
   data: {
@@ -223,7 +223,7 @@ private def toolResultIds(request: ProviderFixture.RecordedRequest): String =
   ids.join(",")
 
 //[ A reply that arrives in three pieces, so a scenario can stop after one. //]
-private def saysInPieces(): ProviderFixture.Response = ProviderFixture.sse:
+private def saysInPieces(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   event: message_start
   data: {

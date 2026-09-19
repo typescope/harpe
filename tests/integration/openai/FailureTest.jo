@@ -11,7 +11,7 @@ import harpe.testing.check
 import harpe.test.integration.ProviderFixture
 import harpe.test.integration.ModelDriver
 
-private def error(status: String, message: String): ProviderFixture.Response =
+private def error(status: String, message: String): ProviderFixture.Scripted =
   ProviderFixture.response:
     status
     "application/json"
@@ -19,7 +19,7 @@ private def error(status: String, message: String): ProviderFixture.Response =
       {"error":{"message":"\{message}","type":"test_error","code":"test"}}
       """
 
-private def rateLimited(): ProviderFixture.Response = new ProviderFixture.Response:
+private def rateLimited(): ProviderFixture.Scripted = new ProviderFixture.Scripted:
   "429 Too Many Requests"
   py.list:
     py.tuple("Content-Type", "application/json")

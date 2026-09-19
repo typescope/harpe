@@ -1,0 +1,69 @@
+namespace harpe.server
+
+import harpe.server.Http.Status
+import harpe.server.Http.Mime
+import harpe.server.Http.Header
+import harpe.server.Response
+import harpe.server.Complete
+import harpe.server.OnDisk
+
+//[ Writing a `Response` out to WSGI: the status line, the headers every
+  ! response carries, and the body it hands back.
+  !
+  ! The only place in `harpe.server` that speaks WSGI's calling convention.
+  ! `Application` hands it a response and gets back the iterable a server
+  ! expects.
+//]
+private section Wsgi
+  //[ How much of a file is read at once, and so what one costs in memory. //]
+  private def blockBytes: Int = 65536
+
+  //[ Write `response` to WSGI. //]
+  def write(environ: py.Dynamic, startResponse: py.Dynamic, response: Response): py.Dynamic =
+    match response
+    case Complete(status, headers, body) =>
+      val _ = start(startResponse, status, headers)
+      py.dynamic(py.list(body))
+
+    case OnDisk(status, headers, path, length) =>
+      //[ Declared here rather than by the builder, so the length sent and the
+        ! file read cannot name different sizes. //]
+      val framed = headers ++ [Header("Content-Length", length.toString)]
+      val handle = py.open(path, "rb")
+      val _ = start(startResponse, status, framed)
+      blocks(environ, handle)
+
+  //[ `handle` as the iterable a server reads a block at a time, and closes
+    !
+    ! `wsgi.file_wrapper` is the server's own, which may reach `sendfile` and
+    ! never copy the file through this process at all. PEP 3333 leaves it
+    ! optional, so `wsgiref`'s is the fallback — the same iteration, without the
+    ! server's shortcut. Both carry the `close` a server must call, which is
+    ! what shuts the handle opened above.
+  //]
+  private def blocks(environ: py.Dynamic, handle: py.Dynamic): py.Dynamic =
+    val wrapper = environ.get("wsgi.file_wrapper")
+    if py.isNone(wrapper) then py.module("wsgiref.util").FileWrapper(handle, blockBytes)
+    else py.call(wrapper, handle, blockBytes)
+
+  //[ Begin the response, with `nosniff` so a browser never guesses a type. Returns WSGI's `write`. //]
+  def start(startResponse: py.Dynamic, status: Status.Code, headers: List[Header]): py.Dynamic =
+    val pairs = py.list()
+    for h in headers do pairs.append(py.tuple(h.name, h.value))
+    pairs.append(py.tuple("X-Content-Type-Options", "nosniff"))
+    if framable(headers) then pairs.append(py.tuple("Content-Security-Policy", "frame-ancestors 'self'"))
+
+    py.call(startResponse, Status.line(status), pairs)
+
+  //[ Whether this response is a page another site could frame
+    !
+    ! HTML gets `frame-ancestors 'self'`, so a hostile page cannot put the
+    ! application in an invisible frame and collect a click meant for it. A
+    ! route that must be framed sends a policy of its own, which is kept.
+  //]
+  def framable(headers: List[Header]): Bool =
+    val kind = Response.headerIn(headers, "Content-Type").getOrElse("")
+    match Response.headerIn(headers, "Content-Security-Policy")
+    case Some(_) => false
+    case None    => py.dynamic(kind).lower().asString.startsWith("text/html")
+end

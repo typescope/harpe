@@ -21,7 +21,7 @@ import harpe.test.integration.ModelDriver
 private def model(server: ProviderFixture.Server) =
   openrouter("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
 
-private def toolResponse(): ProviderFixture.Response = ProviderFixture.sse:
+private def toolResponse(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   data: {
     "type": "response.completed", "sequence_number": 1,
@@ -48,7 +48,7 @@ private def toolResponse(): ProviderFixture.Response = ProviderFixture.sse:
   data: [DONE]
   """
 
-private def textResponse(text: String): ProviderFixture.Response = ProviderFixture.sse:
+private def textResponse(text: String): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_done","output_index":0,"content_index":0,"delta":"\{text}","logprobs":[]}
 
@@ -77,7 +77,7 @@ private def textResponse(text: String): ProviderFixture.Response = ProviderFixtu
   data: [DONE]
   """
 
-private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
+private def unavailable(): ProviderFixture.Scripted = ProviderFixture.response:
   "503 Service Unavailable"
   "application/json"
   """
@@ -85,7 +85,7 @@ private def unavailable(): ProviderFixture.Response = ProviderFixture.response:
     """
 
 //[ A reply cut off by the token limit, mid tool call. //]
-private def truncated(): ProviderFixture.Response = ProviderFixture.sse:
+private def truncated(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_cut","output_index":0,"content_index":0,"delta":"Let me loo","logprobs":[]}
 
@@ -127,7 +127,7 @@ private def truncated(): ProviderFixture.Response = ProviderFixture.sse:
   ! item has to be replayed, unchanged and in order, on the request that returns
   ! the tool result.
 //]
-private def reasonsThenCalls(): ProviderFixture.Response = ProviderFixture.sse:
+private def reasonsThenCalls(): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   data: {
     "type": "response.completed", "sequence_number": 1,

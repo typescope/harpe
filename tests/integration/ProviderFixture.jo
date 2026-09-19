@@ -7,10 +7,16 @@
 
 namespace harpe.test.integration
 
-import harpe.Http
-import harpe.Http.request
+import harpe.server.Http
+import harpe.server.Http.Header
+import harpe.server.Response
+import harpe.server.Complete
+import harpe.server.Application
+import harpe.server.Router
+import harpe.server.Serve
+import harpe.server.Request
+import harpe.server.request
 import harpe.ffi.json
-import harpe.util.Process
 
 section ProviderFixture
   //[ One scripted response
@@ -20,14 +26,14 @@ section ProviderFixture
     ! statusless half of `Classify` — a failure that never became an HTTP
     ! status, and is classified by exception type instead.
   //]
-  class Response(status: String, headers: py.List, chunks: List[String], delaySeconds: Float = 0.0)
+  class Scripted(status: String, headers: py.List, chunks: List[String], delaySeconds: Float = 0.0)
 
-  def response(status: String, contentType: String, body: String): Response =
-    new Response(status, py.list(py.tuple("Content-Type", contentType)), [body])
+  def response(status: String, contentType: String, body: String): Scripted =
+    new Scripted(status, py.list(py.tuple("Content-Type", contentType)), [body])
 
   //[ A response the server sits on for `seconds` before sending anything. //]
-  def stalled(seconds: Float): Response =
-    new Response:
+  def stalled(seconds: Float): Scripted =
+    new Scripted:
       "200 OK"
       py.list(py.tuple("Content-Type", "text/event-stream"))
       ["data: [DONE]\n\n"]
@@ -39,8 +45,8 @@ section ProviderFixture
     ! scenario that has to act while a turn is mid-request — cancelling it, say —
     ! uses it to hold the turn where it wants it, rather than racing the reply.
   //]
-  def sse(body: String, delaySeconds: Float = 0.0): Response =
-    new Response:
+  def sse(body: String, delaySeconds: Float = 0.0): Scripted =
+    new Scripted:
       "200 OK"
       py.list:
         py.tuple("Content-Type", "text/event-stream")
@@ -84,48 +90,57 @@ section ProviderFixture
     def requestJson: py.Dict = recorded(0).jsonBody
   end
 
-  private def encode(chunks: List[String]): py.List =
-    val encoded = py.list()
-    for chunk in chunks do
-      encoded.append(py.dynamic(chunk).encode("utf-8"))
-    encoded
+  private def serve(responses: List[Scripted], requests: py.List): Response receives request =
+    val body = Request.body() rescue None => abort "the provider fixture was sent a body that is not UTF-8"
 
-  private def serve(responses: List[Response], requests: py.List): py.List receives request =
     val recorded = new RecordedRequest:
       request.environ.get("REQUEST_METHOD", "GET").asString
       request.path
       request.environ.get("QUERY_STRING", "").asString
-      Http.readBody()
+      body
       request.environ
     requests.append(recorded)
 
     val index = requests.size - 1
     if index >= responses.size then
-      Http.respond("500 Internal Server Error", "text/plain", "unexpected request")
+      Response.complete(Http.Status.ServerError, Http.Mime.Text, "unexpected request")
     else
       val answer = responses.get(index)
       if answer.delaySeconds > 0.0 then py.module("time").sleep(answer.delaySeconds)
-      py.call(request.startResponse, answer.status, answer.headers)
-      encode(answer.chunks)
+      Complete(status(answer.status), headers(answer.headers), py.dynamic(answer.chunks.join("")).encode("utf-8"))
+
+  //[ A scripted status line such as `"529 Overloaded"`, which no standard status names. //]
+  private def status(line: String): Http.Status.Code =
+    val parts = py.dynamic(line).split(" ", 1).cast[py.List]
+    val code = Int.parse(parts.get(0).asString) rescue None => abort "a scripted status with no code: '\{line}'"
+    Http.Status.Other(code, parts.get(1).asString)
+
+  private def headers(pairs: py.List): List[Header] =
+    var out: List[Header] = []
+    for pair in pairs do
+      val fields = py.module("builtins").list(pair).cast[py.List]
+      out = out + Header(fields.get(0).asString, fields.get(1).asString)
+    out
 
   //[ Run `test` against a local server with an ordered response script.
     !
     ! Port zero avoids collisions. `serve_forever` permits retries and other
     ! multi-request flows; shutdown and join make the fixture lifetime explicit.
   //]
-  def withResponses(responses: List[Response], test: Server => Unit): Unit =
+  def withResponses(responses: List[Scripted], test: Server => Unit): Unit =
     val requests = py.list()
-    val httpd = Http.server("127.0.0.1", 0, () => serve(responses, requests))
-    Http.quiet(httpd)
-    val port = httpd.server_port.asInt
+    val application = new Application:
+      host = Application.Host.Loopback
+      routes = []
+      fallback = () => serve(responses, requests)
+      maxBodyBytes = 67108864
+
+    val background = Serve.inBackground("127.0.0.1", 0, application)
+    val port = background.port
     val server = new Server("http://127.0.0.1:\{port}", port, requests)
-    val thread = Process.daemon: () => httpd.serve_forever(poll_interval = 0.01)
-    thread.start()
 
     val result = py.try: test(server)
-    val _ = py.try: httpd.shutdown()
-    val _ = py.try: httpd.server_close()
-    val _ = py.try: thread.join(2.0)
+    val _ = py.try: background.stop()
 
     match result
     case Ok(_) => pass

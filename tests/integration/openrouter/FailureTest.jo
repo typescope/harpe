@@ -14,7 +14,7 @@ import harpe.test.integration.ModelDriver
 private def model(server: ProviderFixture.Server) =
   openrouter("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 2)
 
-private def error(status: String, message: String): ProviderFixture.Response =
+private def error(status: String, message: String): ProviderFixture.Scripted =
   ProviderFixture.response:
     status
     "application/json"
@@ -24,7 +24,7 @@ private def error(status: String, message: String): ProviderFixture.Response =
 
 def failureSuite(): Unit receives thisSuite, logger = suite: "failure", () =>
   test: "429 reports the Retry-After delay", () =>
-    val limited = new ProviderFixture.Response:
+    val limited = new ProviderFixture.Scripted:
       "429 Too Many Requests"
       py.list:
         py.tuple("Content-Type", "application/json")

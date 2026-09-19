@@ -1,0 +1,142 @@
+namespace harpe.server
+
+import harpe.ffi.builtins
+
+//[ The protocol as values: what a program names in source, independent of any
+  ! one exchange.
+  !
+  ! WHAT BELONGS HERE. A type the protocol itself defines — a verb, a status, a
+  ! media type, a header — together with the
+  ! support that makes it usable: the status line a code writes, the charset a
+  ! content type settles, the spelling WSGI expects of a verb. What an
+  ! application chooses to accept is not protocol, so `Host` and `CrossSite`
+  ! are `Application`'s.
+  !
+  ! WHAT DOES NOT. Nothing here reads a request or builds a response. `Request`
+  ! owns what came in, `Response` what goes back, and the test for an addition
+  ! is whether it would still mean something in a program that never serves a
+  ! request. `Header` passes it: a name and a value are the protocol's, and only
+  ! `Response` builds one to send. A body format whose reader is inseparable
+  ! from its shape does not, which is why `Multipart` owns both its types and
+  ! the scan that fills them.
+  !
+  ! Closed unions rather than strings, because `"200 0K"` is a typo no compiler
+  ! can refuse, and a second `405`-vs-`501` rule is the kind of difference
+  ! nobody notices until it matters.
+//]
+section Http
+  //[ One header, either side of the exchange
+    !
+    ! A CR or LF in the name or the value aborts here, at construction, since
+    ! one would split the response it is written into.
+  //]
+  class Header(name: String, value: String)
+    private val whole: Bool =
+      val split = name.contains("\r") || name.contains("\n")
+      if split || value.contains("\r") || value.contains("\n") then
+        abort "header '\{name}' contains a line break"
+      true
+  end
+
+  //[ The verb, as a value rather than a string
+    !
+    ! Closed on purpose: these five are what a server here understands, and
+    ! anything else, HEAD included, is refused at the door with a 501 rather than
+    ! carried inward as a string nothing will ever match. `Options` is named
+    ! because browsers really do send it — it matches no route, but it is a
+    ! deliberate 404 rather than an accident of `method == "GET"` being false.
+    !
+    ! `Options` rather than `Option`, which is Jo's own.
+  //]
+  section Verb
+    union Method = Get | Post | Put | Delete | Options
+  end
+
+  //[ The status, as a value rather than a string
+    !
+    ! Same reason as the verb: `"200 0K"` is a string a compiler cannot refuse,
+    ! and a status line is written at every response site. Add a case rather
+    ! than passing a literal. `Other` is for a status decided at runtime, such
+    ! as one relayed from upstream.
+    !
+    ! Some cases are vocabulary an application spends itself. Nothing here
+    ! answers a conditional request, so a route wanting a 304 reads
+    ! `If-None-Match` and answers on its own terms, and nothing answers 411,
+    ! since a body that declared no length reads as None rather than being
+    ! refused at the door.
+  //]
+  section Status
+    union Code =
+        Success
+      | Created
+      | NoContent
+      | SeeOther
+      | NotModified
+      | BadRequest
+      | Unauthorized
+      | Forbidden
+      | NotFound
+      | MethodNotAllowed
+      | Conflict
+      | LengthRequired
+      | TooLarge
+      | UnsupportedMediaType
+      | TooManyRequests
+      | ServerError
+      | NotImplemented
+      | Unavailable
+      | Other(code: Int, reason: String)
+
+    //[ The status line WSGI expects. //]
+    def line(code: Code): String =
+      match code
+      case Success              => "200 OK"
+      case Created              => "201 Created"
+      case NoContent            => "204 No Content"
+      case SeeOther             => "303 See Other"
+      case NotModified          => "304 Not Modified"
+      case BadRequest           => "400 Bad Request"
+      case Unauthorized         => "401 Unauthorized"
+      case Forbidden            => "403 Forbidden"
+      case NotFound             => "404 Not Found"
+      case MethodNotAllowed     => "405 Method Not Allowed"
+      case Conflict             => "409 Conflict"
+      case LengthRequired       => "411 Length Required"
+      case TooLarge             => "413 Payload Too Large"
+      case UnsupportedMediaType => "415 Unsupported Media Type"
+      case TooManyRequests      => "429 Too Many Requests"
+      case ServerError          => "500 Internal Server Error"
+      case NotImplemented       => "501 Not Implemented"
+      case Unavailable          => "503 Service Unavailable"
+      case Other(code, reason)  => "\{code} \{reason}"
+  end
+
+  //[ The content type, with its charset settled here rather than at each site
+    !
+    ! `Other` carries a type resolved at runtime — a file's own, from
+    ! `File.mimeType`. Everything a handler names in source should be a case, so
+    ! that the charset decision is made once.
+  //]
+  section Mime
+    union Type = Html | Json | Ndjson | Text | Css | JavaScript | Other(value: String)
+
+    def value(kind: Type): String =
+      match kind
+      case Html        => "text/html; charset=utf-8"
+      case Json        => "application/json"
+      case Ndjson      => "application/x-ndjson"
+      case Text        => "text/plain; charset=utf-8"
+      case Css         => "text/css; charset=utf-8"
+      case JavaScript  => "application/javascript; charset=utf-8"
+      case Other(raw)  => raw
+  end
+
+  //[ The verb as WSGI spells it. //]
+  private[server] def verbName(method: Verb.Method): String =
+    match method
+    case Verb.Get     => "GET"
+    case Verb.Post    => "POST"
+    case Verb.Put     => "PUT"
+    case Verb.Delete  => "DELETE"
+    case Verb.Options => "OPTIONS"
+end
