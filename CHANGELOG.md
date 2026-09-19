@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.0 — 2026-09-20
 
 **HTTP now lives in `harpe.server`, and an application is a value.** What was
 one `harpe.Http` file is ten under `agent/server/`, each owning one side of
