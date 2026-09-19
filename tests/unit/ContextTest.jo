@@ -175,7 +175,7 @@ def contextSuite(): Unit receives thisSuite, logger = suite: "context", () =>
       val paired = toolTurn("keep me", "print 1", "1") ++ toolTurn("and me", "print 2", "2")
       val kept = truncate(paired, 30)     // room for ~one turn
       check("starts at a user message", kept.get(0) is UserInput(_, _))
-      check("no orphaned tool result", !(kept.get(0) is ToolResults(_)))
+      check("no orphaned tool result", kept.get(0) is !ToolResults(_))
 
   suite: "SummarizingContext", () =>
     test: "leaves the transcript alone under the high-water mark", () =>

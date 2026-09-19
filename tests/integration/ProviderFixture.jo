@@ -8,7 +8,7 @@
 namespace harpe.test.integration
 
 import harpe.server.Http
-import harpe.server.Header
+import harpe.server.Http.Header
 import harpe.server.Response
 import harpe.server.Complete
 import harpe.server.Application
@@ -103,7 +103,7 @@ section ProviderFixture
 
     val index = requests.size - 1
     if index >= responses.size then
-      Response.complete(Http.Status.ServerError, Http.Mime.Text, [], "unexpected request")
+      Response.complete(Http.Status.ServerError, Http.Mime.Text, "unexpected request")
     else
       val answer = responses.get(index)
       if answer.delaySeconds > 0.0 then py.module("time").sleep(answer.delaySeconds)

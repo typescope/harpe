@@ -6,24 +6,38 @@ import harpe.ffi.builtins
   ! one exchange.
   !
   ! WHAT BELONGS HERE. A type the protocol itself defines — a verb, a status, a
-  ! media type, the shape of a multipart body — together with the support that
-  ! makes it usable: the status line a code writes, the charset a content type
-  ! settles, the spelling WSGI expects of a verb. `Host` and `CrossSite` sit
-  ! here too: they name what an application may accept, not what any exchange
-  ! did.
+  ! media type, a header, the shape of a multipart body — together with the
+  ! support that makes it usable: the status line a code writes, the charset a
+  ! content type settles, the spelling WSGI expects of a verb. `Host` and
+  ! `CrossSite` sit here too: they name what an application may accept, not
+  ! what any exchange did.
   !
   ! WHAT DOES NOT. Nothing here reads a request or builds a response. `Request`
   ! owns what came in, `Response` what goes back, and the test for an addition
   ! is whether it would still mean something in a program that never serves a
   ! request. A reader of the body is `Request`'s even when the format is the
   ! protocol's, which is why `Multipart` is defined here and
-  ! `Request.multipart()` decodes one.
+  ! `Request.multipart()` decodes one. `Header` is here for the same reason: a
+  ! name and a value are the protocol's, and only `Response` builds one to send.
   !
   ! Closed unions rather than strings, because `"200 0K"` is a typo no compiler
   ! can refuse, and a second `405`-vs-`501` rule is the kind of difference
   ! nobody notices until it matters.
 //]
 section Http
+  //[ One header, either side of the exchange
+    !
+    ! A CR or LF in the name or the value aborts here, at construction, since
+    ! one would split the response it is written into.
+  //]
+  class Header(name: String, value: String)
+    private val whole: Bool =
+      val split = name.contains("\r") || name.contains("\n")
+      if split || value.contains("\r") || value.contains("\n") then
+        abort "header '\{name}' contains a line break"
+      true
+  end
+
   //[ The verb, as a value rather than a string
     !
     ! Closed on purpose: these five are what a server here understands, and
@@ -44,6 +58,10 @@ section Http
     ! and a status line is written at every response site. Add a case rather
     ! than passing a literal. `Other` is for a status decided at runtime, such
     ! as one relayed from upstream.
+    !
+    ! `NotModified` is vocabulary an application spends itself: nothing here
+    ! answers a conditional request, so a route that wants one reads
+    ! `If-None-Match` and answers 304 on its own terms.
   //]
   section Status
     union Code =
@@ -58,6 +76,7 @@ section Http
       | NotFound
       | MethodNotAllowed
       | Conflict
+      | LengthRequired
       | TooLarge
       | UnsupportedMediaType
       | TooManyRequests
@@ -80,6 +99,7 @@ section Http
       case NotFound             => "404 Not Found"
       case MethodNotAllowed     => "405 Method Not Allowed"
       case Conflict             => "409 Conflict"
+      case LengthRequired       => "411 Length Required"
       case TooLarge             => "413 Payload Too Large"
       case UnsupportedMediaType => "415 Unsupported Media Type"
       case TooManyRequests      => "429 Too Many Requests"

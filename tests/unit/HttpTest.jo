@@ -8,7 +8,7 @@
 namespace harpe.test.unit.HttpTest
 
 import harpe.server.Http
-import harpe.server.Header
+import harpe.server.Http.Header
 import harpe.server.Application
 import harpe.server.Router
 import harpe.server.Serve
@@ -39,24 +39,44 @@ private def applicationFor(answersTo: Http.Host.Policy, reached: py.List): Appli
 //[ Every path these tests ask for. `reached` records what a route saw. //]
 private def route(reached: py.List): Response receives request =
   match request
-  case Request.Get("/dynamic") => Response.complete(Http.Status.Success, Http.Mime.Json, [], "{}")
-  case Request.Get("/asset")   => Response.revalidated(Response.complete(Http.Status.Success, Http.Mime.Css, [], "body { margin: 0 }"))
-  case Request.Get("/page")    => Response.revalidated(Response.html("<p>" + Request.query("v").getOrElse("one") + "</p>"))
+  case Request.Get("/dynamic") => Response.complete(Http.Status.Success, Http.Mime.Json, "{}")
+  case Request.Get("/asset")   => Response.complete(Http.Status.Success, Http.Mime.Css, "body { margin: 0 }")
+  case Request.Get("/page")    => Response.html("<p>" + Request.query("v").getOrElse("one") + "</p>")
   case Request.Get("/moved")   => Response.redirect("/dynamic")
 
+  //[ Conditional requests, done by the route
+    !
+    ! Nothing in `harpe.server` answers one, so this is what an application
+    ! writes when it wants a 304: a validator it can compute cheaply, checked
+    ! before the body is built. `reached` records that the build was skipped.
+  //]
+  case Request.Get("/versioned") =>
+    val tag = "\"v" + Request.query("v").getOrElse("1") + "\""
+    if Request.header("If-None-Match").getOrElse("") == tag then
+      Response.complete(Http.Status.NotModified, Http.Mime.Text, "", headers = [Header("ETag", tag)])
+    else
+      reached.append("built")
+      val rule = Header("Cache-Control", "private, no-cache")
+      Response.html("<p>built</p>", headers = [Header("ETag", tag), rule])
+
+  //[ A body the browser may keep, which is a route naming its own rule in place of `no-store`. //]
+  case Request.Get("/cached") =>
+    val own = Header("Cache-Control", "public, max-age=3600")
+    Response.complete(Http.Status.Success, Http.Mime.Css, "body { margin: 0 }", headers = [own])
+
   case Request.Get("/headed") =>
-    Response.complete(Http.Status.Created, Http.Mime.Text, [Header("X-Trace", "abc")], Request.header("X-Asked").getOrElse("absent"))
+    Response.complete(Http.Status.Created, Http.Mime.Text, Request.header("X-Asked").getOrElse("absent"), headers = [Header("X-Trace", "abc")])
 
   case Request.Get("/query") =>
     val shown = match Request.query("q")
                 case Some(value) => "some:" + value
                 case None        => "none"
-    Response.complete(Http.Status.Success, Http.Mime.Text, [], shown)
+    Response.complete(Http.Status.Success, Http.Mime.Text, shown)
 
   //[ The parts of a path, split once, which is what replaced the `Segments` pattern. //]
   case Request.Get(path) if path.startsWith("/files/") =>
     match Request.segments(path)
-    case ["files", name] => Response.complete(Http.Status.Success, Http.Mime.Text, [], name)
+    case ["files", name] => Response.complete(Http.Status.Success, Http.Mime.Text, name)
     case _               => Response.notFound()
 
   case Request.Get("/stream") =>
@@ -76,28 +96,28 @@ private def route(reached: py.List): Response receives request =
   case Request.Post("/echo") =>
     reached.append(1)
     val text = Request.body() rescue None => return Response.badRequest("not utf-8")
-    Response.complete(Http.Status.Success, Http.Mime.Text, [], text.size.toString)
+    Response.complete(Http.Status.Success, Http.Mime.Text, text.size.toString)
 
   case Request.Post("/twice") =>
     val _ = Request.bytes()
     val second = match py.try(Request.bytes())
                  case Ok(_)    => "read twice"
                  case Err(err) => err.message
-    Response.complete(Http.Status.Success, Http.Mime.Text, [], second)
+    Response.complete(Http.Status.Success, Http.Mime.Text, second)
 
   case Request.Get("/framed") =>
     val own = Header("Content-Security-Policy", "frame-ancestors https://partner.example")
-    Response.complete(Http.Status.Success, Http.Mime.Html, [own], "<p>embedded</p>")
+    Response.html("<p>embedded</p>", headers = [own])
 
   case Request.Get("/cookie") =>
     val shown = Request.cookie("sid").getOrElse("absent")
-    Response.complete(Http.Status.Success, Http.Mime.Text, [Response.cookie("sid", "abc123", maxAgeSeconds = 60, secure = true)], shown)
+    Response.complete(Http.Status.Success, Http.Mime.Text, shown, headers = [Response.cookie("sid", "abc123", maxAgeSeconds = 60, secure = true)])
 
   //[ The same, signed for a different cookie name, to show the name is signed. //]
   case Request.Get("/signed-other") =>
     val given = Request.query("value").getOrElse("")
     val header = Response.signedCookie("other", given, secret, maxAgeSeconds = 60, secure = true)
-    Response.complete(Http.Status.Success, Http.Mime.Text, [header], "issued")
+    Response.complete(Http.Status.Success, Http.Mime.Text, "issued", headers = [header])
 
   //[ Signs `?value=` into a cookie, and reads back whatever cookie the request carries. //]
   case Request.Get("/signed") =>
@@ -105,7 +125,7 @@ private def route(reached: py.List): Response receives request =
     val age = Int.parse(Request.query("age").getOrElse("60")) rescue None => 60
     val seen = Request.signedCookie("sid", secret).getOrElse("absent")
     val header = Response.signedCookie("sid", given, secret, maxAgeSeconds = age, secure = true)
-    Response.complete(Http.Status.Success, Http.Mime.Text, [header], seen)
+    Response.complete(Http.Status.Success, Http.Mime.Text, seen, headers = [header])
 
   case Request.Post("/upload") =>
     val form = Request.multipart() rescue None => return Response.badRequest("expected multipart/form-data")
@@ -116,7 +136,7 @@ private def route(reached: py.List): Response receives request =
                 else
                   val one = files.get(0)
                   "\{one.filename}|\{one.mime}|\{one.size}"
-    Response.complete(Http.Status.Success, Http.Mime.Text, [], "\{note}|\{tags}|\{shown}")
+    Response.complete(Http.Status.Success, Http.Mime.Text, "\{note}|\{tags}|\{shown}")
 
   case Request.Post("/json") =>
     Response.json:
@@ -149,6 +169,39 @@ private def call(wsgi: (py.Dynamic, py.Dynamic) => py.List, method: String, targ
   callBytes(wsgi, method, target, headers, py.dynamic(body).encode())
 
 private def callBytes(wsgi: (py.Dynamic, py.Dynamic) => py.List, method: String, target: String, headers: List[Header], body: py.Dynamic): Answer =
+  callWith:
+    wsgi
+    method
+    target
+    headers
+    body
+    (environ: py.Dict) => pass
+
+//[ A POST whose environ declares no length, as a server passing chunks through
+  ! hands one over. `marked` is how that server says a body is still coming:
+  ! `Transfer-Encoding` on the request, `wsgi.input_terminated` on the stream —
+  ! which is gunicorn's spelling — or nothing at all, for a POST with no body.
+//]
+private def withoutLength(wsgi: (py.Dynamic, py.Dynamic) => py.List, marked: String): Answer =
+  val adjust = (environ: py.Dict) =>
+    val _ = py.dynamic(environ).pop("CONTENT_LENGTH", py.none())
+    if marked == "chunked" then environ.set("HTTP_TRANSFER_ENCODING", "chunked")
+    if marked == "terminated" then environ.set("wsgi.input_terminated", true)
+  callWith:
+    wsgi
+    "POST"
+    "/echo"
+    []
+    py.dynamic("hello").encode()
+    adjust
+
+private def callWith(
+      wsgi: (py.Dynamic, py.Dynamic) => py.List,
+      method: String,
+      target: String,
+      headers: List[Header],
+      body: py.Dynamic,
+      adjust: py.Dict => Unit): Answer =
   val urllib = py.module("urllib.parse")
   val parts = urllib.urlsplit(target)
 
@@ -162,6 +215,7 @@ private def callBytes(wsgi: (py.Dynamic, py.Dynamic) => py.List, method: String,
   for h in headers do
     val key = py.dynamic(h.name).upper().asString.replace("-", "_")
     environ.set(if key == "CONTENT_TYPE" then key else "HTTP_" + key, h.value)
+  adjust(environ)
 
   val statuses = py.list()
   val sent = py.list()
@@ -190,6 +244,11 @@ private def fileRoute(root: String): Response receives request =
   match request
   case Request.Get("/download") => Response.file(root, name, Response.Attachment)
   case Request.Get("/show")     => Response.file(root, name, Response.Inline)
+
+  //[ A file a route says the browser may keep, which the proxy would normally serve. //]
+  case Request.Get("/keepable") =>
+    val rule = Header("Cache-Control", "public, max-age=31536000, immutable")
+    Response.file(root, name, Response.Inline, headers = [rule])
   case _                     => Response.notFound()
 
 //[ A directory of files to serve, beside one that must stay out of reach, for the length of `body`. //]
@@ -232,7 +291,7 @@ private def tabled(reached: py.List): Application =
       Router.Post("/api/message", () => echoed(reached))
       Router.Post("/api/upload", () => echoed(reached), maxBodyBytes = 4096)
       Router.Delete("/api/session", () => Response.json(py.dict("ok" ~ true)))
-      Router.Prefix("/assets/", () => Response.complete(Http.Status.Success, Http.Mime.Text, [], "asset"))
+      Router.Prefix("/assets/", () => Response.complete(Http.Status.Success, Http.Mime.Text, "asset"))
     fallback = () => Response.html("<p>the page</p>")
 
 private def info(): Response receives request = Response.json(py.dict("name" ~ "clair"))
@@ -240,7 +299,7 @@ private def info(): Response receives request = Response.json(py.dict("name" ~ "
 private def echoed(reached: py.List): Response receives request =
   reached.append(1)
   val text = Request.body() rescue None => return Response.badRequest("not utf-8")
-  Response.complete(Http.Status.Success, Http.Mime.Text, [], text.size.toString)
+  Response.complete(Http.Status.Success, Http.Mime.Text, text.size.toString)
 
 //[ Two routes claiming one verb and path, which no application may hold. //]
 private def clashing(): Application =
@@ -310,6 +369,31 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("never sniffed", headerOf(answer, "X-Content-Type-Options") == "nosniff")
     check("no etag", answer.header("ETag") is None)
 
+  test: "lets a route name its own caching rule, in place of no-store", () =>
+    val answer = get(appFor(py.list()), "/cached")
+    val rules = answer.headers.select(h => py.dynamic(h.name).lower().asString == "cache-control")
+    check("the route's own", headerOf(answer, "Cache-Control") == "public, max-age=3600")
+    check("and only one of it", rules.size == 1)
+
+  //[ The framework answers no conditional request, so this is the application doing it. //]
+  test: "lets a route answer a conditional request itself, before building the body", () =>
+    val reached = py.list()
+    val wsgi = applicationFor(Http.Host.Loopback, reached).wsgi()
+
+    val first = get(wsgi, "/versioned?v=7")
+    val tag = headerOf(first, "ETag")
+    check("200", first.status == 200 && first.text == "<p>built</p>")
+    check("built once", reached.size == 1)
+    check("its own caching rule", headerOf(first, "Cache-Control") == "private, no-cache")
+
+    val second = call: wsgi, "GET", "/versioned?v=7", [Header("If-None-Match", tag)], ""
+    check("304", second.status == 304 && second.text == "")
+    check("and no no-store to drop the copy it just kept", second.header("Cache-Control") is None)
+    check("and the body was never built", reached.size == 1)
+
+    val changed = call: wsgi, "GET", "/versioned?v=8", [Header("If-None-Match", tag)], ""
+    check("a new version builds again", changed.status == 200 && reached.size == 2)
+
   test: "reads a request header and sends the route's own", () =>
     val wsgi = appFor(py.list())
     val sent = call(wsgi, "GET", "/headed", [Header("X-Asked", "yes")], "")
@@ -335,36 +419,6 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("200", answer.status == 200)
     check("decoded as UTF-8", answer.text == "café")
     check("bytes that are not UTF-8 are a 400", get(wsgi, "/files/%FF").status == 400)
-
-  test: "answers a revalidated response with an etag, then 304 when it is unchanged", () =>
-    val wsgi = appFor(py.list())
-    val first = get(wsgi, "/asset")
-    val tag = headerOf(first, "ETag")
-    check("200 first time", first.status == 200)
-    check("body arrives", first.text == "body { margin: 0 }")
-    check("carries an etag", tag != "")
-    check("kept by the browser alone, and rechecked", headerOf(first, "Cache-Control") == "private, no-cache")
-    check("still typed", headerOf(first, "Content-Type") == "text/css; charset=utf-8")
-
-    val second = call(wsgi, "GET", "/asset", [Header("If-None-Match", tag)], "")
-    check("304 second time", second.status == 304)
-    check("and no body", second.text == "")
-    check("with its validator", headerOf(second, "ETag") == tag)
-
-    val listed = call(wsgi, "GET", "/asset", [Header("If-None-Match", "\"other\", W/" + tag)], "")
-    check("a weak tag in a list", listed.status == 304)
-    check("any tag", call(wsgi, "GET", "/asset", [Header("If-None-Match", "*")], "").status == 304)
-
-  test: "revalidates any complete response, and refetches once it changes", () =>
-    val wsgi = appFor(py.list())
-    val first = get(wsgi, "/page")
-    check("html", headerOf(first, "Content-Type") == "text/html; charset=utf-8" && headerOf(first, "Cache-Control") == "private, no-cache")
-
-    val tag = [Header("If-None-Match", headerOf(first, "ETag"))]
-    check("unchanged", call(wsgi, "GET", "/page", tag, "").status == 304)
-
-    val changed = call(wsgi, "GET", "/page?v=two", tag, "")
-    check("changed", changed.status == 200 && changed.text == "<p>two</p>")
 
   test: "reads JSON only when it is labelled and is an object", () =>
     val wsgi = appFor(py.list())
@@ -479,6 +533,22 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     background.stop()
     check("emit reported the close", reached.size == 1 && reached.get(0).asString == "closed")
 
+  //[ What a server that passes the chunks through hands over: a body, and no declared length. //]
+  test: "refuses a body that declares no length, rather than reading it as empty", () =>
+    val wsgi = appFor(py.list())
+
+    val chunked = withoutLength(wsgi, marked = "chunked")
+    check("411", chunked.status == 411)
+    check("and says why", chunked.text == "a request body must declare its length")
+
+    val terminated = withoutLength(wsgi, marked = "terminated")
+    check("a stream marked terminated too", terminated.status == 411)
+
+    //[ Nothing says a body is coming, so it is a POST that has none, and reads as empty. //]
+    val bodyless = withoutLength(wsgi, marked = "nothing")
+    check("a POST carrying no body is still served", bodyless.status == 200)
+    check("and reads as empty", bodyless.text == "0")
+
   test: "refuses a body larger than the cap, before the route sees it", () =>
     val reached = py.list()
     val wsgi = appFor(reached)
@@ -579,6 +649,13 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("the application's, with no routes", applicationFor(Http.Host.Loopback, py.list()).ceiling == limit)
 
   //[ The index is built when the `Application` is, so a clash is a startup failure. //]
+  //[ Refused where the bad value came from, not at the write, so a route's answer can be trusted. //]
+  test: "refuses a header that would split the response, at construction", () =>
+    check("a newline in the value", py.try(Header("X-Note", "a\nb")) is Err(_))
+    check("a carriage return in the value", py.try(Header("X-Note", "a\rb")) is Err(_))
+    check("and one in the name", py.try(Header("X\nNote", "fine")) is Err(_))
+    check("an ordinary header is built", py.try(Header("X-Note", "fine")) is Ok(_))
+
   test: "refuses two routes claiming the same verb and path", () =>
     check("at construction", py.try(clashing()) is Err(_))
 
@@ -591,13 +668,20 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
       check("no body for \{target}", head.text == "" && headerOf(head, "Content-Length") == "0")
     check("no route ran", reached.size == 0)
 
-  test: "serves a file under its root, revalidated and named", () =>
+  test: "serves a file under its root, typed and named", () =>
     withFiles: (root: String, wsgi: (py.Dynamic, py.Dynamic) => py.List) =>
       val hello = get(wsgi, "/download?name=hello.txt")
       check("200", hello.status == 200 && hello.text == "hi")
       check("typed from its name", headerOf(hello, "Content-Type").startsWith("text/plain"))
       check("saved", headerOf(hello, "Content-Disposition") == "attachment; filename=\"hello.txt\"; filename*=UTF-8''hello.txt")
-      check("revalidated", headerOf(hello, "Cache-Control") == "private, no-cache" && headerOf(hello, "ETag") != "")
+      check("not a client's to keep", headerOf(hello, "Cache-Control") == "no-store")
+
+      val keepable = get(wsgi, "/keepable?name=css/app.css")
+      val rules = keepable.headers.select(h => py.dynamic(h.name).lower().asString == "cache-control")
+      check("unless the route says so", headerOf(keepable, "Cache-Control") == "public, max-age=31536000, immutable")
+      check("and then only its own", rules.size == 1)
+      check("still typed and named", headerOf(keepable, "Content-Type") == "text/css; charset=utf-8")
+      check("and no validator", hello.header("ETag") is None)
 
       val nested = get(wsgi, "/show?name=css/app.css")
       check("nested", nested.status == 200 && headerOf(nested, "Content-Type") == "text/css; charset=utf-8")

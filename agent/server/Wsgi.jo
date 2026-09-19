@@ -1,9 +1,8 @@
 namespace harpe.server
 
-import harpe.server.Http
 import harpe.server.Http.Status
 import harpe.server.Http.Mime
-import harpe.server.Header
+import harpe.server.Http.Header
 import harpe.server.Response
 import harpe.server.Complete
 import harpe.server.Stream
@@ -32,10 +31,7 @@ private section Wsgi
   //[ Begin the response, with `nosniff` so a browser never guesses a type. Returns WSGI's `write`. //]
   def start(startResponse: py.Dynamic, status: Status.Code, headers: List[Header]): py.Dynamic =
     val pairs = py.list()
-    for h in headers do
-      if h.name.contains("\r") || h.name.contains("\n") || h.value.contains("\r") || h.value.contains("\n") then
-        abort "header '\{h.name}' contains a line break"
-      pairs.append(py.tuple(h.name, h.value))
+    for h in headers do pairs.append(py.tuple(h.name, h.value))
     pairs.append(py.tuple("X-Content-Type-Options", "nosniff"))
     if framable(headers) then pairs.append(py.tuple("Content-Security-Policy", "frame-ancestors 'self'"))
 

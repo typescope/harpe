@@ -1,12 +1,10 @@
 namespace harpe.server
 
-import harpe.ffi.builtins
-import harpe.ffi.threading
 import harpe.server.Http
 import harpe.server.Http.Verb
 import harpe.server.Http.Status
 import harpe.server.Http.Mime
-import harpe.server.Header
+import harpe.server.Http.Header
 import harpe.server.Http.Host
 import harpe.server.Http.CrossSite
 import harpe.server.Request
@@ -65,7 +63,8 @@ class Application(
     ! Refuses, in order and before the route runs: a verb not implemented (501,
     ! not 405, because no path has been looked at), a path that is not UTF-8
     ! (400), a `Host` this application does not answer to (400), a cross-site
-    ! write (403), and a body over the route's limit (413).
+    ! write (403), a body that declares no length (411), and a body over the
+    ! route's limit (413).
     !
     ! The 413 is written without draining what the client is still sending, so a
     ! client mid-upload may see the connection close first. Give the server its
@@ -89,6 +88,8 @@ class Application(
       return Answer.refuse(Status.Forbidden, "cross-site request refused")
 
     val found = routeFor(method, path)
+    if Request.undeclaredBody(environ) then
+      return Answer.refuse(Status.LengthRequired, "a request body must declare its length")
     if Request.declaredLength(environ) > limitFor(found) then
       return Answer.refuse(Status.TooLarge, "request body too large")
 
@@ -99,7 +100,7 @@ class Application(
       if others.size == 0 then Answer.ran(fallback, method, path, environ)
       else
         val headers = [Header("Allow", others.join(", "))]
-        Response.complete(Status.MethodNotAllowed, Mime.Text, headers, "method not allowed")
+        Response.complete(Status.MethodNotAllowed, Mime.Text, "method not allowed", headers = headers)
 
   //[ What this exchange may send: the route's own limit, or the application's. //]
   private def limitFor(found: Option[Router.Route]): Int =
@@ -132,16 +133,13 @@ end
 
 //[ Building the answer: the refusals, and what a route's own answer becomes. //]
 private section Answer
-  //[ Run `handler` with the request bound, and answer 304 in place of a body the client holds. //]
+  //[ Run `handler` with the request bound. //]
   def ran(handler: (() => Response receives request), method: Verb.Method, path: String, environ: py.Dynamic): Response =
-    val answered = with request = new Request(method, path, environ) in handler()
-    if unchanged(method, environ, answered) then notModified(answered) else answered
-
-
+    with request = new Request(method, path, environ) in handler()
 
   //[ A refusal made before a request is bound. //]
   def refuse(status: Status.Code, message: String): Response =
-    Response.complete(status, Mime.Text, [], message)
+    Response.complete(status, Mime.Text, message)
 
   //[ The 501 for a HEAD, which must not carry a body
     !
@@ -153,24 +151,4 @@ private section Answer
   def unsupportedHead(): Response =
     Complete(Status.NotImplemented, [Header("Content-Length", "0")], py.dynamic("").encode())
 
-  //[ Whether a successful GET carries an `ETag` the client already holds
-    !
-    ! `If-None-Match` may list several tags, weak ones included, or be `*`.
-  //]
-  def unchanged(method: Verb.Method, environ: py.Dynamic, response: Response): Bool =
-    match response
-    case Complete(status, headers, _) if method is Verb.Get && status is Status.Success =>
-      val tag = Response.headerIn(headers, "ETag") rescue None => return false
-      val held = Request.environValue(environ, "HTTP_IF_NONE_MATCH") rescue None => return false
-      val tags = held.split(",").map(t => t.trim).map(t => if t.startsWith("W/") then t.substring(2, t.size - 2) else t)
-      tags.contains("*") || tags.contains(tag)
-    case _ => false
-
-  //[ The 304 for `response`: its validators and caching headers, and no body. //]
-  def notModified(response: Response): Response =
-    match response
-    case Stream(_, _) => response
-    case Complete(_, headers, _) =>
-      val kept = headers.select(h => py.dynamic(h.name).lower().asString == "etag" || py.dynamic(h.name).lower().asString == "cache-control")
-      Complete(Status.NotModified, kept, py.dynamic("").encode())
 end

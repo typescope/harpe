@@ -71,7 +71,6 @@ val application = new Application:
     Router.Get("/api/info", () => agent.info())
     Router.Post("/api/message", () => agent.message())
     Router.Post("/api/upload", () => agent.upload(), maxBodyBytes = 26214400)
-    Router.Prefix("/assets/", () => agent.asset())
   fallback = () => agent.page()
 
 val server = py.module("waitress").create_server:
@@ -83,6 +82,10 @@ val server = py.module("waitress").create_server:
   max_request_body_size = application.ceiling
 server.run()
 ```
+
+Serve static assets from the proxy rather than the application. An application
+running without one, in development or in a single container, serves its own
+with `Router.Prefix("/assets/", () => agent.asset())` and `Response.file`.
 
 Keep `maxBodyBytes` small — it defaults to 1 MiB and covers every route that
 names none — and let an upload route raise its own. `application.ceiling` is the
@@ -114,6 +117,11 @@ Pass the server the same body limit. `wsgi` refuses an oversized body before the
 route sees it, but without draining what the client is still sending, so the
 server's own limit is what gives the client a clean answer.
 
+A body must declare its length. `wsgi` answers 411 to one that does not, since
+the limit is enforced from the declaration and nothing here streams a body.
+Waitress de-chunks a chunked request and declares the length itself, so this is
+the servers that pass the chunks through, gunicorn among them.
+
 A streaming producer should stop once `emit` returns `false`, since the client
 has gone.
 
@@ -129,6 +137,18 @@ cross-site check to read, gets a 403 from the `Origin` comparison:
 
 ```nginx
 proxy_set_header Host $host;
+```
+
+**Serve the assets yourself.** A page's own files never need to reach the
+application, and a fingerprinted one can be cached for a year. `Response.file`
+answers `no-store`, since what it exists for is the download a proxy cannot
+serve, the one the request must be entitled to:
+
+```nginx
+location /assets/ {
+    alias /srv/agent/assets/;
+    add_header Cache-Control "public, max-age=31536000, immutable";
+}
 ```
 
 **Match the proxy's limits to the application's.** nginx allows a 1 MB body by
@@ -148,9 +168,10 @@ An event stream can also send `Sse.keepalive()` during quiet periods.
 setting, such as `proxy_buffering off`.
 
 **`Secure` cookies need TLS at the browser, not at the application.** The proxy
-terminates TLS, so `Response.cookie(…, secure = true)` is right in production
-even though the application only ever sees plain HTTP. In local development
-over `http://` on anything but `localhost`, that cookie will not come back.
+terminates TLS, so the `secure = true` that `Response.cookie` defaults to is
+right in production even though the application only ever sees plain HTTP. In
+local development over `http://` on anything but `localhost`, that cookie will
+not come back, and `secure = false` is the deliberate way to say so.
 
 The client's IP and the original scheme arrive in `X-Forwarded-For` and
 `X-Forwarded-Proto`, which `Request.header` reads. Trust them only from a proxy you

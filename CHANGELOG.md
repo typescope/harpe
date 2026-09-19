@@ -69,17 +69,26 @@ segment, a symlink out of `root`, a directory and a missing file are all the
 same 404. The type is guessed from the name, with `; charset=utf-8` added to
 text, JSON and JavaScript so a browser never guesses a page's encoding.
 `Content-Disposition` names the file in ASCII and UTF-8, and the response is
-revalidated.
+`no-store`, since what it serves is the download the request had to be entitled
+to. The files a page needs are the proxy's to serve, and to cache.
 
-**`Response.revalidated` lets the browser keep a response**, and `Application`
-answers 304 with no body when it already has it. Every builder sends
-`Cache-Control: no-store`, which is right for an agent's reply and wrong for a
-stylesheet, and a page reading its assets from disk per request was re-sending
-them on every load. Wrapping any complete response, HTML included, adds a
-content-derived `ETag` and `Cache-Control: private, no-cache`. The route still
-runs on every load and a 304 means the body is byte-for-byte unchanged, so a
-copy
-is never stale and never another user's.
+**A response is `no-store` unless its route says otherwise.** `Response.binary`
+and `Response.complete` add that rule only when `headers` names no
+`Cache-Control`, so a route that may be kept sends its own and no response
+carries two. Every response states a rule, one or the other, and a missing
+`Cache-Control` carries no meaning, since absence would leave a cache free to
+invent a freshness lifetime. A 304 states none, because it updates a stored
+response rather than being one, so absence there leaves the rule the client
+already holds. Nothing here answers a conditional request: `Status.NotModified`
+is vocabulary, and a route that wants a 304 reads `If-None-Match` and answers
+on its own terms.
+
+**A builder's extras have defaults.** `headers` comes last and defaults to
+`Response.NoHeaders`, so the common call names none: `complete` and `binary`
+take `(status, kind, body)`, `html` takes a body, `json` takes a dict and a
+`status` for a 201, and `redirect` and `file` take headers for a cookie or a
+caching rule riding along. `Response.cookie` and `signedCookie` default to
+`secure = true`.
 
 **Request readers answer `Option` rather than a fallback.** `Request.query` is
 None for an absent parameter and `Some("")` for an empty one. `Request.json` is
@@ -92,7 +101,7 @@ write them. `Request.path` is decoded as UTF-8, where WSGI hands over Latin-1,
 so a route matches `/café` as written.
 
 **Cookies are written from `Response` and read from `Request`.**
-`Response.cookie(name, value, maxAgeSeconds, secure)` builds a `Set-Cookie` that
+`Response.cookie(name, value, maxAgeSeconds)` builds a `Set-Cookie` that
 is always `Path=/`, `HttpOnly` and `SameSite=Lax`. `Response.signedCookie` and
 `Request.signedCookie` carry a value a client cannot change: the cookie holds
 the value, its expiry and an HMAC-SHA256 over both and the cookie's name, so it
