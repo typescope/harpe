@@ -29,6 +29,7 @@ import harpe.logging.TeeLogger
 import harpe.observability.ViewLogger
 import harpe.observability.Viewer
 import harpe.server.Http
+import harpe.server.Application
 import harpe.transcript.Journal
 import harpe.logging.logger
 import harpe.Model.UserInput
@@ -162,7 +163,7 @@ private def journalPort(): Int =
 //[ Serve `viewLog` on `port`, on loopback. //]
 private def openViewer(viewLog: ViewLogger, port: Int, path: String): Unit receives stdout =
   if port > 0 then
-    Viewer.start(viewLog, os.path.basename(path), "127.0.0.1", port, Http.Host.Loopback)
+    Viewer.start(viewLog, os.path.basename(path), "127.0.0.1", port, Application.Host.Loopback)
     println("")
     println("  " + Style.muted("journal · http://127.0.0.1:\{port}"))
 

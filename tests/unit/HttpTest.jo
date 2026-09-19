@@ -29,7 +29,7 @@ private def secret: String = "0123456789abcdef0123456789abcdef"
 private def limit: Int = 1024
 
 //[ Everything under one `fallback`, which is how an application dispatches by pattern. //]
-private def applicationFor(answersTo: Http.Host.Policy, reached: py.List): Application =
+private def applicationFor(answersTo: Application.Host.Policy, reached: py.List): Application =
   new Application:
     host = answersTo
     routes = []
@@ -269,7 +269,7 @@ private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.List) => Uni
   os.symlink(scratch + "/outside/secret.txt", root + "/link")
 
   val files = new Application:
-    host = Http.Host.Loopback
+    host = Application.Host.Loopback
     routes = []
     fallback = () => fileRoute(root)
     maxBodyBytes = limit
@@ -284,7 +284,7 @@ private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.List) => Uni
 //[ An application wired as a table, which is how `Router` is meant to be used. //]
 private def tabled(reached: py.List): Application =
   new Application:
-    host = Http.Host.Loopback
+    host = Application.Host.Loopback
     maxBodyBytes = limit
     routes = List:
       Router.Get("/api/info", info)
@@ -304,7 +304,7 @@ private def echoed(reached: py.List): Response receives request =
 //[ Two routes claiming one verb and path, which no application may hold. //]
 private def clashing(): Application =
   new Application:
-    host = Http.Host.Loopback
+    host = Application.Host.Loopback
     routes = List:
       Router.Get("/api/info", () => Response.notFound())
       Router.Get("/api/info", () => Response.notFound())
@@ -322,7 +322,7 @@ private def multipartBody(boundary: String, parts: List[String], file: py.Dynami
 
 //[ The application under test. `reached` records what its routes saw. //]
 private def appFor(reached: py.List): (py.Dynamic, py.Dynamic) => py.List =
-  applicationFor(Http.Host.Loopback, reached).wsgi()
+  applicationFor(Application.Host.Loopback, reached).wsgi()
 
 private def get(wsgi: (py.Dynamic, py.Dynamic) => py.List, target: String): Answer =
   call(wsgi, "GET", target, [], "")
@@ -378,7 +378,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
   //[ The framework answers no conditional request, so this is the application doing it. //]
   test: "lets a route answer a conditional request itself, before building the body", () =>
     val reached = py.list()
-    val wsgi = applicationFor(Http.Host.Loopback, reached).wsgi()
+    val wsgi = applicationFor(Application.Host.Loopback, reached).wsgi()
 
     val first = get(wsgi, "/versioned?v=7")
     val tag = headerOf(first, "ETag")
@@ -520,7 +520,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
   test: "tells a producer once its client has gone", () =>
     val reached = py.list()
-    val background = Serve.inBackground("127.0.0.1", 0, applicationFor(Http.Host.Loopback, reached))
+    val background = Serve.inBackground("127.0.0.1", 0, applicationFor(Application.Host.Loopback, reached))
 
     val socket = py.module("socket").create_connection(py.tuple("127.0.0.1", background.port))
     socket.sendall(py.dynamic("GET /forever HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n").encode())
@@ -577,7 +577,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("a rebound name", call(wsgi, "GET", "/dynamic", [Header("Host", "attacker.example:8080")], "").status == 400)
 
   test: "accepts only the one host it is named for, whatever its port or case", () =>
-    val wsgi = applicationFor(Http.Host.Named("Agent.Example.com"), py.list()).wsgi()
+    val wsgi = applicationFor(Application.Host.Named("Agent.Example.com"), py.list()).wsgi()
     check("its name", call(wsgi, "GET", "/dynamic", [Header("Host", "agent.example.com:8080")], "").status == 200)
     check("without a port", call(wsgi, "GET", "/dynamic", [Header("Host", "AGENT.EXAMPLE.COM")], "").status == 200)
     check("another name", call(wsgi, "GET", "/dynamic", [Header("Host", "www.example.com")], "").status == 400)
@@ -646,7 +646,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
   test: "reports the largest limit any route allows, for the server to match", () =>
     check("the upload's", tabled(py.list()).ceiling == 4096)
-    check("the application's, with no routes", applicationFor(Http.Host.Loopback, py.list()).ceiling == limit)
+    check("the application's, with no routes", applicationFor(Application.Host.Loopback, py.list()).ceiling == limit)
 
   //[ The index is built when the `Application` is, so a clash is a startup failure. //]
   //[ Refused where the bad value came from, not at the write, so a route's answer can be trusted. //]

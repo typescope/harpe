@@ -8,9 +8,9 @@ import harpe.ffi.builtins
   ! WHAT BELONGS HERE. A type the protocol itself defines — a verb, a status, a
   ! media type, a header, the shape of a multipart body — together with the
   ! support that makes it usable: the status line a code writes, the charset a
-  ! content type settles, the spelling WSGI expects of a verb. `Host` and
-  ! `CrossSite` sit here too: they name what an application may accept, not
-  ! what any exchange did.
+  ! content type settles, the spelling WSGI expects of a verb. What an
+  ! application chooses to accept is not protocol, so `Host` and `CrossSite`
+  ! are `Application`'s.
   !
   ! WHAT DOES NOT. Nothing here reads a request or builds a response. `Request`
   ! owns what came in, `Response` what goes back, and the test for an addition
@@ -128,32 +128,6 @@ section Http
       case Css         => "text/css; charset=utf-8"
       case JavaScript  => "application/javascript; charset=utf-8"
       case Other(raw)  => raw
-  end
-
-  //[ Which `Host` names a request may carry
-    !
-    ! Checking it is what defeats DNS rebinding, where a hostile page points its
-    ! own name at a server on loopback and reads it as same-origin. `Named`
-    ! compares one name without its port, case-insensitively. `Unchecked` is for
-    ! a server whose proxy already checks. A server reached by several names, or
-    ! by a pattern, is a case to add here.
-  //]
-  section Host
-    union Policy =
-        Loopback
-      | Named(name: String)
-      | Unchecked
-  end
-
-  //[ Whether a browser on another site may send a write
-    !
-    ! `Refuse` answers 403 to a POST, PUT or DELETE a browser marks as
-    ! cross-site, which is CSRF protection with no token to thread through
-    ! forms. Clients that are not browsers send neither header it reads, so an
-    ! API client or a webhook still gets through.
-  //]
-  section CrossSite
-    union Policy = Refuse | Allow
   end
 
   //[ One file a client sent in a `multipart/form-data` body

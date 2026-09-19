@@ -5,7 +5,6 @@ import harpe.ffi.builtins
 import harpe.util.Clock
 import harpe.server.Http
 import harpe.server.Http.Verb
-import harpe.server.Http.Host
 import harpe.server.Http.Multipart
 import harpe.server.Http.Upload
 import harpe.server.Util
@@ -134,13 +133,8 @@ section Request
     case Ok(name) => if py.isNone(name) then None else Some(name.asString)
     case Err(_)   => None
 
-  private[server] def hostAllowed(environ: py.Dynamic, policy: Host.Policy): Bool =
-    match policy
-    case Host.Unchecked => true
-    case Host.Loopback  => nameIn(environ, ["localhost", "127.0.0.1", "::1"])
-    case Host.Named(name)  => nameIn(environ, [py.dynamic(name).lower().asString])
-
-  private def nameIn(environ: py.Dynamic, names: List[String]): Bool =
+  //[ Whether the `Host` header names one of `names`, which is the reading `Application` judges against. //]
+  private[server] def nameIn(environ: py.Dynamic, names: List[String]): Bool =
     match environValue(environ, "HTTP_HOST")
     case None => false
     case Some(authority) =>
