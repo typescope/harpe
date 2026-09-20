@@ -16,9 +16,26 @@ import harpe.server.Form
   ! `Request.json()`, `Request.form()` — rather than being handed an `environ`.
   ! A route touches neither that nor the start of the response.
 //]
-class Request(method: Http.Verb.Method, path: String, environ: py.Dynamic)
+class Request
+  val method: Http.Verb.Method
+  val path: String
+
+  //[ The WSGI environ, which a route reads through the readers below
+    !
+    ! Not a route's to touch: reaching `wsgi.input` through it would take the
+    ! body without `bodyTaken` seeing it, and a later reader would find the
+    ! stream already drained.
+  //]
+  private[server] val environ: py.Dynamic
+
   //[ Whether a reader has taken the body, which WSGI hands over as a stream read once. //]
-  var bodyTaken: Bool = false
+  private[server] var bodyTaken: Bool = false
+
+  //[ Bound by the server, once per exchange. //]
+  private[server] def Request(method: Http.Verb.Method, path: String, environ: py.Dynamic) =
+    this.method = method
+    this.path = path
+    this.environ = environ
 end
 
 //[ The request being served. Bound once per request by the server. //]
@@ -160,6 +177,36 @@ section Request
   //[ A request header, or None when the client did not send it. //]
   def header(name: String): Option[String] receives request =
     environValue(request.environ, environKey(name))
+
+  //[ Every header the client sent, for code that must keep them all
+    !
+    ! WSGI upper-cases a name and turns its dashes into underscores, so a name
+    ! comes back as `X-Trace` however the client spelled it, and one that
+    ! carried an underscore is no longer told from one that carried a dash.
+  //]
+  def headers(): List[Http.Header] receives request =
+    var found: List[Http.Header] = []
+    for key in py.iter(request.environ.keys()) do
+      val name = key.asString
+      if name.startsWith("HTTP_") then
+        val bare = name.substring(5, name.size - 5)
+        found = found + Http.Header(headerName(bare), request.environ.get(name, "").asString)
+    for plain in ["CONTENT_TYPE", "CONTENT_LENGTH"] do
+      match environValue(request.environ, plain)
+      case Some(value) => found = found + Http.Header(headerName(plain), value)
+      case None        => pass
+    found
+
+  //[ `X_TRACE` as `X-Trace`, which is the shape a client wrote it in. //]
+  private def headerName(mangled: String): String =
+    var parts: List[String] = []
+    for piece in mangled.split("_") do
+      parts = parts + py.dynamic(piece).capitalize().asString
+    parts.join("-")
+
+  //[ The query string as it arrived, undecoded — `query` reads one parameter out of it. //]
+  def queryString(): String receives request =
+    request.environ.get("QUERY_STRING", "").asString
 
   //[ The first value of a query parameter
     !
