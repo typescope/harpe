@@ -3,9 +3,19 @@
 ## Unreleased
 
 **`Application` is now `WebApp`.** The old name was long in exactly the places
-it appeared most, which were the nested ones: `WebApp.Host.Loopback`,
-`WebApp.Fallback`, `WebApp.CrossSite.Refuse`. `Application.jo` is `WebApp.jo`,
-and `import harpe.server.Application` is `import harpe.server.WebApp`.
+it appeared most, which were the nested ones: `WebApp.Fallback`,
+`WebApp.CrossSite.Refuse`. `Application.jo` is `WebApp.jo`, and
+`import harpe.server.Application` is `import harpe.server.WebApp`.
+
+**`host` is a string, or `WebApp.Loopback`, or `WebApp.AnyHost`.** The
+`Host.Policy` union is gone and `Host.Named("agent.example.com")` is now just
+`"agent.example.com"`. `AnyHost` is spelled out rather than being `None`,
+because it is what turns the DNS-rebinding check off and should say so where it
+is written.
+
+A string answers to itself alone. An application reached at a loopback name
+says `WebApp.Loopback`, which answers to `localhost`, `127.0.0.1` and `::1`
+alike, rather than having a string quietly stand for three.
 
 **`Router` is now `Route`.** It never routed anything — dispatch lives in
 `WebApp` — it just builds the routes an application holds. `Route.Get`,

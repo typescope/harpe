@@ -66,7 +66,7 @@ waitress, for example:
 
 ```jo
 val application = new WebApp:
-  host = WebApp.Host.Named("agent.example.com")
+  host = "agent.example.com"
   routes = List:
     Route.Get("/api/info", () => agent.info())
     Route.Post("/api/message", () => agent.message())
@@ -136,7 +136,7 @@ Scale with threads, or put each process behind sticky routing. With gunicorn,
 that means `--workers 1 --threads N`.
 
 Name the host your users type. `host` defaults to
-`WebApp.Host.Loopback`, which suits a prototype and refuses a hostile name
+`WebApp.Loopback`, which suits a prototype and refuses a hostile name
 pointed at `127.0.0.1`, so a deployment that forgets to name its own host is
 refused rather than quietly served. Keep `crossSite` at `Refuse` unless
 browsers on other sites must write to the server.
@@ -169,7 +169,7 @@ A proxy changes what the application sees, and three of harpe's checks read
 exactly those values.
 
 **Pass the original `Host` through.** nginx's default `proxy_pass` replaces it
-with the upstream address, so `WebApp.Host.Named` refuses every request
+with the upstream address, so a `host` named as a string refuses every request
 with a 400, and an older browser's POST, which has no `Sec-Fetch-Site` for the
 cross-site check to read, gets a 403 from the `Origin` comparison:
 

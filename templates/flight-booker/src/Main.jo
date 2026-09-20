@@ -16,6 +16,7 @@ import harpe.ffi.sys
 import jo.IO.stdout
 import harpe.Model
 import harpe.server.WebApp
+import harpe.server.Route
 import harpe.Toolset
 import harpe.Tool
 
@@ -47,14 +48,13 @@ private def webServe(): Unit receives stdout, appHome =
   // and this picks one. `WebApp` is also the door: it refuses a verb it
   // does not implement, a `Host` it does not answer to, and a cross-site write,
   // before any route runs.
-  val answersTo: WebApp.Host.Policy =
-    if host == "127.0.0.1" || host == "localhost" then WebApp.Host.Loopback
-    else WebApp.Host.Named(host)
 
   val application = new WebApp:
-    host = answersTo
+    // Answers to localhost, 127.0.0.1 and ::1. A deployment reached by another
+    // name puts that name here instead, as a string.
+    host = WebApp.Loopback
     routes = []
-    fallback = () => server.route()
+    fallback = WebApp.Fallback(() => server.route(), maxBodyBytes = Route.defaultMaxBodyBytes)
 
   val httpd = py.module("waitress").create_server:
     application.wsgi()

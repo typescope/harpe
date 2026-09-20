@@ -59,12 +59,11 @@ private def serve(): Unit receives stdout, appHome =
   // page polls for its events. That is what keeps the pool free: a worker is
   // pinned for a response's whole life, so the pool bounds concurrent requests,
   // not concurrent conversations.
-  val answersTo: WebApp.Host.Policy =
-    if host == "127.0.0.1" || host == "localhost" then WebApp.Host.Loopback
-    else WebApp.Host.Named(host)
 
   val application = new WebApp:
-    host = answersTo
+    // Answers to localhost, 127.0.0.1 and ::1. A deployment reached by another
+    // name puts that name here instead, as a string.
+    host = WebApp.Loopback
     routes = []
     fallback = WebApp.Fallback(() => server.route(), maxBodyBytes = 26214400)
 

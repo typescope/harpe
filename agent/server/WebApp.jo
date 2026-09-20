@@ -38,7 +38,7 @@ import jo.py.resource.*
 class WebApp(
       routes: List[Route],
       fallback: WebApp.Fallback = WebApp.defaultFallback,
-      host: WebApp.Host.Policy = WebApp.Host.Loopback,
+      host: WebApp.Loopback | WebApp.AnyHost | String = WebApp.Loopback,
       crossSite: WebApp.CrossSite.Policy = WebApp.CrossSite.Refuse)
 
   //[ The exact routes, indexed once when the application is built. //]
@@ -175,15 +175,11 @@ section WebApp
       case Err(_)   => "<!doctype html><title>404 Not Found</title><h1>404</h1>"
     Response.complete(Status.NotFound, Mime.Html, body)
 
-  //[ Which `Host` names a request may carry
-    !
-    ! `Loopback` accepts `localhost`, `127.0.0.1` and `::1`. `Named` compares
-    ! one name without its port, case-insensitively. `Unchecked` is for a server
-    ! whose proxy already checks.
-  //]
-  section Host
-    union Policy = Loopback | Named(name: String) | Unchecked
-  end
+  //[ Answers `localhost`, `127.0.0.1` and `::1`, which is what a prototype wants. //]
+  object Loopback
+
+  //[ Answers any `Host` at all, for a server whose proxy already checks it. //]
+  object AnyHost
 
   //[ Whether a browser on another site may send a write
     !
@@ -195,12 +191,12 @@ section WebApp
     union Policy = Refuse | Allow
   end
 
-  //[ Whether the `Host` this request carries is one `policy` answers to. //]
-  private[server] def hostAllowed(environ: py.Dynamic, policy: Host.Policy): Bool =
-    match policy
-    case Host.Unchecked   => true
-    case Host.Loopback    => Request.nameIn(environ, ["localhost", "127.0.0.1", "::1"])
-    case Host.Named(name) => Request.nameIn(environ, [py.dynamic(name).lower().asString])
+  //[ Whether the `Host` this request carries is one `host` answers to. //]
+  private[server] def hostAllowed(environ: py.Dynamic, host: Loopback | AnyHost | String): Bool =
+    match host
+    case AnyHost      => true
+    case Loopback     => Request.nameIn(environ, ["localhost", "127.0.0.1", "::1"])
+    case name: String => Request.nameIn(environ, [py.dynamic(name).lower().asString])
 end
 
 //[ Building the answer: running a route, and the refusals made before one runs. //]
