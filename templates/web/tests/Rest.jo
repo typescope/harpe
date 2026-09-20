@@ -76,59 +76,77 @@ section Rest
   def base64(data: String): String =
     py.module("base64").b64encode(py.dynamic(data).encode("utf-8")).decode("ascii").asString
 
-  //[ Run one NDJSON endpoint to completion, collecting every event
+  //[ Start one turn and follow it to its end, collecting every event
+    !
+    ! `POST /api/message` answers at once with the session and the cursor to
+    ! read from; the events come from polling `GET /api/events`. A turn that
+    ! minted a session gets a `session` event at the front of the list, which
+    ! the server does not send — it is what the page learns from the answer,
+    ! put into the timeline so a scenario reads it the way the page does.
     !
     ! `watch` is called with each event AS IT ARRIVES, which is the only way to
     ! act on a turn while it is still running — the cancellation scenario posts
-    ! `/api/stop` from inside it. Sending that on a second connection is safe:
-    ! the agent's server is threaded, so a request does not queue behind the
-    ! stream it is interrupting.
+    ! `/api/stop` from inside it, and the follower scenario starts a second
+    ! reader.
   //]
   def stream(agent: WebAgent.Agent, path: String, body: py.Dict, watch: py.Dict => Unit)
   : List[py.Dict] =
-    drain(agent, "POST", path, json.dumps(body), watch)
+    val answer = postJson(agent, path, body)
+    assert: answer.status == 200, "\{path}: expected the turn to start, got \{answer.status}"
+
+    val started = parse(answer.text)
+    val id = started.get("session", "").asString
+
+    // Only a turn that minted a session reports one, which is what the old
+    // `session` event meant: a resumed turn says nothing about its id. It goes
+    // to `watch` BEFORE the poll starts, because a scenario acting mid-turn
+    // needs the id before the turn's own events arrive.
+    var opening: List[py.Dict] = []
+    if started.get("minted", false).asBool then
+      val opened = py.dict("type" ~ "session", "id" ~ id)
+      watch(opened)
+      opening = [opened]
+
+    opening ++ follow(agent, id, started.get("from", 0).asInt, watch)
 
   //[ The same, for a scenario with nothing to do mid-turn. //]
   def events(agent: WebAgent.Agent, path: String, body: py.Dict): List[py.Dict] =
     stream(agent, path, body, (event: py.Dict) => pass)
 
-  //[ Attach to a turn already running, and follow it to its end
+  //[ Read a turn already running, from `from`, and follow it to its end
     !
     ! What a tab does when it loads (or reloads) while a turn is in flight: the
-    ! page sees `state.active` on its history, and opens this to watch the rest.
+    ! page sees `state.active` on its history and polls from where it is. A
+    ! cursor of 0 reads everything the session has recorded, which is how a tab
+    ! that missed the start catches up.
   //]
-  def subscribe(agent: WebAgent.Agent, session: String): List[py.Dict] =
-    drain:
-      agent
-      "GET"
-      url("/api/subscribe", py.dict("session" ~ session))
-      ""
-      (event: py.Dict) => pass
+  def rejoin(agent: WebAgent.Agent, session: String, from: Int): List[py.Dict] =
+    follow(agent, session, from, (event: py.Dict) => pass)
 
-  //[ Read an NDJSON response line by line, as the events are produced. //]
-  private def drain(
-      agent: WebAgent.Agent, method: String, path: String, body: String, watch: py.Dict => Unit)
+  //[ Poll `/api/events` from `seen` until the server says no turn is running. //]
+  private def follow(
+      agent: WebAgent.Agent, session: String, seen: Int, watch: py.Dict => Unit)
   : List[py.Dict] =
-    val conn = connect(agent)
-    conn.request(method, path, body, jsonHeaders())
-    val answer = conn.getresponse()
-    assert: answer.status.asInt == 200, "\{path}: expected a 200 stream, got \{answer.status.asInt}"
+    var collected: List[py.Dict] = []
+    var cursor = seen
+    var running = true
 
-    var events: List[py.Dict] = []
-    var reading = true
+    while running do
+      val answer = get(agent, url("/api/events", py.dict("session" ~ session, "seen" ~ cursor)))
+      assert: answer.status == 200, "/api/events: expected 200, got \{answer.status}"
 
-    while reading do
-      val line = answer.readline()
-      if builtins.len(line) == 0 then reading = false
-      else
-        val text = line.decode("utf-8").asString.trim
-        if text != "" then
-          val event = parse(text)
-          events = events + event
-          watch(event)
+      val batch = parse(answer.text)
+      cursor = batch.get("next", 0).asInt
 
-    conn.close()
-    events
+      for item in batch.get("events", py.list()).cast[py.List] do
+        val event = item.cast[py.Dict]
+        collected = collected + event
+        watch(event)
+
+      if batch.get("active", false).asBool then py.module("time").sleep(0.02)
+      else running = false
+
+    collected
 
   //[ One turn: send `text` (resuming `session`, or minting one when empty). //]
   def turn(agent: WebAgent.Agent, session: String, text: String): List[py.Dict] =

@@ -78,7 +78,7 @@ section ModelScript
     """
 
   //[ The model answers with `text` and calls nothing — the turn ends here. //]
-  def says(text: String): ProviderFixture.Response =
+  def says(text: String): ProviderFixture.Scripted =
     ProviderFixture.sse(frames([delta(text), completed(messageItem(text))]))
 
   //[ The same answer, withheld for `seconds` before a single byte of it is sent
@@ -87,14 +87,14 @@ section ModelScript
     ! agent sits inside its model request for that whole time, which is where a
     ! cancellation has to arrive to be worth testing.
   //]
-  def saysAfter(seconds: Float, text: String): ProviderFixture.Response =
+  def saysAfter(seconds: Float, text: String): ProviderFixture.Scripted =
     ProviderFixture.sse:
       frames([delta(text), completed(messageItem(text))])
       delaySeconds = seconds
 
   //[ The model calls one tool and says nothing — the turn continues once the result is in. //]
   def calls(tool: String, arguments: py.Dict, callId: String = "call_e2e")
-  : ProviderFixture.Response =
+  : ProviderFixture.Scripted =
     ProviderFixture.sse(frames([completed(callItem(tool, encodedArguments(arguments), callId))]))
 
   //[ A call's arguments as the protocol carries them: JSON, inside a JSON string

@@ -983,27 +983,35 @@ function send() {
   });
 }
 
-// Drain one NDJSON event stream, dispatching each line through handle() into
-// `bubble`/`statusText`; calls onDone() when the stream ends. Shared by the
-// send path (POST /api/message) and the reconnect path (GET /api/subscribe).
-function readStream(resp, bubble, statusText, onDone) {
-  var reader = resp.body.getReader();
-  var decoder = new TextDecoder();
-  var buf = '';
-  function pump() {
-    return reader.read().then(function (res) {
-      if (res.done) { onDone(); return; }
-      buf += decoder.decode(res.value, { stream: true });
-      var idx;
-      while ((idx = buf.indexOf(NL)) >= 0) {
-        var line = buf.slice(0, idx).trim();
-        buf = buf.slice(idx + 1);
-        if (line) handle(JSON.parse(line), bubble, statusText);
-      }
-      return pump();
-    });
+// How often a tab asks for what it has not seen. A poll costs the server a
+// list slice, so this is cheap; it is the visible latency of a turn's output.
+var POLL_MS = 250;
+
+// Follow a session's turn by polling its events from a cursor, dispatching each
+// through handle() into `bubble`/`statusText`; calls onDone() when the turn
+// ends. Shared by the send path and the reconnect path, which are the same
+// thing here: a cursor over the events the session recorded.
+//
+// This replaced an open NDJSON stream. A WSGI worker thread is pinned for a
+// response's whole life, so every tab watching a turn held one for as long as
+// the turn ran — a poll holds one for a millisecond.
+function pollEvents(id, from, bubble, statusText, onDone) {
+  var seen = from;
+  function tick() {
+    return fetch('/api/events?session=' + encodeURIComponent(id) + '&seen=' + seen)
+      .then(function (resp) { return resp.json(); })
+      .then(function (batch) {
+        seen = batch.next;
+        for (var i = 0; i < batch.events.length; i++) {
+          handle(batch.events[i], bubble, statusText);
+        }
+        // The batch above already carried the turn's last events, so there is
+        // nothing left to wait for once the server says nothing is running.
+        if (!batch.active) { onDone(); return; }
+        return new Promise(function (r) { setTimeout(r, POLL_MS); }).then(tick);
+      });
   }
-  return pump();
+  return tick();
 }
 
 // POST one message and render its progress/answer stream into `bubble`.
@@ -1014,22 +1022,31 @@ function streamTurn(text, attachments, bubble, statusText, finish) {
     activeTurnSession = currentSession;
   }
 
+  // The server starts the turn and answers at once; it never holds this
+  // connection open for it.
   return fetch('/api/message', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   }).then(function (resp) {
+    if (!resp.ok) return resp.json().then(function (refused) {
+      throw new Error(refused.detail || 'refused');
+    });
+    return resp.json();
+  }).then(function (started) {
+    currentSession = started.session;
+    activeTurnSession = started.session;
     turnConnected = true;
     sendStopIfReady();
-    return readStream(resp, bubble, statusText, finish);
-  }).catch(function () {
-    statusText.textContent = 'connection error';
+    return pollEvents(started.session, started.from, bubble, statusText, finish);
+  }).catch(function (err) {
+    statusText.textContent = (err && err.message) || 'connection error';
     clearBusy();
   });
 }
 
-// Reconnect to a turn already running on the server (e.g. after a page refresh,
-// or in a second tab opened mid-turn). The pending user message isn't in the
+// Rejoin a turn already running on the server (e.g. after a page refresh, or in
+// a second tab opened mid-turn). The pending user message isn't in the
 // committed history yet, so it is rendered from the live `state`, and once the
 // turn ends that live pair is swapped for the committed one.
 function reconnect(id, state, seq) {
@@ -1053,18 +1070,17 @@ function reconnect(id, state, seq) {
   function finish() {
     status.remove();
     clearBusy();
-    // Preserve a streamed failure: it sends no turnFinish, so nothing replaces it.
+    // Preserve a failure: it sends no turnFinish, so nothing replaces it.
     if (seq === loadSeq) commitTurn(urow, row);
     loadSessions();
     refreshFiles(false);   // a reconnected turn may have produced files
   }
 
-  fetch('/api/subscribe?session=' + encodeURIComponent(id))
-    .then(function (resp) {
-      turnConnected = true;
-      sendStopIfReady();
-      return readStream(resp, bubble, statusText, finish);
-    })
+  // Rejoining is just a cursor: start from the beginning of what the session
+  // has recorded, so nothing this tab missed is lost.
+  turnConnected = true;
+  sendStopIfReady();
+  pollEvents(id, 0, bubble, statusText, finish)
     .catch(function () { status.remove(); clearBusy(); });
 }
 

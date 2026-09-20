@@ -324,21 +324,23 @@ def webSuite(): Unit receives thisSuite = suite: "web", () =>
         checkEquals("and takes the next turn", Events.streamed(resumed), "Still here.")
 
   test: "lets a second view follow a turn already in flight", () =>
-    // The reply is held back long enough for another connection to attach, which
-    // is what a tab does when it loads mid-turn: it sees `state.active` on its
-    // history and opens `/api/subscribe` to watch the rest.
+    // The reply is held back long enough for a second reader to start, which is
+    // what a tab does when it loads mid-turn: it sees `state.active` on its
+    // history and polls `/api/events` from the beginning of what was recorded.
     ProviderFixture.withResponses: [ModelScript.saysAfter(1.0, "Both of you get this.")], server =>
       WebAgent.withAgent: server.baseUrl, agent =>
         val watched = py.dict("id" ~ "", "followed" ~ false)
 
-        // The follower attaches from inside the sender's own stream, on the
+        // The follower starts from inside the sender's own poll, on the
         // `thinking` status — the turn is Active from then until it commits.
         val follow = (event: py.Dict) =>
           val kind = event.get("type", "").asString
           if kind == "session" then watched.set("id", event.get("id", "").asString)
           if kind == "status" && event.get("label", "").asString == "thinking" then
-            val seen = Rest.subscribe(agent, watched.get("id", "").asString)
-            checkEquals("the follower saw the reply stream", Events.streamed(seen), "Both of you get this.")
+            // From 0: a cursor is how a tab that missed the start catches up,
+            // so the follower sees the whole turn and not just the remainder.
+            val seen = Rest.rejoin(agent, watched.get("id", "").asString, 0)
+            checkEquals("the follower saw the whole reply", Events.streamed(seen), "Both of you get this.")
             check("and the finished turn", Events.has(seen, "turnFinish"))
             watched.set("followed", true)
 
@@ -347,31 +349,33 @@ def webSuite(): Unit receives thisSuite = suite: "web", () =>
         check("the follower ran", watched.get("followed", false).asBool)
         checkEquals("the sender got its own copy", Events.streamed(events), "Both of you get this.")
 
-        // Once the turn is over there is nothing left to follow, and the page
-        // falls back to the committed history rather than waiting on a stream.
-        val late = Rest.subscribe(agent, watched.get("id", "").asString)
-        check("a late subscriber gets an empty stream", late.isEmpty)
+        // Once the turn is over a reader already at the end has nothing to
+        // collect, and is told so at once rather than waiting on anything.
+        val ended = Rest.rejoin(agent, watched.get("id", "").asString, events.size)
+        check("a reader at the end gets nothing more", ended.isEmpty)
+
+        // And one starting from 0 still replays the finished turn, which is why
+        // a reload mid-turn never loses what it missed.
+        val replayed = Rest.rejoin(agent, watched.get("id", "").asString, 0)
+        checkEquals("while a reader from the start replays it", Events.streamed(replayed), "Both of you get this.")
 
   test: "refuses a message with nothing in it", () =>
     withIdleAgent: agent =>
-      val events = Rest.events(agent, "/api/message", py.dict("text" ~ "   "))
-      checkEquals:
-        "says what was wrong"
-        Events.first(events, "error").get("detail", "").asString
-        "empty message"
-      check("mints no session for it", !Events.has(events, "session"))
+      // A refusal is the answer to the request that starts a turn, not an event
+      // inside one: there is no turn to carry it.
+      val answer = Rest.postJson(agent, "/api/message", py.dict("text" ~ "   "))
+      check("refuses it", answer.status == 400)
+      check("says what was wrong", answer.text.contains("empty message"))
       check("leaves the picker empty", Rest.get(agent, "/api/sessions").text.contains("[]"))
 
   test: "refuses session ids that can escape the session directories", () =>
     withIdleAgent: agent =>
-      val events = Rest.events:
+      val answer = Rest.postJson:
         agent
         "/api/message"
         py.dict("session" ~ "../outside", "text" ~ "hello")
-      checkEquals:
-        "rejects traversal in a message session"
-        Events.first(events, "error").get("detail", "").asString
-        "invalid session"
+      check("rejects traversal in a message session", answer.status == 400)
+      check("and says which", answer.text.contains("invalid session"))
 
       val upload = Rest.postJson:
         agent
