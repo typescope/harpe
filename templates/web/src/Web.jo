@@ -18,7 +18,7 @@ import harpe.ffi.signal
 import harpe.util.File
 
 import jo.IO.stdout
-import harpe.Http
+import harpe.server.Application
 import harpe.Model
 import harpe.ffi.os
 
@@ -50,10 +50,31 @@ private def serve(): Unit receives stdout, appHome =
   val host = os.getenv("HOST", "127.0.0.1")
   val port = Int.parse(os.getenv("PORT", "8765")) rescue None => 8765
 
-  // `Http.server` owns the threading: one request per thread, so the page and
-  // `/api/stop` stay responsive while a long turn runs. Turns within a session
-  // are still serialized by its lock, and the shared model client is thread safe.
-  val httpd = Http.server: host, port, () => server.route()
+  // Harpe installs no HTTP server: an `Application` is a plain WSGI callable
+  // and this picks one. It is also the door — a verb it does not implement, a
+  // `Host` it does not answer to, and a cross-site write are all refused before
+  // any route runs.
+  //
+  // Every request is short, because a turn runs on a thread of its own and the
+  // page polls for its events. That is what keeps the pool free: a worker is
+  // pinned for a response's whole life, so the pool bounds concurrent requests,
+  // not concurrent conversations.
+  val answersTo: Application.Host.Policy =
+    if host == "127.0.0.1" || host == "localhost" then Application.Host.Loopback
+    else Application.Host.Named(host)
+
+  val application = new Application:
+    host = answersTo
+    routes = []
+    fallback = () => server.route()
+    maxBodyBytes = 26214400
+
+  val httpd = py.module("waitress").create_server:
+    application.wsgi()
+    host = host
+    port = port
+    threads = 16
+    max_request_body_size = application.ceiling
 
   println """
 
@@ -69,7 +90,7 @@ private def serve(): Unit receives stdout, appHome =
   println "  Live at http://\{host}:\{port}"
   println "  Ctrl-C to stop"
 
-  // Stop cleanly on Ctrl-C instead of dumping a traceback from serve_forever.
+  // Stop cleanly on Ctrl-C instead of dumping a traceback from the server loop.
   Process.shutdownOnSigint("\n  ♪ Clair stopped.")
 
-  httpd.serve_forever()
+  httpd.run()

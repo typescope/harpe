@@ -82,17 +82,15 @@ class FileSystemImpl
       val names: py.List = os.listdir(real)
       py.dynamic(names).sort()
 
-      var result = List.empty[FileSystem.Entry]
-      var i = builtins.len(names) - 1
+      val entries = List.builder[FileSystem.Entry]
 
-      while i >= 0 do
-        val name = names.get(i).asString
+      for entry in names do
+        val name = entry.asString
         val child = if dir == "" then name else dir + "/" + name
         val realChild = if dir == "" then os.path.join(realRoot, name) else os.path.join(real, name)
-        result = result.prepend(new FileSystem.Entry(child, os.path.isdir(realChild)))
-        i = i - 1
+        entries.add(new FileSystem.Entry(child, os.path.isdir(realChild)))
 
-      Ok(result)
+      Ok(entries.result)
 
   def openTextFile(path: String, encoding: String = "utf-8"): Result[TextFile, String] =
     if !validEncoding(encoding) then Err("unknown encoding: '\{encoding}'")

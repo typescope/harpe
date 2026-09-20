@@ -18,6 +18,7 @@ import harpe.util.File
 import harpe.ffi.time
 import harpe.ffi.json
 import harpe.ffi.threading
+import harpe.ffi.builtins
 
 import harpe.Agent
 import harpe.Approvals
@@ -25,9 +26,8 @@ import harpe.Toolset
 import harpe.Tool
 import harpe.Tool.ToolInput
 import harpe.Context
-import harpe.Transcript
 import harpe.transcript.Journal
-import harpe.TurnData
+import harpe.turns.TurnData
 import harpe.logging.JsonlLogger
 import harpe.logging.Logger
 import harpe.logging.logger
@@ -47,16 +47,9 @@ import harpe.turns.TurnResult
   ! `Active` carries the turn's opening transcript payload — what the user
   ! actually sent — so a tab loading (or reloading) mid-turn renders the pending
   ! message from the same value `/api/history` will render it from afterwards,
-  ! and then subscribes to the turn's events.
+  ! and then polls the turn's events from where it left off.
 //]
 union SessionState = Idle | Active(request: Value)
-
-//[ One attached event sink
-  !
-  ! (an open streaming response), identified so its owner can detach it when its
-  ! subscription ends.
-//]
-class Subscriber(id: Int, sink: Sink)
 
 private class PendingApproval(id: String, title: String, detail: String)
   val ready = threading.Event()
@@ -92,62 +85,88 @@ class Session(
 
   var lastActive: Float = Clock.now()
 
-  //[ The live turn state (`Idle`/`Active`), reported to a tab on load so it can reconnect to a turn in flight
+  //[ The live turn state (`Idle`/`Active`), reported to a tab on load so it can rejoin a turn in flight
     !
-    ! `idle` is *set* exactly when `state` is `Idle`, so a subscriber blocks on
-    ! it for precisely the turn's remaining duration.
+    ! `idle` is *set* exactly when `state` is `Idle`, which is what `since`
+    ! reports as `active` so a poller knows whether to keep asking.
   //]
   var state: SessionState = Idle
   val idle = threading.Event()
 
-  //[ The event sinks attached to the running turn
+  //[ Every event this session has produced, which a page reads through a cursor
     !
-    ! The initiating request plus any tabs that subscribed after loading
-    ! mid-turn — so one turn fans out to every connected view. Guarded by
-    ! `sinksLock`. `nextSubId` hands out ids.
+    ! A turn runs on its own thread and records here; each tab asks for what it
+    ! has not seen. That is the whole fan-out: two tabs watching one turn are
+    ! two cursors over one list, so nothing is attached, detached, or held open.
+    !
+    ! It is also what keeps a turn off the request thread. WSGI pins one worker
+    ! for a response's whole life, so a turn answering down its own connection
+    ! would hold a worker for as long as it ran — and a reconnecting tab is just
+    ! a cursor that fell behind, rather than a subscriber to re-attach.
+    !
+    ! The list only grows, which is bounded in practice: the server drops a
+    ! session from the registry once it has been idle long enough.
   //]
-  private val sinksLock = threading.Lock()
-  private var subs: List[Subscriber] = []
-  private var nextSubId: Int = 0
+  private val flightLock = threading.Lock()
+  private var inFlight: Int = 0
+  private val eventsLock = threading.Lock()
+  private val events = py.list()
   private val approvalLock = threading.Lock()
   private var pendingApproval: Option[PendingApproval] = None
 
-  //[ Attach `sink` to the running turn, returning its id for later detach. //]
-  def addSink(sink: Sink): Int =
-    sinksLock.acquire()
-    val id = nextSubId
-    nextSubId = nextSubId + 1
-    subs = subs + new Subscriber(id, sink)
-    sinksLock.release()
-
-    approvalLock.acquire()
-    val pending = pendingApproval
-    approvalLock.release()
-    match pending
-    case Some(item) => sink(approvalEvent(item))
-    case None       => pass
-    id
-
-  //[ Detach the sink with this id (idempotent). //]
-  def removeSink(id: Int): Unit =
-    sinksLock.acquire()
-    subs = subs.select(s => s.id != id)
-    sinksLock.release()
-
-  //[ Emit one event to every attached sink
+  //[ Count a turn as in flight, before its thread has taken the session lock
     !
-    ! The snapshot is taken under the lock but the writes happen off it, so a
-    ! slow client cannot stall the turn. A write that fails — a tab that closed
-    ! — is ignored: the sink is released by its owner (the turn, or the
-    ! subscriber handler) when the turn ends, not here.
+    ! The route calls this *before* starting the thread, so a page that polls
+    ! immediately is told a turn is running rather than racing the thread that
+    ! is about to start one. A counter rather than a flag, so a second turn
+    ! queued behind the first does not read as finished when the first ends.
   //]
-  def broadcast(obj: py.Dict): Unit =
-    sinksLock.acquire()
-    val current = subs
-    sinksLock.release()
+  def beginTurn(): Unit =
+    flightLock.acquire()
+    inFlight = inFlight + 1
+    idle.clear()
+    flightLock.release()
 
-    for s in current do
-      val _ = py.try(s.sink(obj))
+  //[ Whether any turn is in flight, which is what tells a poller to keep asking. //]
+  def active: Bool =
+    flightLock.acquire()
+    val running = inFlight > 0
+    flightLock.release()
+    running
+
+  private def endTurn(): Unit =
+    flightLock.acquire()
+    inFlight = inFlight - 1
+    if inFlight <= 0 then
+      inFlight = 0
+      idle.set()
+    flightLock.release()
+
+  //[ Record one event for the readers. //]
+  def emit(obj: py.Dict): Unit =
+    eventsLock.acquire()
+    events.append(obj)
+    eventsLock.release()
+
+  //[ The events after `seen`, the cursor to ask with next, and whether a turn is still running. //]
+  def since(seen: Int): py.Dict =
+    eventsLock.acquire()
+    val total = builtins.len(events)
+    val out = py.list()
+    var i = if seen < 0 then 0 else seen
+    while i < total do
+      out.append(events.get(i))
+      i = i + 1
+    eventsLock.release()
+
+    py.dict("events" ~ out, "next" ~ total, "active" ~ active)
+
+  //[ The cursor as it stands, which is where a turn about to start will append. //]
+  def cursor: Int =
+    eventsLock.acquire()
+    val total = builtins.len(events)
+    eventsLock.release()
+    total
 
   private def approvalEvent(item: PendingApproval): py.Dict =
     py.dict(
@@ -164,7 +183,7 @@ class Session(
     approvalLock.acquire()
     pendingApproval = Some(item)
     approvalLock.release()
-    broadcast(approvalEvent(item))
+    emit(approvalEvent(item))
 
     val deadline = Clock.now() + 600.0
     var decision: Approvals.Decision = Approvals.TimedOut
@@ -184,7 +203,7 @@ class Session(
     approvalLock.acquire()
     if pendingApproval is Some(current) && current.id == id then pendingApproval = None
     approvalLock.release()
-    broadcast(py.dict("type" ~ "approval-ended", "id" ~ id, "decision" ~ Approvals.wire(decision)))
+    emit(py.dict("type" ~ "approval-ended", "id" ~ id, "decision" ~ Approvals.wire(decision)))
     decision
 
   //[ Resolve the current request. Stale or duplicate decisions are ignored. //]
@@ -202,15 +221,15 @@ class Session(
     approvalLock.release()
     accepted
 
-  //[ Run one user turn, fanning its events out to every attached sink.
+  //[ Run one user turn, recording its events for whoever is reading.
     !
-    ! `initiatorSink` is the sink of the request that started the turn. It is
-    ! attached once the turn owns the session lock (so it never receives a prior
-    ! turn's events) and detached when the turn ends. While `state` is `Active`,
-    ! other tabs may attach via `addSink`. All of them see the same stream. When
-    ! the turn finishes, `idle` is set, which releases every subscriber.
+    ! Runs on a thread of its own, started by `POST /api/message`, so no request
+    ! waits on it. Every tab watching this session — the one that sent the
+    ! message and any other — reads the same recorded events through its own
+    ! cursor. When the turn finishes, `idle` is set, and `since` reports
+    ! `active` false so the pollers stop.
   //]
-  def runTurn(request: Value, prompt: String, initiatorSink: Sink): Unit =
+  def runTurn(request: Value, prompt: String): Unit =
     // The bracket is opened HERE, outside the lock the body takes, so the gap
     // between this record and `harpe.turn.started` is the real queue wait.
     transcript.request(request)
@@ -219,10 +238,9 @@ class Session(
     this.lock.acquire()
     state = Active(request)
     idle.clear()
-    val subId = addSink(initiatorSink)
 
-    val emit: Sink = obj => this.broadcast(obj)
-    val channel = new WebInteract(emit, this.stop, (id, title, detail) => requestApproval(id, title, detail))
+    val sink: Sink = obj => this.emit(obj)
+    val channel = new WebInteract(sink, this.stop, (id, title, detail) => requestApproval(id, title, detail))
 
     val turn = with logger = log in
       Agent.ask:
@@ -231,7 +249,6 @@ class Session(
         tools = tools
         interact = channel
         context = context
-        transcript = transcript
 
     // The driver's reading of the finished turn: how it ended, and which files
     // the agent delivered. `sendFile` is the agent's channel for putting a file
@@ -249,20 +266,19 @@ class Session(
       // The finished turn, rendered exactly as `/api/history` would render it once
       // reloaded — so the page folds the live reply into its committed form (code
       // trace, delivered files) from this event alone, with nothing to re-fetch.
-      broadcast: py.dict:
+      emit: py.dict:
         "type" ~ "turnFinish"
         "rows" ~ TurnView.rows(record, Session.existingDataDir(this.id))
 
     case TurnResult.Interrupted =>
-      broadcast(py.dict("type" ~ "interrupted"))
+      emit(py.dict("type" ~ "interrupted"))
 
     case TurnResult.Failed(detail) =>
-      broadcast(py.dict("type" ~ "failed", "detail" ~ detail))
+      emit(py.dict("type" ~ "failed", "detail" ~ detail))
 
-    removeSink(subId)
     state = Idle
     stop.clear()
-    idle.set()
+    endTurn()
     this.lock.release()
     transcript.response(response)
 
@@ -449,8 +465,11 @@ section Session
         // The turn's OPENING record, which holds what the user typed. The
         // engine's own `harpe.turn.started` carries the model-facing text, with
         // any file manifest appended — not a title.
-        if title == "" && d.get("category", "").asString == Journal.requestCategory then
-          title = TurnView.requestText(Value.fromJson(d.get("data", py.dict())))
+        // A record's payload sits under `fields`, so the request's `data` is
+        // one level in — `{time, event, fields, context}`.
+        if title == "" && d.get("event", "").asString == Journal.requestEvent then
+          val fields = d.get("fields", py.dict()).cast[py.Dict]
+          title = TurnView.requestText(Value.fromJson(fields.get("data", py.dict())))
 
     new SessionMeta(id, if title == "" then "New chat" else title, startTime)
 end

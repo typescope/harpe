@@ -7,14 +7,21 @@
   ! Routes:
   !   GET  /             the chat page
   !   GET  /api/info     agent name (for the page title)
-  !   POST /api/message  run one turn — streams NDJSON progress then done
+  !   POST /api/message  start one turn, and answer at once
+  !   GET  /api/events   the turn's events after a cursor, which the page polls
   !   POST /api/stop     request cancellation of a session's running turn
   !   POST /api/approval resolve the pending booking approval
   !
-  ! Sessions are keyed by a time-sortable id minted on first message. The id is
-  ! returned as the first stream event and stored by the browser in localStorage
-  ! so the conversation context survives page refreshes (as long as the server
-  ! is still running and the session is in memory).
+  ! A TURN DOES NOT ANSWER ITS OWN REQUEST. `POST /api/message` starts the turn
+  ! on a thread of its own and returns the session id immediately; the page then
+  ! polls `GET /api/events` for what it has not seen. WSGI pins one worker
+  ! thread for a response's whole life, so a turn answering down its own
+  ! connection would hold a worker for as long as the turn took — and how long
+  ! that is is the one thing nobody can predict.
+  !
+  ! Sessions are keyed by a time-sortable id minted on first message, stored by
+  ! the browser in localStorage so the conversation survives page refreshes (as
+  ! long as the server is still running and the session is in memory).
 //]
 
 namespace flight.booker
@@ -33,8 +40,10 @@ import harpe.logging.logger
 import harpe.Model
 import harpe.Toolset
 import harpe.Tool
-import harpe.Http
-import harpe.Http.request
+import harpe.server.Http
+import harpe.server.Request
+import harpe.server.request
+import harpe.server.Response
 
 
 class Server(brain: Model, home: String, sandboxEnv: Map[String, String])
@@ -43,65 +52,87 @@ class Server(brain: Model, home: String, sandboxEnv: Map[String, String])
   private val runTool: harpe.tools.RunCodeTool =
     harpe.tools.RunCodeTool(os.path.join(home, "sandbox"), approvalDeadline = 610)
 
-  //[ The WSGI entry point: re-establish `appHome` from the server's field, then route. //]
-  def route(): py.List receives request =
+  //[ The route table's fallback: re-establish `appHome` from the server's field, then match. //]
+  def route(): Response receives request =
     with appHome = home in dispatch()
 
-  private def dispatch(): py.List receives request, appHome =
+  private def dispatch(): Response receives request, appHome =
     match request
-    case Http.Get("/")             => page()
-    case Http.Get("/api/info")     => Http.respondJson(py.dict("name" ~ "Sky"))
-    case Http.Post("/api/message") => handleMessage()
-    case Http.Post("/api/stop")    => handleStop()
-    case Http.Post("/api/approval") => handleApproval()
-    case _                         => Http.respond("404 Not Found", "text/plain; charset=utf-8", "not found")
+    case Request.Get("/")              => page()
+    case Request.Get("/api/info")      => Response.json(py.dict("name" ~ "Sky"))
+    case Request.Get("/api/events")    => handleEvents()
+    case Request.Post("/api/message")  => handleMessage()
+    case Request.Post("/api/stop")     => handleStop()
+    case Request.Post("/api/approval") => handleApproval()
+    case _                             => Response.notFound()
 
   //[ Serve the chat page from assets/index.html. //]
-  private def page(): py.List receives request, appHome =
-    Http.respond: "200 OK", "text/html; charset=utf-8",
-      File.read(os.path.join(appHome, "assets/index.html"))
+  private def page(): Response receives request, appHome =
+    Response.html(File.read(os.path.join(appHome, "assets/index.html")))
 
-  //[ Run one agent turn, streaming NDJSON progress events to the browser.
+  //[ Start one agent turn, and answer at once with the session to poll.
     !
     ! A request without a `session` field mints a new one. A request with a
-    ! `session` resumes the existing session from the in-memory registry. A
-    ! `session` event is always emitted first so the browser can store (or
-    ! confirm) the id before the turn begins.
+    ! `session` resumes the existing session from the in-memory registry. The
+    ! answer always names the session so the browser can store (or confirm) the
+    ! id, and carries the cursor to start polling `/api/events` from.
+    !
+    ! The turn runs on a daemon thread. Nothing waits for it here: a turn takes
+    ! as long as it takes, and a request thread is too scarce to spend on that.
   //]
-  private def handleMessage(): py.List receives request, appHome =
-    val body = Http.readJson()
+  private def handleMessage(): Response receives request, appHome =
+    val body = Request.json() rescue None => return Response.badRequest("expected a JSON object")
     val text = body.get("text", "").asString
     val reqId = body.get("session", "").asString
     val requestedId = sanitizeSessionId(reqId)
 
-    val write = Http.beginStream("application/x-ndjson")
-    val sink: Sink = (obj: py.Dict) =>
-      py.call(write, py.dynamic(json.dumps(obj) + "\n").encode())
-
     if reqId != "" && requestedId != reqId then
-      sink(py.dict("type" ~ "error", "detail" ~ "invalid session"))
+      return Response.badRequest("invalid session")
+    if text.trim == "" then
+      return Response.badRequest("empty message")
 
-    else if text.trim == "" then
-      sink(py.dict("type" ~ "error", "detail" ~ "empty message"))
+    evictIdle()
+    val session = if reqId == "" then createSession() else resumeSession(requestedId)
 
-    else
-      evictIdle()
-      val session = if reqId == "" then createSession() else resumeSession(requestedId)
+    // The cursor before this turn adds anything, so the page polls from here
+    // and sees the whole turn however late its first poll lands.
+    val from = session.cursor
 
-      // Always emit the session id first. On the first message the browser mints
-      // it. On subsequent messages it confirms the id the browser already has.
-      // If `resumeSession` fell back to a new session (server restart etc.) the
-      // browser learns the replacement id and stays in sync.
-      sink(py.dict("type" ~ "session", "id" ~ session.id))
+    // Counted before the thread starts, so a page that polls at once is told a
+    // turn is running rather than racing the thread about to start one.
+    session.beginTurn()
 
-      val turnRequest = Journal.payload("text" ~ text)
-      session.runTurn(turnRequest, text, sink)
+    val turnRequest = Journal.payload("text" ~ text)
+    val runner = threading.Thread:
+      target = () => session.runTurn(turnRequest, text)
+      daemon = true
+    runner.start()
 
-    py.list()
+    Response.json(py.dict("session" ~ session.id, "from" ~ from))
+
+  //[ The events a session has produced since `seen`, which the page polls for.
+    !
+    ! Costs a list slice, so it is cheap to ask often. `active` tells the page
+    ! whether a turn is still running, which is how it knows to keep asking.
+  //]
+  private def handleEvents(): Response receives request =
+    val requested = Request.query("session").getOrElse("")
+    val id = sanitizeSessionId(requested)
+    val seen = Int.parse(Request.query("seen").getOrElse("0")) rescue None => 0
+
+    registryLock.acquire()
+    val found: Option[Session] =
+      if id == requested && registry.contains(id) then Some(registry.get(id).cast[Session])
+      else None
+    registryLock.release()
+
+    match found
+    case Some(session) => Response.json(session.since(seen))
+    case None          => Response.json(py.dict("events" ~ py.list(), "next" ~ seen, "active" ~ false))
 
   //[ Request cancellation of the session's running turn. //]
-  private def handleStop(): py.List receives request =
-    val body = Http.readJson()
+  private def handleStop(): Response receives request =
+    val body = Request.json() rescue None => return Response.badRequest("expected a JSON object")
     val requested = body.get("session", "").asString
     val id = sanitizeSessionId(requested)
 
@@ -109,11 +140,11 @@ class Server(brain: Model, home: String, sandboxEnv: Map[String, String])
     if id == requested && registry.contains(id) then registry.get(id).cast[Session].requestStop()
     registryLock.release()
 
-    Http.respondJson(py.dict("ok" ~ true))
+    Response.json(py.dict("ok" ~ true))
 
   //[ Resolve the pending booking approval for a session. //]
-  private def handleApproval(): py.List receives request =
-    val body = Http.readJson()
+  private def handleApproval(): Response receives request =
+    val body = Request.json() rescue None => return Response.badRequest("expected a JSON object")
     val requested = body.get("session", "").asString
     val sessionId = sanitizeSessionId(requested)
     val approvalId = body.get("id", "").asString
@@ -129,7 +160,7 @@ class Server(brain: Model, home: String, sandboxEnv: Map[String, String])
       case Some(session) => session.decideApproval(approvalId, decision)
       case None          => false
 
-    Http.respondJson(py.dict("ok" ~ accepted))
+    Response.json(py.dict("ok" ~ accepted))
 
   //[ Accept only a bare session name, never a path supplied by the client. //]
   private def sanitizeSessionId(raw: String): String =
