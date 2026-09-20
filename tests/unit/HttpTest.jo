@@ -39,8 +39,13 @@ private def route(reached: py.List): Response receives request =
   match request
   case Request.Get("/dynamic") => Response.complete(Http.Status.Success, Http.Mime.Json, "{}")
   case Request.Get("/asset")   => Response.complete(Http.Status.Success, Http.Mime.Css, "body { margin: 0 }")
+  case Request.Get("/typed")   => Response.complete(Http.Status.Success, Http.Mime.Other("image/png"), "x")
   case Request.Get("/page")    => Response.html("<p>" + Request.query("v").getOrElse("one") + "</p>")
   case Request.Get("/moved")   => Response.redirect("/dynamic")
+
+  //[ A status decided at runtime, which the server writes with the reason it carries. //]
+  case Request.Get("/overloaded") =>
+    Response.complete(Http.Status.Other(529, "Overloaded"), Http.Mime.Text, "busy")
 
   //[ Conditional requests, done by the route
     !
@@ -156,7 +161,7 @@ private def route(reached: py.List): Response receives request =
   case _ => Response.notFound()
 
 //[ A response as a client would read it. //]
-private class Answer(status: Int, headers: List[Header], bytes: py.Dynamic)
+private class Answer(status: Int, line: String, headers: List[Header], bytes: py.Dynamic)
   def text: String = bytes.decode("utf-8").asString
 
   //[ The first header by this name, compared case-insensitively. //]
@@ -252,7 +257,7 @@ private def callWith(
     val fields = py.module("builtins").list(pair).cast[py.List]
     answered = answered + Header(fields.get(0).asString, fields.get(1).asString)
 
-  new Answer(status, answered, py.dynamic("").encode().join(chunks))
+  new Answer(status, line, answered, py.dynamic("").encode().join(chunks))
 
 //[ Files under `root`, named by the `name` query parameter. //]
 private def fileRoute(root: String): Response receives request =
@@ -367,17 +372,20 @@ private def carrying(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, cookie: Strin
 def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
   test: "names a status line for every code", () =>
-    check("200", Http.Status.line(Http.Status.Success) == "200 OK")
-    check("303", Http.Status.line(Http.Status.SeeOther) == "303 See Other")
-    check("304", Http.Status.line(Http.Status.NotModified) == "304 Not Modified")
-    check("413", Http.Status.line(Http.Status.TooLarge) == "413 Payload Too Large")
-    check("501", Http.Status.line(Http.Status.NotImplemented) == "501 Not Implemented")
-    check("one decided at runtime", Http.Status.line(Http.Status.Other(529, "Overloaded")) == "529 Overloaded")
+    val wsgi = appFor(py.list())
+    val oversized = py.dynamic("x").callDynamic("__mul__", limit + 1).asString
+    check("200", get(wsgi, "/dynamic").line == "200 OK")
+    check("303", get(wsgi, "/moved").line == "303 See Other")
+    check("304", call(wsgi, "GET", "/versioned", [Header("If-None-Match", "\"v1\"")], "").line == "304 Not Modified")
+    check("413", call(wsgi, "POST", "/echo", [], oversized).line == "413 Payload Too Large")
+    check("501", call(wsgi, "TRACE", "/dynamic", [], "").line == "501 Not Implemented")
+    check("one decided at runtime", get(wsgi, "/overloaded").line == "529 Overloaded")
 
   test: "settles the charset once, per content type", () =>
-    check("html carries one", Http.Mime.value(Http.Mime.Html) == "text/html; charset=utf-8")
-    check("json carries none", Http.Mime.value(Http.Mime.Json) == "application/json")
-    check("a runtime type passes through", Http.Mime.value(Http.Mime.Other("image/png")) == "image/png")
+    val wsgi = appFor(py.list())
+    check("html carries one", get(wsgi, "/page").header("Content-Type") is Some("text/html; charset=utf-8"))
+    check("json carries none", get(wsgi, "/dynamic").header("Content-Type") is Some("application/json"))
+    check("a runtime type passes through", get(wsgi, "/typed").header("Content-Type") is Some("image/png"))
 
   test: "answers a dynamic response no-store and nosniff", () =>
     val answer = get(appFor(py.list()), "/dynamic")

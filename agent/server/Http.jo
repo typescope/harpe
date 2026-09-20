@@ -64,7 +64,7 @@ section Http
       | Other(code: Int, reason: String)
 
     //[ The status line WSGI expects. //]
-    def line(code: Code): String =
+    private[server] def line(code: Code): String =
       match code
       case Success              => "200 OK"
       case Created              => "201 Created"
@@ -96,7 +96,7 @@ section Http
   section Mime
     union Type = Html | Json | Ndjson | Text | Css | JavaScript | Other(value: String)
 
-    def value(kind: Type): String =
+    private[server] def value(kind: Type): String =
       match kind
       case Html        => "text/html; charset=utf-8"
       case Json        => "application/json"
