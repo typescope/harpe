@@ -24,8 +24,11 @@ section Http
   //[ The verb a request carries
     !
     ! These five are what a server here understands. Anything else, HEAD
-    ! included, is refused with a 501 before any route is looked at. `Options`
-    ! matches no route, so a browser sending one gets a 404.
+    ! included, is refused with a 501 before any route is looked at. A route
+    ! may claim `Options`, which is how an application answers the CORS
+    ! preflight harpe sends no header of its own for. One no route claims
+    ! answers 405 with `Allow` where another verb claims the path, and the
+    ! fallback's 404 otherwise.
   //]
   section Verb
     union Method = Get | Post | Put | Delete | Options

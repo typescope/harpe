@@ -134,25 +134,28 @@ section Request
       case Some(name) => names.contains(name)
       case None       => false
 
-  //[ Is this a write a browser sent from another site?
+  //[ Did a browser send this from another site?
     !
     ! Go's `CrossOriginProtection` algorithm. `Sec-Fetch-Site` decides when a
     ! browser sent it. Otherwise an `Origin` must name the same authority as
-    ! `Host`. A request carrying neither did not come from a browser page.
+    ! `Host`. A request carrying neither did not come from a browser page, so a
+    ! browser too old to send either is not recognised as cross-site at all.
   //]
+  private[server] def crossSiteRequest(environ: py.Dynamic): Bool =
+    match environValue(environ, "HTTP_SEC_FETCH_SITE")
+    case Some(site) => site != "same-origin" && site != "none"
+    case None =>
+      match environValue(environ, "HTTP_ORIGIN")
+      case None => false
+      case Some(origin) =>
+        val netloc = py.module("urllib.parse").urlsplit(origin).netloc.asString
+        val host = environValue(environ, "HTTP_HOST").getOrElse("")
+        py.dynamic(netloc).lower().asString != py.dynamic(host).lower().asString
+
+  //[ The same, for a verb that changes something — the request CSRF turns on. //]
   private[server] def crossSiteWrite(method: Verb.Method, environ: py.Dynamic): Bool =
     val writes = method is Verb.Post || method is Verb.Put || method is Verb.Delete
-    if !writes then false
-    else
-      match environValue(environ, "HTTP_SEC_FETCH_SITE")
-      case Some(site) => site != "same-origin" && site != "none"
-      case None =>
-        match environValue(environ, "HTTP_ORIGIN")
-        case None => false
-        case Some(origin) =>
-          val netloc = py.module("urllib.parse").urlsplit(origin).netloc.asString
-          val host = environValue(environ, "HTTP_HOST").getOrElse("")
-          py.dynamic(netloc).lower().asString != py.dynamic(host).lower().asString
+    writes && crossSiteRequest(environ)
 
   //[ A request header, or None when the client did not send it. //]
   def header(name: String): Option[String] receives request =

@@ -17,6 +17,21 @@ A string answers to itself alone. An application reached at a loopback name
 says `WebApp.Loopback`, which answers to `localhost`, `127.0.0.1` and `::1`
 alike, rather than having a string quietly stand for three.
 
+**`crossSite` has three settings, and a route may claim `OPTIONS`.**
+`NoCrossSite` is the default and refuses every cross-site request, the GET
+included, which matches the local private application the other defaults
+describe. It is stricter than the old `Refuse`, so **a site other pages link to
+must now name `NoCrossSiteWrite`** — that is what `Refuse` did, refusing a
+cross-site POST, PUT or DELETE while letting the GET behind an inbound link
+through. `AnyCrossSite` refuses nothing. A direct visit and the application's
+own pages are unaffected under all three, since neither is cross-site.
+
+`Route.Options` joins `Get`, `Post`, `Put` and `Delete`, so an application can
+answer a CORS preflight. harpe sends no `Access-Control-*` header of its own —
+which origins may call is the application's to decide — and the verb doc no
+longer claims `OPTIONS` matches no route, which stopped being true once a route
+could claim it.
+
 **`Router` is now `Route`.** It never routed anything — dispatch lives in
 `WebApp` — it just builds the routes an application holds. `Route.Get`,
 `Post`, `Put`, `Delete` and `Prefix` are where `Router.*` was, and the type

@@ -138,8 +138,14 @@ that means `--workers 1 --threads N`.
 Name the host your users type. `host` defaults to
 `WebApp.Loopback`, which suits a prototype and refuses a hostile name
 pointed at `127.0.0.1`, so a deployment that forgets to name its own host is
-refused rather than quietly served. Keep `crossSite` at `Refuse` unless
-browsers on other sites must write to the server.
+refused rather than quietly served. `crossSite` defaults to `NoCrossSite`, which refuses every cross-site request
+and suits an internal tool nothing links to. A site other pages link to needs
+`NoCrossSiteWrite`, or the GET behind every inbound link is a 403. Neither
+setting touches a direct visit or the application's own pages. CORS is not a
+defence against any of this — it governs what a browser lets a page *read*, so
+a cross-site form POST needs none of it. An application that wants CORS answers
+its own preflight with `Route.Options` and sends its own
+`Access-Control-Allow-*`.
 
 Size the thread pool for concurrency, not for request rate. WSGI pins one
 worker for a response's whole life, so the pool needs room for every request in

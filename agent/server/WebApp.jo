@@ -79,7 +79,7 @@ class WebApp(
     if !WebApp.hostAllowed(environ, host) then
       val sent = Request.environValue(environ, "HTTP_HOST").getOrElse("none")
       return Answer.refuse(Status.BadRequest, "host '\{sent}' is not one this application answers to")
-    if crossSite is WebApp.NoCrossSite && Request.crossSiteWrite(method, environ) then
+    if WebApp.crossSiteRefused(crossSite, method, environ) then
       return Answer.refuse(Status.Forbidden, "cross-site request refused")
 
     val found = routeFor(method, path)
@@ -181,13 +181,26 @@ section WebApp
   //[ Answers any `Host` at all, for a server whose proxy already checks it. //]
   object AnyHost
 
-  //[ Whether a browser on another site may send a write
+  //[ What a browser on another site may send
     !
-    ! `NoCrossSite` answers 403 to a POST, PUT or DELETE a browser marks as
-    ! cross-site, which is CSRF protection. Clients that are not browsers send
-    ! neither header it reads, so an API client or a webhook still gets through.
+    ! `NoCrossSite` is the default and refuses every cross-site request, read
+    ! included, which suits the local private application the other defaults
+    ! describe. A site other pages link to wants `NoCrossSiteWrite`, which
+    ! refuses only a cross-site POST, PUT or DELETE — that is CSRF protection,
+    ! and it lets the GET behind every inbound link through. `AnyCrossSite`
+    ! refuses nothing, for a server whose own checks come first.
+    !
+    ! Clients that are not browsers send neither header this reads, so an API
+    ! client or a webhook gets through whichever is named.
   //]
-  union CrossSite = NoCrossSite | AnyCrossSite
+  union CrossSite = NoCrossSite | NoCrossSiteWrite | AnyCrossSite
+
+  //[ Whether `policy` refuses this exchange. //]
+  private[server] def crossSiteRefused(policy: CrossSite, method: Verb.Method, environ: py.Dynamic): Bool =
+    match policy
+    case AnyCrossSite     => false
+    case NoCrossSiteWrite => Request.crossSiteWrite(method, environ)
+    case NoCrossSite      => Request.crossSiteRequest(environ)
 
   //[ Whether the `Host` this request carries is one `host` answers to. //]
   private[server] def hostAllowed(environ: py.Dynamic, host: Loopback | AnyHost | String): Bool =

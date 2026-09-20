@@ -51,6 +51,18 @@ section Route
       maxBodyBytes: Int = defaultMaxBodyBytes): Route =
     new Route(Verb.Delete, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
 
+  //[ A route answering OPTIONS at exactly `path`
+    !
+    ! What answers a CORS preflight, which harpe sends no header of its own
+    ! for: the `Access-Control-Allow-*` a browser needs are this handler's to
+    ! send, since which origins may call is the application's to decide.
+  //]
+  def Options(
+      path: String,
+      handler: (() => Response receives request),
+      maxBodyBytes: Int = defaultMaxBodyBytes): Route =
+    new Route(Verb.Options, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
+
   //[ Everything under `path`, which must end in `/` — the assets of a page
     !
     ! The handler reads `request.path` for the rest. The longest matching

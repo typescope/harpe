@@ -32,6 +32,7 @@ private def applicationFor(answersTo: WebApp.Loopback | WebApp.AnyHost | String,
     host = answersTo
     routes = []
     fallback = WebApp.Fallback(() => route(reached), maxBodyBytes = limit)
+    crossSite = WebApp.NoCrossSiteWrite
 
 //[ Every path these tests ask for. `reached` records what a route saw. //]
 private def route(reached: py.List): Response receives request =
@@ -774,6 +775,38 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
     val read = call(wsgi, "GET", "/dynamic", [host, Header("Sec-Fetch-Site", "cross-site")], "")
     check("a cross-site read is not a write", read.status == 200)
+
+  test: "refuses every cross-site request where the application asks for that", () =>
+    val host = Header("Host", "127.0.0.1:8080")
+    val foreign = Header("Sec-Fetch-Site", "cross-site")
+
+    val strict = new WebApp(
+      routes = [],
+      fallback = WebApp.Fallback(() => route(py.list()), maxBodyBytes = limit),
+      crossSite = WebApp.NoCrossSite).wsgi()
+    check("the read too", call(strict, "GET", "/dynamic", [host, foreign], "").status == 403)
+    check("and the write", call(strict, "POST", "/echo", [host, foreign], "x").status == 403)
+    check("a direct visit still arrives", call(strict, "GET", "/dynamic", [host, Header("Sec-Fetch-Site", "none")], "").status == 200)
+    check("and the application's own page", call(strict, "GET", "/dynamic", [host, Header("Sec-Fetch-Site", "same-origin")], "").status == 200)
+
+    val byDefault = new WebApp(
+      routes = [],
+      fallback = WebApp.Fallback(() => route(py.list()), maxBodyBytes = limit)).wsgi()
+    check("which is what an application naming no policy gets", call(byDefault, "GET", "/dynamic", [host, foreign], "").status == 403)
+
+    val open = new WebApp(
+      routes = [],
+      fallback = WebApp.Fallback(() => route(py.list()), maxBodyBytes = limit),
+      crossSite = WebApp.AnyCrossSite).wsgi()
+    check("nothing is refused", call(open, "POST", "/echo", [host, foreign], "x").status == 200)
+
+  test: "lets a route answer the CORS preflight, which harpe sends no header for", () =>
+    val app = new WebApp(
+      routes = List(Route.Options("/api/message", () => Response.complete(Http.Status.Success, Http.Mime.Text, "", headers = [Header("Access-Control-Allow-Origin", "https://partner.example")]))),
+      host = "127.0.0.1")
+    val answered = call(app.wsgi(), "OPTIONS", "/api/message", [Header("Host", "127.0.0.1:8080")], "")
+    check("the route ran", answered.status == 200)
+    check("carrying what the application chose", answered.header("Access-Control-Allow-Origin") is Some("https://partner.example"))
 
   test: "refuses a verb it does not implement with 501", () =>
     check("501", call(appFor(py.list()), "TRACE", "/dynamic", [], "").status == 501)
