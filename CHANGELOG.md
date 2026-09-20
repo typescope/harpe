@@ -184,6 +184,18 @@ path calls `Request.segments(path)` once and matches the list.
 The templates pin the previous release and still call the old signatures.
 Moving them is part of the release, not of this change.
 
+**`Agent.ask` no longer takes a `transcript`, and the `Transcript` interface is
+gone.** The engine writes its turn events to the ambient `logger` like every
+other record, so a turn is in the log whether or not anything reads it back.
+`NoTranscript` was a default that discarded the conversation while `logger` kept
+the diagnostics, and wiring one but not the other left a failed turn with no
+input and nothing to detect the half-configuration.
+
+A driver that wants its journal replayable as a conversation still brackets each
+turn with `Journal.request` and `Journal.response`, which are unchanged — drop
+the `transcript` argument from the `Agent.ask` call and nothing else moves.
+`TurnData` is `harpe.turns.TurnData`.
+
 The journal viewer is now something a driver mounts, not a second process you
 start. `harpe.observability.ViewLogger` is a `Logger` that retains the last
 `capacity` entries in memory and lets them be read back, which gives a
