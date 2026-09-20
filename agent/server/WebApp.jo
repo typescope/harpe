@@ -39,7 +39,7 @@ class WebApp(
       routes: List[Route],
       fallback: WebApp.Fallback = WebApp.defaultFallback,
       host: WebApp.Loopback | WebApp.AnyHost | String = WebApp.Loopback,
-      crossSite: WebApp.CrossSite.Policy = WebApp.CrossSite.Refuse)
+      crossSite: WebApp.CrossSite = WebApp.NoCrossSite)
 
   //[ The exact routes, indexed once when the application is built. //]
   private val exact: py.Dict = Route.indexed(routes)
@@ -79,7 +79,7 @@ class WebApp(
     if !WebApp.hostAllowed(environ, host) then
       val sent = Request.environValue(environ, "HTTP_HOST").getOrElse("none")
       return Answer.refuse(Status.BadRequest, "host '\{sent}' is not one this application answers to")
-    if crossSite is WebApp.CrossSite.Refuse && Request.crossSiteWrite(method, environ) then
+    if crossSite is WebApp.NoCrossSite && Request.crossSiteWrite(method, environ) then
       return Answer.refuse(Status.Forbidden, "cross-site request refused")
 
     val found = routeFor(method, path)
@@ -183,13 +183,11 @@ section WebApp
 
   //[ Whether a browser on another site may send a write
     !
-    ! `Refuse` answers 403 to a POST, PUT or DELETE a browser marks as
+    ! `NoCrossSite` answers 403 to a POST, PUT or DELETE a browser marks as
     ! cross-site, which is CSRF protection. Clients that are not browsers send
     ! neither header it reads, so an API client or a webhook still gets through.
   //]
-  section CrossSite
-    union Policy = Refuse | Allow
-  end
+  union CrossSite = NoCrossSite | AnyCrossSite
 
   //[ Whether the `Host` this request carries is one `host` answers to. //]
   private[server] def hostAllowed(environ: py.Dynamic, host: Loopback | AnyHost | String): Bool =
