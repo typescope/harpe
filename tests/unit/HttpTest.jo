@@ -709,7 +709,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("a path no route claims", missing.status == 404)
     check("as a page, since a browser is what reaches it", missing.header("Content-Type") is Some(kind) && kind.startsWith("text/html"))
     check("the bundled one, not the bare fallback", missing.text.contains("That page does not exist"))
-    check("reads no body, so the ceiling is the route's", covered.ceiling == Route.defaultMaxBodyBytes)
+    check("reads no body, so the limit is the route's", covered.maxRequestBodyBytes == Route.defaultMaxBodyBytes)
     check("a body sent there is refused first", call(wsgi, "POST", "/nothing", [], "hello").status == 413)
 
   test: "answers an application's own 404 page, and harpe's when it cannot be read", () =>
@@ -848,8 +848,8 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("and that one did not run", reached.size == 1)
 
   test: "reports the largest limit any handler allows, for the server to match", () =>
-    check("the upload's", tabled(py.list()).ceiling == 4096)
-    check("the fallback's, with no routes", applicationFor(WebApp.Loopback, py.list()).ceiling == limit)
+    check("the upload's", tabled(py.list()).maxRequestBodyBytes == 4096)
+    check("the fallback's, with no routes", applicationFor(WebApp.Loopback, py.list()).maxRequestBodyBytes == limit)
 
   //[ The index is built when the `WebApp` is, so a clash is a startup failure. //]
   //[ Refused where the bad value came from, not at the write, so a route's answer can be trusted. //]

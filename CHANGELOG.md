@@ -58,8 +58,12 @@ instead, which saves remembering that `Response.html` is a 200.
 A route that names no limit takes `Route.defaultMaxBodyBytes`, 1 MiB, rather
 than inheriting the application's. `Route.maxBodyBytes` is now always the real
 limit, so `0` means "no body at all" at both levels instead of meaning "inherit"
-at one and "refuse everything" at the other. `app.ceiling` is unchanged
-in purpose: the largest limit any handler allows, which is what the server gets.
+at one and "refuse everything" at the other.
+
+**`WebApp.ceiling` is now `WebApp.maxRequestBodyBytes`**, unchanged in purpose:
+the largest limit any handler allows, which is what the server should be given.
+The new name says what the number is rather than what shape it has, and matches
+the `max_request_body_size` it is written into.
 
 ## 0.10.1 — 2026-09-20
 

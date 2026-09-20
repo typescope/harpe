@@ -27,7 +27,7 @@ import jo.py.resource.*
   ! the fallback. One whose routes cover everything names none and takes
   ! `WebApp.notFound()`.
   !
-  ! Every handler names the largest body it accepts, and `ceiling` is the
+  ! Every handler names the largest body it accepts, and `maxRequestBodyBytes` is the
   ! largest of them, which is the limit to give the server. `host` defaults to
   ! loopback, so a prototype on `127.0.0.1` runs as it is and a deployment
   ! reached by any other name must name it.
@@ -50,7 +50,7 @@ class WebApp(
        Wsgi.write: environ, startResponse, answer(environ)
 
   //[ The largest body any handler allows, which is the limit to give the server. //]
-  def ceiling: Int =
+  def maxRequestBodyBytes: Int =
     var most = fallback.maxBodyBytes
     for route in routes do
       if route.maxBodyBytes > most then most = route.maxBodyBytes

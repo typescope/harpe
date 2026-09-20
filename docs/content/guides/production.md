@@ -79,7 +79,7 @@ val server = py.module("waitress").create_server:
   port = port
   threads = 32
   channel_timeout = 3600
-  max_request_body_size = application.ceiling
+  max_request_body_size = application.maxRequestBodyBytes
 server.run()
 ```
 
@@ -87,7 +87,7 @@ Serve static assets from the proxy rather than the application. An application
 running without one, in development or in a single container, serves its own
 with `Route.Prefix("/assets/", () => agent.asset())` and `Response.file`.
 
-Every handler names the largest body it accepts, and `application.ceiling` is
+Every handler names the largest body it accepts, and `application.maxRequestBodyBytes` is
 the largest of them, which is what the server should allow. A route that names
 no limit takes `Route.defaultMaxBodyBytes`, 1 MiB.
 
