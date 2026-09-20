@@ -6,7 +6,15 @@ namespace harpe.server
   ! `application/x-www-form-urlencoded` carries no files, so `files` is empty
   ! for one of those.
 //]
-class Form(values: py.Dict, uploads: List[Form.Upload])
+class Form
+  private val values: py.Dict
+  private val uploads: List[Form.Upload]
+
+  //[ Filled by the scan that read the body, which is the only thing that builds one. //]
+  private[server] def Form(values: py.Dict, uploads: List[Form.Upload]) =
+    this.values = values
+    this.uploads = uploads
+
   //[ The first text field by this name, `Some("")` for one sent empty. //]
   def field(name: String): Option[String] =
     if values.contains(name) then Some(values.get(name).cast[py.List].get(0).asString) else None
