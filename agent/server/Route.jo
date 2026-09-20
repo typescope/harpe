@@ -64,10 +64,10 @@ section Route
     if !path.endsWith("/") then abort "a prefix route's path must end in '/': '\{path}'"
     new Route(method, path, prefix = true, maxBodyBytes = maxBodyBytes, handler = handler)
 
-  //[ The exact routes by "VERB path", for an `Application` to dispatch through
+  //[ The exact routes by "VERB path", for a `WebApp` to dispatch through
     !
     ! Two routes claiming one verb and path abort here, which is when the
-    ! `Application` holding them is built.
+    ! `WebApp` holding them is built.
   //]
   private[server] def indexed(routes: List[Route]): py.Dict =
     val exact = py.dict()

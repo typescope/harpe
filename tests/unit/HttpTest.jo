@@ -1,6 +1,6 @@
 //[ HttpTest.jo
   !
-  ! Unit tests for `harpe.server`. They call an `Application`'s WSGI callable in
+  ! Unit tests for `harpe.server`. They call a `WebApp`'s WSGI callable in
   ! memory, through `call` below, with no socket and no thread.
 //]
 
@@ -8,7 +8,7 @@ namespace harpe.test.unit.HttpTest
 
 import harpe.server.Http
 import harpe.server.Http.Header
-import harpe.server.Application
+import harpe.server.WebApp
 import harpe.server.Route
 import harpe.server.Request
 import harpe.server.request
@@ -27,11 +27,11 @@ private def secret: String = "0123456789abcdef0123456789abcdef"
 private def limit: Int = 1024
 
 //[ Everything under one `fallback`, which is how an application dispatches by pattern. //]
-private def applicationFor(answersTo: Application.Host.Policy, reached: py.List): Application =
-  new Application:
+private def applicationFor(answersTo: WebApp.Host.Policy, reached: py.List): WebApp =
+  new WebApp:
     host = answersTo
     routes = []
-    fallback = Application.Fallback(() => route(reached), maxBodyBytes = limit)
+    fallback = WebApp.Fallback(() => route(reached), maxBodyBytes = limit)
 
 //[ Every path these tests ask for. `reached` records what a route saw. //]
 private def route(reached: py.List): Response receives request =
@@ -285,10 +285,10 @@ private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.Dynamic) => 
   write(scratch + "/outside/secret.txt", "secret")
   os.symlink(scratch + "/outside/secret.txt", root + "/link")
 
-  val files = new Application:
-    host = Application.Host.Loopback
+  val files = new WebApp:
+    host = WebApp.Host.Loopback
     routes = []
-    fallback = Application.Fallback(() => fileRoute(root), maxBodyBytes = limit)
+    fallback = WebApp.Fallback(() => fileRoute(root), maxBodyBytes = limit)
 
   val result = py.try(body(root, files.wsgi()))
   py.module("shutil").rmtree(scratch)
@@ -298,16 +298,16 @@ private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.Dynamic) => 
   case Err(err) => abort err.message
 
 //[ An application wired as a table, which is how `Route` is meant to be used. //]
-private def tabled(reached: py.List): Application =
-  new Application:
-    host = Application.Host.Loopback
+private def tabled(reached: py.List): WebApp =
+  new WebApp:
+    host = WebApp.Host.Loopback
     routes = List:
       Route.Get("/api/info", info, maxBodyBytes = limit)
       Route.Post("/api/message", () => echoed(reached), maxBodyBytes = limit)
       Route.Post("/api/upload", () => echoed(reached), maxBodyBytes = 4096)
       Route.Delete("/api/session", () => Response.json(py.dict("ok" ~ true)), maxBodyBytes = limit)
       Route.Prefix("/assets/", () => Response.complete(Http.Status.Success, Http.Mime.Text, "asset"), maxBodyBytes = limit)
-    fallback = Application.Fallback(() => Response.html("<p>the page</p>"), maxBodyBytes = limit)
+    fallback = WebApp.Fallback(() => Response.html("<p>the page</p>"), maxBodyBytes = limit)
 
 private def info(): Response receives request = Response.json(py.dict("name" ~ "clair"))
 
@@ -317,9 +317,9 @@ private def echoed(reached: py.List): Response receives request =
   Response.complete(Http.Status.Success, Http.Mime.Text, text.size.toString)
 
 //[ Two routes claiming one verb and path, which no application may hold. //]
-private def clashing(): Application =
-  new Application:
-    host = Application.Host.Loopback
+private def clashing(): WebApp =
+  new WebApp:
+    host = WebApp.Host.Loopback
     routes = List:
       Route.Get("/api/info", () => Response.notFound())
       Route.Get("/api/info", () => Response.notFound())
@@ -336,15 +336,15 @@ private def multipartBody(boundary: String, parts: List[String], file: py.Dynami
 
 //[ The same routes under a limit big enough for a real upload. //]
 private def roomyApp(): (py.Dynamic, py.Dynamic) => py.Dynamic =
-  val app = new Application:
-    host = Application.Host.Loopback
+  val app = new WebApp:
+    host = WebApp.Host.Loopback
     routes = []
-    fallback = Application.Fallback(() => route(py.list()), maxBodyBytes = 1048576)
+    fallback = WebApp.Fallback(() => route(py.list()), maxBodyBytes = 1048576)
   app.wsgi()
 
 //[ The application under test. `reached` records what its routes saw. //]
 private def appFor(reached: py.List): (py.Dynamic, py.Dynamic) => py.Dynamic =
-  applicationFor(Application.Host.Loopback, reached).wsgi()
+  applicationFor(WebApp.Host.Loopback, reached).wsgi()
 
 private def get(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, target: String): Answer =
   call(wsgi, "GET", target, [], "")
@@ -394,7 +394,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
   //[ The framework answers no conditional request, so this is the application doing it. //]
   test: "lets a route answer a conditional request itself, before building the body", () =>
     val reached = py.list()
-    val wsgi = applicationFor(Application.Host.Loopback, reached).wsgi()
+    val wsgi = applicationFor(WebApp.Host.Loopback, reached).wsgi()
 
     val first = get(wsgi, "/versioned?v=7")
     val tag = headerOf(first, "ETag")
@@ -677,10 +677,10 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
     // Bigger than one block, so the copy loops rather than reading once.
     val long = py.dynamic("y").callDynamic("__mul__", 150000).asString
-    val big = new Application:
-      host = Application.Host.Loopback
+    val big = new WebApp:
+      host = WebApp.Host.Loopback
       routes = []
-      fallback = Application.Fallback(() => route(py.list()), maxBodyBytes = 1048576)
+      fallback = WebApp.Fallback(() => route(py.list()), maxBodyBytes = 1048576)
     val spooled = call(big.wsgi(), "POST", "/save?into=" + into, [], long)
     check("across blocks", spooled.status == 200 && spooled.text == "{\"written\": 150000}")
     check("every one of them", py.module("os").path.getsize(into).asInt == 150000)
@@ -701,7 +701,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("the route never ran", reached.size == 1)
 
   test: "answers 404 by default, for an application whose routes cover it", () =>
-    val covered = new Application(routes = List(Route.Get("/api/info", info)))
+    val covered = new WebApp(routes = List(Route.Get("/api/info", info)))
     val wsgi = covered.wsgi()
     check("a route it claims", get(wsgi, "/api/info").status == 200)
     val missing = get(wsgi, "/nothing")
@@ -715,24 +715,24 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     val scratch = py.module("tempfile").mkdtemp().asString
     py.open(scratch + "/404.html", "wb").write(py.dynamic("<p>nothing here</p>").encode())
 
-    val own = new Application(
+    val own = new WebApp(
       routes = List(Route.Get("/api/info", info)),
-      fallback = Application.notFound(scratch + "/404.html"))
+      fallback = WebApp.notFound(scratch + "/404.html"))
     val answer = get(own.wsgi(), "/nothing")
     check("the application's page", answer.status == 404 && answer.text == "<p>nothing here</p>")
 
-    val absent = new Application(
+    val absent = new WebApp(
       routes = List(Route.Get("/api/info", info)),
-      fallback = Application.notFound(scratch + "/gone.html"))
+      fallback = WebApp.notFound(scratch + "/gone.html"))
     val fellBack = get(absent.wsgi(), "/nothing")
     check("harpe's, rather than a 500", fellBack.status == 404 && fellBack.text.contains("That page does not exist"))
 
     py.module("shutil").rmtree(scratch)
 
   test: "checks the host by default, without an application saying so", () =>
-    val plain = new Application(
+    val plain = new WebApp(
       routes = [],
-      fallback = Application.Fallback(() => route(py.list()), maxBodyBytes = Route.defaultMaxBodyBytes))
+      fallback = WebApp.Fallback(() => route(py.list()), maxBodyBytes = Route.defaultMaxBodyBytes))
 
     val wsgi = plain.wsgi()
     check("loopback is what a prototype gets", get(wsgi, "/dynamic").status == 200)
@@ -748,7 +748,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("a rebound name", call(wsgi, "GET", "/dynamic", [Header("Host", "attacker.example:8080")], "").status == 400)
 
   test: "accepts only the one host it is named for, whatever its port or case", () =>
-    val wsgi = applicationFor(Application.Host.Named("Agent.Example.com"), py.list()).wsgi()
+    val wsgi = applicationFor(WebApp.Host.Named("Agent.Example.com"), py.list()).wsgi()
     check("its name", call(wsgi, "GET", "/dynamic", [Header("Host", "agent.example.com:8080")], "").status == 200)
     check("without a port", call(wsgi, "GET", "/dynamic", [Header("Host", "AGENT.EXAMPLE.COM")], "").status == 200)
     check("another name", call(wsgi, "GET", "/dynamic", [Header("Host", "www.example.com")], "").status == 400)
@@ -816,9 +816,9 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
   test: "reports the largest limit any handler allows, for the server to match", () =>
     check("the upload's", tabled(py.list()).ceiling == 4096)
-    check("the fallback's, with no routes", applicationFor(Application.Host.Loopback, py.list()).ceiling == limit)
+    check("the fallback's, with no routes", applicationFor(WebApp.Host.Loopback, py.list()).ceiling == limit)
 
-  //[ The index is built when the `Application` is, so a clash is a startup failure. //]
+  //[ The index is built when the `WebApp` is, so a clash is a startup failure. //]
   //[ Refused where the bad value came from, not at the write, so a route's answer can be trusted. //]
   test: "refuses a header that would split the response, at construction", () =>
     check("a newline in the value", py.try(Header("X-Note", "a\nb")) is Err(_))

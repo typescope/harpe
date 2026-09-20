@@ -125,7 +125,7 @@ section Request
     case Ok(name) => if py.isNone(name) then None else Some(name.asString)
     case Err(_)   => None
 
-  //[ Whether the `Host` header names one of `names`, which is the reading `Application` judges against. //]
+  //[ Whether the `Host` header names one of `names`, which is the reading `WebApp` judges against. //]
   private[server] def nameIn(environ: py.Dynamic, names: List[String]): Bool =
     match environValue(environ, "HTTP_HOST")
     case None => false
@@ -227,7 +227,7 @@ section Request
     ! than was declared — never a truncated buffer.
     !
     ! Reads exactly what `CONTENT_LENGTH` declares, with no cap of its own:
-    ! `Application.wsgi` has already refused a declaration over the route's own
+    ! `WebApp.wsgi` has already refused a declaration over the route's own
     ! limit.
     !
     ! The body is a stream, so a second read in one request aborts.

@@ -11,7 +11,7 @@ import harpe.server.Http
 import harpe.server.Http.Header
 import harpe.server.Response
 import harpe.server.Complete
-import harpe.server.Application
+import harpe.server.WebApp
 import harpe.server.Route
 import harpe.server.Serve
 import harpe.server.Request
@@ -129,10 +129,10 @@ section ProviderFixture
   //]
   def withResponses(responses: List[Scripted], test: Server => Unit): Unit =
     val requests = py.list()
-    val application = new Application:
-      host = Application.Host.Loopback
+    val application = new WebApp:
+      host = WebApp.Host.Loopback
       routes = []
-      fallback = Application.Fallback(() => serve(responses, requests), maxBodyBytes = 67108864)
+      fallback = WebApp.Fallback(() => serve(responses, requests), maxBodyBytes = 67108864)
 
     val background = Serve.inBackground("127.0.0.1", 0, application)
     val port = background.port

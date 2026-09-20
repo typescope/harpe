@@ -46,7 +46,7 @@ namespace harpe.observability
 import harpe.ffi.json
 import harpe.logging.Entry
 import harpe.server.Http
-import harpe.server.Application
+import harpe.server.WebApp
 import harpe.server.Serve
 import harpe.server.Request
 import harpe.server.request
@@ -97,7 +97,7 @@ section Viewer
     ! its own banner, so there is nothing to hand back. NO AUTHENTICATION: a
     ! journal holds every conversation it was given, so `host` belongs on a
     ! loopback address, and `answersTo` names what a browser may call it there,
-    ! defaulting to the loopback names for the same reason `Application` does.
+    ! defaulting to the loopback names for the same reason `WebApp` does.
     !
     ! Quiet, because the page polls: an access log here is a line a second in
     ! whatever terminal the driver was already using.
@@ -107,11 +107,11 @@ section Viewer
       title: String,
       host: String,
       port: Int,
-      answersTo: Application.Host.Policy = Application.Host.Loopback): Unit =
-    val application = new Application:
+      answersTo: WebApp.Host.Policy = WebApp.Host.Loopback): Unit =
+    val application = new WebApp:
       host = answersTo
       routes = []
-      fallback = Application.Fallback(() => route(viewLog, title), maxBodyBytes = 0)
+      fallback = WebApp.Fallback(() => route(viewLog, title), maxBodyBytes = 0)
 
     val _ = Serve.inBackground(host, port, application)
 

@@ -25,7 +25,7 @@ import jo.py.resource.*
   ! single-page application whose client routes on the path. An application
   ! that dispatches by pattern matching passes no routes and its own match as
   ! the fallback. One whose routes cover everything names none and takes
-  ! `Application.notFound()`.
+  ! `WebApp.notFound()`.
   !
   ! Every handler names the largest body it accepts, and `ceiling` is the
   ! largest of them, which is the limit to give the server. `host` defaults to
@@ -35,11 +35,11 @@ import jo.py.resource.*
   ! A deployment runs `wsgi()` on the WSGI server it chooses. `Serve` is
   ! wsgiref, for harpe's own viewer and tests.
 //]
-class Application(
+class WebApp(
       routes: List[Route],
-      fallback: Application.Fallback = Application.defaultFallback,
-      host: Application.Host.Policy = Application.Host.Loopback,
-      crossSite: Application.CrossSite.Policy = Application.CrossSite.Refuse)
+      fallback: WebApp.Fallback = WebApp.defaultFallback,
+      host: WebApp.Host.Policy = WebApp.Host.Loopback,
+      crossSite: WebApp.CrossSite.Policy = WebApp.CrossSite.Refuse)
 
   //[ The exact routes, indexed once when the application is built. //]
   private val exact: py.Dict = Route.indexed(routes)
@@ -76,10 +76,10 @@ class Application(
     val path = Request.decodedPath(environ) rescue None =>
       return Answer.refuse(Status.BadRequest, "path is not UTF-8")
 
-    if !Application.hostAllowed(environ, host) then
+    if !WebApp.hostAllowed(environ, host) then
       val sent = Request.environValue(environ, "HTTP_HOST").getOrElse("none")
       return Answer.refuse(Status.BadRequest, "host '\{sent}' is not one this application answers to")
-    if crossSite is Application.CrossSite.Refuse && Request.crossSiteWrite(method, environ) then
+    if crossSite is WebApp.CrossSite.Refuse && Request.crossSiteWrite(method, environ) then
       return Answer.refuse(Status.Forbidden, "cross-site request refused")
 
     val found = routeFor(method, path)
@@ -124,8 +124,8 @@ class Application(
     claimed
 end
 
-//[ What an `Application` constructor takes beyond its routes, and the checks behind them. //]
-section Application
+//[ What a `WebApp` constructor takes beyond its routes, and the checks behind them. //]
+section WebApp
   //[ What answers a request no route claims, and the largest body it accepts
     !
     ! The limit is named outright because the fallback is often the only

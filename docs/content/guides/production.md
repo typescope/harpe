@@ -59,19 +59,19 @@ redact secrets and personal data.
 
 ## Serving HTTP
 
-An `Application` declares its routes and the policy enforced before any of them
+A `WebApp` declares its routes and the policy enforced before any of them
 runs. `application.wsgi()` is a plain WSGI application: run it on the server you
 choose, in development as in production, since harpe installs none. With
 waitress, for example:
 
 ```jo
-val application = new Application:
-  host = Application.Host.Named("agent.example.com")
+val application = new WebApp:
+  host = WebApp.Host.Named("agent.example.com")
   routes = List:
     Route.Get("/api/info", () => agent.info())
     Route.Post("/api/message", () => agent.message())
     Route.Post("/api/upload", () => agent.upload(), maxBodyBytes = 26214400)
-  fallback = Application.Fallback(() => agent.page(), maxBodyBytes = 1048576)
+  fallback = WebApp.Fallback(() => agent.page(), maxBodyBytes = 1048576)
 
 val server = py.module("waitress").create_server:
   application.wsgi()
@@ -93,16 +93,16 @@ no limit takes `Route.defaultMaxBodyBytes`, 1 MiB.
 
 A fallback names its own, because an application that dispatches in a `match`
 has no other limit. One whose routes cover everything names no fallback at all
-and takes `Application.notFound`, which answers a small bundled 404 page and
+and takes `WebApp.notFound`, which answers a small bundled 404 page and
 reads no body. It is HTML, not the JSON `Response.notFound` answers, because a
 path no route claims is usually a browser's. A body sent to one is refused 413
 before the 404.
 
-`Application.notFound(path)` answers the application's own page instead,
+`WebApp.notFound(path)` answers the application's own page instead,
 read from `path` per request:
 
 ```jo
-fallback = Application.notFound(os.path.join(appHome, "assets/404.html"))
+fallback = WebApp.notFound(os.path.join(appHome, "assets/404.html"))
 ```
 
 Reach for it rather than building the `Fallback` by hand, since `Response.html`
@@ -136,7 +136,7 @@ Scale with threads, or put each process behind sticky routing. With gunicorn,
 that means `--workers 1 --threads N`.
 
 Name the host your users type. `host` defaults to
-`Application.Host.Loopback`, which suits a prototype and refuses a hostile name
+`WebApp.Host.Loopback`, which suits a prototype and refuses a hostile name
 pointed at `127.0.0.1`, so a deployment that forgets to name its own host is
 refused rather than quietly served. Keep `crossSite` at `Refuse` unless
 browsers on other sites must write to the server.
@@ -169,7 +169,7 @@ A proxy changes what the application sees, and three of harpe's checks read
 exactly those values.
 
 **Pass the original `Host` through.** nginx's default `proxy_pass` replaces it
-with the upstream address, so `Application.Host.Named` refuses every request
+with the upstream address, so `WebApp.Host.Named` refuses every request
 with a 400, and an older browser's POST, which has no `Sec-Fetch-Site` for the
 cross-site check to read, gets a 403 from the `Origin` comparison:
 

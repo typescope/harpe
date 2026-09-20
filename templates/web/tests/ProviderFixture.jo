@@ -11,7 +11,7 @@ import harpe.server.Http
 import harpe.server.Http.Header
 import harpe.server.Response
 import harpe.server.Complete
-import harpe.server.Application
+import harpe.server.WebApp
 import harpe.server.Request
 import harpe.server.request
 import harpe.ffi.json
@@ -128,10 +128,10 @@ section ProviderFixture
   //]
   def withResponses(responses: List[Scripted], test: Server => Unit): Unit =
     val requests = py.list()
-    val application = new Application:
-      host = Application.Host.Loopback
+    val application = new WebApp:
+      host = WebApp.Host.Loopback
       routes = []
-      fallback = Application.Fallback(() => serve(responses, requests), maxBodyBytes = 67108864)
+      fallback = WebApp.Fallback(() => serve(responses, requests), maxBodyBytes = 67108864)
 
     // waitress rather than wsgiref: it is what the agent itself runs on, it is
     // quiet by default, and it threads, so a stalled response does not block
