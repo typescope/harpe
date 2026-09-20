@@ -16,6 +16,7 @@ import harpe.ffi.threading
 import harpe.util.Clock
 import harpe.ffi.json
 import harpe.ffi.os
+import harpe.ffi.builtins
 
 import harpe.Agent
 import harpe.Approvals
@@ -23,8 +24,7 @@ import harpe.Context
 import harpe.Toolset
 import harpe.Model
 import harpe.Model.Message
-import harpe.TurnData
-import harpe.Transcript
+import harpe.turns.TurnData
 import harpe.transcript.Journal
 import harpe.logging.Logger
 import harpe.logging.logger
@@ -56,10 +56,42 @@ class Session(id: String, brain: Model, tools: Toolset, context: Context)
   private val approvalLock = threading.Lock()
   private var pendingApproval: Option[PendingApproval] = None
 
-  //[ Run one user turn, streaming its events to `sink`.
+  //[ Every event this session has produced, for a page to poll through
+    !
+    ! A turn runs on its own thread and writes here; the browser asks for what
+    ! it has not seen yet. That is what keeps a turn off the request thread —
+    ! WSGI pins one worker for a response's whole life, so a turn that answered
+    ! down its own connection would hold a worker for minutes.
+    !
+    ! The list only grows, which is bounded in practice because the server drops
+    ! a session after thirty minutes idle.
+  //]
+  private val eventsLock = threading.Lock()
+  private val events = py.list()
+
+  //[ Record one event for the pollers. This is the sink a turn is given. //]
+  private def record(obj: py.Dict): Unit =
+    eventsLock.acquire()
+    events.append(obj)
+    eventsLock.release()
+
+  //[ The events after `seen`, the cursor to ask with next, and whether a turn is still running. //]
+  def since(seen: Int): py.Dict =
+    eventsLock.acquire()
+    val total = builtins.len(events)
+    val out = py.list()
+    var i = if seen < 0 then 0 else seen
+    while i < total do
+      out.append(events.get(i))
+      i = i + 1
+    eventsLock.release()
+
+    py.dict("events" ~ out, "next" ~ total, "active" ~ !idle.is_set().asBool)
+
+  //[ Run one user turn, recording its events for the pollers.
     !
     ! Opens the transcript bracket, acquires the session lock, runs the engine,
-    ! then closes the bracket and releases the lock. The sink receives:
+    ! then closes the bracket and releases the lock. The events recorded are:
     !
     !   • `status` — thinking indicator, tool names while they run
     !   • `assistant-message` — intermediate text (before tool calls) and the
@@ -68,7 +100,7 @@ class Session(id: String, brain: Model, tools: Toolset, context: Context)
     !   • `approval` / `approval-ended` — booking confirmation flow
     !   • `done` — turn complete (result: success | interrupted | failed)
   //]
-  def runTurn(request: Value, text: String, sink: Sink): Unit =
+  def runTurn(request: Value, text: String): Unit =
     transcript.request(request)
     lastActive = Clock.now()
 
@@ -76,6 +108,7 @@ class Session(id: String, brain: Model, tools: Toolset, context: Context)
     idle.clear()
     stop.clear()
 
+    val sink: Sink = (obj: py.Dict) => record(obj)
     val channel = new WebInteract(sink, stop, (id, title, detail) => requestApproval(id, title, detail, sink))
 
     val turn = with logger = log in
@@ -85,7 +118,6 @@ class Session(id: String, brain: Model, tools: Toolset, context: Context)
         tools = tools
         interact = channel
         context = context
-        transcript = transcript
 
     // `AssistantMessage` events only fire for text paired with tool calls.
     // The turn's closing reply (after the last tool call, or when there were

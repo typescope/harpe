@@ -15,7 +15,7 @@ import harpe.ffi.sys
 
 import jo.IO.stdout
 import harpe.Model
-import harpe.Http
+import harpe.server.Application
 import harpe.Toolset
 import harpe.Tool
 
@@ -43,7 +43,24 @@ private def webServe(): Unit receives stdout, appHome =
   val host = os.getenv("HOST", "127.0.0.1")
   val port = Int.parse(os.getenv("PORT", "8765")) rescue None => 8765
 
-  val httpd = Http.server: host, port, () => server.route()
+  // Harpe installs no HTTP server, so the application is a plain WSGI callable
+  // and this picks one. `Application` is also the door: it refuses a verb it
+  // does not implement, a `Host` it does not answer to, and a cross-site write,
+  // before any route runs.
+  val answersTo: Application.Host.Policy =
+    if host == "127.0.0.1" || host == "localhost" then Application.Host.Loopback
+    else Application.Host.Named(host)
+
+  val application = new Application:
+    host = answersTo
+    routes = []
+    fallback = () => server.route()
+
+  val httpd = py.module("waitress").create_server:
+    application.wsgi()
+    host = host
+    port = port
+    threads = 16
 
   println """
 
@@ -61,4 +78,4 @@ private def webServe(): Unit receives stdout, appHome =
 
   Process.shutdownOnSigint("\n  ✈ Sky stopped.")
 
-  httpd.serve_forever()
+  httpd.run()

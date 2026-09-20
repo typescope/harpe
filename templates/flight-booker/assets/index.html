@@ -247,6 +247,9 @@
 
     let assistantBubble = null;
 
+    // Start the turn, then poll it. The server answers this at once — it never
+    // holds the connection open for the turn, because a WSGI worker thread is
+    // pinned for a response's whole life and a turn takes as long as it takes.
     try {
       const body = { text };
       if (sessionId) body.session = sessionId;
@@ -256,20 +259,40 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
+      // `Response.badRequest` answers {error, detail}, which is what the
+      // server sends for an empty message or a session id it will not accept.
+      if (!res.ok) {
+        const refused = await res.json().catch(() => ({}));
+        appendBubble('assistant', 'Error: ' + (refused.detail || 'request refused'));
+        setStatus('');
+        setBusy(false);
+        return;
+      }
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
+      const started = await res.json();
+      if (sessionId !== started.session) {
+        sessionId = started.session;
+        localStorage.setItem('skySessionId', sessionId);
+      }
 
+      // Ask for what we have not seen. A poll costs the server a list slice, so
+      // four a second is cheap, and the cursor makes a dropped poll harmless.
+      let seen = started.from;
       while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop();
-        for (const line of lines) {
-          if (line.trim()) handleEvent(JSON.parse(line));
-        }
+        await new Promise(r => setTimeout(r, 250));
+
+        const page = await fetch(
+          '/api/events?session=' + encodeURIComponent(sessionId) + '&seen=' + seen
+        );
+        if (!page.ok) throw new Error('poll failed');
+
+        const batch = await page.json();
+        seen = batch.next;
+        for (const ev of batch.events) handleEvent(ev);
+
+        // `active` goes false when the turn ends; the batch above already
+        // carried its last events, so there is nothing left to wait for.
+        if (!batch.active) break;
       }
     } catch (err) {
       setStatus('');
@@ -281,15 +304,6 @@
 
     function handleEvent(ev) {
       switch (ev.type) {
-        case 'session':
-          // Always update: first message mints the id; subsequent messages
-          // confirm it (or learn a replacement id after a server restart).
-          if (sessionId !== ev.id) {
-            sessionId = ev.id;
-            localStorage.setItem('skySessionId', sessionId);
-          }
-          break;
-
         case 'status':
           setStatus(ev.label);
           break;
