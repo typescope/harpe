@@ -13,22 +13,15 @@ import harpe.server.request
 
 //[ What a route answers with: a value, so a route can be called and its answer
   ! inspected without a server, and a wrapper can add to what it answers.
-  ! `Application` is the only place one is written out, and it is what adds
-  ! `nosniff` and the framing policy every response carries.
+  ! `Application` adds the `nosniff` and framing headers every response carries.
   !
   ! `Complete` carries every header it sends, and the builders in `Response`
   ! fill in `Content-Type` and `Cache-Control`. `OnDisk` names a file the
   ! server reads a block at a time, so its size is not its cost in memory.
   !
-  ! EVERY RESPONSE IS WHOLE. Nothing here holds a connection open while it
-  ! produces: WSGI pins one worker thread for a response's whole life, so a
-  ! long one costs a thread nobody can reclaim, and how long it will run is
-  ! exactly what a server cannot know. A page that follows work in progress
-  ! polls a cursor instead, which `harpe.observability.Viewer` shows.
-  !
-  ! WHAT BELONGS HERE. Anything that constructs what goes back: the builders,
-  ! the header values they set, the cookies they write. The protocol's own
-  ! types live in `Http`, `Http.Header` among them.
+  ! Every response is whole: nothing here holds a connection open while it
+  ! produces. A page that follows work in progress polls a cursor instead,
+  ! which `harpe.observability.Viewer` shows.
 //]
 union Response =
     Complete(status: Status.Code, headers: List[Header], body: py.Dynamic)

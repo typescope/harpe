@@ -14,11 +14,9 @@ import harpe.server.Wsgi
 //[ One application: its routes, the policy enforced before any of them runs,
   ! and the WSGI callable a server is given.
   !
-  ! THE DOOR IS HERE. Before a route runs, `wsgi` refuses an unknown verb, a
-  ! path that is not UTF-8, a `Host` the application does not answer to, a
-  ! cross-site write, and a body over the route's limit. Those are protocol
-  ! answers every browser-facing application needs, and none of them is a
-  ! route's to remember.
+  ! Refused before any route runs: an unknown verb, a path that is not UTF-8, a
+  ! `Host` the application does not answer to, a cross-site write, and a body
+  ! over the route's limit.
   !
   ! `fallback` answers what no route claims — the page itself, for a
   ! single-page application whose client routes on the path. An application
@@ -26,14 +24,12 @@ import harpe.server.Wsgi
   ! the fallback.
   !
   ! `maxBodyBytes` is the limit for every route that names none. Keep it small:
-  ! an upload route says so for itself, and `ceiling` is what the server is
-  ! given. `host` defaults to loopback, so a prototype on `127.0.0.1` runs as it
-  ! is, and a deployment that forgets to name its own host is refused rather
-  ! than quietly served — which is what stops a hostile page pointing its own
-  ! name at this server and reading it as same-origin.
+  ! an upload route says so for itself, and `ceiling` is the limit to give the
+  ! server. `host` defaults to loopback, so a prototype on `127.0.0.1` runs as
+  ! it is and a deployment reached by any other name must name it.
   !
-  ! `wsgi` is the seam a deployment binds its server to, so harpe installs none.
-  ! `Serve` is wsgiref, for harpe's own viewer and tests.
+  ! A deployment runs `wsgi()` on the WSGI server it chooses. `Serve` is
+  ! wsgiref, for harpe's own viewer and tests.
 //]
 class Application(
       routes: List[Router.Route],
@@ -41,10 +37,10 @@ class Application(
       host: Application.Host.Policy = Application.Host.Loopback,
       maxBodyBytes: Int = 1048576,
       crossSite: Application.CrossSite.Policy = Application.CrossSite.Refuse)
-  //[ The exact routes, indexed once here, where two claiming one verb and path abort. //]
+  //[ The exact routes, indexed once when the application is built. //]
   private val exact: py.Dict = Router.indexed(routes)
 
-  //[ This application as a WSGI application, which is what a server is given. //]
+  //[ This application as the WSGI callable a server is given. //]
   def wsgi(): (py.Dynamic, py.Dynamic) => py.Dynamic =
     (environ: py.Dynamic, startResponse: py.Dynamic) =>
       Wsgi.write(environ, startResponse, answer(environ))
@@ -58,10 +54,8 @@ class Application(
 
   //[ What this exchange is answered with, refusals included
     !
-    ! Refuses, in order and before the route runs: a verb not implemented (501,
-    ! not 405, because no path has been looked at), a path that is not UTF-8
-    ! (400), a `Host` this application does not answer to (400), a cross-site
-    ! write (403), and a body over the route's limit (413).
+    ! An unknown verb is refused 501 rather than 405, because no path has been
+    ! looked at yet.
     !
     ! The 413 is written without draining what the client is still sending, so a
     ! client mid-upload may see the connection close first. Give the server its
@@ -97,7 +91,7 @@ class Application(
         val headers = [Header("Allow", others.join(", "))]
         Response.complete(Status.MethodNotAllowed, Mime.Text, "method not allowed", headers = headers)
 
-  //[ What this exchange may send: the route's own limit, or the application's. //]
+  //[ The body limit for this exchange: the route's own, or the application's. //]
   private def limitFor(found: Option[Router.Route]): Int =
     match found
     case Some(route) => if route.maxBodyBytes == 0 then maxBodyBytes else route.maxBodyBytes
@@ -117,7 +111,7 @@ class Application(
         longest = route.path.size
     best
 
-  //[ The verbs another route claims this exact path under, which is what makes a 405 rather than the fallback. //]
+  //[ The verbs other routes claim this exact path under — any at all make a 405, not the fallback. //]
   private def otherVerbs(method: Verb.Method, path: String): List[String] =
     var claimed: List[String] = []
     for route in routes do
@@ -126,19 +120,13 @@ class Application(
     claimed
 end
 
-//[ What this application chooses to accept, which is policy rather than protocol.
-  !
-  ! These name what an `Application` answers to, not anything an exchange
-  ! carried, so they sit with the class that takes them rather than in `Http`.
-//]
+//[ The policies an `Application` constructor takes, and the checks behind them. //]
 section Application
   //[ Which `Host` names a request may carry
     !
-    ! Checking it is what defeats DNS rebinding, where a hostile page points its
-    ! own name at a server on loopback and reads it as same-origin. `Named`
-    ! compares one name without its port, case-insensitively. `Unchecked` is for
-    ! a server whose proxy already checks. A server reached by several names, or
-    ! by a pattern, is a case to add here.
+    ! `Loopback` accepts `localhost`, `127.0.0.1` and `::1`. `Named` compares
+    ! one name without its port, case-insensitively. `Unchecked` is for a server
+    ! whose proxy already checks.
   //]
   section Host
     union Policy = Loopback | Named(name: String) | Unchecked
@@ -147,9 +135,8 @@ section Application
   //[ Whether a browser on another site may send a write
     !
     ! `Refuse` answers 403 to a POST, PUT or DELETE a browser marks as
-    ! cross-site, which is CSRF protection with no token to thread through
-    ! forms. Clients that are not browsers send neither header it reads, so an
-    ! API client or a webhook still gets through.
+    ! cross-site, which is CSRF protection. Clients that are not browsers send
+    ! neither header it reads, so an API client or a webhook still gets through.
   //]
   section CrossSite
     union Policy = Refuse | Allow
@@ -163,7 +150,7 @@ section Application
     case Host.Named(name) => Request.nameIn(environ, [py.dynamic(name).lower().asString])
 end
 
-//[ Building the answer: the refusals, and what a route's own answer becomes. //]
+//[ Building the answer: running a route, and the refusals made before one runs. //]
 private section Answer
   //[ Run `handler` with the request bound. //]
   def ran(handler: (() => Response receives request), method: Verb.Method, path: String, environ: py.Dynamic): Response =
