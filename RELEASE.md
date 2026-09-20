@@ -249,12 +249,27 @@ grep -rl "version = \"$PREV_MINOR\"" --include='jo.toml' templates/ \
   | xargs -r sed -i "s/version = \"$PREV_MINOR\"/version = \"$MINOR\"/g"
 ```
 
-If the release changed an API, the templates need their sources adapted too, in
-the same pull request. Touching `templates/` is what runs the `Templates`
-workflow, which builds all five against the packages just published and runs the
-suites that ship with them — so it is a real gate: `jo new` serves this
-repository's default branch, and a red build there means users are being handed
-templates that do not build.
+Bumping the pin is the easy half. If the release changed an API — and a minor
+release usually did — the templates need their sources adapted in the same pull
+request, because a pin alone leaves them pointing at a package they no longer
+compile against.
+
+Work through them one at a time and commit each on its own. A template is a
+whole application, so a commit per template keeps each migration reviewable and
+lets a broken one be reverted without taking the others with it. Build each
+against the published package before moving on:
+
+```sh
+cd templates/<name>
+JO_REGISTRY_URL=https://pkg.typescope.ai jo check agent
+```
+
+Touching `templates/` is what runs the `Templates` workflow, which builds all
+five against the packages just published and runs the suites that ship with
+them. **That workflow is the gate for this pull request, and it must be green
+before merge**: `jo new` serves this repository's default branch, so a red build
+there hands every new user a template that does not build. Nothing else in CI
+covers them, because nothing else resolves the registry.
 
 This is a separate pull request from step 1 on purpose. The pins cannot move
 before the packages exist, and keeping it apart is what leaves the release pull
