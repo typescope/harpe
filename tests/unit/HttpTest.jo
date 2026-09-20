@@ -258,13 +258,13 @@ private def callWith(
 private def fileRoute(root: String): Response receives request =
   val name = Request.query("name").getOrElse("")
   match request
-  case Request.Get("/download") => Response.file(root, name, Response.Attachment)
-  case Request.Get("/show")     => Response.file(root, name, Response.Inline)
+  case Request.Get("/download") => Response.download(root, name)
+  case Request.Get("/show")     => Response.file(root, name)
 
   //[ A file a route says the browser may keep, which the proxy would normally serve. //]
   case Request.Get("/keepable") =>
     val rule = Header("Cache-Control", "public, max-age=31536000, immutable")
-    Response.file(root, name, Response.Inline, headers = [rule])
+    Response.file(root, name, headers = [rule])
   case _                     => Response.notFound()
 
 //[ A directory of files to serve, beside one that must stay out of reach, for the length of `body`. //]

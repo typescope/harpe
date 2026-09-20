@@ -116,15 +116,16 @@ section Response
   def badRequest(detail: String): Response =
     complete(Status.BadRequest, Mime.Json, JSON.dumps(py.dict("error" ~ "bad_request", "detail" ~ detail)))
 
-  //[ Whether a browser shows a file or saves it. //]
-  union Disposition = Inline | Attachment
-
-  //[ The file under `root` that `name` names
+  //[ The file under `root` that `name` names, shown in the browser
     !
     ! `name` is a relative path, as a client sent it. A name that is empty,
     ! absolute, has a `..` segment, or resolves outside `root` through a
     ! symlink is a 404, and so is a directory or a missing file, so a client
     ! cannot tell which. The type is guessed from the name.
+    !
+    ! The browser renders what it can — a page, an image, a PDF — in this
+    ! application's origin, so a file a user uploaded is `download`'s to answer,
+    ! not this one's.
     !
     ! The server reads the file a block at a time, so a large one costs a block
     ! rather than its size. It is opened when the response is written, not here,
@@ -136,7 +137,18 @@ section Response
     ! A route serving one the browser may keep names its rule in `headers`,
     ! which ride after `Content-Disposition`.
   //]
-  def file(root: String, name: String, disposition: Disposition, headers: List[Header] = NoHeaders): Response =
+  def file(root: String, name: String, headers: List[Header] = NoHeaders): Response =
+    stored(root, name, Inline, headers)
+
+  //[ The same file, saved rather than shown — see `file` for how `name` is resolved. //]
+  def download(root: String, name: String, headers: List[Header] = NoHeaders): Response =
+    stored(root, name, Attachment, headers)
+
+  //[ Whether a browser shows a file or saves it. //]
+  private union Disposition = Inline | Attachment
+
+  //[ The response both file builders answer with, differing only in that header. //]
+  private def stored(root: String, name: String, disposition: Disposition, headers: List[Header]): Response =
     val target = resolve(root, name) rescue None => return notFound()
     val shown = Header("Content-Disposition", dispositionValue(disposition, os.path.basename(name)))
     OnDisk:
