@@ -8,8 +8,11 @@ import harpe.server.Http.Header
 import harpe.server.Request
 import harpe.server.request
 import harpe.server.Response
-import harpe.server.Router
+import harpe.server.Route
 import harpe.server.Wsgi
+import harpe.util.File
+import jo.resource.*
+import jo.py.resource.*
 
 //[ One application: its routes, the policy enforced before any of them runs,
   ! and the WSGI callable a server is given.
@@ -21,33 +24,34 @@ import harpe.server.Wsgi
   ! `fallback` answers what no route claims — the page itself, for a
   ! single-page application whose client routes on the path. An application
   ! that dispatches by pattern matching passes no routes and its own match as
-  ! the fallback.
+  ! the fallback. One whose routes cover everything names none and takes
+  ! `Application.notFound()`.
   !
-  ! `maxBodyBytes` is the limit for every route that names none. Keep it small:
-  ! an upload route says so for itself, and `ceiling` is the limit to give the
-  ! server. `host` defaults to loopback, so a prototype on `127.0.0.1` runs as
-  ! it is and a deployment reached by any other name must name it.
+  ! Every handler names the largest body it accepts, and `ceiling` is the
+  ! largest of them, which is the limit to give the server. `host` defaults to
+  ! loopback, so a prototype on `127.0.0.1` runs as it is and a deployment
+  ! reached by any other name must name it.
   !
   ! A deployment runs `wsgi()` on the WSGI server it chooses. `Serve` is
   ! wsgiref, for harpe's own viewer and tests.
 //]
 class Application(
-      routes: List[Router.Route],
-      fallback: (() => Response receives request),
+      routes: List[Route],
+      fallback: Application.Fallback = Application.defaultFallback,
       host: Application.Host.Policy = Application.Host.Loopback,
-      maxBodyBytes: Int = 1048576,
       crossSite: Application.CrossSite.Policy = Application.CrossSite.Refuse)
+
   //[ The exact routes, indexed once when the application is built. //]
-  private val exact: py.Dict = Router.indexed(routes)
+  private val exact: py.Dict = Route.indexed(routes)
 
   //[ This application as the WSGI callable a server is given. //]
   def wsgi(): (py.Dynamic, py.Dynamic) => py.Dynamic =
     (environ: py.Dynamic, startResponse: py.Dynamic) =>
-      Wsgi.write(environ, startResponse, answer(environ))
+       Wsgi.write: environ, startResponse, answer(environ)
 
-  //[ The largest body any route allows, which is the limit to give the server. //]
+  //[ The largest body any handler allows, which is the limit to give the server. //]
   def ceiling: Int =
-    var most = maxBodyBytes
+    var most = fallback.maxBodyBytes
     for route in routes do
       if route.maxBodyBytes > most then most = route.maxBodyBytes
     most
@@ -86,23 +90,23 @@ class Application(
     case Some(route) => Answer.ran(route.handler, method, path, environ)
     case None =>
       val others = otherVerbs(method, path)
-      if others.size == 0 then Answer.ran(fallback, method, path, environ)
+      if others.size == 0 then Answer.ran(fallback.handler, method, path, environ)
       else
         val headers = [Header("Allow", others.join(", "))]
         Response.complete(Status.MethodNotAllowed, Mime.Text, "method not allowed", headers = headers)
 
-  //[ The body limit for this exchange: the route's own, or the application's. //]
-  private def limitFor(found: Option[Router.Route]): Int =
+  //[ The body limit for this exchange: the route's own, or the fallback's. //]
+  private def limitFor(found: Option[Route]): Int =
     match found
-    case Some(route) => if route.maxBodyBytes == 0 then maxBodyBytes else route.maxBodyBytes
-    case None        => maxBodyBytes
+    case Some(route) => route.maxBodyBytes
+    case None        => fallback.maxBodyBytes
 
   //[ The route for this exchange: an exact path first, then the longest prefix that covers it. //]
-  private def routeFor(method: Verb.Method, path: String): Option[Router.Route] =
+  private def routeFor(method: Verb.Method, path: String): Option[Route] =
     val key = Http.verbName(method) + " " + path
-    if exact.contains(key) then return Some(exact.get(key).cast[Router.Route])
+    if exact.contains(key) then return Some(exact.get(key).cast[Route])
 
-    var best: Option[Router.Route] = None
+    var best: Option[Route] = None
     var longest = -1
     for route in routes do
       val covers = route.prefix && Http.verbName(route.method) == Http.verbName(method) && path.startsWith(route.path)
@@ -120,8 +124,57 @@ class Application(
     claimed
 end
 
-//[ The policies an `Application` constructor takes, and the checks behind them. //]
+//[ What an `Application` constructor takes beyond its routes, and the checks behind them. //]
 section Application
+  //[ What answers a request no route claims, and the largest body it accepts
+    !
+    ! The limit is named outright because the fallback is often the only
+    ! handler there is: an application that dispatches in a `match` passes no
+    ! routes, so this is the only limit it gets.
+  //]
+  class Fallback(
+        handler: (() => Response receives request),
+        maxBodyBytes: Int)
+
+  //[ Answers a 404 page and reads no body, for an application whose routes cover it
+    !
+    ! `path` is the application's own HTML page. Naming none answers harpe's
+    ! bundled one. HTML rather than the JSON `Response.notFound` answers,
+    ! because what reaches a path no route claims is usually a browser. A body
+    ! sent to one is refused 413 rather than 404, since the limit is checked
+    ! first.
+  //]
+  def notFound(path: String = ""): Fallback =
+    Fallback(() => pageAt(path), maxBodyBytes = 0)
+
+  //[ What `fallback` defaults to, which is `notFound()` under a name a default argument can hold. //]
+  def defaultFallback: Fallback = notFound()
+
+  //[ The page at `path`, or harpe's own where there is none to read
+    !
+    ! `path` is the application's own rather than a client's, so it is read as
+    ! given — nothing here resolves it against a root. It is read per request,
+    ! like the assets an application serves, and one that cannot be read
+    ! answers harpe's page rather than a 500.
+  //]
+  private def pageAt(path: String): Response =
+    if path == "" then return notFoundPage()
+    match py.try(File.read(path))
+    case Ok(body) => Response.complete(Status.NotFound, Mime.Html, body)
+    case Err(_)   => notFoundPage()
+
+  //[ The bundled 404 page, or a bare one if the bundle cannot be read
+    !
+    ! Nothing from the request reaches it, so the page is a constant: a
+    ! fallback that echoed the path would put it in every application's HTML.
+  //]
+  private def notFoundPage(): Response =
+    val bundle = new py.resource.ResourceBundle("harpe")
+    val body = match bundle.readText("assets/not-found.html")
+      case Ok(text) => text
+      case Err(_)   => "<!doctype html><title>404 Not Found</title><h1>404</h1>"
+    Response.complete(Status.NotFound, Mime.Html, body)
+
   //[ Which `Host` names a request may carry
     !
     ! `Loopback` accepts `localhost`, `127.0.0.1` and `::1`. `Named` compares

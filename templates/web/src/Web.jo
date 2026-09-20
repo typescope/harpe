@@ -66,8 +66,7 @@ private def serve(): Unit receives stdout, appHome =
   val application = new Application:
     host = answersTo
     routes = []
-    fallback = () => server.route()
-    maxBodyBytes = 26214400
+    fallback = Application.Fallback(() => server.route(), maxBodyBytes = 26214400)
 
   val httpd = py.module("waitress").create_server:
     application.wsgi()

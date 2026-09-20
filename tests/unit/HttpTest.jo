@@ -9,7 +9,7 @@ namespace harpe.test.unit.HttpTest
 import harpe.server.Http
 import harpe.server.Http.Header
 import harpe.server.Application
-import harpe.server.Router
+import harpe.server.Route
 import harpe.server.Request
 import harpe.server.request
 import harpe.server.Response
@@ -31,8 +31,7 @@ private def applicationFor(answersTo: Application.Host.Policy, reached: py.List)
   new Application:
     host = answersTo
     routes = []
-    fallback = () => route(reached)
-    maxBodyBytes = limit
+    fallback = Application.Fallback(() => route(reached), maxBodyBytes = limit)
 
 //[ Every path these tests ask for. `reached` records what a route saw. //]
 private def route(reached: py.List): Response receives request =
@@ -289,8 +288,7 @@ private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.Dynamic) => 
   val files = new Application:
     host = Application.Host.Loopback
     routes = []
-    fallback = () => fileRoute(root)
-    maxBodyBytes = limit
+    fallback = Application.Fallback(() => fileRoute(root), maxBodyBytes = limit)
 
   val result = py.try(body(root, files.wsgi()))
   py.module("shutil").rmtree(scratch)
@@ -299,18 +297,17 @@ private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.Dynamic) => 
   case Ok(_)    => pass
   case Err(err) => abort err.message
 
-//[ An application wired as a table, which is how `Router` is meant to be used. //]
+//[ An application wired as a table, which is how `Route` is meant to be used. //]
 private def tabled(reached: py.List): Application =
   new Application:
     host = Application.Host.Loopback
-    maxBodyBytes = limit
     routes = List:
-      Router.Get("/api/info", info)
-      Router.Post("/api/message", () => echoed(reached))
-      Router.Post("/api/upload", () => echoed(reached), maxBodyBytes = 4096)
-      Router.Delete("/api/session", () => Response.json(py.dict("ok" ~ true)))
-      Router.Prefix("/assets/", () => Response.complete(Http.Status.Success, Http.Mime.Text, "asset"))
-    fallback = () => Response.html("<p>the page</p>")
+      Route.Get("/api/info", info, maxBodyBytes = limit)
+      Route.Post("/api/message", () => echoed(reached), maxBodyBytes = limit)
+      Route.Post("/api/upload", () => echoed(reached), maxBodyBytes = 4096)
+      Route.Delete("/api/session", () => Response.json(py.dict("ok" ~ true)), maxBodyBytes = limit)
+      Route.Prefix("/assets/", () => Response.complete(Http.Status.Success, Http.Mime.Text, "asset"), maxBodyBytes = limit)
+    fallback = Application.Fallback(() => Response.html("<p>the page</p>"), maxBodyBytes = limit)
 
 private def info(): Response receives request = Response.json(py.dict("name" ~ "clair"))
 
@@ -324,9 +321,8 @@ private def clashing(): Application =
   new Application:
     host = Application.Host.Loopback
     routes = List:
-      Router.Get("/api/info", () => Response.notFound())
-      Router.Get("/api/info", () => Response.notFound())
-    fallback = () => Response.notFound()
+      Route.Get("/api/info", () => Response.notFound())
+      Route.Get("/api/info", () => Response.notFound())
 
 //[ A `multipart/form-data` body, built the way a browser builds one. //]
 private def multipartBody(boundary: String, parts: List[String], file: py.Dynamic): py.Dynamic =
@@ -343,8 +339,7 @@ private def roomyApp(): (py.Dynamic, py.Dynamic) => py.Dynamic =
   val app = new Application:
     host = Application.Host.Loopback
     routes = []
-    fallback = () => route(py.list())
-    maxBodyBytes = 1048576
+    fallback = Application.Fallback(() => route(py.list()), maxBodyBytes = 1048576)
   app.wsgi()
 
 //[ The application under test. `reached` records what its routes saw. //]
@@ -685,8 +680,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     val big = new Application:
       host = Application.Host.Loopback
       routes = []
-      fallback = () => route(py.list())
-      maxBodyBytes = 1048576
+      fallback = Application.Fallback(() => route(py.list()), maxBodyBytes = 1048576)
     val spooled = call(big.wsgi(), "POST", "/save?into=" + into, [], long)
     check("across blocks", spooled.status == 200 && spooled.text == "{\"written\": 150000}")
     check("every one of them", py.module("os").path.getsize(into).asInt == 150000)
@@ -706,8 +700,39 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("413", call(wsgi, "POST", "/echo", [], oversized).status == 413)
     check("the route never ran", reached.size == 1)
 
+  test: "answers 404 by default, for an application whose routes cover it", () =>
+    val covered = new Application(routes = List(Route.Get("/api/info", info)))
+    val wsgi = covered.wsgi()
+    check("a route it claims", get(wsgi, "/api/info").status == 200)
+    val missing = get(wsgi, "/nothing")
+    check("a path no route claims", missing.status == 404)
+    check("as a page, since a browser is what reaches it", missing.header("Content-Type") is Some(kind) && kind.startsWith("text/html"))
+    check("the bundled one, not the bare fallback", missing.text.contains("That page does not exist"))
+    check("reads no body, so the ceiling is the route's", covered.ceiling == Route.defaultMaxBodyBytes)
+    check("a body sent there is refused first", call(wsgi, "POST", "/nothing", [], "hello").status == 413)
+
+  test: "answers an application's own 404 page, and harpe's when it cannot be read", () =>
+    val scratch = py.module("tempfile").mkdtemp().asString
+    py.open(scratch + "/404.html", "wb").write(py.dynamic("<p>nothing here</p>").encode())
+
+    val own = new Application(
+      routes = List(Route.Get("/api/info", info)),
+      fallback = Application.notFound(scratch + "/404.html"))
+    val answer = get(own.wsgi(), "/nothing")
+    check("the application's page", answer.status == 404 && answer.text == "<p>nothing here</p>")
+
+    val absent = new Application(
+      routes = List(Route.Get("/api/info", info)),
+      fallback = Application.notFound(scratch + "/gone.html"))
+    val fellBack = get(absent.wsgi(), "/nothing")
+    check("harpe's, rather than a 500", fellBack.status == 404 && fellBack.text.contains("That page does not exist"))
+
+    py.module("shutil").rmtree(scratch)
+
   test: "checks the host by default, without an application saying so", () =>
-    val plain = new Application(routes = [], fallback = () => route(py.list()))
+    val plain = new Application(
+      routes = [],
+      fallback = Application.Fallback(() => route(py.list()), maxBodyBytes = Route.defaultMaxBodyBytes))
 
     val wsgi = plain.wsgi()
     check("loopback is what a prototype gets", get(wsgi, "/dynamic").status == 200)
@@ -780,7 +805,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     val wsgi = tabled(reached).wsgi()
     val big = py.dynamic("x").callDynamic("__mul__", 2048).asString
 
-    check("over the application's limit", call(wsgi, "POST", "/api/message", [], big).status == 413)
+    check("over that route's own limit", call(wsgi, "POST", "/api/message", [], big).status == 413)
     check("the route never ran", reached.size == 0)
     check("under the upload's own limit", call(wsgi, "POST", "/api/upload", [], big).status == 200)
     check("the upload ran", reached.size == 1)
@@ -789,9 +814,9 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("over the upload's limit too", call(wsgi, "POST", "/api/upload", [], huge).status == 413)
     check("and that one did not run", reached.size == 1)
 
-  test: "reports the largest limit any route allows, for the server to match", () =>
+  test: "reports the largest limit any handler allows, for the server to match", () =>
     check("the upload's", tabled(py.list()).ceiling == 4096)
-    check("the application's, with no routes", applicationFor(Application.Host.Loopback, py.list()).ceiling == limit)
+    check("the fallback's, with no routes", applicationFor(Application.Host.Loopback, py.list()).ceiling == limit)
 
   //[ The index is built when the `Application` is, so a clash is a startup failure. //]
   //[ Refused where the bad value came from, not at the write, so a route's answer can be trusted. //]

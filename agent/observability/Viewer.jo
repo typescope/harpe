@@ -111,8 +111,7 @@ section Viewer
     val application = new Application:
       host = answersTo
       routes = []
-      fallback = () => route(viewLog, title)
-      maxBodyBytes = 0
+      fallback = Application.Fallback(() => route(viewLog, title), maxBodyBytes = 0)
 
     val _ = Serve.inBackground(host, port, application)
 

@@ -68,10 +68,10 @@ waitress, for example:
 val application = new Application:
   host = Application.Host.Named("agent.example.com")
   routes = List:
-    Router.Get("/api/info", () => agent.info())
-    Router.Post("/api/message", () => agent.message())
-    Router.Post("/api/upload", () => agent.upload(), maxBodyBytes = 26214400)
-  fallback = () => agent.page()
+    Route.Get("/api/info", () => agent.info())
+    Route.Post("/api/message", () => agent.message())
+    Route.Post("/api/upload", () => agent.upload(), maxBodyBytes = 26214400)
+  fallback = Application.Fallback(() => agent.page(), maxBodyBytes = 1048576)
 
 val server = py.module("waitress").create_server:
   application.wsgi()
@@ -85,11 +85,30 @@ server.run()
 
 Serve static assets from the proxy rather than the application. An application
 running without one, in development or in a single container, serves its own
-with `Router.Prefix("/assets/", () => agent.asset())` and `Response.file`.
+with `Route.Prefix("/assets/", () => agent.asset())` and `Response.file`.
 
-Keep `maxBodyBytes` small — it defaults to 1 MiB and covers every route that
-names none — and let an upload route raise its own. `application.ceiling` is the
-largest of them, which is what the server should allow.
+Every handler names the largest body it accepts, and `application.ceiling` is
+the largest of them, which is what the server should allow. A route that names
+no limit takes `Route.defaultMaxBodyBytes`, 1 MiB.
+
+A fallback names its own, because an application that dispatches in a `match`
+has no other limit. One whose routes cover everything names no fallback at all
+and takes `Application.notFound`, which answers a small bundled 404 page and
+reads no body. It is HTML, not the JSON `Response.notFound` answers, because a
+path no route claims is usually a browser's. A body sent to one is refused 413
+before the 404.
+
+`Application.notFound(path)` answers the application's own page instead,
+read from `path` per request:
+
+```jo
+fallback = Application.notFound(os.path.join(appHome, "assets/404.html"))
+```
+
+Reach for it rather than building the `Fallback` by hand, since `Response.html`
+answers 200 — a page that says 404 under a status that says otherwise is one a
+crawler indexes and monitoring never counts. A path that cannot be read answers
+harpe's own page rather than failing the request.
 
 Budget memory for the bodies a route holds, not just for the limit it names.
 `Request.bytes`, `body` and `json` hold the whole body, so the peak for those

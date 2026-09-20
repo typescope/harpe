@@ -5,47 +5,50 @@ import harpe.server.Http.Verb
 import harpe.server.request
 import harpe.server.Response
 
+//[ One route. `maxBodyBytes` is the largest body it accepts, 0 for none at all. //]
+class Route(
+      method: Verb.Method,
+      path: String,
+      prefix: Bool,
+      maxBodyBytes: Int,
+      handler: () => Response receives request)
+
 //[ The routes an application answers, declared as a table.
   !
   ! Paths are compared exactly. `Prefix` is for a path that carries a parameter
   ! in a single-page application, and for the assets under a directory, where
   ! the handler reads `request.path` for the rest.
 //]
-section Router
-  //[ One route. `maxBodyBytes` of 0 takes the application's own limit. //]
-  class Route(
-        method: Verb.Method,
-        path: String,
-        prefix: Bool,
-        maxBodyBytes: Int,
-        handler: () => Response receives request)
+section Route
+  //[ The body limit a route takes when it names none. //]
+  def defaultMaxBodyBytes: Int = 1048576
 
   //[ A route answering GET at exactly `path`. //]
   def Get(
       path: String,
       handler: (() => Response receives request),
-      maxBodyBytes: Int = 0): Route =
+      maxBodyBytes: Int = defaultMaxBodyBytes): Route =
     new Route(Verb.Get, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
 
   //[ A route answering POST at exactly `path`. //]
   def Post(
       path: String,
       handler: (() => Response receives request),
-      maxBodyBytes: Int = 0): Route =
+      maxBodyBytes: Int = defaultMaxBodyBytes): Route =
     new Route(Verb.Post, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
 
   //[ A route answering PUT at exactly `path`. //]
   def Put(
       path: String,
       handler: (() => Response receives request),
-      maxBodyBytes: Int = 0): Route =
+      maxBodyBytes: Int = defaultMaxBodyBytes): Route =
     new Route(Verb.Put, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
 
   //[ A route answering DELETE at exactly `path`. //]
   def Delete(
       path: String,
       handler: (() => Response receives request),
-      maxBodyBytes: Int = 0): Route =
+      maxBodyBytes: Int = defaultMaxBodyBytes): Route =
     new Route(Verb.Delete, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
 
   //[ Everything under `path`, which must end in `/` — the assets of a page
@@ -57,7 +60,7 @@ section Router
       path: String,
       handler: (() => Response receives request),
       method: Verb.Method = Verb.Get,
-      maxBodyBytes: Int = 0): Route =
+      maxBodyBytes: Int = defaultMaxBodyBytes): Route =
     if !path.endsWith("/") then abort "a prefix route's path must end in '/': '\{path}'"
     new Route(method, path, prefix = true, maxBodyBytes = maxBodyBytes, handler = handler)
 

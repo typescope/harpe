@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+**`Router` is now `Route`.** It never routed anything — dispatch lives in
+`Application` — it just builds the routes an application holds. `Route.Get`,
+`Post`, `Put`, `Delete` and `Prefix` are where `Router.*` was, and the type
+`Router.Route` is now plain `Route`, a class beside its section the way
+`Application` is.
+
+**Every handler names the body it accepts, so `Application` no longer has a
+limit of its own.** `Application.maxBodyBytes` is gone. It read as a cap but
+behaved as a default, and in practice it was only ever the fallback's limit:
+every application in this repo passed no routes at all. The fallback now
+carries it, like a route does.
+
+```jo
+fallback = Application.Fallback(() => agent.page(), maxBodyBytes = 26214400)
+```
+
+`fallback` now has a default, so an application whose routes cover everything
+names none and takes `Application.notFound`: a small bundled 404 page that
+reads no body. HTML rather than the JSON `Response.notFound` answers, because
+what reaches a path no route claims is usually a browser.
+`Application.notFound(path)` answers the application's own page at that path
+instead, which saves remembering that `Response.html` is a 200.
+
+A route that names no limit takes `Route.defaultMaxBodyBytes`, 1 MiB, rather
+than inheriting the application's. `Route.maxBodyBytes` is now always the real
+limit, so `0` means "no body at all" at both levels instead of meaning "inherit"
+at one and "refuse everything" at the other. `application.ceiling` is unchanged
+in purpose: the largest limit any handler allows, which is what the server gets.
+
 ## 0.10.1 — 2026-09-20
 
 Everything below is this release. **Do not use 0.10.0**: it reached the

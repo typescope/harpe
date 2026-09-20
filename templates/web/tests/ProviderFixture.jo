@@ -131,8 +131,7 @@ section ProviderFixture
     val application = new Application:
       host = Application.Host.Loopback
       routes = []
-      fallback = () => serve(responses, requests)
-      maxBodyBytes = 67108864
+      fallback = Application.Fallback(() => serve(responses, requests), maxBodyBytes = 67108864)
 
     // waitress rather than wsgiref: it is what the agent itself runs on, it is
     // quiet by default, and it threads, so a stalled response does not block
