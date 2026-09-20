@@ -96,7 +96,11 @@ class Server(brain: Model, home: String, sandboxEnv: Map[String, String])
 
     // The cursor before this turn adds anything, so the page polls from here
     // and sees the whole turn however late its first poll lands.
-    val from = session.since(0).get("next").asInt
+    val from = session.cursor
+
+    // Counted before the thread starts, so a page that polls at once is told a
+    // turn is running rather than racing the thread about to start one.
+    session.beginTurn()
 
     val turnRequest = Journal.payload("text" ~ text)
     val runner = threading.Thread:

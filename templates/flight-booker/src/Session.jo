@@ -66,14 +66,51 @@ class Session(id: String, brain: Model, tools: Toolset, context: Context)
     ! The list only grows, which is bounded in practice because the server drops
     ! a session after thirty minutes idle.
   //]
+  private val flightLock = threading.Lock()
+  private var inFlight: Int = 0
   private val eventsLock = threading.Lock()
   private val events = py.list()
+
+  //[ Count a turn as in flight, before its thread has taken the session lock
+    !
+    ! The route calls this *before* starting the thread, so a page that polls
+    ! immediately is told a turn is running rather than racing the thread that
+    ! is about to start one. A counter rather than a flag, so a second turn
+    ! queued behind the first does not read as finished when the first ends.
+  //]
+  def beginTurn(): Unit =
+    flightLock.acquire()
+    inFlight = inFlight + 1
+    idle.clear()
+    flightLock.release()
+
+  //[ Whether any turn is in flight, which is what tells a poller to keep asking. //]
+  def active: Bool =
+    flightLock.acquire()
+    val running = inFlight > 0
+    flightLock.release()
+    running
+
+  private def endTurn(): Unit =
+    flightLock.acquire()
+    inFlight = inFlight - 1
+    if inFlight <= 0 then
+      inFlight = 0
+      idle.set()
+    flightLock.release()
 
   //[ Record one event for the pollers. This is the sink a turn is given. //]
   private def record(obj: py.Dict): Unit =
     eventsLock.acquire()
     events.append(obj)
     eventsLock.release()
+
+  //[ The cursor as it stands, which is where a turn about to start will append. //]
+  def cursor: Int =
+    eventsLock.acquire()
+    val total = builtins.len(events)
+    eventsLock.release()
+    total
 
   //[ The events after `seen`, the cursor to ask with next, and whether a turn is still running. //]
   def since(seen: Int): py.Dict =
@@ -86,7 +123,7 @@ class Session(id: String, brain: Model, tools: Toolset, context: Context)
       i = i + 1
     eventsLock.release()
 
-    py.dict("events" ~ out, "next" ~ total, "active" ~ !idle.is_set().asBool)
+    py.dict("events" ~ out, "next" ~ total, "active" ~ active)
 
   //[ Run one user turn, recording its events for the pollers.
     !
@@ -136,7 +173,7 @@ class Session(id: String, brain: Model, tools: Toolset, context: Context)
     case TurnResult.Failed(detail) =>
       sink(py.dict("type" ~ "done", "result" ~ "failed", "detail" ~ detail))
 
-    idle.set()
+    endTurn()
     lock.release()
 
     val resultLabel = match turn.result
