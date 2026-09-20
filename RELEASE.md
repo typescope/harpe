@@ -42,6 +42,8 @@ Create a branch from the latest `origin/main`. In the pull request:
 - [ ] Add the release notes to `CHANGELOG.md`.
 - [ ] Update the version and link in the release badge in `README.md`.
 - [ ] Confirm nothing here still pins a released version, with the check below.
+- [ ] Confirm the `Jo` job is green **on the pull request head**, and that the
+      compiler about to build the artifacts is the one CI installs.
 
 Consumers here are the package blocks in the root `jo.toml` and nothing else —
 `cli/` builds from source, so it carries no version to retarget. The pins that do
@@ -60,6 +62,23 @@ grep -rn 'version = "' --include='jo.toml' . \
 **The gate before publishing is the `Jo` job**: `jo run test`, plus the CLI
 agent's build and its end-to-end suite. All of it builds from these sources, so
 it is green before publication and stays green after.
+
+Read that job. A local run proves only that the tree builds with whatever
+compiler happens to be active on this machine, and that is also the compiler
+that will build the artifact. The two must be the same one, because a published
+version cannot be withdrawn:
+
+```sh
+gh pr checks                                   # the Jo job must pass on this head
+curl -sSf https://jo-lang.org/install.sh | sh  # what CI and every user installs
+jo versions                                    # the active one must be that
+```
+
+0.10.0 is why this is a checklist item. It was published from a machine running
+Jo 0.13.0 while CI ran 0.13.4. The tree had not compiled on 0.13.4 for three
+days, so the `Jo` job was already red and nobody had looked; and 0.13.4 could
+not read the pickle in the artifact that went to the registry. The version was
+spent before a single consumer resolved it.
 
 ## 2. Build and verify the artifacts from the pull request head
 
