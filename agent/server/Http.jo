@@ -113,9 +113,10 @@ section Http
 
   //[ The content type, with its charset settled here rather than at each site
     !
-    ! `Other` carries a type resolved at runtime — a file's own, from
-    ! `File.mimeType`. Everything a handler names in source should be a case, so
-    ! that the charset decision is made once.
+    ! Everything a handler names in source is a case, and `Other` carries what
+    ! no case names, so that the charset decision is made once. A type resolved
+    ! at runtime — a file's own, from `File.mimeType` — arrives through `parse`,
+    ! which is where it becomes a case.
   //]
   section Mime
     union Type = Html | Json | Ndjson | Text | Css | JavaScript | Other(value: String)
@@ -129,6 +130,24 @@ section Http
       case Css         => "text/css; charset=utf-8"
       case JavaScript  => "application/javascript; charset=utf-8"
       case Other(raw)  => raw
+
+    //[ The case a raw type names, or `Other` carrying it
+      !
+      ! A served `.css` and a `Mime.Css` must send the same header, so a type
+      ! a case already spells becomes that case. What is left keeps its charset
+      ! here, since a browser left to guess the encoding of UTF-8 text renders
+      ! it wrong.
+    //]
+    def parse(raw: String): Type =
+      match raw
+      case "text/html"              => Html
+      case "application/json"       => Json
+      case "application/x-ndjson"   => Ndjson
+      case "text/plain"             => Text
+      case "text/css"               => Css
+      case "text/javascript"        => JavaScript
+      case "application/javascript" => JavaScript
+      case _                        => Other(if raw.startsWith("text/") then raw + "; charset=utf-8" else raw)
   end
 
   //[ The verb as WSGI spells it. //]

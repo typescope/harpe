@@ -60,13 +60,7 @@ section Response
     ! would tell it to drop the copy it was just told is good.
   //]
   def binary(status: Status.Code, kind: Mime.Type, body: py.Dynamic, headers: List[Header] = NoHeaders): Response =
-    Complete(status, sent(status, kind, headers), body)
-
-  //[ The headers every builder sends: the type, the caching rule, then the caller's own. //]
-  private def sent(status: Status.Code, kind: Mime.Type, headers: List[Header]): List[Header] =
-    val stated = status is Status.NotModified || headerIn(headers, "Cache-Control") is !None
-    val rule = if stated then [] else [Header("Cache-Control", "no-store")]
-    [Header("Content-Type", Mime.value(kind))] ++ rule ++ headers
+    Complete(status, headersFor(status, kind, headers), body)
 
   def html(body: String, headers: List[Header] = NoHeaders): Response =
     complete(Status.Success, Mime.Html, body, headers)
@@ -144,22 +138,25 @@ section Response
   //]
   def file(root: String, name: String, disposition: Disposition, headers: List[Header] = NoHeaders): Response =
     val target = resolve(root, name) rescue None => return notFound()
-    val guessed = File.mimeType(target).getOrElse("application/octet-stream")
     val shown = Header("Content-Disposition", dispositionValue(disposition, os.path.basename(name)))
     OnDisk:
       Status.Success
-      sent(Status.Success, Mime.Other(charset(guessed)), [shown] ++ headers)
+      headersFor(Status.Success, fileType(target), [shown] ++ headers)
       target
       os.path.getsize(target)
 
-  //[ A text type with its charset settled, as the `Mime` cases have theirs
+  //[ The headers every builder sends: the type, the caching rule, then the caller's own. //]
+  private def headersFor(status: Status.Code, kind: Mime.Type, headers: List[Header]): List[Header] =
+    val stated = status is Status.NotModified || headerIn(headers, "Cache-Control") is !None
+    val rule = if stated then [] else [Header("Cache-Control", "no-store")]
+    [Header("Content-Type", Mime.value(kind))] ++ rule ++ headers
+
+  //[ The type a file's name implies, bytes when nothing recognizes the name.
     !
-    ! `mimetypes` answers a bare `text/html`, and a browser left to guess the
-    ! encoding of a UTF-8 page renders it wrong.
+    ! A browser downloads what it cannot type, rather than guessing at it.
   //]
-  private def charset(kind: String): String =
-    val text = kind.startsWith("text/") || kind == "application/javascript" || kind == "application/json"
-    if text then kind + "; charset=utf-8" else kind
+  private def fileType(path: String): Mime.Type =
+    Mime.parse(File.mimeType(path).getOrElse("application/octet-stream"))
 
   //[ The real path of `name` under `root`, or None when it is not a file inside it. //]
   private def resolve(root: String, name: String): Option[String] =
