@@ -24,11 +24,11 @@ and both test suites all build from these sources, so a release pull request is
 green throughout — the deadlock that used to make one red before publication is
 gone with the agents that caused it.
 
-What moved is where that tension lives. The five templates under `templates/` are
-pinned to a published release, so they are updated *after* publication, not
-before it. Step 8 is that update. Their `Templates` workflow is deliberately not
-the release gate, and it does not run on a pull request that leaves `templates/`
-alone.
+What moved is where that tension lives. The five templates under `templates/`
+pin a published release, so they are updated *after* publication, not before
+it — step 4, in the same pull request. Their `Templates` workflow does not run
+on a pull request that leaves `templates/` alone, so a framework change never
+pays for it.
 
 ## 1. Prepare the release pull request
 
@@ -47,7 +47,7 @@ Create a branch from the latest `origin/main`. In the pull request:
 
 Consumers here are the package blocks in the root `jo.toml` and nothing else —
 `cli/` builds from source, so it carries no version to retarget. The pins that do
-move live under `templates/`, and step 8 moves them.
+move live under `templates/`, and step 4 moves them.
 
 Outside `templates/`, the only `version =` lines in this repository are the three
 package blocks in the root `jo.toml`. A constraint anywhere else means something
@@ -107,7 +107,7 @@ unzip -p .build/harpe/release/harpe-v$VERSION.joy meta.toml | grep -E 'version|h
 unzip -l .build/harpe/release/harpe-v$VERSION.joy | grep resources/ | head
 ```
 
-Keep an extracted copy for the step 5 check, before anything else can rebuild
+Keep an extracted copy for the step 6 check, before anything else can rebuild
 over it:
 
 ```sh
@@ -169,15 +169,58 @@ curl --fail https://pkg.typescope.ai/harpe.jsonl | tail -1
 curl --fail https://pkg.typescope.ai/harpe-testing.jsonl | tail -1
 ```
 
-## 4. Merge
+## 4. Move the templates onto the new release, in this same pull request
 
-CI here does not depend on what has been published, so its verdict has not
-changed since step 1. Merge when it is green and review is done.
+The five templates under `templates/` are pinned to the previous release until
+now. The packages exist as of step 3, so the pins can move:
+
+```sh
+grep -rl "version = \"$PREV_MINOR\"" --include='jo.toml' templates/ \
+  | xargs -r sed -i "s/version = \"$PREV_MINOR\"/version = \"$MINOR\"/g"
+```
+
+Bumping the pin is the easy half. If the release changed an API — and a minor
+release usually did — the templates need their sources adapted too, or a pin
+alone leaves them pointing at a package they no longer compile against.
+
+Work through them one at a time and commit each on its own. A template is a
+whole application, so a commit per template keeps each migration reviewable and
+lets a broken one be reverted without taking the others with it. Check each
+against the published package before moving on:
+
+```sh
+cd templates/<name>
+JO_REGISTRY_URL=https://pkg.typescope.ai jo check agent
+```
+
+**This goes in the release pull request, not one of its own.** Touching
+`templates/` is what runs the `Templates` workflow, which builds all five
+against the packages just published and runs the suites that ship with them.
+That workflow only triggers on a pull request targeting `main`, so a templates
+branch based on anything else — the release branch, say — gets **no checks at
+all**, silently. Keeping both in one pull request against `main` is what makes
+the gate run.
+
+It must be green before merge: `jo new` serves this repository's default
+branch, so a red build there hands every new user a template that does not
+build. Nothing else in CI covers them, because nothing else resolves the
+registry.
+
+The pins cannot move before step 3, which is why this is not part of step 1.
+Until then the pull request leaves `templates/` alone, so `Templates` does not
+run and the `Jo` job carries it on its own — the pull request is green
+throughout, and this step adds the second set of checks rather than fixing a
+red one.
+
+## 5. Merge
+
+Merge when every check is green and review is done: the `Jo` job for the
+framework, and one `Templates` job per template.
 
 If review still demands a source change, the published version is spent: do not
 force the artifacts to match. Bump to the next patch, and start again at step 1.
 
-## 5. Verify the merged commit matches what was published
+## 6. Verify the merged commit matches what was published
 
 This is the check that makes publishing from a branch safe. Repackage from
 `main` and compare *content*, not archive bytes — `jo package` records the build
@@ -198,7 +241,7 @@ diff -r /tmp/published-$VERSION /tmp/merged-$VERSION && echo "matches what was p
 Any difference means something changed between publishing and merging. The
 registry cannot be corrected — release the next patch from `main` instead.
 
-## 6. Tag the merged commit
+## 7. Tag the merged commit
 
 ```sh
 git status --short
@@ -208,7 +251,7 @@ git push origin v$VERSION
 
 Never move or reuse a published version tag.
 
-## 7. Create the permanent Harpe GitHub release
+## 8. Create the permanent Harpe GitHub release
 
 The release notes are the new version's section of `CHANGELOG.md` alone, so cut
 it out — passing the whole file would republish every earlier version's notes:
@@ -238,39 +281,3 @@ gh release create v$VERSION \
   --title "Harpe $VERSION" \
   --notes-file /tmp/notes-v$VERSION.md
 ```
-
-## 8. Move the templates to the new release
-
-The five templates under `templates/` are pinned to the previous release until
-now. In a pull request of its own, against `main`:
-
-```sh
-grep -rl "version = \"$PREV_MINOR\"" --include='jo.toml' templates/ \
-  | xargs -r sed -i "s/version = \"$PREV_MINOR\"/version = \"$MINOR\"/g"
-```
-
-Bumping the pin is the easy half. If the release changed an API — and a minor
-release usually did — the templates need their sources adapted in the same pull
-request, because a pin alone leaves them pointing at a package they no longer
-compile against.
-
-Work through them one at a time and commit each on its own. A template is a
-whole application, so a commit per template keeps each migration reviewable and
-lets a broken one be reverted without taking the others with it. Build each
-against the published package before moving on:
-
-```sh
-cd templates/<name>
-JO_REGISTRY_URL=https://pkg.typescope.ai jo check agent
-```
-
-Touching `templates/` is what runs the `Templates` workflow, which builds all
-five against the packages just published and runs the suites that ship with
-them. **That workflow is the gate for this pull request, and it must be green
-before merge**: `jo new` serves this repository's default branch, so a red build
-there hands every new user a template that does not build. Nothing else in CI
-covers them, because nothing else resolves the registry.
-
-This is a separate pull request from step 1 on purpose. The pins cannot move
-before the packages exist, and keeping it apart is what leaves the release pull
-request green throughout.
