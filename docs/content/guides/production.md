@@ -59,19 +59,19 @@ redact secrets and personal data.
 
 ## Serving HTTP
 
-An `Application` declares its routes and the policy enforced before any of them
+A `WebApp` declares its routes and the policy enforced before any of them
 runs. `application.wsgi()` is a plain WSGI application: run it on the server you
 choose, in development as in production, since harpe installs none. With
 waitress, for example:
 
 ```jo
-val application = new Application:
-  host = Application.Host.Named("agent.example.com")
+val application = new WebApp:
+  host = "agent.example.com"
   routes = List:
-    Router.Get("/api/info", () => agent.info())
-    Router.Post("/api/message", () => agent.message())
-    Router.Post("/api/upload", () => agent.upload(), maxBodyBytes = 26214400)
-  fallback = () => agent.page()
+    Route.Get("/api/info", () => agent.info())
+    Route.Post("/api/message", () => agent.message())
+    Route.Post("/api/upload", () => agent.upload(), maxBodyBytes = 26214400)
+  fallback = WebApp.Fallback(() => agent.page(), maxBodyBytes = 1048576)
 
 val server = py.module("waitress").create_server:
   application.wsgi()
@@ -79,17 +79,36 @@ val server = py.module("waitress").create_server:
   port = port
   threads = 32
   channel_timeout = 3600
-  max_request_body_size = application.ceiling
+  max_request_body_size = application.maxRequestBodyBytes
 server.run()
 ```
 
 Serve static assets from the proxy rather than the application. An application
 running without one, in development or in a single container, serves its own
-with `Router.Prefix("/assets/", () => agent.asset())` and `Response.file`.
+with `Route.Prefix("/assets/", () => agent.asset())` and `Response.file`.
 
-Keep `maxBodyBytes` small — it defaults to 1 MiB and covers every route that
-names none — and let an upload route raise its own. `application.ceiling` is the
-largest of them, which is what the server should allow.
+Every handler names the largest body it accepts, and `application.maxRequestBodyBytes` is
+the largest of them, which is what the server should allow. A route that names
+no limit takes `Route.defaultMaxBodyBytes`, 1 MiB.
+
+A fallback names its own, because an application that dispatches in a `match`
+has no other limit. One whose routes cover everything names no fallback at all
+and takes `WebApp.notFound`, which answers a small bundled 404 page and
+reads no body. It is HTML, not the JSON `Response.notFound` answers, because a
+path no route claims is usually a browser's. A body sent to one is refused 413
+before the 404.
+
+`WebApp.notFound(path)` answers the application's own page instead,
+read from `path` per request:
+
+```jo
+fallback = WebApp.notFound(os.path.join(appHome, "assets/404.html"))
+```
+
+Reach for it rather than building the `Fallback` by hand, since `Response.html`
+answers 200 — a page that says 404 under a status that says otherwise is one a
+crawler indexes and monitoring never counts. A path that cannot be read answers
+harpe's own page rather than failing the request.
 
 Budget memory for the bodies a route holds, not just for the limit it names.
 `Request.bytes`, `body` and `json` hold the whole body, so the peak for those
@@ -117,10 +136,16 @@ Scale with threads, or put each process behind sticky routing. With gunicorn,
 that means `--workers 1 --threads N`.
 
 Name the host your users type. `host` defaults to
-`Application.Host.Loopback`, which suits a prototype and refuses a hostile name
+`WebApp.Loopback`, which suits a prototype and refuses a hostile name
 pointed at `127.0.0.1`, so a deployment that forgets to name its own host is
-refused rather than quietly served. Keep `crossSite` at `Refuse` unless
-browsers on other sites must write to the server.
+refused rather than quietly served. `crossSite` defaults to `NoCrossSite`, which refuses every cross-site request
+and suits an internal tool nothing links to. A site other pages link to needs
+`NoCrossSiteWrite`, or the GET behind every inbound link is a 403. Neither
+setting touches a direct visit or the application's own pages. CORS is not a
+defence against any of this — it governs what a browser lets a page *read*, so
+a cross-site form POST needs none of it. An application that wants CORS answers
+its own preflight with `Route.Options` and sends its own
+`Access-Control-Allow-*`.
 
 Size the thread pool for concurrency, not for request rate. WSGI pins one
 worker for a response's whole life, so the pool needs room for every request in
@@ -150,7 +175,7 @@ A proxy changes what the application sees, and three of harpe's checks read
 exactly those values.
 
 **Pass the original `Host` through.** nginx's default `proxy_pass` replaces it
-with the upstream address, so `Application.Host.Named` refuses every request
+with the upstream address, so a `host` named as a string refuses every request
 with a 400, and an older browser's POST, which has no `Sec-Fetch-Site` for the
 cross-site check to read, gets a 403 from the `Origin` comparison:
 

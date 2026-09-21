@@ -66,10 +66,10 @@ Viewer.start(viewLog, title, "127.0.0.1", port)
 
 `answersTo` names what a browser may call the viewer, which is what refuses a
 hostile page that points its own name at `127.0.0.1`. It defaults to
-`Application.Host.Loopback`, so a viewer reached by another name says so:
+`WebApp.Loopback`, so a viewer reached by another name says so:
 
 ```jo
-Viewer.start(viewLog, title, host, port, answersTo = Application.Host.Named(host))
+Viewer.start(viewLog, title, host, port, answersTo = host)
 ```
 
 The framework provides the mechanism and stops there. Whether to expose a

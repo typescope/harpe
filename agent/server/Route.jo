@@ -5,46 +5,63 @@ import harpe.server.Http.Verb
 import harpe.server.request
 import harpe.server.Response
 
+//[ One route. `maxBodyBytes` is the largest body it accepts, 0 for none at all. //]
+class Route(
+      method: Verb.Method,
+      path: String,
+      prefix: Bool,
+      maxBodyBytes: Int,
+      handler: () => Response receives request)
+
 //[ The routes an application answers, declared as a table.
   !
-  ! A table rather than a chain of patterns, so the policy of a route sits with
-  ! the route and `Application` can read it before the handler runs — which is
-  ! what makes a body limit per route possible at all.
-  !
-  ! Paths are compared exactly. `Prefix` is for the one path that carries a parameter in a single-page application, an asset under a directory, and the handler reads `request.path` for the rest.
+  ! Paths are compared exactly. `Prefix` is for a path that carries a parameter
+  ! in a single-page application, and for the assets under a directory, where
+  ! the handler reads `request.path` for the rest.
 //]
-section Router
-  //[ One route. `maxBodyBytes` of 0 takes the application's own limit. //]
-  class Route(
-        method: Verb.Method,
-        path: String,
-        prefix: Bool,
-        maxBodyBytes: Int,
-        handler: () => Response receives request)
+section Route
+  //[ The body limit a route takes when it names none. //]
+  def defaultMaxBodyBytes: Int = 1048576
 
+  //[ A route answering GET at exactly `path`. //]
   def Get(
       path: String,
       handler: (() => Response receives request),
-      maxBodyBytes: Int = 0): Route =
+      maxBodyBytes: Int = defaultMaxBodyBytes): Route =
     new Route(Verb.Get, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
 
+  //[ A route answering POST at exactly `path`. //]
   def Post(
       path: String,
       handler: (() => Response receives request),
-      maxBodyBytes: Int = 0): Route =
+      maxBodyBytes: Int = defaultMaxBodyBytes): Route =
     new Route(Verb.Post, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
 
+  //[ A route answering PUT at exactly `path`. //]
   def Put(
       path: String,
       handler: (() => Response receives request),
-      maxBodyBytes: Int = 0): Route =
+      maxBodyBytes: Int = defaultMaxBodyBytes): Route =
     new Route(Verb.Put, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
 
+  //[ A route answering DELETE at exactly `path`. //]
   def Delete(
       path: String,
       handler: (() => Response receives request),
-      maxBodyBytes: Int = 0): Route =
+      maxBodyBytes: Int = defaultMaxBodyBytes): Route =
     new Route(Verb.Delete, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
+
+  //[ A route answering OPTIONS at exactly `path`
+    !
+    ! What answers a CORS preflight, which harpe sends no header of its own
+    ! for: the `Access-Control-Allow-*` a browser needs are this handler's to
+    ! send, since which origins may call is the application's to decide.
+  //]
+  def Options(
+      path: String,
+      handler: (() => Response receives request),
+      maxBodyBytes: Int = defaultMaxBodyBytes): Route =
+    new Route(Verb.Options, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
 
   //[ Everything under `path`, which must end in `/` — the assets of a page
     !
@@ -55,14 +72,14 @@ section Router
       path: String,
       handler: (() => Response receives request),
       method: Verb.Method = Verb.Get,
-      maxBodyBytes: Int = 0): Route =
+      maxBodyBytes: Int = defaultMaxBodyBytes): Route =
     if !path.endsWith("/") then abort "a prefix route's path must end in '/': '\{path}'"
     new Route(method, path, prefix = true, maxBodyBytes = maxBodyBytes, handler = handler)
 
-  //[ The exact routes by "VERB path", for an `Application` to dispatch through
+  //[ The exact routes by "VERB path", for a `WebApp` to dispatch through
     !
     ! Two routes claiming one verb and path abort here, which is when the
-    ! `Application` holding them is built.
+    ! `WebApp` holding them is built.
   //]
   private[server] def indexed(routes: List[Route]): py.Dict =
     val exact = py.dict()

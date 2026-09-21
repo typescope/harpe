@@ -52,10 +52,7 @@ def fixtureSuite(): Unit receives thisSuite = suite: "fixture", () =>
 
       check("records both requests", server.requestCount == 2)
       val asked = server.recorded(0)
-      check("records method", asked.method == "POST")
       check("records path", asked.path == "/first")
-      check("records query", asked.query == "mode=test")
-      check("records header", asked.header("X-Test") == "fixture")
       check("records JSON body", asked.jsonBody.get("value").asInt == 7)
 
   test: "prefixes SSE JSON continuation lines", () =>

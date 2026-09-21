@@ -2,30 +2,23 @@ namespace harpe.server
 
 import harpe.ffi.builtins
 import harpe.ffi.threading
-import harpe.server.Application
+import harpe.server.WebApp
 
-//[ A wsgiref server on a daemon thread — FOR HARPE'S OWN VIEWER AND TESTS.
-  !
-  ! wsgiref is the standard library's reference server: no read timeout, an
-  ! accept backlog of five, no keep-alive. It is here because the `harpe`
-  ! package installs no server of its own. An application runs
-  ! `Application.wsgi()` on the WSGI server it chooses.
-//]
+//[ A wsgiref server on a daemon thread — FOR HARPE'S OWN VIEWER AND TESTS. //]
 private[harpe] section Serve
   //[ A server running on a background thread: the port it bound, and how to stop it. //]
   class Background(port: Int, stop: () => Unit)
 
-  //[ Serve `route` with wsgiref on a daemon thread — for harpe's own viewer and tests
+  //[ Serve `application` with wsgiref on a daemon thread
     !
     ! wsgiref is the standard library's reference server, with no read timeout,
-    ! an accept backlog of five and no keep-alive, so not for production. It is
-    ! here because the `harpe` package installs no server. A deployment runs
-    ! `wsgi` on the WSGI server it chooses.
+    ! an accept backlog of five and no keep-alive, so not for production. A
+    ! deployment runs `WebApp.wsgi()` on the WSGI server it chooses.
     !
     ! Binds before returning, so a port already taken raises here. Port 0 binds
     ! a free one, which `port` reports. Writes no access log.
   //]
-  def inBackground(host: String, port: Int, application: Application): Background =
+  def inBackground(host: String, port: Int, application: WebApp): Background =
     val simple = py.module("wsgiref.simple_server")
     val threaded = builtins.newType:
       "ThreadingWSGIServer"

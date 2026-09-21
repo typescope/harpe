@@ -1,5 +1,82 @@
 # Changelog
 
+## Unreleased
+
+**The body readers are members of `Request`.** `Request.body()`,
+`json()`, `form()`, `query()`, `header()`, `cookie()`, `signedCookie()`,
+`bytes()` and `saveTo()` are now `request.body()` and so on. They always read
+the request the server bound, so calling them on it says that, where the old
+spelling read like a static call that quietly depended on ambient state. The
+patterns keep the old form — `Request.Get(path)` matches a value you hand it.
+
+`request.environ` and `bodyTaken` are `private[server]`, since reaching
+`wsgi.input` through the environ took the body without the double-read guard
+seeing it. Nothing replaces them: a route names the header or parameter it
+wants, through `header(name)` and `query(key)`.
+
+**`Application` is now `WebApp`.** The old name was long in exactly the places
+it appeared most, which were the nested ones: `WebApp.Fallback`,
+`WebApp.CrossSite.Refuse`. `Application.jo` is `WebApp.jo`, and
+`import harpe.server.Application` is `import harpe.server.WebApp`.
+
+**`host` is a string, or `WebApp.Loopback`, or `WebApp.AnyHost`.** The
+`Host.Policy` union is gone and `Host.Named("agent.example.com")` is now just
+`"agent.example.com"`. `AnyHost` is spelled out rather than being `None`,
+because it is what turns the DNS-rebinding check off and should say so where it
+is written.
+
+A string answers to itself alone. An application reached at a loopback name
+says `WebApp.Loopback`, which answers to `localhost`, `127.0.0.1` and `::1`
+alike, rather than having a string quietly stand for three.
+
+**`crossSite` has three settings, and a route may claim `OPTIONS`.**
+`NoCrossSite` is the default and refuses every cross-site request, the GET
+included, which matches the local private application the other defaults
+describe. It is stricter than the old `Refuse`, so **a site other pages link to
+must now name `NoCrossSiteWrite`** — that is what `Refuse` did, refusing a
+cross-site POST, PUT or DELETE while letting the GET behind an inbound link
+through. `AnyCrossSite` refuses nothing. A direct visit and the application's
+own pages are unaffected under all three, since neither is cross-site.
+
+`Route.Options` joins `Get`, `Post`, `Put` and `Delete`, so an application can
+answer a CORS preflight. harpe sends no `Access-Control-*` header of its own —
+which origins may call is the application's to decide — and the verb doc no
+longer claims `OPTIONS` matches no route, which stopped being true once a route
+could claim it.
+
+**`Router` is now `Route`.** It never routed anything — dispatch lives in
+`WebApp` — it just builds the routes an application holds. `Route.Get`,
+`Post`, `Put`, `Delete` and `Prefix` are where `Router.*` was, and the type
+`Router.Route` is now plain `Route`, a class beside its section the way
+`WebApp` is.
+
+**Every handler names the body it accepts, so `WebApp` no longer has a
+limit of its own.** `WebApp.maxBodyBytes` is gone. It read as a cap but
+behaved as a default, and in practice it was only ever the fallback's limit:
+every application in this repo passed no routes at all. The fallback now
+carries it, like a route does.
+
+```jo
+fallback = WebApp.Fallback(() => agent.page(), maxBodyBytes = 26214400)
+```
+
+`fallback` now has a default, so an application whose routes cover everything
+names none and takes `WebApp.defaultFallback`: a small bundled 404 page that
+reads no body. HTML rather than the JSON `Response.notFound` answers, because
+what reaches a path no route claims is usually a browser.
+`WebApp.notFound(path)` answers the application's own page at that path
+instead, which saves remembering that `Response.html` is a 200.
+
+A route that names no limit takes `Route.defaultMaxBodyBytes`, 1 MiB, rather
+than inheriting the application's. `Route.maxBodyBytes` is now always the real
+limit, so `0` means "no body at all" at both levels instead of meaning "inherit"
+at one and "refuse everything" at the other.
+
+**`WebApp.ceiling` is now `WebApp.maxRequestBodyBytes`**, unchanged in purpose:
+the largest limit any handler allows, which is what the server should be given.
+The new name says what the number is rather than what shape it has, and matches
+the `max_request_body_size` it is written into.
+
 ## 0.10.1 — 2026-09-20
 
 Everything below is this release. **Do not use 0.10.0**: it reached the
@@ -79,11 +156,14 @@ is exactly what a server cannot know. A page that follows work in progress
 polls a cursor instead, which `harpe.observability.Viewer` has always done and
 which costs a list slice per poll.
 
-**`Response.file(root, name, disposition)` serves a file under a directory.**
-`name` is the relative path a client sent. An empty or absolute name, a `..`
-segment, a symlink out of `root`, a directory and a missing file are all the
-same 404. The type is guessed from the name, with `; charset=utf-8` added to
-text, JSON and JavaScript so a browser never guesses a page's encoding.
+**`Response.file(root, name)` and `Response.download(root, name)` serve a file
+under a directory.** `file` is shown in the browser, `download` is saved, which
+is what a file a user uploaded wants, since what a browser renders it renders in
+this application's origin. `name` is the relative path a client sent. An empty
+or absolute name, a `..` segment, a symlink out of `root`, a directory and a
+missing file are all the same 404. The type is guessed from the name and becomes
+the `Mime` case that spells it, so a served `.css` and a route naming
+`Mime.Css` send the same header, the `; charset=utf-8` on it included.
 `Content-Disposition` names the file in ASCII and UTF-8, and the response is
 `no-store`, since what it serves is the download the request had to be entitled
 to. The files a page needs are the proxy's to serve, and to cache.

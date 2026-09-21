@@ -1,6 +1,6 @@
 //[ HttpTest.jo
   !
-  ! Unit tests for `harpe.server`. They call an `Application`'s WSGI callable in
+  ! Unit tests for `harpe.server`. They call a `WebApp`'s WSGI callable in
   ! memory, through `call` below, with no socket and no thread.
 //]
 
@@ -8,8 +8,8 @@ namespace harpe.test.unit.HttpTest
 
 import harpe.server.Http
 import harpe.server.Http.Header
-import harpe.server.Application
-import harpe.server.Router
+import harpe.server.WebApp
+import harpe.server.Route
 import harpe.server.Request
 import harpe.server.request
 import harpe.server.Response
@@ -27,20 +27,25 @@ private def secret: String = "0123456789abcdef0123456789abcdef"
 private def limit: Int = 1024
 
 //[ Everything under one `fallback`, which is how an application dispatches by pattern. //]
-private def applicationFor(answersTo: Application.Host.Policy, reached: py.List): Application =
-  new Application:
+private def applicationFor(answersTo: WebApp.Loopback | WebApp.AnyHost | String, reached: py.List): WebApp =
+  new WebApp:
     host = answersTo
     routes = []
-    fallback = () => route(reached)
-    maxBodyBytes = limit
+    fallback = WebApp.Fallback(() => route(reached), maxBodyBytes = limit)
+    crossSite = WebApp.NoCrossSiteWrite
 
 //[ Every path these tests ask for. `reached` records what a route saw. //]
 private def route(reached: py.List): Response receives request =
   match request
   case Request.Get("/dynamic") => Response.complete(Http.Status.Success, Http.Mime.Json, "{}")
   case Request.Get("/asset")   => Response.complete(Http.Status.Success, Http.Mime.Css, "body { margin: 0 }")
-  case Request.Get("/page")    => Response.html("<p>" + Request.query("v").getOrElse("one") + "</p>")
+  case Request.Get("/typed")   => Response.complete(Http.Status.Success, Http.Mime.Other("image/png"), "x")
+  case Request.Get("/page")    => Response.html("<p>" + request.query("v").getOrElse("one") + "</p>")
   case Request.Get("/moved")   => Response.redirect("/dynamic")
+
+  //[ A status decided at runtime, which the server writes with the reason it carries. //]
+  case Request.Get("/overloaded") =>
+    Response.complete(Http.Status.Other(529, "Overloaded"), Http.Mime.Text, "busy")
 
   //[ Conditional requests, done by the route
     !
@@ -49,8 +54,8 @@ private def route(reached: py.List): Response receives request =
     ! before the body is built. `reached` records that the build was skipped.
   //]
   case Request.Get("/versioned") =>
-    val tag = "\"v" + Request.query("v").getOrElse("1") + "\""
-    if Request.header("If-None-Match").getOrElse("") == tag then
+    val tag = "\"v" + request.query("v").getOrElse("1") + "\""
+    if request.header("If-None-Match").getOrElse("") == tag then
       Response.complete(Http.Status.NotModified, Http.Mime.Text, "", headers = [Header("ETag", tag)])
     else
       reached.append("built")
@@ -63,10 +68,10 @@ private def route(reached: py.List): Response receives request =
     Response.complete(Http.Status.Success, Http.Mime.Css, "body { margin: 0 }", headers = [own])
 
   case Request.Get("/headed") =>
-    Response.complete(Http.Status.Created, Http.Mime.Text, Request.header("X-Asked").getOrElse("absent"), headers = [Header("X-Trace", "abc")])
+    Response.complete(Http.Status.Created, Http.Mime.Text, request.header("X-Asked").getOrElse("absent"), headers = [Header("X-Trace", "abc")])
 
   case Request.Get("/query") =>
-    val shown = match Request.query("q")
+    val shown = match request.query("q")
                 case Some(value) => "some:" + value
                 case None        => "none"
     Response.complete(Http.Status.Success, Http.Mime.Text, shown)
@@ -79,12 +84,12 @@ private def route(reached: py.List): Response receives request =
 
   case Request.Post("/echo") =>
     reached.append(1)
-    val text = Request.body() rescue None => return Response.badRequest("not utf-8")
+    val text = request.body() rescue None => return Response.badRequest("not utf-8")
     Response.complete(Http.Status.Success, Http.Mime.Text, text.size.toString)
 
   case Request.Post("/twice") =>
-    val _ = Request.bytes()
-    val second = match py.try(Request.bytes())
+    val _ = request.bytes()
+    val second = match py.try(request.bytes())
                  case Ok(_)    => "read twice"
                  case Err(err) => err.message
     Response.complete(Http.Status.Success, Http.Mime.Text, second)
@@ -94,29 +99,29 @@ private def route(reached: py.List): Response receives request =
     Response.html("<p>embedded</p>", headers = [own])
 
   case Request.Get("/cookie") =>
-    val shown = Request.cookie("sid").getOrElse("absent")
+    val shown = request.cookie("sid").getOrElse("absent")
     Response.complete(Http.Status.Success, Http.Mime.Text, shown, headers = [Response.cookie("sid", "abc123", maxAgeSeconds = 60, secure = true)])
 
   //[ The same, signed for a different cookie name, to show the name is signed. //]
   case Request.Get("/signed-other") =>
-    val given = Request.query("value").getOrElse("")
+    val given = request.query("value").getOrElse("")
     val header = Response.signedCookie("other", given, secret, maxAgeSeconds = 60, secure = true)
     Response.complete(Http.Status.Success, Http.Mime.Text, "issued", headers = [header])
 
   //[ Signs `?value=` into a cookie, and reads back whatever cookie the request carries. //]
   case Request.Get("/signed") =>
-    val given = Request.query("value").getOrElse("")
-    val age = Int.parse(Request.query("age").getOrElse("60")) rescue None => 60
-    val seen = Request.signedCookie("sid", secret).getOrElse("absent")
+    val given = request.query("value").getOrElse("")
+    val age = Int.parse(request.query("age").getOrElse("60")) rescue None => 60
+    val seen = request.signedCookie("sid", secret).getOrElse("absent")
     val header = Response.signedCookie("sid", given, secret, maxAgeSeconds = age, secure = true)
     Response.complete(Http.Status.Success, Http.Mime.Text, seen, headers = [header])
 
   //[ The route names the directory its files go in, or none to refuse them. //]
   case Request.Post("/upload") =>
-    val into: String | None = match Request.query("into")
+    val into: String | None = match request.query("into")
                               case Some(dir) => dir
                               case None      => None
-    val form = Request.form(into) rescue None =>
+    val form = request.form(into) rescue None =>
       return Response.badRequest("expected multipart/form-data")
 
     val note = form.field("note").getOrElse("absent")
@@ -130,23 +135,23 @@ private def route(reached: py.List): Response receives request =
 
   //[ A urlencoded body, as a webhook posts one. //]
   case Request.Post("/form") =>
-    val form = Request.form() rescue None => return Response.badRequest("expected a form")
+    val form = request.form() rescue None => return Response.badRequest("expected a form")
     val tags = form.all("tag").join("+")
     Response.complete(Http.Status.Success, Http.Mime.Text, "\{form.field("note").getOrElse("absent")}|\{tags}|\{form.files("any").size}")
 
   case Request.Post("/json") =>
     Response.json:
-      Request.json() rescue None => return Response.badRequest("bad json")
+      request.json() rescue None => return Response.badRequest("bad json")
 
   //[ An upload spooled straight to the path the route chose, never held whole. //]
   case Request.Post("/save") =>
-    match Request.saveTo(Request.query("into").getOrElse(""))
+    match request.saveTo(request.query("into").getOrElse(""))
     case Some(written) => Response.json(py.dict("written" ~ written))
     case None          => Response.badRequest("no whole body")
 
   //[ An empty directory is one nobody meant, so it aborts rather than writing to the CWD. //]
   case Request.Post("/upload-nowhere") =>
-    match py.try(Request.form(""))
+    match py.try(request.form(""))
     case Ok(_)    => Response.complete(Http.Status.Success, Http.Mime.Text, "accepted")
     case Err(err) => Response.complete(Http.Status.Success, Http.Mime.Text, err.message)
 
@@ -156,7 +161,7 @@ private def route(reached: py.List): Response receives request =
   case _ => Response.notFound()
 
 //[ A response as a client would read it. //]
-private class Answer(status: Int, headers: List[Header], bytes: py.Dynamic)
+private class Answer(status: Int, line: String, headers: List[Header], bytes: py.Dynamic)
   def text: String = bytes.decode("utf-8").asString
 
   //[ The first header by this name, compared case-insensitively. //]
@@ -252,19 +257,19 @@ private def callWith(
     val fields = py.module("builtins").list(pair).cast[py.List]
     answered = answered + Header(fields.get(0).asString, fields.get(1).asString)
 
-  new Answer(status, answered, py.dynamic("").encode().join(chunks))
+  new Answer(status, line, answered, py.dynamic("").encode().join(chunks))
 
 //[ Files under `root`, named by the `name` query parameter. //]
 private def fileRoute(root: String): Response receives request =
-  val name = Request.query("name").getOrElse("")
+  val name = request.query("name").getOrElse("")
   match request
-  case Request.Get("/download") => Response.file(root, name, Response.Attachment)
-  case Request.Get("/show")     => Response.file(root, name, Response.Inline)
+  case Request.Get("/download") => Response.download(root, name)
+  case Request.Get("/show")     => Response.file(root, name)
 
   //[ A file a route says the browser may keep, which the proxy would normally serve. //]
   case Request.Get("/keepable") =>
     val rule = Header("Cache-Control", "public, max-age=31536000, immutable")
-    Response.file(root, name, Response.Inline, headers = [rule])
+    Response.file(root, name, headers = [rule])
   case _                     => Response.notFound()
 
 //[ A directory of files to serve, beside one that must stay out of reach, for the length of `body`. //]
@@ -286,11 +291,10 @@ private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.Dynamic) => 
   write(scratch + "/outside/secret.txt", "secret")
   os.symlink(scratch + "/outside/secret.txt", root + "/link")
 
-  val files = new Application:
-    host = Application.Host.Loopback
+  val files = new WebApp:
+    host = WebApp.Loopback
     routes = []
-    fallback = () => fileRoute(root)
-    maxBodyBytes = limit
+    fallback = WebApp.Fallback(() => fileRoute(root), maxBodyBytes = limit)
 
   val result = py.try(body(root, files.wsgi()))
   py.module("shutil").rmtree(scratch)
@@ -299,34 +303,32 @@ private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.Dynamic) => 
   case Ok(_)    => pass
   case Err(err) => abort err.message
 
-//[ An application wired as a table, which is how `Router` is meant to be used. //]
-private def tabled(reached: py.List): Application =
-  new Application:
-    host = Application.Host.Loopback
-    maxBodyBytes = limit
+//[ An application wired as a table, which is how `Route` is meant to be used. //]
+private def tabled(reached: py.List): WebApp =
+  new WebApp:
+    host = WebApp.Loopback
     routes = List:
-      Router.Get("/api/info", info)
-      Router.Post("/api/message", () => echoed(reached))
-      Router.Post("/api/upload", () => echoed(reached), maxBodyBytes = 4096)
-      Router.Delete("/api/session", () => Response.json(py.dict("ok" ~ true)))
-      Router.Prefix("/assets/", () => Response.complete(Http.Status.Success, Http.Mime.Text, "asset"))
-    fallback = () => Response.html("<p>the page</p>")
+      Route.Get("/api/info", info, maxBodyBytes = limit)
+      Route.Post("/api/message", () => echoed(reached), maxBodyBytes = limit)
+      Route.Post("/api/upload", () => echoed(reached), maxBodyBytes = 4096)
+      Route.Delete("/api/session", () => Response.json(py.dict("ok" ~ true)), maxBodyBytes = limit)
+      Route.Prefix("/assets/", () => Response.complete(Http.Status.Success, Http.Mime.Text, "asset"), maxBodyBytes = limit)
+    fallback = WebApp.Fallback(() => Response.html("<p>the page</p>"), maxBodyBytes = limit)
 
 private def info(): Response receives request = Response.json(py.dict("name" ~ "clair"))
 
 private def echoed(reached: py.List): Response receives request =
   reached.append(1)
-  val text = Request.body() rescue None => return Response.badRequest("not utf-8")
+  val text = request.body() rescue None => return Response.badRequest("not utf-8")
   Response.complete(Http.Status.Success, Http.Mime.Text, text.size.toString)
 
 //[ Two routes claiming one verb and path, which no application may hold. //]
-private def clashing(): Application =
-  new Application:
-    host = Application.Host.Loopback
+private def clashing(): WebApp =
+  new WebApp:
+    host = WebApp.Loopback
     routes = List:
-      Router.Get("/api/info", () => Response.notFound())
-      Router.Get("/api/info", () => Response.notFound())
-    fallback = () => Response.notFound()
+      Route.Get("/api/info", () => Response.notFound())
+      Route.Get("/api/info", () => Response.notFound())
 
 //[ A `multipart/form-data` body, built the way a browser builds one. //]
 private def multipartBody(boundary: String, parts: List[String], file: py.Dynamic): py.Dynamic =
@@ -340,16 +342,15 @@ private def multipartBody(boundary: String, parts: List[String], file: py.Dynami
 
 //[ The same routes under a limit big enough for a real upload. //]
 private def roomyApp(): (py.Dynamic, py.Dynamic) => py.Dynamic =
-  val app = new Application:
-    host = Application.Host.Loopback
+  val app = new WebApp:
+    host = WebApp.Loopback
     routes = []
-    fallback = () => route(py.list())
-    maxBodyBytes = 1048576
+    fallback = WebApp.Fallback(() => route(py.list()), maxBodyBytes = 1048576)
   app.wsgi()
 
 //[ The application under test. `reached` records what its routes saw. //]
 private def appFor(reached: py.List): (py.Dynamic, py.Dynamic) => py.Dynamic =
-  applicationFor(Application.Host.Loopback, reached).wsgi()
+  applicationFor(WebApp.Loopback, reached).wsgi()
 
 private def get(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, target: String): Answer =
   call(wsgi, "GET", target, [], "")
@@ -371,17 +372,20 @@ private def carrying(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, cookie: Strin
 def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
   test: "names a status line for every code", () =>
-    check("200", Http.Status.line(Http.Status.Success) == "200 OK")
-    check("303", Http.Status.line(Http.Status.SeeOther) == "303 See Other")
-    check("304", Http.Status.line(Http.Status.NotModified) == "304 Not Modified")
-    check("413", Http.Status.line(Http.Status.TooLarge) == "413 Payload Too Large")
-    check("501", Http.Status.line(Http.Status.NotImplemented) == "501 Not Implemented")
-    check("one decided at runtime", Http.Status.line(Http.Status.Other(529, "Overloaded")) == "529 Overloaded")
+    val wsgi = appFor(py.list())
+    val oversized = py.dynamic("x").callDynamic("__mul__", limit + 1).asString
+    check("200", get(wsgi, "/dynamic").line == "200 OK")
+    check("303", get(wsgi, "/moved").line == "303 See Other")
+    check("304", call(wsgi, "GET", "/versioned", [Header("If-None-Match", "\"v1\"")], "").line == "304 Not Modified")
+    check("413", call(wsgi, "POST", "/echo", [], oversized).line == "413 Payload Too Large")
+    check("501", call(wsgi, "TRACE", "/dynamic", [], "").line == "501 Not Implemented")
+    check("one decided at runtime", get(wsgi, "/overloaded").line == "529 Overloaded")
 
   test: "settles the charset once, per content type", () =>
-    check("html carries one", Http.Mime.value(Http.Mime.Html) == "text/html; charset=utf-8")
-    check("json carries none", Http.Mime.value(Http.Mime.Json) == "application/json")
-    check("a runtime type passes through", Http.Mime.value(Http.Mime.Other("image/png")) == "image/png")
+    val wsgi = appFor(py.list())
+    check("html carries one", get(wsgi, "/page").header("Content-Type") is Some("text/html; charset=utf-8"))
+    check("json carries none", get(wsgi, "/dynamic").header("Content-Type") is Some("application/json"))
+    check("a runtime type passes through", get(wsgi, "/typed").header("Content-Type") is Some("image/png"))
 
   test: "answers a dynamic response no-store and nosniff", () =>
     val answer = get(appFor(py.list()), "/dynamic")
@@ -399,7 +403,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
   //[ The framework answers no conditional request, so this is the application doing it. //]
   test: "lets a route answer a conditional request itself, before building the body", () =>
     val reached = py.list()
-    val wsgi = applicationFor(Application.Host.Loopback, reached).wsgi()
+    val wsgi = applicationFor(WebApp.Loopback, reached).wsgi()
 
     val first = get(wsgi, "/versioned?v=7")
     val tag = headerOf(first, "ETag")
@@ -682,11 +686,10 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
     // Bigger than one block, so the copy loops rather than reading once.
     val long = py.dynamic("y").callDynamic("__mul__", 150000).asString
-    val big = new Application:
-      host = Application.Host.Loopback
+    val big = new WebApp:
+      host = WebApp.Loopback
       routes = []
-      fallback = () => route(py.list())
-      maxBodyBytes = 1048576
+      fallback = WebApp.Fallback(() => route(py.list()), maxBodyBytes = 1048576)
     val spooled = call(big.wsgi(), "POST", "/save?into=" + into, [], long)
     check("across blocks", spooled.status == 200 && spooled.text == "{\"written\": 150000}")
     check("every one of them", py.module("os").path.getsize(into).asInt == 150000)
@@ -706,8 +709,39 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("413", call(wsgi, "POST", "/echo", [], oversized).status == 413)
     check("the route never ran", reached.size == 1)
 
+  test: "answers 404 by default, for an application whose routes cover it", () =>
+    val covered = new WebApp(routes = List(Route.Get("/api/info", info)))
+    val wsgi = covered.wsgi()
+    check("a route it claims", get(wsgi, "/api/info").status == 200)
+    val missing = get(wsgi, "/nothing")
+    check("a path no route claims", missing.status == 404)
+    check("as a page, since a browser is what reaches it", missing.header("Content-Type") is Some(kind) && kind.startsWith("text/html"))
+    check("the bundled one, not the bare fallback", missing.text.contains("That page does not exist"))
+    check("reads no body, so the limit is the route's", covered.maxRequestBodyBytes == Route.defaultMaxBodyBytes)
+    check("a body sent there is refused first", call(wsgi, "POST", "/nothing", [], "hello").status == 413)
+
+  test: "answers an application's own 404 page, and harpe's when it cannot be read", () =>
+    val scratch = py.module("tempfile").mkdtemp().asString
+    py.open(scratch + "/404.html", "wb").write(py.dynamic("<p>nothing here</p>").encode())
+
+    val own = new WebApp(
+      routes = List(Route.Get("/api/info", info)),
+      fallback = WebApp.notFound(scratch + "/404.html"))
+    val answer = get(own.wsgi(), "/nothing")
+    check("the application's page", answer.status == 404 && answer.text == "<p>nothing here</p>")
+
+    val absent = new WebApp(
+      routes = List(Route.Get("/api/info", info)),
+      fallback = WebApp.notFound(scratch + "/gone.html"))
+    val fellBack = get(absent.wsgi(), "/nothing")
+    check("harpe's, rather than a 500", fellBack.status == 404 && fellBack.text.contains("That page does not exist"))
+
+    py.module("shutil").rmtree(scratch)
+
   test: "checks the host by default, without an application saying so", () =>
-    val plain = new Application(routes = [], fallback = () => route(py.list()))
+    val plain = new WebApp(
+      routes = [],
+      fallback = WebApp.Fallback(() => route(py.list()), maxBodyBytes = Route.defaultMaxBodyBytes))
 
     val wsgi = plain.wsgi()
     check("loopback is what a prototype gets", get(wsgi, "/dynamic").status == 200)
@@ -723,7 +757,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("a rebound name", call(wsgi, "GET", "/dynamic", [Header("Host", "attacker.example:8080")], "").status == 400)
 
   test: "accepts only the one host it is named for, whatever its port or case", () =>
-    val wsgi = applicationFor(Application.Host.Named("Agent.Example.com"), py.list()).wsgi()
+    val wsgi = applicationFor("Agent.Example.com", py.list()).wsgi()
     check("its name", call(wsgi, "GET", "/dynamic", [Header("Host", "agent.example.com:8080")], "").status == 200)
     check("without a port", call(wsgi, "GET", "/dynamic", [Header("Host", "AGENT.EXAMPLE.COM")], "").status == 200)
     check("another name", call(wsgi, "GET", "/dynamic", [Header("Host", "www.example.com")], "").status == 400)
@@ -749,6 +783,38 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
     val read = call(wsgi, "GET", "/dynamic", [host, Header("Sec-Fetch-Site", "cross-site")], "")
     check("a cross-site read is not a write", read.status == 200)
+
+  test: "refuses every cross-site request where the application asks for that", () =>
+    val host = Header("Host", "127.0.0.1:8080")
+    val foreign = Header("Sec-Fetch-Site", "cross-site")
+
+    val strict = new WebApp(
+      routes = [],
+      fallback = WebApp.Fallback(() => route(py.list()), maxBodyBytes = limit),
+      crossSite = WebApp.NoCrossSite).wsgi()
+    check("the read too", call(strict, "GET", "/dynamic", [host, foreign], "").status == 403)
+    check("and the write", call(strict, "POST", "/echo", [host, foreign], "x").status == 403)
+    check("a direct visit still arrives", call(strict, "GET", "/dynamic", [host, Header("Sec-Fetch-Site", "none")], "").status == 200)
+    check("and the application's own page", call(strict, "GET", "/dynamic", [host, Header("Sec-Fetch-Site", "same-origin")], "").status == 200)
+
+    val byDefault = new WebApp(
+      routes = [],
+      fallback = WebApp.Fallback(() => route(py.list()), maxBodyBytes = limit)).wsgi()
+    check("which is what an application naming no policy gets", call(byDefault, "GET", "/dynamic", [host, foreign], "").status == 403)
+
+    val open = new WebApp(
+      routes = [],
+      fallback = WebApp.Fallback(() => route(py.list()), maxBodyBytes = limit),
+      crossSite = WebApp.AnyCrossSite).wsgi()
+    check("nothing is refused", call(open, "POST", "/echo", [host, foreign], "x").status == 200)
+
+  test: "lets a route answer the CORS preflight, which harpe sends no header for", () =>
+    val app = new WebApp(
+      routes = List(Route.Options("/api/message", () => Response.complete(Http.Status.Success, Http.Mime.Text, "", headers = [Header("Access-Control-Allow-Origin", "https://partner.example")]))),
+      host = "127.0.0.1")
+    val answered = call(app.wsgi(), "OPTIONS", "/api/message", [Header("Host", "127.0.0.1:8080")], "")
+    check("the route ran", answered.status == 200)
+    check("carrying what the application chose", answered.header("Access-Control-Allow-Origin") is Some("https://partner.example"))
 
   test: "refuses a verb it does not implement with 501", () =>
     check("501", call(appFor(py.list()), "TRACE", "/dynamic", [], "").status == 501)
@@ -780,7 +846,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     val wsgi = tabled(reached).wsgi()
     val big = py.dynamic("x").callDynamic("__mul__", 2048).asString
 
-    check("over the application's limit", call(wsgi, "POST", "/api/message", [], big).status == 413)
+    check("over that route's own limit", call(wsgi, "POST", "/api/message", [], big).status == 413)
     check("the route never ran", reached.size == 0)
     check("under the upload's own limit", call(wsgi, "POST", "/api/upload", [], big).status == 200)
     check("the upload ran", reached.size == 1)
@@ -789,11 +855,11 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("over the upload's limit too", call(wsgi, "POST", "/api/upload", [], huge).status == 413)
     check("and that one did not run", reached.size == 1)
 
-  test: "reports the largest limit any route allows, for the server to match", () =>
-    check("the upload's", tabled(py.list()).ceiling == 4096)
-    check("the application's, with no routes", applicationFor(Application.Host.Loopback, py.list()).ceiling == limit)
+  test: "reports the largest limit any handler allows, for the server to match", () =>
+    check("the upload's", tabled(py.list()).maxRequestBodyBytes == 4096)
+    check("the fallback's, with no routes", applicationFor(WebApp.Loopback, py.list()).maxRequestBodyBytes == limit)
 
-  //[ The index is built when the `Application` is, so a clash is a startup failure. //]
+  //[ The index is built when the `WebApp` is, so a clash is a startup failure. //]
   //[ Refused where the bad value came from, not at the write, so a route's answer can be trusted. //]
   test: "refuses a header that would split the response, at construction", () =>
     check("a newline in the value", py.try(Header("X-Note", "a\nb")) is Err(_))

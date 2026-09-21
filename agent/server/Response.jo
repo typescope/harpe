@@ -13,22 +13,15 @@ import harpe.server.request
 
 //[ What a route answers with: a value, so a route can be called and its answer
   ! inspected without a server, and a wrapper can add to what it answers.
-  ! `Application` is the only place one is written out, and it is what adds
-  ! `nosniff` and the framing policy every response carries.
+  ! `WebApp` adds the `nosniff` and framing headers every response carries.
   !
   ! `Complete` carries every header it sends, and the builders in `Response`
   ! fill in `Content-Type` and `Cache-Control`. `OnDisk` names a file the
   ! server reads a block at a time, so its size is not its cost in memory.
   !
-  ! EVERY RESPONSE IS WHOLE. Nothing here holds a connection open while it
-  ! produces: WSGI pins one worker thread for a response's whole life, so a
-  ! long one costs a thread nobody can reclaim, and how long it will run is
-  ! exactly what a server cannot know. A page that follows work in progress
-  ! polls a cursor instead, which `harpe.observability.Viewer` shows.
-  !
-  ! WHAT BELONGS HERE. Anything that constructs what goes back: the builders,
-  ! the header values they set, the cookies they write. The protocol's own
-  ! types live in `Http`, `Http.Header` among them.
+  ! Every response is whole: nothing here holds a connection open while it
+  ! produces. A page that follows work in progress polls a cursor instead,
+  ! which `harpe.observability.Viewer` shows.
 //]
 union Response =
     Complete(status: Status.Code, headers: List[Header], body: py.Dynamic)
@@ -36,37 +29,24 @@ union Response =
 
 //[ The builders a route answers with. Import `harpe.server.Response` and write `Response.html(…)`. //]
 section Response
-  //[ No headers of a caller's own, which is what a builder taking some defaults to. //]
+  //[ The empty list a builder's `headers` defaults to. //]
   def NoHeaders: List[Header] = []
 
-  //[ A complete response from a text body
+  //[ A complete response from a text body, encoded as UTF-8
     !
-    ! `no-store`, because what is answered this way is dynamic and none of it
-    ! is a client's to keep. A response the browser may keep names its own
-    ! `Cache-Control` in `headers`, which are sent after `Content-Type` and
-    ! `Cache-Control`.
-    !
-    ! Every response states a rule, one or the other. A missing `Cache-Control`
-    ! carries no meaning here, since absence would leave a cache free to invent
-    ! a freshness lifetime of its own.
+    ! Sends `Cache-Control: no-store` unless `headers` names one of its own,
+    ! and sends `headers` after `Content-Type` and `Cache-Control`.
   //]
   def complete(status: Status.Code, kind: Mime.Type, body: String, headers: List[Header] = NoHeaders): Response =
     binary(status, kind, py.dynamic(body).encode(), headers)
 
   //[ A complete response from a binary body, with the same headers as `complete`
     !
-    ! A 304 states no rule of its own. It updates a stored response rather than
-    ! being one, so absence leaves the rule the client holds, where `no-store`
-    ! would tell it to drop the copy it was just told is good.
+    ! A 304 sends no `Cache-Control`, leaving the rule the client already
+    ! holds for the copy it is being told to keep.
   //]
   def binary(status: Status.Code, kind: Mime.Type, body: py.Dynamic, headers: List[Header] = NoHeaders): Response =
-    Complete(status, sent(status, kind, headers), body)
-
-  //[ The headers every builder sends: the type, the caching rule, then the caller's own. //]
-  private def sent(status: Status.Code, kind: Mime.Type, headers: List[Header]): List[Header] =
-    val stated = status is Status.NotModified || headerIn(headers, "Cache-Control") is !None
-    val rule = if stated then [] else [Header("Cache-Control", "no-store")]
-    [Header("Content-Type", Mime.value(kind))] ++ rule ++ headers
+    Complete(status, headersFor(status, kind, headers), body)
 
   def html(body: String, headers: List[Header] = NoHeaders): Response =
     complete(Status.Success, Mime.Html, body, headers)
@@ -75,17 +55,14 @@ section Response
   def json(dict: py.Dict, status: Status.Code = Status.Success, headers: List[Header] = NoHeaders): Response =
     complete(status, Mime.Json, JSON.dumps(dict), headers)
 
-  //[ A `Set-Cookie` header to send with a response
+  //[ A `Set-Cookie` header, to pass in a response's `headers`
     !
-    ! Always `Path=/`, `HttpOnly` and `SameSite=Lax`, so a script cannot read
-    ! it and a cross-site POST does not carry it. `secure` adds `Secure` and
-    ! defaults to true, which browsers accept on `http://localhost` too, so
-    ! plain HTTP on any other host is what `secure = false` is for. A
-    ! `maxAgeSeconds` of 0 deletes the cookie, which is what logging out sends.
-    ! A name or value that would need quoting aborts.
-    !
-    ! It answers a `Header`, not a `Response`, because a cookie rides with
-    ! whatever response the route is already building.
+    ! Always `Path=/`, `HttpOnly` and `SameSite=Lax`, so no script can read the
+    ! cookie and no cross-site POST carries it. `secure` adds `Secure`, which
+    ! browsers accept on `http://localhost` too, so `secure = false` is for
+    ! plain HTTP on any other host. A `maxAgeSeconds` of 0 deletes the cookie,
+    ! which is what logging out sends. A name or value that would need quoting
+    ! aborts.
   //]
   def cookie(name: String, value: String, maxAgeSeconds: Int, secure: Bool = true): Header =
     if !Util.cookieSafe(name) || name == "" then abort "cookie name '\{name}' is not a token"
@@ -94,13 +71,14 @@ section Response
     val attributes = "; Path=/; Max-Age=\{maxAgeSeconds}; HttpOnly; SameSite=Lax"
     Header("Set-Cookie", name + "=" + value + attributes + (if secure then "; Secure" else ""))
 
-  //[ The same, carrying a value `Http.signedCookie` will only read back unaltered
+  //[ A `Set-Cookie` whose value a client can neither forge nor alter
     !
-    ! `maxAgeSeconds` sets both the browser's `Max-Age` and the expiry inside
-    ! the signature, so the two cannot drift. The value is signed, not
-    ! encrypted, and rides on every request, so keep it small and keep secrets
-    ! out of it. The secret is the application's, and must be at least 32
-    ! characters.
+    ! `Request.signedCookie` reads it back, and answers None when anything
+    ! changed it or its expiry has passed. The value is signed, not encrypted,
+    ! and rides on every request, so keep it small and keep secrets out of it.
+    ! The attributes are `cookie`'s, and `maxAgeSeconds` sets both the browser's
+    ! `Max-Age` and the expiry inside the signature. The secret is the
+    ! application's, and must be at least 32 characters.
   //]
   def signedCookie(name: String, value: String, secret: String, maxAgeSeconds: Int, secure: Bool = true): Header =
     val encoded = py.module("base64").urlsafe_b64encode(py.dynamic(value).encode()).decode().asString.replace("=", "")
@@ -112,6 +90,7 @@ section Response
   def redirect(location: String, headers: List[Header] = NoHeaders): Response =
     complete(Status.SeeOther, Mime.Text, "", [Header("Location", location)] ++ headers)
 
+  //[ A 404 whose body is `{"error": "not_found"}`. //]
   def notFound(): Response =
     complete(Status.NotFound, Mime.Json, JSON.dumps(py.dict("error" ~ "not_found")))
 
@@ -122,44 +101,53 @@ section Response
   def badRequest(detail: String): Response =
     complete(Status.BadRequest, Mime.Json, JSON.dumps(py.dict("error" ~ "bad_request", "detail" ~ detail)))
 
-  //[ Whether a browser shows a file or saves it. //]
-  union Disposition = Inline | Attachment
-
-  //[ The file under `root` that `name` names
+  //[ The file under `root` that `name` names, shown in the browser
     !
     ! `name` is a relative path, as a client sent it. A name that is empty,
     ! absolute, has a `..` segment, or resolves outside `root` through a
-    ! symlink is a 404, and so is a directory or a missing file, so a client
+    ! symlink is a 404, and so is a directory or a missing file, and a client
     ! cannot tell which. The type is guessed from the name.
     !
-    ! The server reads the file a block at a time, so a large one costs a block
-    ! rather than its size. It is opened when the response is written, not here,
-    ! since a response is a value that may never be sent — so a file deleted in
-    ! between raises then, and the server answers 500.
+    ! The browser renders what it can — a page, an image, a PDF — in this
+    ! application's origin, so answer with `download` for a file a user
+    ! uploaded.
     !
-    ! `no-store`, since what this answers is the download the request had to be
-    ! entitled to. A proxy serves the files a page needs, and caches them there.
-    ! A route serving one the browser may keep names its rule in `headers`,
-    ! which ride after `Content-Disposition`.
+    ! The file is read a block at a time, so its size is not its cost in
+    ! memory, and it is opened when the response is written rather than here:
+    ! one deleted in between makes the server answer 500.
+    !
+    ! Sends `Cache-Control: no-store` unless `headers` names one of its own,
+    ! and sends `headers` after `Content-Disposition`.
   //]
-  def file(root: String, name: String, disposition: Disposition, headers: List[Header] = NoHeaders): Response =
+  def file(root: String, name: String, headers: List[Header] = NoHeaders): Response =
+    stored(root, name, Inline, headers)
+
+  //[ The same as `file`, except the browser saves it rather than showing it. //]
+  def download(root: String, name: String, headers: List[Header] = NoHeaders): Response =
+    stored(root, name, Attachment, headers)
+
+  //[ Whether a browser shows a file or saves it. //]
+  private union Disposition = Inline | Attachment
+
+  //[ The response `file` and `download` share, which differ only in `Content-Disposition`. //]
+  private def stored(root: String, name: String, disposition: Disposition, headers: List[Header]): Response =
     val target = resolve(root, name) rescue None => return notFound()
-    val guessed = File.mimeType(target).getOrElse("application/octet-stream")
     val shown = Header("Content-Disposition", dispositionValue(disposition, os.path.basename(name)))
     OnDisk:
       Status.Success
-      sent(Status.Success, Mime.Other(charset(guessed)), [shown] ++ headers)
+      headersFor(Status.Success, fileType(target), [shown] ++ headers)
       target
       os.path.getsize(target)
 
-  //[ A text type with its charset settled, as the `Mime` cases have theirs
-    !
-    ! `mimetypes` answers a bare `text/html`, and a browser left to guess the
-    ! encoding of a UTF-8 page renders it wrong.
-  //]
-  private def charset(kind: String): String =
-    val text = kind.startsWith("text/") || kind == "application/javascript" || kind == "application/json"
-    if text then kind + "; charset=utf-8" else kind
+  //[ The headers every builder sends: the type, the caching rule, then the caller's own. //]
+  private def headersFor(status: Status.Code, kind: Mime.Type, headers: List[Header]): List[Header] =
+    val stated = status is Status.NotModified || headerIn(headers, "Cache-Control") is !None
+    val rule = if stated then [] else [Header("Cache-Control", "no-store")]
+    [Header("Content-Type", Mime.value(kind))] ++ rule ++ headers
+
+  //[ The type a file's name implies, `application/octet-stream` when it implies none. //]
+  private def fileType(path: String): Mime.Type =
+    Mime.parse(File.mimeType(path).getOrElse("application/octet-stream"))
 
   //[ The real path of `name` under `root`, or None when it is not a file inside it. //]
   private def resolve(root: String, name: String): Option[String] =

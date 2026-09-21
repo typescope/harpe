@@ -1,0 +1,233 @@
+namespace harpe.server
+
+import harpe.server.Http
+import harpe.server.Http.Verb
+import harpe.server.Http.Status
+import harpe.server.Http.Mime
+import harpe.server.Http.Header
+import harpe.server.Request
+import harpe.server.request
+import harpe.server.Response
+import harpe.server.Route
+import harpe.server.Wsgi
+import harpe.util.File
+import jo.resource.*
+import jo.py.resource.*
+
+//[ One application: its routes, the policy enforced before any of them runs,
+  ! and the WSGI callable a server is given.
+  !
+  ! Refused before any route runs: an unknown verb, a path that is not UTF-8, a
+  ! `Host` the application does not answer to, a cross-site write, and a body
+  ! over the route's limit.
+  !
+  ! `fallback` answers what no route claims — the page itself, for a
+  ! single-page application whose client routes on the path. An application
+  ! that dispatches by pattern matching passes no routes and its own match as
+  ! the fallback. One whose routes cover everything names none and takes
+  ! `WebApp.notFound()`.
+  !
+  ! Every handler names the largest body it accepts, and `maxRequestBodyBytes` is the
+  ! largest of them, which is the limit to give the server. `host` defaults to
+  ! loopback, so a prototype on `127.0.0.1` runs as it is and a deployment
+  ! reached by any other name must name it.
+  !
+  ! A deployment runs `wsgi()` on the WSGI server it chooses. `Serve` is
+  ! wsgiref, for harpe's own viewer and tests.
+//]
+class WebApp(
+      routes: List[Route],
+      fallback: WebApp.Fallback = WebApp.defaultFallback,
+      host: WebApp.Loopback | WebApp.AnyHost | String = WebApp.Loopback,
+      crossSite: WebApp.CrossSite = WebApp.NoCrossSite)
+
+  //[ The exact routes, indexed once when the application is built. //]
+  private val exact: py.Dict = Route.indexed(routes)
+
+  //[ This application as the WSGI callable a server is given. //]
+  def wsgi(): (py.Dynamic, py.Dynamic) => py.Dynamic =
+    (environ: py.Dynamic, startResponse: py.Dynamic) =>
+       Wsgi.write: environ, startResponse, answer(environ)
+
+  //[ The largest body any handler allows, which is the limit to give the server. //]
+  def maxRequestBodyBytes: Int =
+    var most = fallback.maxBodyBytes
+    for route in routes do
+      if route.maxBodyBytes > most then most = route.maxBodyBytes
+    most
+
+  //[ What this exchange is answered with, refusals included
+    !
+    ! An unknown verb is refused 501 rather than 405, because no path has been
+    ! looked at yet.
+    !
+    ! The 413 is written without draining what the client is still sending, so a
+    ! client mid-upload may see the connection close first. Give the server its
+    ! own limit too, which can discard the body properly.
+    !
+    ! A route that raises is left to the server, which answers 500 and logs it.
+    ! An application wanting its own answer, logged with the session it belongs
+    ! to, wraps its own routes: only it knows that context.
+  //]
+  private def answer(environ: py.Dynamic): Response =
+    val raw = environ.get("REQUEST_METHOD", "GET").asString
+    val method = Request.verb(raw) rescue None =>
+      return if raw == "HEAD" then Answer.unsupportedHead() else Answer.refuse(Status.NotImplemented, "not implemented")
+    val path = Request.decodedPath(environ) rescue None =>
+      return Answer.refuse(Status.BadRequest, "path is not UTF-8")
+
+    if !WebApp.hostAllowed(environ, host) then
+      val sent = Request.environValue(environ, "HTTP_HOST").getOrElse("none")
+      return Answer.refuse(Status.BadRequest, "host '\{sent}' is not one this application answers to")
+    if WebApp.crossSiteRefused(crossSite, method, environ) then
+      return Answer.refuse(Status.Forbidden, "cross-site request refused")
+
+    val found = routeFor(method, path)
+    if Request.declaredLength(environ) > limitFor(found) then
+      return Answer.refuse(Status.TooLarge, "request body too large")
+
+    match found
+    case Some(route) => Answer.ran(route.handler, method, path, environ)
+    case None =>
+      val others = otherVerbs(method, path)
+      if others.size == 0 then Answer.ran(fallback.handler, method, path, environ)
+      else
+        val headers = [Header("Allow", others.join(", "))]
+        Response.complete(Status.MethodNotAllowed, Mime.Text, "method not allowed", headers = headers)
+
+  //[ The body limit for this exchange: the route's own, or the fallback's. //]
+  private def limitFor(found: Option[Route]): Int =
+    match found
+    case Some(route) => route.maxBodyBytes
+    case None        => fallback.maxBodyBytes
+
+  //[ The route for this exchange: an exact path first, then the longest prefix that covers it. //]
+  private def routeFor(method: Verb.Method, path: String): Option[Route] =
+    val key = Http.verbName(method) + " " + path
+    if exact.contains(key) then return Some(exact.get(key).cast[Route])
+
+    var best: Option[Route] = None
+    var longest = -1
+    for route in routes do
+      val covers = route.prefix && Http.verbName(route.method) == Http.verbName(method) && path.startsWith(route.path)
+      if covers && route.path.size > longest then
+        best = Some(route)
+        longest = route.path.size
+    best
+
+  //[ The verbs other routes claim this exact path under — any at all make a 405, not the fallback. //]
+  private def otherVerbs(method: Verb.Method, path: String): List[String] =
+    var claimed: List[String] = []
+    for route in routes do
+      if !route.prefix && route.path == path && Http.verbName(route.method) != Http.verbName(method) then
+        claimed = claimed + Http.verbName(route.method)
+    claimed
+end
+
+//[ What a `WebApp` constructor takes beyond its routes, and the checks behind them. //]
+section WebApp
+  //[ What answers a request no route claims, and the largest body it accepts
+    !
+    ! The limit is named outright because the fallback is often the only
+    ! handler there is: an application that dispatches in a `match` passes no
+    ! routes, so this is the only limit it gets.
+  //]
+  class Fallback(
+        handler: (() => Response receives request),
+        maxBodyBytes: Int)
+
+  //[ Answers a 404 page and reads no body, for an application whose routes cover it
+    !
+    ! `path` is the application's own HTML page. Naming none answers harpe's
+    ! bundled one. HTML rather than the JSON `Response.notFound` answers,
+    ! because what reaches a path no route claims is usually a browser. A body
+    ! sent to one is refused 413 rather than 404, since the limit is checked
+    ! first.
+  //]
+  def notFound(path: String = ""): Fallback =
+    Fallback(() => pageAt(path), maxBodyBytes = 0)
+
+  //[ What `fallback` defaults to, which is `notFound()` under a name a default argument can hold. //]
+  def defaultFallback: Fallback = notFound()
+
+  //[ The page at `path`, or harpe's own where there is none to read
+    !
+    ! `path` is the application's own rather than a client's, so it is read as
+    ! given — nothing here resolves it against a root. It is read per request,
+    ! like the assets an application serves, and one that cannot be read
+    ! answers harpe's page rather than a 500.
+  //]
+  private def pageAt(path: String): Response =
+    if path == "" then return notFoundPage()
+    match py.try(File.read(path))
+    case Ok(body) => Response.complete(Status.NotFound, Mime.Html, body)
+    case Err(_)   => notFoundPage()
+
+  //[ The bundled 404 page, or a bare one if the bundle cannot be read
+    !
+    ! Nothing from the request reaches it, so the page is a constant: a
+    ! fallback that echoed the path would put it in every application's HTML.
+  //]
+  private def notFoundPage(): Response =
+    val bundle = new py.resource.ResourceBundle("harpe")
+    val body = match bundle.readText("assets/not-found.html")
+      case Ok(text) => text
+      case Err(_)   => "<!doctype html><title>404 Not Found</title><h1>404</h1>"
+    Response.complete(Status.NotFound, Mime.Html, body)
+
+  //[ Answers `localhost`, `127.0.0.1` and `::1`, which is what a prototype wants. //]
+  object Loopback
+
+  //[ Answers any `Host` at all, for a server whose proxy already checks it. //]
+  object AnyHost
+
+  //[ What a browser on another site may send
+    !
+    ! `NoCrossSite` is the default and refuses every cross-site request, read
+    ! included, which suits the local private application the other defaults
+    ! describe. A site other pages link to wants `NoCrossSiteWrite`, which
+    ! refuses only a cross-site POST, PUT or DELETE — that is CSRF protection,
+    ! and it lets the GET behind every inbound link through. `AnyCrossSite`
+    ! refuses nothing, for a server whose own checks come first.
+    !
+    ! Clients that are not browsers send neither header this reads, so an API
+    ! client or a webhook gets through whichever is named.
+  //]
+  union CrossSite = NoCrossSite | NoCrossSiteWrite | AnyCrossSite
+
+  //[ Whether `policy` refuses this exchange. //]
+  private[server] def crossSiteRefused(policy: CrossSite, method: Verb.Method, environ: py.Dynamic): Bool =
+    match policy
+    case AnyCrossSite     => false
+    case NoCrossSiteWrite => Request.crossSiteWrite(method, environ)
+    case NoCrossSite      => Request.crossSiteRequest(environ)
+
+  //[ Whether the `Host` this request carries is one `host` answers to. //]
+  private[server] def hostAllowed(environ: py.Dynamic, host: Loopback | AnyHost | String): Bool =
+    match host
+    case AnyHost      => true
+    case Loopback     => Request.nameIn(environ, ["localhost", "127.0.0.1", "::1"])
+    case name: String => Request.nameIn(environ, [py.dynamic(name).lower().asString])
+end
+
+//[ Building the answer: running a route, and the refusals made before one runs. //]
+private section Answer
+  //[ Run `handler` with the request bound. //]
+  def ran(handler: (() => Response receives request), method: Verb.Method, path: String, environ: py.Dynamic): Response =
+    with request = new Request(method, path, environ) in handler()
+
+  //[ A refusal made before a request is bound. //]
+  def refuse(status: Status.Code, message: String): Response =
+    Response.complete(status, Mime.Text, message)
+
+  //[ The 501 for a HEAD, which must not carry a body
+    !
+    ! Waitress writes whatever body it is handed, even for a HEAD, and frames an
+    ! empty one as chunked, and either leaves bytes a client keeping the
+    ! connection open reads as its next response. A declared length of 0 is what
+    ! makes both servers send the headers alone.
+  //]
+  def unsupportedHead(): Response =
+    Complete(Status.NotImplemented, [Header("Content-Length", "0")], py.dynamic("").encode())
+
+end
