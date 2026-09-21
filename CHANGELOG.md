@@ -44,6 +44,17 @@ which origins may call is the application's to decide — and the verb doc no
 longer claims `OPTIONS` matches no route, which stopped being true once a route
 could claim it.
 
+**`Response.file` drops its `Disposition`, and `Response.download` takes the
+other half.** `file(root, name, headers)` is shown in the browser and
+`download(root, name, headers)` is saved, where one `file(root, name,
+disposition, headers)` did both. A call passing `Response.Inline` no longer
+compiles — drop the argument, since inline is what `file` does — and one passing
+`Attachment` becomes `download`. The `Disposition` union is private now.
+
+The guessed type also becomes the `Mime` case that spells it rather than an
+`Other` carrying a string, so a served `.css` and a route naming `Mime.Css` send
+the same header, the `; charset=utf-8` on it included.
+
 **`Router` is now `Route`.** It never routed anything — dispatch lives in
 `WebApp` — it just builds the routes an application holds. `Route.Get`,
 `Post`, `Put`, `Delete` and `Prefix` are where `Router.*` was, and the type
@@ -156,17 +167,16 @@ is exactly what a server cannot know. A page that follows work in progress
 polls a cursor instead, which `harpe.observability.Viewer` has always done and
 which costs a list slice per poll.
 
-**`Response.file(root, name)` and `Response.download(root, name)` serve a file
-under a directory.** `file` is shown in the browser, `download` is saved, which
-is what a file a user uploaded wants, since what a browser renders it renders in
-this application's origin. `name` is the relative path a client sent. An empty
-or absolute name, a `..` segment, a symlink out of `root`, a directory and a
-missing file are all the same 404. The type is guessed from the name and becomes
-the `Mime` case that spells it, so a served `.css` and a route naming
-`Mime.Css` send the same header, the `; charset=utf-8` on it included.
-`Content-Disposition` names the file in ASCII and UTF-8, and the response is
-`no-store`, since what it serves is the download the request had to be entitled
-to. The files a page needs are the proxy's to serve, and to cache.
+**`Response.file(root, name, disposition)` serves a file under a directory.**
+`Inline` is shown in the browser, `Attachment` is saved, which is what a file a
+user uploaded wants, since what a browser renders it renders in this
+application's origin. `name` is the relative path a client sent. An empty or
+absolute name, a `..` segment, a symlink out of `root`, a directory and a
+missing file are all the same 404. The type is guessed from the name, with
+`; charset=utf-8` appended to the textual ones. `Content-Disposition` names the
+file in ASCII and UTF-8, and the response is `no-store`, since what it serves is
+the download the request had to be entitled to. The files a page needs are the
+proxy's to serve, and to cache.
 
 The file goes out through the server's own `wsgi.file_wrapper`, which may reach
 `sendfile` and never copy it through this process, so a response costs a block
