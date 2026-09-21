@@ -81,7 +81,7 @@ class Server(brain: Model, home: String, sandboxEnv: Map[String, String])
     ! as long as it takes, and a request thread is too scarce to spend on that.
   //]
   private def handleMessage(): Response receives request, appHome =
-    val body = request.json() rescue None => return Response.badRequest("expected a JSON object")
+    val body = Request.json() rescue None => return Response.badRequest("expected a JSON object")
     val text = body.get("text", "").asString
     val reqId = body.get("session", "").asString
     val requestedId = sanitizeSessionId(reqId)
@@ -116,9 +116,9 @@ class Server(brain: Model, home: String, sandboxEnv: Map[String, String])
     ! whether a turn is still running, which is how it knows to keep asking.
   //]
   private def handleEvents(): Response receives request =
-    val requested = request.query("session").getOrElse("")
+    val requested = Request.query("session").getOrElse("")
     val id = sanitizeSessionId(requested)
-    val seen = Int.parse(request.query("seen").getOrElse("0")) rescue None => 0
+    val seen = Int.parse(Request.query("seen").getOrElse("0")) rescue None => 0
 
     registryLock.acquire()
     val found: Option[Session] =
@@ -132,7 +132,7 @@ class Server(brain: Model, home: String, sandboxEnv: Map[String, String])
 
   //[ Request cancellation of the session's running turn. //]
   private def handleStop(): Response receives request =
-    val body = request.json() rescue None => return Response.badRequest("expected a JSON object")
+    val body = Request.json() rescue None => return Response.badRequest("expected a JSON object")
     val requested = body.get("session", "").asString
     val id = sanitizeSessionId(requested)
 
@@ -144,7 +144,7 @@ class Server(brain: Model, home: String, sandboxEnv: Map[String, String])
 
   //[ Resolve the pending booking approval for a session. //]
   private def handleApproval(): Response receives request =
-    val body = request.json() rescue None => return Response.badRequest("expected a JSON object")
+    val body = Request.json() rescue None => return Response.badRequest("expected a JSON object")
     val requested = body.get("session", "").asString
     val sessionId = sanitizeSessionId(requested)
     val approvalId = body.get("id", "").asString

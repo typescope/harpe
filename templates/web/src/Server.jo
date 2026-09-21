@@ -211,7 +211,7 @@ class ChatServer(brain: Model, name: String, home: String)
     ! page follows it through `GET /api/events`.
   //]
   private def handleMessage(): Response receives request, appHome =
-    val body = request.json() rescue None => return Response.badRequest("expected a JSON object")
+    val body = Request.json() rescue None => return Response.badRequest("expected a JSON object")
     val text = body.get("text", "").asString
     val reqId = body.get("session", "").asString
     val requestedId = sanitizeName(reqId)
@@ -270,7 +270,7 @@ class ChatServer(brain: Model, name: String, home: String)
     ! stopping is idempotent.
   //]
   private def handleStop(): Response receives request =
-    val body = request.json() rescue None => return Response.badRequest("expected a JSON object")
+    val body = Request.json() rescue None => return Response.badRequest("expected a JSON object")
     val id = body.get("session", "").asString
 
     registryLock.acquire()
@@ -281,7 +281,7 @@ class ChatServer(brain: Model, name: String, home: String)
 
   //[ Resolve an instant approval for the session's active turn. //]
   private def handleApproval(): Response receives request =
-    val body = request.json() rescue None => return Response.badRequest("expected a JSON object")
+    val body = Request.json() rescue None => return Response.badRequest("expected a JSON object")
     val sessionId = sanitizeName(body.get("session", "").asString)
     val approvalId = body.get("id", "").asString
     val decision = body.get("decision", "").asString
@@ -305,9 +305,9 @@ class ChatServer(brain: Model, name: String, home: String)
     ! back to the committed history.
   //]
   private def handleEvents(): Response receives request =
-    val seen = Int.parse(request.query("seen").getOrElse("0")) rescue None => 0
+    val seen = Int.parse(Request.query("seen").getOrElse("0")) rescue None => 0
 
-    match residentSession(request.query("session").getOrElse(""))
+    match residentSession(Request.query("session").getOrElse(""))
     case Some(session) => Response.json(session.since(seen))
     case None          => Response.json(py.dict("events" ~ py.list(), "next" ~ seen, "active" ~ false))
 
@@ -450,7 +450,7 @@ class ChatServer(brain: Model, name: String, home: String)
 
   //[ Permanently remove one idle session and all of its stored files. //]
   private def handleDeleteSession(): Response receives request, appHome =
-    val body = request.json() rescue None => return Response.badRequest("expected a JSON object")
+    val body = Request.json() rescue None => return Response.badRequest("expected a JSON object")
     val requested = body.get("session", "").asString
     val id = sanitizeName(requested)
 
@@ -497,7 +497,7 @@ class ChatServer(brain: Model, name: String, home: String)
     ! fields rather than one merged list.
   //]
   private def handleHistory(): Response receives request, appHome =
-    val id = request.query("session").getOrElse("")
+    val id = Request.query("session").getOrElse("")
     val dataDir = existingDataDir(id)
 
     val arr = py.list()
@@ -637,7 +637,7 @@ class ChatServer(brain: Model, name: String, home: String)
     ! neither escape the session dir nor clobber an existing file.
   //]
   private def handleUpload(): Response receives request, appHome =
-    val body = request.json() rescue None => return Response.badRequest("expected a JSON object")
+    val body = Request.json() rescue None => return Response.badRequest("expected a JSON object")
     val reqId = body.get("session", "").asString
     val requestedId = sanitizeName(reqId)
     val name = sanitizeName(body.get("name", "").asString)
@@ -671,7 +671,7 @@ class ChatServer(brain: Model, name: String, home: String)
     ! or written by the agent. Newest first.
   //]
   private def handleFiles(): Response receives request, appHome =
-    val files = match existingDataDir(request.query("session").getOrElse(""))
+    val files = match existingDataDir(Request.query("session").getOrElse(""))
                 case None      => []
                 case Some(dir) => Session.listFiles(dir)
 
@@ -684,9 +684,9 @@ class ChatServer(brain: Model, name: String, home: String)
     ! file, or any traversal attempt is a 404.
   //]
   private def handleFile(): Response receives request, appHome =
-    val name = sanitizeName(request.query("name").getOrElse(""))
+    val name = sanitizeName(Request.query("name").getOrElse(""))
 
-    match existingDataDir(request.query("session").getOrElse(""))
+    match existingDataDir(Request.query("session").getOrElse(""))
     case None => Response.notFound()
     case Some(dir) =>
       val p = os.path.join(dir, name)
@@ -706,7 +706,7 @@ class ChatServer(brain: Model, name: String, home: String)
     ! adopts the returned id.
   //]
   private def handleRun(): Response receives request, appHome =
-    val body = request.json() rescue None => return Response.badRequest("expected a JSON object")
+    val body = Request.json() rescue None => return Response.badRequest("expected a JSON object")
     val code = body.get("code", "").asString
     val reqId = body.get("session", "").asString
     val requestedId = sanitizeName(reqId)
@@ -731,7 +731,7 @@ class ChatServer(brain: Model, name: String, home: String)
     ! Mints a session if the request carries none.
   //]
   private def handleSave(): Response receives request, appHome =
-    val body = request.json() rescue None => return Response.badRequest("expected a JSON object")
+    val body = Request.json() rescue None => return Response.badRequest("expected a JSON object")
     val reqId = body.get("session", "").asString
     val name = sanitizeName(body.get("name", "").asString)
     val content = body.get("content", "").asString
