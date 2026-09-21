@@ -60,13 +60,6 @@ class Request
       case None        => pass
     found
 
-  //[ `X_TRACE` as `X-Trace`, which is the shape a client wrote it in. //]
-  private def headerName(mangled: String): String =
-    var parts: List[String] = []
-    for piece in mangled.split("_") do
-      parts = parts + py.dynamic(piece).capitalize().asString
-    parts.join("-")
-
   //[ The query string as it arrived, undecoded — `query` reads one parameter out of it. //]
   def queryString(): String =
     environ.get("QUERY_STRING", "").asString
@@ -79,9 +72,6 @@ class Request
   def query(key: String): Option[String] =
     val qs = environ.get("QUERY_STRING", "").asString
     firstValue(py.module("urllib.parse").parse_qs(qs, keep_blank_values = true).cast[py.Dict], key)
-
-  private def firstValue(params: py.Dict, key: String): Option[String] =
-    if params.contains(key) then Some(params.get(key).cast[py.List].get(0).asString) else None
 
   //[ A cookie the client sent, or None
     !
@@ -129,11 +119,6 @@ class Request
     val decoded = py.try(py.module("base64").urlsafe_b64decode(value + "===").decode("utf-8").asString) rescue Err(_) => return None
     Some(decoded)
 
-  //[ The media type of the body, lower-cased and without its parameters. //]
-  private[server] def mediaType(): String =
-    val kind = header("Content-Type").getOrElse("")
-    py.dynamic(kind.split(";").get(0).trim).lower().asString
-
   //[ The request body as bytes, or None when it cannot be trusted whole
     !
     ! None when the body declared no length at all, and when less of it arrived
@@ -152,9 +137,6 @@ class Request
     val declared = Request.declaredLength(environ)
     val raw = environ.get("wsgi.input").read(declared)
     if builtins.len(raw) == declared then Some(raw) else None
-
-  //[ How much of a body is read at once, and so what one costs in memory. //]
-  private def blockBytes: Int = 65536
 
   //[ The request body written to `path`, and how many bytes that was
     !
@@ -240,6 +222,36 @@ class Request
     case "multipart/form-data"               => scanned(fileStoreDir)
     case _                                   => None
 
+  //[ The request body as a JSON object
+    !
+    ! None unless the request says `application/json` and the body parses to an
+    ! object, which a handler answers with its own 400. A browser must preflight
+    ! a cross-site request carrying that type.
+  //]
+  def json(): Option[py.Dict] =
+    if mediaType() != "application/json" then return None
+    val text = body() rescue None => return None
+    val value = py.try(JSON.loads(text)) rescue Err(_) => return None
+    if py.isInstance(value, builtins.dict) then Some(value.cast[py.Dict]) else None
+
+  //[ `X_TRACE` as `X-Trace`, which is the shape a client wrote it in. //]
+  private def headerName(mangled: String): String =
+    var parts: List[String] = []
+    for piece in mangled.split("_") do
+      parts = parts + py.dynamic(piece).capitalize().asString
+    parts.join("-")
+
+  private def firstValue(params: py.Dict, key: String): Option[String] =
+    if params.contains(key) then Some(params.get(key).cast[py.List].get(0).asString) else None
+
+  //[ The media type of the body, lower-cased and without its parameters. //]
+  private[server] def mediaType(): String =
+    val kind = header("Content-Type").getOrElse("")
+    py.dynamic(kind.split(";").get(0).trim).lower().asString
+
+  //[ How much of a body is read at once, and so what one costs in memory. //]
+  private def blockBytes: Int = 65536
+
   //[ A `application/x-www-form-urlencoded` body, decoded as `query` decodes a URL's. //]
   private def urlencoded(): Option[Form] =
     val text = body() rescue None => return None
@@ -254,18 +266,6 @@ class Request
 
     val mark = Multipart.boundary(header("Content-Type").getOrElse("")) rescue None => return None
     Multipart.read(environ.get("wsgi.input"), mark, Request.declaredLength(environ), fileStoreDir)
-
-  //[ The request body as a JSON object
-    !
-    ! None unless the request says `application/json` and the body parses to an
-    ! object, which a handler answers with its own 400. A browser must preflight
-    ! a cross-site request carrying that type.
-  //]
-  def json(): Option[py.Dict] =
-    if mediaType() != "application/json" then return None
-    val text = body() rescue None => return None
-    val value = py.try(JSON.loads(text)) rescue Err(_) => return None
-    if py.isInstance(value, builtins.dict) then Some(value.cast[py.Dict]) else None
 end
 
 
