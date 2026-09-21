@@ -13,7 +13,7 @@ import harpe.server.Form
   ! apart. `path` is already decoded as UTF-8.
   !
   ! The server binds one per exchange, so a handler asks for what it wants —
-  ! `Request.json()`, `Request.form()` — rather than being handed an `environ`.
+  ! `request.json()`, `request.form()` — rather than being handed an `environ`.
   ! A route touches neither that nor the start of the response.
 //]
 class Request
@@ -36,7 +36,238 @@ class Request
     this.method = method
     this.path = path
     this.environ = environ
+
+  //[ A request header, or None when the client did not send it. //]
+  def header(name: String): Option[String] =
+    Request.environValue(environ, Request.environKey(name))
+
+  //[ Every header the client sent, for code that must keep them all
+    !
+    ! WSGI upper-cases a name and turns its dashes into underscores, so a name
+    ! comes back as `X-Trace` however the client spelled it, and one that
+    ! carried an underscore is no longer told from one that carried a dash.
+  //]
+  def headers(): List[Http.Header] =
+    var found: List[Http.Header] = []
+    for key in py.iter(environ.keys()) do
+      val name = key.asString
+      if name.startsWith("HTTP_") then
+        val bare = name.substring(5, name.size - 5)
+        found = found + Http.Header(headerName(bare), environ.get(name, "").asString)
+    for plain in ["CONTENT_TYPE", "CONTENT_LENGTH"] do
+      match Request.environValue(environ, plain)
+      case Some(value) => found = found + Http.Header(headerName(plain), value)
+      case None        => pass
+    found
+
+  //[ `X_TRACE` as `X-Trace`, which is the shape a client wrote it in. //]
+  private def headerName(mangled: String): String =
+    var parts: List[String] = []
+    for piece in mangled.split("_") do
+      parts = parts + py.dynamic(piece).capitalize().asString
+    parts.join("-")
+
+  //[ The query string as it arrived, undecoded — `query` reads one parameter out of it. //]
+  def queryString(): String =
+    environ.get("QUERY_STRING", "").asString
+
+  //[ The first value of a query parameter
+    !
+    ! None when the parameter is absent. `?q=` is `Some("")`, so a handler can
+    ! tell an empty value from a missing one.
+  //]
+  def query(key: String): Option[String] =
+    val qs = environ.get("QUERY_STRING", "").asString
+    firstValue(py.module("urllib.parse").parse_qs(qs, keep_blank_values = true).cast[py.Dict], key)
+
+  private def firstValue(params: py.Dict, key: String): Option[String] =
+    if params.contains(key) then Some(params.get(key).cast[py.List].get(0).asString) else None
+
+  //[ A cookie the client sent, or None
+    !
+    ! Parsed leniently, as browsers write them, so one malformed cookie does not
+    ! hide the rest. The first of two same-named cookies wins, which is the one
+    ! with the longest path.
+  //]
+  def cookie(name: String): Option[String] =
+    val raw = header("Cookie") rescue None => return None
+
+    for chunk in raw.split(";") do
+      val pair = py.dynamic(chunk.trim).split("=", 1).cast[py.List]
+      if pair.size == 2 && pair.get(0).asString.trim == name then
+        val value = pair.get(1).asString.trim
+        val quoted = value.size >= 2 && value.startsWith("\"") && value.endsWith("\"")
+        return Some(if quoted then value.substring(1, value.size - 2) else value)
+
+    None
+
+  //[ The value of a signed cookie, or None
+    !
+    ! None when the cookie is missing, was altered, was moved to another name,
+    ! or has passed the expiry it was signed with, and a caller cannot tell
+    ! those apart. Signing proves the value is the one this application wrote.
+    ! It does NOT hide it: whoever holds the cookie can read it, so a user id
+    ! belongs here and a secret does not.
+    !
+    ! The expiry the server enforces is the signed one, not the browser's
+    ! `Max-Age`. Nothing here can be revoked before it expires — an application
+    ! that must revoke keeps state of its own, such as a deny list.
+  //]
+  def signedCookie(name: String, secret: String): Option[String] =
+    val carried = cookie(name) rescue None => return None
+    val parts = carried.split(".")
+    if parts.size != 3 then return None
+
+    val value = parts.get(0)
+    val expiry = parts.get(1)
+    val signature = Util.signCookie(name, value, expiry, secret)
+    if !py.module("hmac").compare_digest(signature, parts.get(2)).asBool then return None
+
+    val deadline = Int.parse(expiry) rescue None => return None
+    if deadline <= Clock.now().toInt then return None
+
+    val decoded = py.try(py.module("base64").urlsafe_b64decode(value + "===").decode("utf-8").asString) rescue Err(_) => return None
+    Some(decoded)
+
+  //[ The media type of the body, lower-cased and without its parameters. //]
+  private[server] def mediaType(): String =
+    val kind = header("Content-Type").getOrElse("")
+    py.dynamic(kind.split(";").get(0).trim).lower().asString
+
+  //[ The request body as bytes, or None when it cannot be trusted whole
+    !
+    ! None when the body declared no length at all, and when less of it arrived
+    ! than was declared — never a truncated buffer.
+    !
+    ! Reads exactly what `CONTENT_LENGTH` declares, with no cap of its own:
+    ! `WebApp.wsgi` has already refused a declaration over the route's own
+    ! limit.
+    !
+    ! The body is a stream, so a second read in one request aborts.
+  //]
+  def bytes(): Option[py.Dynamic] =
+    if bodyTaken then abort "the request body was already read"
+    bodyTaken = true
+    if Request.undeclaredBody(environ) then return None
+    val declared = Request.declaredLength(environ)
+    val raw = environ.get("wsgi.input").read(declared)
+    if builtins.len(raw) == declared then Some(raw) else None
+
+  //[ How much of a body is read at once, and so what one costs in memory. //]
+  private def blockBytes: Int = 65536
+
+  //[ The request body written to `path`, and how many bytes that was
+    !
+    ! The body is copied a block at a time, so a large one costs a block rather
+    ! than its size. `bytes` and the readers built on it hold the whole body, so
+    ! a route taking uploads reaches for this instead.
+    !
+    ! None in the same cases `bytes` answers None — a body that declared no
+    ! length, and one that arrived short — and nothing is left at `path` in
+    ! either, so None means nothing was stored. Anything already there is
+    ! replaced.
+    !
+    ! `path` is the route's to choose. A filename a client sent is not one: see
+    ! `Form.Upload`.
+  //]
+  def saveTo(path: String): Option[Int] =
+    if bodyTaken then abort "the request body was already read"
+    bodyTaken = true
+    if Request.undeclaredBody(environ) then return None
+
+    val declared = Request.declaredLength(environ)
+    val input = environ.get("wsgi.input")
+    val out = py.open(path, "wb")
+    var written = 0
+
+    while written < declared do
+      val asked = declared - written
+      val block = input.read(if asked > blockBytes then blockBytes else asked)
+      val got = builtins.len(block)
+      if got == 0 then break
+      out.write(block)
+      written = written + got
+
+    out.close()
+    if written == declared then return Some(written)
+
+    // A prefix of a message reads as a whole one, so leave nothing behind.
+    os.unlink(path)
+    None
+
+  //[ The request body as text, or None when it is not UTF-8. //]
+  def body(): Option[String] =
+    val raw = bytes() rescue None => return None
+    match py.try(raw.decode("utf-8").asString)
+    case Ok(text) => Some(text)
+    case Err(_)   => None
+
+  //[ The request body as a form, in either encoding a browser sends
+    !
+    ! `multipart/form-data` carries files, `application/x-www-form-urlencoded`
+    ! cannot, and a route reads both the same way. `Form.files` is empty for the
+    ! one that carries none.
+    !
+    ! `fileStoreDir` is a directory the route owns. Each file is written there
+    ! as it arrives, under a generated name, and its `Upload` carries that path
+    ! beside the name the client sent. A route keeping a file renames it:
+    !
+    !     val form = request.form(Session.dataDir(id)) rescue None =>
+    !       return Response.badRequest("expected a form")
+    !
+    ! It defaults to None, which refuses every file part, so `request.form()`
+    ! reads a form that should carry none. A route wanting only some of the
+    ! files deletes the rest. An empty string aborts.
+    !
+    ! None unless the request names one of those two types and the body reads
+    ! cleanly. Every file already written is unlinked first, so None means
+    ! nothing was stored.
+    !
+    ! A browser may send either type cross-site without a preflight, so leave
+    ! the application's `crossSite` check on, and verify the sender's own
+    ! signature on a webhook route.
+    !
+    ! A multipart body is read a block at a time and never held whole, so what a
+    ! route must budget is that directory's disk rather than this process's
+    ! memory.
+  //]
+  def form(fileStoreDir: String | None = None): Option[Form] =
+    if fileStoreDir is "" then
+      abort "an empty fileStoreDir writes to the working directory: name a directory, or pass None to refuse files"
+
+    match mediaType()
+    case "application/x-www-form-urlencoded" => urlencoded()
+    case "multipart/form-data"               => scanned(fileStoreDir)
+    case _                                   => None
+
+  //[ A `application/x-www-form-urlencoded` body, decoded as `query` decodes a URL's. //]
+  private def urlencoded(): Option[Form] =
+    val text = body() rescue None => return None
+    val parsed = py.module("urllib.parse").parse_qs(text, keep_blank_values = true)
+    Some(new Form(parsed.cast[py.Dict], []))
+
+  //[ A `multipart/form-data` body, scanned as it arrives. //]
+  private def scanned(fileStoreDir: String | None): Option[Form] =
+    if bodyTaken then abort "the request body was already read"
+    bodyTaken = true
+    if Request.undeclaredBody(environ) then return None
+
+    val mark = Multipart.boundary(header("Content-Type").getOrElse("")) rescue None => return None
+    Multipart.read(environ.get("wsgi.input"), mark, Request.declaredLength(environ), fileStoreDir)
+
+  //[ The request body as a JSON object
+    !
+    ! None unless the request says `application/json` and the body parses to an
+    ! object, which a handler answers with its own 400. A browser must preflight
+    ! a cross-site request carrying that type.
+  //]
+  def json(): Option[py.Dict] =
+    if mediaType() != "application/json" then return None
+    val text = body() rescue None => return None
+    val value = py.try(JSON.loads(text)) rescue Err(_) => return None
+    if py.isInstance(value, builtins.dict) then Some(value.cast[py.Dict]) else None
 end
+
 
 //[ The request being served. Bound once per request by the server. //]
 param request: Request
@@ -78,7 +309,6 @@ section Request
   def segments(path: String): List[String] =
     path.split("/").exclude(part => part == "")
 
-
   private[server] def verb(raw: String): Option[Verb.Method] =
     if raw == "GET" then Some(Verb.Get)
     else if raw == "POST" then Some(Verb.Post)
@@ -86,7 +316,6 @@ section Request
     else if raw == "DELETE" then Some(Verb.Delete)
     else if raw == "OPTIONS" then Some(Verb.Options)
     else None
-
 
   //[ `PATH_INFO` as the client wrote it
     !
@@ -121,7 +350,7 @@ section Request
     ! Waitress also de-chunks and declares the length, so what is left here is
     ! the servers that pass the chunks through.
   //]
-  private def undeclaredBody(environ: py.Dynamic): Bool =
+  private[server] def undeclaredBody(environ: py.Dynamic): Bool =
     match environValue(environ, "CONTENT_LENGTH")
     case Some(declared) if declared.trim != "" => false
     case _ => !py.isNone(environ.get("HTTP_TRANSFER_ENCODING"))
@@ -173,234 +402,4 @@ section Request
   private[server] def crossSiteWrite(method: Verb.Method, environ: py.Dynamic): Bool =
     val writes = method is Verb.Post || method is Verb.Put || method is Verb.Delete
     writes && crossSiteRequest(environ)
-
-  //[ A request header, or None when the client did not send it. //]
-  def header(name: String): Option[String] receives request =
-    environValue(request.environ, environKey(name))
-
-  //[ Every header the client sent, for code that must keep them all
-    !
-    ! WSGI upper-cases a name and turns its dashes into underscores, so a name
-    ! comes back as `X-Trace` however the client spelled it, and one that
-    ! carried an underscore is no longer told from one that carried a dash.
-  //]
-  def headers(): List[Http.Header] receives request =
-    var found: List[Http.Header] = []
-    for key in py.iter(request.environ.keys()) do
-      val name = key.asString
-      if name.startsWith("HTTP_") then
-        val bare = name.substring(5, name.size - 5)
-        found = found + Http.Header(headerName(bare), request.environ.get(name, "").asString)
-    for plain in ["CONTENT_TYPE", "CONTENT_LENGTH"] do
-      match environValue(request.environ, plain)
-      case Some(value) => found = found + Http.Header(headerName(plain), value)
-      case None        => pass
-    found
-
-  //[ `X_TRACE` as `X-Trace`, which is the shape a client wrote it in. //]
-  private def headerName(mangled: String): String =
-    var parts: List[String] = []
-    for piece in mangled.split("_") do
-      parts = parts + py.dynamic(piece).capitalize().asString
-    parts.join("-")
-
-  //[ The query string as it arrived, undecoded — `query` reads one parameter out of it. //]
-  def queryString(): String receives request =
-    request.environ.get("QUERY_STRING", "").asString
-
-  //[ The first value of a query parameter
-    !
-    ! None when the parameter is absent. `?q=` is `Some("")`, so a handler can
-    ! tell an empty value from a missing one.
-  //]
-  def query(key: String): Option[String] receives request =
-    val qs = request.environ.get("QUERY_STRING", "").asString
-    firstValue(py.module("urllib.parse").parse_qs(qs, keep_blank_values = true).cast[py.Dict], key)
-
-  private def firstValue(params: py.Dict, key: String): Option[String] =
-    if params.contains(key) then Some(params.get(key).cast[py.List].get(0).asString) else None
-
-  //[ A cookie the client sent, or None
-    !
-    ! Parsed leniently, as browsers write them, so one malformed cookie does not
-    ! hide the rest. The first of two same-named cookies wins, which is the one
-    ! with the longest path.
-  //]
-  def cookie(name: String): Option[String] receives request =
-    val raw = header("Cookie") rescue None => return None
-
-    for chunk in raw.split(";") do
-      val pair = py.dynamic(chunk.trim).split("=", 1).cast[py.List]
-      if pair.size == 2 && pair.get(0).asString.trim == name then
-        val value = pair.get(1).asString.trim
-        val quoted = value.size >= 2 && value.startsWith("\"") && value.endsWith("\"")
-        return Some(if quoted then value.substring(1, value.size - 2) else value)
-
-    None
-
-  //[ The value of a signed cookie, or None
-    !
-    ! None when the cookie is missing, was altered, was moved to another name,
-    ! or has passed the expiry it was signed with, and a caller cannot tell
-    ! those apart. Signing proves the value is the one this application wrote.
-    ! It does NOT hide it: whoever holds the cookie can read it, so a user id
-    ! belongs here and a secret does not.
-    !
-    ! The expiry the server enforces is the signed one, not the browser's
-    ! `Max-Age`. Nothing here can be revoked before it expires — an application
-    ! that must revoke keeps state of its own, such as a deny list.
-  //]
-  def signedCookie(name: String, secret: String): Option[String] receives request =
-    val carried = cookie(name) rescue None => return None
-    val parts = carried.split(".")
-    if parts.size != 3 then return None
-
-    val value = parts.get(0)
-    val expiry = parts.get(1)
-    val signature = Util.signCookie(name, value, expiry, secret)
-    if !py.module("hmac").compare_digest(signature, parts.get(2)).asBool then return None
-
-    val deadline = Int.parse(expiry) rescue None => return None
-    if deadline <= Clock.now().toInt then return None
-
-    val decoded = py.try(py.module("base64").urlsafe_b64decode(value + "===").decode("utf-8").asString) rescue Err(_) => return None
-    Some(decoded)
-
-  //[ The media type of the body, lower-cased and without its parameters. //]
-  private[server] def mediaType(): String receives request =
-    val kind = header("Content-Type").getOrElse("")
-    py.dynamic(kind.split(";").get(0).trim).lower().asString
-
-  //[ The request body as bytes, or None when it cannot be trusted whole
-    !
-    ! None when the body declared no length at all, and when less of it arrived
-    ! than was declared — never a truncated buffer.
-    !
-    ! Reads exactly what `CONTENT_LENGTH` declares, with no cap of its own:
-    ! `WebApp.wsgi` has already refused a declaration over the route's own
-    ! limit.
-    !
-    ! The body is a stream, so a second read in one request aborts.
-  //]
-  def bytes(): Option[py.Dynamic] receives request =
-    if request.bodyTaken then abort "the request body was already read"
-    request.bodyTaken = true
-    if undeclaredBody(request.environ) then return None
-    val declared = declaredLength(request.environ)
-    val raw = request.environ.get("wsgi.input").read(declared)
-    if builtins.len(raw) == declared then Some(raw) else None
-
-  //[ How much of a body is read at once, and so what one costs in memory. //]
-  private def blockBytes: Int = 65536
-
-  //[ The request body written to `path`, and how many bytes that was
-    !
-    ! The body is copied a block at a time, so a large one costs a block rather
-    ! than its size. `bytes` and the readers built on it hold the whole body, so
-    ! a route taking uploads reaches for this instead.
-    !
-    ! None in the same cases `bytes` answers None — a body that declared no
-    ! length, and one that arrived short — and nothing is left at `path` in
-    ! either, so None means nothing was stored. Anything already there is
-    ! replaced.
-    !
-    ! `path` is the route's to choose. A filename a client sent is not one: see
-    ! `Form.Upload`.
-  //]
-  def saveTo(path: String): Option[Int] receives request =
-    if request.bodyTaken then abort "the request body was already read"
-    request.bodyTaken = true
-    if undeclaredBody(request.environ) then return None
-
-    val declared = declaredLength(request.environ)
-    val input = request.environ.get("wsgi.input")
-    val out = py.open(path, "wb")
-    var written = 0
-
-    while written < declared do
-      val asked = declared - written
-      val block = input.read(if asked > blockBytes then blockBytes else asked)
-      val got = builtins.len(block)
-      if got == 0 then break
-      out.write(block)
-      written = written + got
-
-    out.close()
-    if written == declared then return Some(written)
-
-    // A prefix of a message reads as a whole one, so leave nothing behind.
-    os.unlink(path)
-    None
-
-  //[ The request body as text, or None when it is not UTF-8. //]
-  def body(): Option[String] receives request =
-    val raw = bytes() rescue None => return None
-    match py.try(raw.decode("utf-8").asString)
-    case Ok(text) => Some(text)
-    case Err(_)   => None
-
-  //[ The request body as a form, in either encoding a browser sends
-    !
-    ! `multipart/form-data` carries files, `application/x-www-form-urlencoded`
-    ! cannot, and a route reads both the same way. `Form.files` is empty for the
-    ! one that carries none.
-    !
-    ! `fileStoreDir` is a directory the route owns. Each file is written there
-    ! as it arrives, under a generated name, and its `Upload` carries that path
-    ! beside the name the client sent. A route keeping a file renames it:
-    !
-    !     val form = Request.form(Session.dataDir(id)) rescue None =>
-    !       return Response.badRequest("expected a form")
-    !
-    ! It defaults to None, which refuses every file part, so `Request.form()`
-    ! reads a form that should carry none. A route wanting only some of the
-    ! files deletes the rest. An empty string aborts.
-    !
-    ! None unless the request names one of those two types and the body reads
-    ! cleanly. Every file already written is unlinked first, so None means
-    ! nothing was stored.
-    !
-    ! A browser may send either type cross-site without a preflight, so leave
-    ! the application's `crossSite` check on, and verify the sender's own
-    ! signature on a webhook route.
-    !
-    ! A multipart body is read a block at a time and never held whole, so what a
-    ! route must budget is that directory's disk rather than this process's
-    ! memory.
-  //]
-  def form(fileStoreDir: String | None = None): Option[Form] receives request =
-    if fileStoreDir is "" then
-      abort "an empty fileStoreDir writes to the working directory: name a directory, or pass None to refuse files"
-
-    match mediaType()
-    case "application/x-www-form-urlencoded" => urlencoded()
-    case "multipart/form-data"               => scanned(fileStoreDir)
-    case _                                   => None
-
-  //[ A `application/x-www-form-urlencoded` body, decoded as `query` decodes a URL's. //]
-  private def urlencoded(): Option[Form] receives request =
-    val text = body() rescue None => return None
-    val parsed = py.module("urllib.parse").parse_qs(text, keep_blank_values = true)
-    Some(new Form(parsed.cast[py.Dict], []))
-
-  //[ A `multipart/form-data` body, scanned as it arrives. //]
-  private def scanned(fileStoreDir: String | None): Option[Form] receives request =
-    if request.bodyTaken then abort "the request body was already read"
-    request.bodyTaken = true
-    if undeclaredBody(request.environ) then return None
-
-    val mark = Multipart.boundary(header("Content-Type").getOrElse("")) rescue None => return None
-    Multipart.read(request.environ.get("wsgi.input"), mark, declaredLength(request.environ), fileStoreDir)
-
-  //[ The request body as a JSON object
-    !
-    ! None unless the request says `application/json` and the body parses to an
-    ! object, which a handler answers with its own 400. A browser must preflight
-    ! a cross-site request carrying that type.
-  //]
-  def json(): Option[py.Dict] receives request =
-    if mediaType() != "application/json" then return None
-    val text = body() rescue None => return None
-    val value = py.try(JSON.loads(text)) rescue Err(_) => return None
-    if py.isInstance(value, builtins.dict) then Some(value.cast[py.Dict]) else None
 end

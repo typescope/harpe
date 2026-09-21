@@ -40,7 +40,7 @@ private def route(reached: py.List): Response receives request =
   case Request.Get("/dynamic") => Response.complete(Http.Status.Success, Http.Mime.Json, "{}")
   case Request.Get("/asset")   => Response.complete(Http.Status.Success, Http.Mime.Css, "body { margin: 0 }")
   case Request.Get("/typed")   => Response.complete(Http.Status.Success, Http.Mime.Other("image/png"), "x")
-  case Request.Get("/page")    => Response.html("<p>" + Request.query("v").getOrElse("one") + "</p>")
+  case Request.Get("/page")    => Response.html("<p>" + request.query("v").getOrElse("one") + "</p>")
   case Request.Get("/moved")   => Response.redirect("/dynamic")
 
   //[ A status decided at runtime, which the server writes with the reason it carries. //]
@@ -54,8 +54,8 @@ private def route(reached: py.List): Response receives request =
     ! before the body is built. `reached` records that the build was skipped.
   //]
   case Request.Get("/versioned") =>
-    val tag = "\"v" + Request.query("v").getOrElse("1") + "\""
-    if Request.header("If-None-Match").getOrElse("") == tag then
+    val tag = "\"v" + request.query("v").getOrElse("1") + "\""
+    if request.header("If-None-Match").getOrElse("") == tag then
       Response.complete(Http.Status.NotModified, Http.Mime.Text, "", headers = [Header("ETag", tag)])
     else
       reached.append("built")
@@ -68,10 +68,10 @@ private def route(reached: py.List): Response receives request =
     Response.complete(Http.Status.Success, Http.Mime.Css, "body { margin: 0 }", headers = [own])
 
   case Request.Get("/headed") =>
-    Response.complete(Http.Status.Created, Http.Mime.Text, Request.header("X-Asked").getOrElse("absent"), headers = [Header("X-Trace", "abc")])
+    Response.complete(Http.Status.Created, Http.Mime.Text, request.header("X-Asked").getOrElse("absent"), headers = [Header("X-Trace", "abc")])
 
   case Request.Get("/query") =>
-    val shown = match Request.query("q")
+    val shown = match request.query("q")
                 case Some(value) => "some:" + value
                 case None        => "none"
     Response.complete(Http.Status.Success, Http.Mime.Text, shown)
@@ -84,12 +84,12 @@ private def route(reached: py.List): Response receives request =
 
   case Request.Post("/echo") =>
     reached.append(1)
-    val text = Request.body() rescue None => return Response.badRequest("not utf-8")
+    val text = request.body() rescue None => return Response.badRequest("not utf-8")
     Response.complete(Http.Status.Success, Http.Mime.Text, text.size.toString)
 
   case Request.Post("/twice") =>
-    val _ = Request.bytes()
-    val second = match py.try(Request.bytes())
+    val _ = request.bytes()
+    val second = match py.try(request.bytes())
                  case Ok(_)    => "read twice"
                  case Err(err) => err.message
     Response.complete(Http.Status.Success, Http.Mime.Text, second)
@@ -99,29 +99,29 @@ private def route(reached: py.List): Response receives request =
     Response.html("<p>embedded</p>", headers = [own])
 
   case Request.Get("/cookie") =>
-    val shown = Request.cookie("sid").getOrElse("absent")
+    val shown = request.cookie("sid").getOrElse("absent")
     Response.complete(Http.Status.Success, Http.Mime.Text, shown, headers = [Response.cookie("sid", "abc123", maxAgeSeconds = 60, secure = true)])
 
   //[ The same, signed for a different cookie name, to show the name is signed. //]
   case Request.Get("/signed-other") =>
-    val given = Request.query("value").getOrElse("")
+    val given = request.query("value").getOrElse("")
     val header = Response.signedCookie("other", given, secret, maxAgeSeconds = 60, secure = true)
     Response.complete(Http.Status.Success, Http.Mime.Text, "issued", headers = [header])
 
   //[ Signs `?value=` into a cookie, and reads back whatever cookie the request carries. //]
   case Request.Get("/signed") =>
-    val given = Request.query("value").getOrElse("")
-    val age = Int.parse(Request.query("age").getOrElse("60")) rescue None => 60
-    val seen = Request.signedCookie("sid", secret).getOrElse("absent")
+    val given = request.query("value").getOrElse("")
+    val age = Int.parse(request.query("age").getOrElse("60")) rescue None => 60
+    val seen = request.signedCookie("sid", secret).getOrElse("absent")
     val header = Response.signedCookie("sid", given, secret, maxAgeSeconds = age, secure = true)
     Response.complete(Http.Status.Success, Http.Mime.Text, seen, headers = [header])
 
   //[ The route names the directory its files go in, or none to refuse them. //]
   case Request.Post("/upload") =>
-    val into: String | None = match Request.query("into")
+    val into: String | None = match request.query("into")
                               case Some(dir) => dir
                               case None      => None
-    val form = Request.form(into) rescue None =>
+    val form = request.form(into) rescue None =>
       return Response.badRequest("expected multipart/form-data")
 
     val note = form.field("note").getOrElse("absent")
@@ -135,23 +135,23 @@ private def route(reached: py.List): Response receives request =
 
   //[ A urlencoded body, as a webhook posts one. //]
   case Request.Post("/form") =>
-    val form = Request.form() rescue None => return Response.badRequest("expected a form")
+    val form = request.form() rescue None => return Response.badRequest("expected a form")
     val tags = form.all("tag").join("+")
     Response.complete(Http.Status.Success, Http.Mime.Text, "\{form.field("note").getOrElse("absent")}|\{tags}|\{form.files("any").size}")
 
   case Request.Post("/json") =>
     Response.json:
-      Request.json() rescue None => return Response.badRequest("bad json")
+      request.json() rescue None => return Response.badRequest("bad json")
 
   //[ An upload spooled straight to the path the route chose, never held whole. //]
   case Request.Post("/save") =>
-    match Request.saveTo(Request.query("into").getOrElse(""))
+    match request.saveTo(request.query("into").getOrElse(""))
     case Some(written) => Response.json(py.dict("written" ~ written))
     case None          => Response.badRequest("no whole body")
 
   //[ An empty directory is one nobody meant, so it aborts rather than writing to the CWD. //]
   case Request.Post("/upload-nowhere") =>
-    match py.try(Request.form(""))
+    match py.try(request.form(""))
     case Ok(_)    => Response.complete(Http.Status.Success, Http.Mime.Text, "accepted")
     case Err(err) => Response.complete(Http.Status.Success, Http.Mime.Text, err.message)
 
@@ -261,7 +261,7 @@ private def callWith(
 
 //[ Files under `root`, named by the `name` query parameter. //]
 private def fileRoute(root: String): Response receives request =
-  val name = Request.query("name").getOrElse("")
+  val name = request.query("name").getOrElse("")
   match request
   case Request.Get("/download") => Response.download(root, name)
   case Request.Get("/show")     => Response.file(root, name)
@@ -319,7 +319,7 @@ private def info(): Response receives request = Response.json(py.dict("name" ~ "
 
 private def echoed(reached: py.List): Response receives request =
   reached.append(1)
-  val text = Request.body() rescue None => return Response.badRequest("not utf-8")
+  val text = request.body() rescue None => return Response.badRequest("not utf-8")
   Response.complete(Http.Status.Success, Http.Mime.Text, text.size.toString)
 
 //[ Two routes claiming one verb and path, which no application may hold. //]

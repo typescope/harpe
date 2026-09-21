@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+**The body readers are members of `Request`.** `Request.body()`,
+`json()`, `form()`, `query()`, `header()`, `cookie()`, `signedCookie()`,
+`bytes()` and `saveTo()` are now `request.body()` and so on. They always read
+the request the server bound, so calling them on it says that, where the old
+spelling read like a static call that quietly depended on ambient state. The
+patterns keep the old form — `Request.Get(path)` matches a value you hand it.
+
+`request.environ` is `private[server]`, since reaching `wsgi.input` through it
+took the body without the double-read guard seeing it. `request.headers()` and
+`request.queryString()` are new, and `Http.verbName` is public, which together
+cover what reading the environ was being used for.
+
 **`Application` is now `WebApp`.** The old name was long in exactly the places
 it appeared most, which were the nested ones: `WebApp.Fallback`,
 `WebApp.CrossSite.Refuse`. `Application.jo` is `WebApp.jo`, and

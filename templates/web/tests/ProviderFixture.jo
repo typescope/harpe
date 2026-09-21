@@ -92,14 +92,14 @@ section ProviderFixture
   end
 
   private def serve(responses: List[Scripted], requests: py.List): Response receives request =
-    val body = Request.body() rescue None => abort "the provider fixture was sent a body that is not UTF-8"
+    val body = request.body() rescue None => abort "the provider fixture was sent a body that is not UTF-8"
 
     val recorded = new RecordedRequest:
       Http.verbName(request.method)
       request.path
-      Request.queryString()
+      request.queryString()
       body
-      Request.headers()
+      request.headers()
     requests.append(recorded)
 
     val index = requests.size - 1
