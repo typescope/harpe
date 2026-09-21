@@ -11,7 +11,7 @@ import harpe.server.Http
 import harpe.server.Http.Header
 import harpe.server.Response
 import harpe.server.Complete
-import harpe.server.Application
+import harpe.server.WebApp
 import harpe.server.Request
 import harpe.server.request
 import harpe.ffi.json
@@ -71,11 +71,7 @@ section ProviderFixture
       else lines = lines + line
     lines.join("\n")
 
-  class RecordedRequest(method: String, path: String, query: String, body: String, environ: py.Dynamic)
-    def header(name: String): String =
-      val key = "HTTP_" + py.dynamic(name).upper().asString.replace("-", "_")
-      environ.get(key, "").asString
-
+  class RecordedRequest(path: String, body: String)
     def jsonBody: py.Dict = json.loads(body).cast[py.Dict]
   end
 
@@ -90,14 +86,9 @@ section ProviderFixture
   end
 
   private def serve(responses: List[Scripted], requests: py.List): Response receives request =
-    val body = Request.body() rescue None => abort "the provider fixture was sent a body that is not UTF-8"
+    val body = request.body() rescue None => abort "the provider fixture was sent a body that is not UTF-8"
 
-    val recorded = new RecordedRequest:
-      request.environ.get("REQUEST_METHOD", "GET").asString
-      request.path
-      request.environ.get("QUERY_STRING", "").asString
-      body
-      request.environ
+    val recorded = new RecordedRequest(request.path, body)
     requests.append(recorded)
 
     val index = requests.size - 1
@@ -128,11 +119,10 @@ section ProviderFixture
   //]
   def withResponses(responses: List[Scripted], test: Server => Unit): Unit =
     val requests = py.list()
-    val application = new Application:
-      host = Application.Host.Loopback
+    val application = new WebApp:
+      host = WebApp.Loopback
       routes = []
-      fallback = () => serve(responses, requests)
-      maxBodyBytes = 67108864
+      fallback = WebApp.Fallback(() => serve(responses, requests), maxBodyBytes = 67108864)
 
     // waitress rather than wsgiref: it is what the agent itself runs on, it is
     // quiet by default, and it threads, so a stalled response does not block
