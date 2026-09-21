@@ -41,28 +41,7 @@ class Request
   def header(name: String): Option[String] =
     Request.environValue(environ, Request.environKey(name))
 
-  //[ Every header the client sent, for code that must keep them all
-    !
-    ! WSGI upper-cases a name and turns its dashes into underscores, so a name
-    ! comes back as `X-Trace` however the client spelled it, and one that
-    ! carried an underscore is no longer told from one that carried a dash.
-  //]
-  def headers(): List[Http.Header] =
-    var found: List[Http.Header] = []
-    for key in py.iter(environ.keys()) do
-      val name = key.asString
-      if name.startsWith("HTTP_") then
-        val bare = name.substring(5, name.size - 5)
-        found = found + Http.Header(headerName(bare), environ.get(name, "").asString)
-    for plain in ["CONTENT_TYPE", "CONTENT_LENGTH"] do
-      match Request.environValue(environ, plain)
-      case Some(value) => found = found + Http.Header(headerName(plain), value)
-      case None        => pass
-    found
 
-  //[ The query string as it arrived, undecoded — `query` reads one parameter out of it. //]
-  def queryString(): String =
-    environ.get("QUERY_STRING", "").asString
 
   //[ The first value of a query parameter
     !
@@ -234,12 +213,6 @@ class Request
     val value = py.try(JSON.loads(text)) rescue Err(_) => return None
     if py.isInstance(value, builtins.dict) then Some(value.cast[py.Dict]) else None
 
-  //[ `X_TRACE` as `X-Trace`, which is the shape a client wrote it in. //]
-  private def headerName(mangled: String): String =
-    var parts: List[String] = []
-    for piece in mangled.split("_") do
-      parts = parts + py.dynamic(piece).capitalize().asString
-    parts.join("-")
 
   private def firstValue(params: py.Dict, key: String): Option[String] =
     if params.contains(key) then Some(params.get(key).cast[py.List].get(0).asString) else None

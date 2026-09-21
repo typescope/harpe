@@ -122,8 +122,8 @@ section Http
       case _                        => Other(if raw.startsWith("text/") then raw + "; charset=utf-8" else raw)
   end
 
-  //[ The verb as WSGI spells it, which is what a client sent and a log records. //]
-  def verbName(method: Verb.Method): String =
+  //[ The verb as WSGI spells it. //]
+  private[server] def verbName(method: Verb.Method): String =
     match method
     case Verb.Get     => "GET"
     case Verb.Post    => "POST"

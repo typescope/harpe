@@ -71,13 +71,7 @@ section ProviderFixture
       else lines = lines + line
     lines.join("\n")
 
-  class RecordedRequest(method: String, path: String, query: String, body: String, sent: List[Http.Header])
-    def header(name: String): String =
-      val wanted = py.dynamic(name).lower().asString
-      for h in sent do
-        if py.dynamic(h.name).lower().asString == wanted then return h.value
-      ""
-
+  class RecordedRequest(path: String, body: String)
     def jsonBody: py.Dict = json.loads(body).cast[py.Dict]
   end
 
@@ -94,12 +88,7 @@ section ProviderFixture
   private def serve(responses: List[Scripted], requests: py.List): Response receives request =
     val body = request.body() rescue None => abort "the provider fixture was sent a body that is not UTF-8"
 
-    val recorded = new RecordedRequest:
-      Http.verbName(request.method)
-      request.path
-      request.queryString()
-      body
-      request.headers()
+    val recorded = new RecordedRequest(request.path, body)
     requests.append(recorded)
 
     val index = requests.size - 1

@@ -9,10 +9,10 @@ the request the server bound, so calling them on it says that, where the old
 spelling read like a static call that quietly depended on ambient state. The
 patterns keep the old form — `Request.Get(path)` matches a value you hand it.
 
-`request.environ` is `private[server]`, since reaching `wsgi.input` through it
-took the body without the double-read guard seeing it. `request.headers()` and
-`request.queryString()` are new, and `Http.verbName` is public, which together
-cover what reading the environ was being used for.
+`request.environ` and `bodyTaken` are `private[server]`, since reaching
+`wsgi.input` through the environ took the body without the double-read guard
+seeing it. Nothing replaces them: a route names the header or parameter it
+wants, through `header(name)` and `query(key)`.
 
 **`Application` is now `WebApp`.** The old name was long in exactly the places
 it appeared most, which were the nested ones: `WebApp.Fallback`,
