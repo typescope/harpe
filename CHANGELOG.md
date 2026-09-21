@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.0 — 2026-09-21
 
 **The body readers are members of `Request`.** `Request.body()`,
 `json()`, `form()`, `query()`, `header()`, `cookie()`, `signedCookie()`,
