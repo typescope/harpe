@@ -80,3 +80,7 @@ my-agent/
 - Edit the sandbox to grant domain-specific capabilities.
 - Edit `src/Server.jo` when you need different routes, authentication, upload
   policy, or integration with an existing web application.
+
+When you are ready to deploy, follow [Serving HTTP](/guides/serving-http/) for
+server configuration, request limits, session concurrency, and reverse proxies,
+then review the [Deployment Checklist](/guides/production/).
