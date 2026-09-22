@@ -72,7 +72,7 @@ vulnerabilities in its virtualization and networking stack, including previously
 unknown bugs. Each exposed feature gives an agent more code to probe for a way
 across the boundary.
 
-Harpe reduces that reach through narrow capability interfaces. A calendar agent
+Harpe reduces that the attack surface through narrow capability interfaces. A calendar agent
 can receive operations to check availability and reserve a slot, with credentials
 and network access kept in trusted implementations. LLM-generated Jo code has no
 ambient access to a shell, raw sockets, FFI, or virtual devices.
