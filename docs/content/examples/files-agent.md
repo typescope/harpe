@@ -1,8 +1,8 @@
 +++
-title = "File Processing Agent"
+title = "PDF Processing Agent"
 +++
 
-The file processing agent is an example web application which allows processing uploaded files, e.g. receipts for reimbursement.
+The file processing agent is an example web application which allows processing uploaded PDF files, e.g. receipts for reimbursement.
 
 The example integrates local PDF manipulation and OCR capabilities, such that it only sends a snapshot of a PDF page to remote LLMs when needed.
 
