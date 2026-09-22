@@ -4,7 +4,7 @@ Harpe publishes three independently versioned Jo packages:
 
 - `harpe-caps`, the pure capability interfaces
 - `harpe`, the Python runtime package, which depends on `harpe-caps`
-- `harpe-testing`, the test framework, which depends on neither
+- `harpe-testing-python`, the test framework, which depends on neither
 
 Packages are published through `https://pkg.typescope.ai`. Developers do not
 need Cloudflare credentials.
@@ -38,7 +38,7 @@ Create a branch from the latest `origin/main`. In the pull request:
 - [ ] Set `[module.harpe.package].version` in `jo.toml`.
 - [ ] Set `[module.testing.package].version` in `jo.toml`.
 - [ ] Confirm `harpe` has the intended `harpe-caps` dependency constraint, and
-      that `harpe-testing` still declares none.
+      that `harpe-testing-python` still declares none.
 - [ ] Add the release notes to `CHANGELOG.md`.
 - [ ] Update the version and link in the release badge in `README.md`.
 - [ ] Confirm nothing here still pins a released version, with the check below.
@@ -96,7 +96,7 @@ Jo writes the artifacts under `.build/caps/release/` and
 ```sh
 (cd .build/caps/release && sha512sum --check harpe-caps-v$VERSION.joy.sha512)
 (cd .build/harpe/release && sha512sum --check harpe-v$VERSION.joy.sha512)
-(cd .build/testing/release && sha512sum --check harpe-testing-v$VERSION.joy.sha512)
+(cd .build/testing/release && sha512sum --check harpe-testing-python-v$VERSION.joy.sha512)
 ```
 
 Confirm the package carries what it should — the dependency constraint, and any
@@ -119,7 +119,7 @@ mkdir -p /tmp/published-$VERSION && (cd /tmp/published-$VERSION && \
 
 The proxy accepts one package per temporary private release. Publish
 `harpe-caps` first so that `harpe` never points at an unavailable dependency.
-`harpe-testing` depends on nothing, so its position does not matter — it goes
+`harpe-testing-python` depends on nothing, so its position does not matter — it goes
 last only to keep the order memorable:
 
 ```sh
@@ -145,15 +145,15 @@ gh release create upload-harpe-v$VERSION \
   --notes "Internal package publication upload"
 ```
 
-Then `harpe-testing`, the same way:
+Then `harpe-testing-python`, the same way:
 
 ```sh
-gh release create upload-harpe-testing-v$VERSION \
+gh release create upload-harpe-testing-python-v$VERSION \
   --repo typescope/proxy \
-  .build/testing/release/harpe-testing-v$VERSION.joy \
-  .build/testing/release/harpe-testing-v$VERSION.joy.sha512 \
+  .build/testing/release/harpe-testing-python-v$VERSION.joy \
+  .build/testing/release/harpe-testing-python-v$VERSION.joy.sha512 \
   --prerelease \
-  --title "Publish harpe-testing $VERSION" \
+  --title "Publish harpe-testing-python $VERSION" \
   --notes "Internal package publication upload"
 ```
 
@@ -166,7 +166,7 @@ Confirm all three indexes are publicly reachable:
 ```sh
 curl --fail https://pkg.typescope.ai/harpe-caps.jsonl | tail -1
 curl --fail https://pkg.typescope.ai/harpe.jsonl | tail -1
-curl --fail https://pkg.typescope.ai/harpe-testing.jsonl | tail -1
+curl --fail https://pkg.typescope.ai/harpe-testing-python.jsonl | tail -1
 ```
 
 ## 4. Move the templates onto the new release, in this same pull request
@@ -272,10 +272,10 @@ gh release create v$VERSION \
   .build/harpe/release/harpe-v$VERSION.joy.sha512 \
   .build/harpe/release/harpe-v$VERSION-sources.zip \
   .build/harpe/release/harpe-v$VERSION-sources.zip.sha512 \
-  .build/testing/release/harpe-testing-v$VERSION.joy \
-  .build/testing/release/harpe-testing-v$VERSION.joy.sha512 \
-  .build/testing/release/harpe-testing-v$VERSION-sources.zip \
-  .build/testing/release/harpe-testing-v$VERSION-sources.zip.sha512 \
+  .build/testing/release/harpe-testing-python-v$VERSION.joy \
+  .build/testing/release/harpe-testing-python-v$VERSION.joy.sha512 \
+  .build/testing/release/harpe-testing-python-v$VERSION-sources.zip \
+  .build/testing/release/harpe-testing-python-v$VERSION-sources.zip.sha512 \
   --repo typescope/harpe \
   --verify-tag \
   --title "Harpe $VERSION" \
