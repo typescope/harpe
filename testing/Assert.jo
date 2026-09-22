@@ -7,10 +7,18 @@
 
 namespace harpe.testing
 
-//[ Fail the enclosing test with `label` unless `cond` holds. //]
-def check(label: String, cond: Bool): Unit =
-  assert: cond, label
+import jo.compile.SourceLocation
+
+//[ Fail the enclosing test with `label` unless `cond` holds.
+  !
+  ! The compiler supplies the call site's location. The runner catches the
+  ! resulting abort at the test boundary, so a failure identifies the assertion
+  ! in the test rather than this helper.
+//]
+def check(label: String, cond: Bool)(auto source: SourceLocation): Unit =
+  if !cond then abort: "\{source.file}:\{source.line}: \{label}"
 
 //[ Fail the enclosing test unless `actual` equals `expected`, quoting both. //]
-def checkEquals(label: String, actual: String, expected: String): Unit =
-  assert: actual == expected, "\{label}: expected [\{expected}] but got [\{actual}]"
+def checkEquals(label: String, actual: String, expected: String)(auto source: SourceLocation): Unit =
+  if actual != expected then
+    abort: "\{source.file}:\{source.line}: \{label}: expected [\{expected}] but got [\{actual}]"
