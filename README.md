@@ -11,9 +11,8 @@ against the capabilities you grant before it can run. Code that asks for an
 unavailable capability does not compile.
 
 > [!NOTE]
-> Harpe is in developer preview and ready for serious experimentation. Its
-> capability model, turn engine, and public APIs are still stabilizing and may
-> change between releases.
+> Harpe is in developer preview and ready for serious experimentation.
+> The public APIs are still stabilizing and may change between releases.
 
 ## Quick start
 
@@ -32,28 +31,23 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY` in `.env`,
-then run. OpenRouter also requires `MODEL`:
+Set API key in `.env`, then run:
 
 ```sh
 jo start
 ```
-
-The `hello` application is intentionally small. Its terminal interaction has no
-spinner, cancellation, sessions, or media handling. You can read the complete
-agent loop in `src/Main.jo`.
 
 Follow [Build Your First Agent](https://harpe.typescope.ai/tutorial/build-your-first-agent/)
 to inspect each part.
 
 ## Start from an application
 
-| Template | Includes | Guide |
-|---|---|---|
-| `pdf-agent` | browser sessions, PDF uploads and OCR | [PDF Processing Agent](https://harpe.typescope.ai/examples/pdf-agent/) |
-| `telegram` | bot sessions, sender authorization, attachments, and Telegram rendering | [Telegram Bot](https://harpe.typescope.ai/examples/telegram-bot/) |
-| `pr-review` | a GitHub PR reviewer, behind a capability scoped to one external API | [GitHub PR Review](https://harpe.typescope.ai/examples/pr-review/) |
-| `flight-booker` | a booking agent that asks a human before the irreversible step | [Flight Booking](https://harpe.typescope.ai/examples/flight-booker/) |
+| Template | Guide |
+|---|---|
+| `pdf-agent` | [PDF Processing Agent](https://harpe.typescope.ai/examples/pdf-agent/) |
+| `telegram` | [Telegram Bot](https://harpe.typescope.ai/examples/telegram-bot/) |
+| `pr-review` | [GitHub PR Review](https://harpe.typescope.ai/examples/pr-review/) |
+| `flight-booker` | [Flight Booking](https://harpe.typescope.ai/examples/flight-booker/) |
 
 ## Documentation
 
