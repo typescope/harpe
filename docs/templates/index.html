@@ -179,6 +179,30 @@
     </div>
   </section>
 
+  <!-- EXAMPLES AND CASE STUDIES -->
+  <section class="band showcase" id="built-with-harpe" aria-labelledby="showcase-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Examples &amp; case studies</p>
+        <h2 class="sec-title" id="showcase-title">Built with Harpe.</h2>
+        <p class="sec-sub">Explore the applications, read how they work, and try the code.</p>
+      </div>
+      <div class="showcase-grid">
+        {% for project in section.extra.showcase %}
+        {% set project_page = get_page(path=project.path) %}
+        <a class="showcase-card{% if project.kind == 'Case study' %} showcase-card--featured{% endif %}" href="{{ project_page.path }}" aria-labelledby="project-{{ project.preview }}">
+          {% include "showcase_preview.html" %}
+          <div class="showcase-copy">
+            <span class="showcase-kind">{{ project.kind }}</span>
+            <h3 id="project-{{ project.preview }}">{{ project.title }} <span aria-hidden="true">↗</span></h3>
+            <p>{{ project.description }}</p>
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
   <!-- CLOSE -->
   {% set tutorial = "/tutorial/build-your-first-agent/" %}
   <section class="close-cta">
