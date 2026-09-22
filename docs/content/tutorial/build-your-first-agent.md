@@ -2,6 +2,14 @@
 title = "Build Your First Agent"
 +++
 
+## Install Jo
+
+```sh
+curl -sSf https://jo-lang.org/install.sh | sh
+```
+
+This installs the `jo` command used to create and run the agent.
+
 ## Create the project
 
 ```sh
