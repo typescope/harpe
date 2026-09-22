@@ -1,5 +1,79 @@
 # Changelog
 
+## Unreleased
+
+**`Response.static(root, path)` serves the static tree, and is the only builder
+that resolves a name a client chose.** It is where `Response.file(root, name)`
+was, under a name that says what it serves. `file` and `download` now take a
+path the application already holds:
+
+```jo
+Response.static(root, path)              // contained, client-named
+Response.file(path)                      // a path the app holds, shown
+Response.download(path, filename = ...)  // a path the app holds, saved
+```
+
+Splitting them puts the containment where the untrusted name is, rather than on
+every call. A path built from what a client sent belongs to `static` — `file`
+and `download` resolve nothing, and a `path` with no file at it aborts, since
+the application named it.
+
+**The type and the name `Response.static` sends both come from the file it
+resolved**, where the type came from the real path and the name from the one
+asked for. The two could disagree through a symlink inside the root, which was
+then served as one type under another name. It is now served under the name it
+points at.
+
+**`Route.assets(prefix, root)` serves a directory of files in development.** A
+deployment's assets are the proxy's to serve, and this gives a prototype the
+same behavior: it reads the tail of its own prefix, where `Route.Prefix` leaves
+the handler to count the prefix out by hand, and it reads a path ending in `/`
+as the `index.html` beside it, with `/assets/` itself asking for the root's own.
+It takes nothing else — no cache rule, since what a deployment caches is the
+proxy's to decide, and no body at all.
+
+That rule is the route's, not `Response.static`'s, which answers 404 for a
+directory and for an empty path as it did before. It is also purely lexical, so
+nothing asks the filesystem what a directory is, and the containment check stays
+inside `Response.static`. A site wanting another convention — an extensionless
+`.html`, or one page answering every path — writes `Prefix` and its own handler.
+
+**The body limit is `maxReqBody` everywhere.** It names the same thing on every
+`Route` constructor, on `WebApp.Fallback`, and on `WebApp` itself, where
+`maxRequestBodyBytes` — the largest of them, and the limit to give the server —
+now carries the name of the parts it is the maximum of.
+`Route.defaultMaxBodyBytes` is `Route.defaultMaxReqBody`. The old names never
+said whether they bounded the request or the response.
+
+Note that `WebApp.maxRequestBodyBytes` was itself `WebApp.ceiling` in 0.11, so
+an application coming from 0.10 meets this field under a third name. This is the
+one it keeps.
+
+**`NoCrossSite` lets a person arrive at a page.** It refused every cross-site
+request, which included the GET behind a link, so an application under the
+default policy answered 403 to anyone clicking through to it. It now serves a
+cross-site GET the browser calls a top-level navigation to a document, and
+refuses everything else a page sends: a fetch, an image, a form post, and an
+embedding, which asks for `iframe` rather than `document`.
+
+That keeps what the policy is for — a tab open on another site cannot reach a
+local application, and CORS would stop it reading a reply but never stop it
+sending the request — while letting a link work. An application that wants the
+old behavior has no policy for it, since refusing a visit refuses the
+application itself.
+
+**`Response.download` takes an optional `filename`.** It is what the browser
+saves the file as, and the type is guessed from it. Naming none keeps today's
+behavior, the last segment of `path`. Name one where the stored name and the
+served name differ — a file stored by hash, or disambiguated against a collision
+the way the web template's `uniqueName` does.
+
+Migrating: `file(root, name)` and `static` differ in name only, so a call moves
+across unchanged. `download(root, name)` still *compiles*, since `name` fits the
+new `filename`, and aborts on the first request with `no file at '<root>'` —
+pass `download(root + "/" + name)`, or `static` where the name came from a
+client.
+
 ## 0.11.0 — 2026-09-21
 
 **The body readers are members of `Request`.** `Request.body()`,
@@ -43,6 +117,17 @@ answer a CORS preflight. harpe sends no `Access-Control-*` header of its own —
 which origins may call is the application's to decide — and the verb doc no
 longer claims `OPTIONS` matches no route, which stopped being true once a route
 could claim it.
+
+**`Response.file` drops its `Disposition`, and `Response.download` takes the
+other half.** `file(root, name, headers)` is shown in the browser and
+`download(root, name, headers)` is saved, where one `file(root, name,
+disposition, headers)` did both. A call passing `Response.Inline` no longer
+compiles — drop the argument, since inline is what `file` does — and one passing
+`Attachment` becomes `download`. The `Disposition` union is private now.
+
+The guessed type also becomes the `Mime` case that spells it rather than an
+`Other` carrying a string, so a served `.css` and a route naming `Mime.Css` send
+the same header, the `; charset=utf-8` on it included.
 
 **`Router` is now `Route`.** It never routed anything — dispatch lives in
 `WebApp` — it just builds the routes an application holds. `Route.Get`,
@@ -156,17 +241,16 @@ is exactly what a server cannot know. A page that follows work in progress
 polls a cursor instead, which `harpe.observability.Viewer` has always done and
 which costs a list slice per poll.
 
-**`Response.file(root, name)` and `Response.download(root, name)` serve a file
-under a directory.** `file` is shown in the browser, `download` is saved, which
-is what a file a user uploaded wants, since what a browser renders it renders in
-this application's origin. `name` is the relative path a client sent. An empty
-or absolute name, a `..` segment, a symlink out of `root`, a directory and a
-missing file are all the same 404. The type is guessed from the name and becomes
-the `Mime` case that spells it, so a served `.css` and a route naming
-`Mime.Css` send the same header, the `; charset=utf-8` on it included.
-`Content-Disposition` names the file in ASCII and UTF-8, and the response is
-`no-store`, since what it serves is the download the request had to be entitled
-to. The files a page needs are the proxy's to serve, and to cache.
+**`Response.file(root, name, disposition)` serves a file under a directory.**
+`Inline` is shown in the browser, `Attachment` is saved, which is what a file a
+user uploaded wants, since what a browser renders it renders in this
+application's origin. `name` is the relative path a client sent. An empty or
+absolute name, a `..` segment, a symlink out of `root`, a directory and a
+missing file are all the same 404. The type is guessed from the name, with
+`; charset=utf-8` appended to the textual ones. `Content-Disposition` names the
+file in ASCII and UTF-8, and the response is `no-store`, since what it serves is
+the download the request had to be entitled to. The files a page needs are the
+proxy's to serve, and to cache.
 
 The file goes out through the server's own `wsgi.file_wrapper`, which may reach
 `sendfile` and never copy it through this process, so a response costs a block

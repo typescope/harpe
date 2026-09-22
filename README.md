@@ -10,6 +10,11 @@ A Harpe agent acts by writing typed Jo programs. Each program is compiled
 against the capabilities you grant before it can run. Code that asks for an
 unavailable capability does not compile.
 
+> [!NOTE]
+> Harpe is in developer preview and ready for serious experimentation. Its
+> capability model, turn engine, and public APIs are still stabilizing and may
+> change between releases.
+
 ## Quick start
 
 Install Jo:
@@ -43,64 +48,17 @@ to inspect each part.
 
 ## Start from an application
 
-Five ready-to-run agents live in [`templates/`](templates/), each a `jo new`
-template that copies a complete project into your directory — sources, sandbox,
-prompt, and, where it has them, its own tests.
-
 | Template | Includes | Guide |
 |---|---|---|
-| `web` | browser sessions, streaming, uploads, and downloadable files | [Create a Web Agent](https://harpe.typescope.ai/tutorial/create-web-agent/) |
-| `telegram` | bot sessions, sender authorization, attachments, and Telegram rendering | [Create a Telegram Agent](https://harpe.typescope.ai/tutorial/create-telegram-agent/) |
-| `pr-review` | a GitHub PR reviewer, behind a capability scoped to one external API | [GitHub PR Review](https://harpe.typescope.ai/case-studies/pr-review/) |
-| `flight-booker` | a booking agent that asks a human before the irreversible step | [Flight Booking](https://harpe.typescope.ai/case-studies/flight-booker/) |
-
-```sh
-jo new my-agent --template typescope/harpe:web
-```
-
-After creating one:
-
-```sh
-cd my-agent
-pip install -r requirements.txt
-cp .env.example .env
-jo start
-```
-
-Each template's `.env.example` documents the variables it needs.
-
-`smart-logistics` moved to its own repository,
-[typescope/smart-logistics](https://github.com/typescope/smart-logistics), which is
-cloned rather than created with `jo new`. Its
-[case study](https://harpe.typescope.ai/case-studies/smart-logistics/) stays here.
-
-Every manifest under `templates/` pins a published release rather than the
-framework sources beside it, so a template builds as it stands and an API change
-on `main` does not have to be made in five applications at once. The `cli/` agent
-is not one of them — it builds from these sources, and is the framework's
-end-to-end test subject.
+| `pdf-agent` | browser sessions, PDF uploads and OCR | [PDF Processing Agent](https://harpe.typescope.ai/examples/pdf-agent/) |
+| `telegram` | bot sessions, sender authorization, attachments, and Telegram rendering | [Telegram Bot](https://harpe.typescope.ai/examples/telegram-bot/) |
+| `pr-review` | a GitHub PR reviewer, behind a capability scoped to one external API | [GitHub PR Review](https://harpe.typescope.ai/examples/pr-review/) |
+| `flight-booker` | a booking agent that asks a human before the irreversible step | [Flight Booking](https://harpe.typescope.ai/examples/flight-booker/) |
 
 ## Documentation
-
-The documentation is at [harpe.typescope.ai](https://harpe.typescope.ai).
 
 - [Why Harpe?](https://harpe.typescope.ai/overview/why-harpe/)
 - [Compile-time sandboxing](https://harpe.typescope.ai/overview/compile-time-sandboxing/)
 - [Create a custom capability](https://harpe.typescope.ai/tutorial/create-custom-capabilities/)
 - [Deployment checklist](https://harpe.typescope.ai/guides/production/)
 
-## Development
-
-Install the test dependencies and run the suite:
-
-```sh
-pip install -r requirements.txt
-jo run test
-```
-
-Harpe requires Jo 0.13 or newer. See [CONTRIBUTING.md](CONTRIBUTING.md) to
-contribute and [SECURITY.md](SECURITY.md) to report a vulnerability.
-
-## License
-
-MIT — see [LICENSE](LICENSE).

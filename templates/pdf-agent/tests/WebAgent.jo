@@ -1,9 +1,9 @@
 //[ WebAgent.jo
   !
-  ! The web agent under test: build it, run it as a real process, and tear it
+  ! The PDF processing agent under test: build it, run it as a real process, and tear it
   ! down.
   !
-  ! These suites drive the shipped `web/` driver over its own HTTP API, so what
+  ! These suites drive the shipped driver over its own HTTP API, so what
   ! runs here is the program a user runs — built either against this branch's
   ! sources or the registry package, and started by its own `main`. Nothing is
   ! reached into: the test speaks to it through a socket, exactly as the chat
@@ -14,7 +14,7 @@
   ! the agent hears back, so a turn is deterministic and no key is needed. The
   ! HOME is a fresh temporary directory holding a copy of the agent's `assets/`
   ! and `AGENT.md`, so sessions, uploads, and logs land there rather than in the
-  ! repo's own `web/data` and `web/logs`. The sandbox is NOT faked: a program a
+  ! repository's own data and logs. The sandbox is NOT faked: a program a
   ! scenario runs is compiled by the real toolchain and executed as its own
   ! process, against the guest built from the same spec as the agent.
   !
@@ -36,7 +36,7 @@ section WebAgent
   //[ How long to wait for the server to answer its first request. //]
   private def startupSeconds: Float = 30.0
 
-  //[ A running web agent: where to reach it, and where it keeps its state.
+  //[ A running PDF processing agent: where to reach it, and where it keeps its state.
     !
     ! The state paths are here because a scenario asserts on both sides of the
     ! API — that a delivered file really is in the session's data directory, that
@@ -173,7 +173,7 @@ section WebAgent
   private def run(agent: Agent, scenario: Agent => Unit): Unit =
     scenario(agent)
 
-  //[ Run `scenario` against a web agent talking to the model at `modelBaseUrl`
+  //[ Run `scenario` against a PDF processing agent talking to the model at `modelBaseUrl`
     !
     ! One agent per scenario, on its own port and its own home. That costs a
     ! process start each time and buys complete isolation: a scenario's sessions,

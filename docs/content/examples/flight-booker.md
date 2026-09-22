@@ -15,7 +15,7 @@ and can be run again as often as you like. createOrder takes a payment, issues a
 ticket against a passenger name, and brings the airline's change rules into
 force, with no return path from any of it.](/img/flight-booker-irreversible.svg)
 
-Booking process requires many steps of search and comparison. **any airport in Switzerland, first week of October, cheapest** translate to three airports, five dates and many airlines. If a agent searches and filters through tool loops, fifteen round trips and numerous offer lists will go through the context window. For a generated program, it's just two loops and simple comparison.
+Booking process requires many steps of search and comparison. **Any airport in Switzerland, first week of October, cheapest** translate to three airports, five dates and many airlines. If a agent searches and filters through tool loops, fifteen round trips and numerous offer lists will go through the context window. For a generated program, it's just two loops and simple comparison.
 
 ## Harpe's Solution
 

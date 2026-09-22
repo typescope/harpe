@@ -42,5 +42,5 @@ That builds the sandbox guest and runs one turn.
   and draft-only `saveDraftReview`
 - `skills/` — reference the model can read
 
-[GitHub PR Review](https://harpe.typescope.ai/case-studies/pr-review/) walks
+[GitHub PR Review](https://harpe.typescope.ai/examples/pr-review/) walks
 through how the capability boundary is built.

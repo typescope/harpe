@@ -1,14 +1,15 @@
 +++
-title = "Create a Web Agent"
+title = "PDF Processing Agent"
 +++
-The web template is a complete browser application with persistent sessions,
-streamed progress, uploads, downloadable files, and a customizable frontend.
-The server and frontend sources are copied into your project.
+
+The file processing agent is an example application for processing uploaded PDF files, e.g. receipts for reimbursement.
+
+The example integrates local PDF manipulation and OCR capabilities, such that it only sends a snapshot of a PDF page to remote LLMs when needed.
 
 ## Create the project
 
 ```sh
-jo new my-agent --template typescope/harpe:web
+jo new my-agent --template typescope/harpe:pdf-agent
 cd my-agent
 pip install -r requirements.txt
 cp .env.example .env
@@ -32,7 +33,7 @@ jo start
 Open `http://127.0.0.1:8765`. Each conversation has its own URL and can resume
 after the process restarts.
 
-[![The Harpe web agent showing persistent conversations, generated-program traces, PDF attachments, an SVG result, and files scoped to the current session.](/img/web-agent.gif)](/img/web-agent.gif)
+[![The Harpe PDF processing agent showing persistent conversations, generated-program traces, PDF attachments, an SVG result, and files scoped to the current session.](/img/pdf-agent.gif)](/img/pdf-agent.gif)
 
 ## Make the first change
 
@@ -80,3 +81,7 @@ my-agent/
 - Edit the sandbox to grant domain-specific capabilities.
 - Edit `src/Server.jo` when you need different routes, authentication, upload
   policy, or integration with an existing web application.
+
+When you are ready to deploy, follow [Serving HTTP](/guides/serving-http/) for
+server configuration, request limits, session concurrency, and reverse proxies,
+then review the [Deployment Checklist](/guides/production/).

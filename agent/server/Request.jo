@@ -254,7 +254,7 @@ section Request
     ! binds the path and guards on it:
     !
     !     case Get(path) if path.startsWith("/assets/") =>
-    !       Response.file(root, path.substring(8, path.size - 8))
+    !       Response.static(root, path.substring(8, path.size - 8))
   //]
   pattern Get(path: String): Partial[Request] =
     case asked if asked.method is Verb.Get then path = asked.path
@@ -359,6 +359,10 @@ section Request
     ! browser sent it. Otherwise an `Origin` must name the same authority as
     ! `Host`. A request carrying neither did not come from a browser page, so a
     ! browser too old to send either is not recognised as cross-site at all.
+    !
+    ! Another origin under the same domain counts as another site — a sibling
+    ! subdomain, or plain HTTP where this is HTTPS — since a subdomain is not
+    ! a boundary this application controls.
   //]
   private[server] def crossSiteRequest(environ: py.Dynamic): Bool =
     match environValue(environ, "HTTP_SEC_FETCH_SITE")
@@ -375,4 +379,21 @@ section Request
   private[server] def crossSiteWrite(method: Verb.Method, environ: py.Dynamic): Bool =
     val writes = method is Verb.Post || method is Verb.Put || method is Verb.Delete
     writes && crossSiteRequest(environ)
+
+  //[ Is this a person arriving at a page?
+    !
+    ! A GET the browser calls a top-level navigation to a document, which is
+    ! what a link, a bookmark and a typed address produce. The verb is part of
+    ! it: a form posts by navigating too, and that is the cross-site POST CSRF
+    ! is. `document` is part of it as well, since an embedding sends `iframe`
+    ! and a page that framed this one is not a person arriving at it.
+    !
+    ! A browser too old to send these headers reports no navigation, which
+    ! leaves it to `crossSiteRequest` — and that reads `Origin`, which a
+    ! navigating GET does not carry, so such a visit arrives either way.
+  //]
+  private[server] def pageVisit(method: Verb.Method, environ: py.Dynamic): Bool =
+    val mode = environValue(environ, "HTTP_SEC_FETCH_MODE").getOrElse("")
+    val dest = environValue(environ, "HTTP_SEC_FETCH_DEST").getOrElse("")
+    method is Verb.Get && mode == "navigate" && dest == "document"
 end

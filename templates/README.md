@@ -7,7 +7,7 @@ tests.
 ## Getting started
 
 ```sh
-jo new my-agent --template typescope/harpe:web
+jo new my-agent --template typescope/harpe:pdf-agent
 cd my-agent
 pip install -r requirements.txt
 cp .env.example .env
@@ -24,7 +24,7 @@ its directory here.
 | Template | What it shows |
 |---|---|
 | `hello` | The smallest complete agent. The whole loop is in `src/Main.jo` |
-| `web` | Browser sessions, streaming, uploads, downloadable files |
+| `pdf-agent` | Browser sessions, streaming, PDF uploads and OCR |
 | `telegram` | Bot sessions, sender authorization, attachments |
 | `pr-review` | A capability scoped to one external API |
 | `flight-booker` | Human approval before an irreversible action |

@@ -31,7 +31,7 @@ private def applicationFor(answersTo: WebApp.Loopback | WebApp.AnyHost | String,
   new WebApp:
     host = answersTo
     routes = []
-    fallback = WebApp.Fallback(() => route(reached), maxBodyBytes = limit)
+    fallback = WebApp.Fallback(() => route(reached), maxReqBody = limit)
     crossSite = WebApp.NoCrossSiteWrite
 
 //[ Every path these tests ask for. `reached` records what a route saw. //]
@@ -263,13 +263,30 @@ private def callWith(
 private def fileRoute(root: String): Response receives request =
   val name = request.query("name").getOrElse("")
   match request
-  case Request.Get("/download") => Response.download(root, name)
-  case Request.Get("/show")     => Response.file(root, name)
+  //[ The static tree, which is the one route here holding a name a client chose. //]
+  case Request.Get("/show")     => Response.static(root, name)
 
   //[ A file a route says the browser may keep, which the proxy would normally serve. //]
   case Request.Get("/keepable") =>
     val rule = Header("Cache-Control", "public, max-age=31536000, immutable")
-    Response.file(root, name, headers = [rule])
+    Response.static(root, name, headers = [rule])
+
+  //[ A path the application holds, shown rather than saved. //]
+  case Request.Get("/inline")   => Response.file(root + "/" + name)
+
+  //[ A path the application holds, saved under the name that path carries. //]
+  case Request.Get("/download") => Response.download(root + "/" + name)
+
+  //[ A file stored under one name and served under another, which `filename` is for. //]
+  case Request.Get("/attach") =>
+    Response.download(root + "/9f2ca1", filename = name)
+
+  //[ A download the application named wrongly, which is its bug rather than a 404. //]
+  case Request.Get("/attach-missing") =>
+    match py.try(Response.download(root + "/gone"))
+    case Ok(answer) => answer
+    case Err(err)   => Response.complete(Http.Status.Success, Http.Mime.Text, err.message)
+
   case _                     => Response.notFound()
 
 //[ A directory of files to serve, beside one that must stay out of reach, for the length of `body`. //]
@@ -285,7 +302,12 @@ private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.Dynamic) => 
   write(root + "/css/app.css", "body {}")
   write(root + "/café.txt", "é")
   write(root + "/blob.unknownext", "?")
+  // A file stored under a name that carries neither its type nor what to call it.
+  write(root + "/9f2ca1", "report")
   write(root + "/index.html", "<p>hi</p>")
+  // A directory carrying its own index, beside `css/`, which carries none.
+  os.makedirs(root + "/guide")
+  write(root + "/guide/index.html", "<p>guide</p>")
   // Larger than one block, so that reading it a block at a time is observable.
   write(root + "/big.bin", py.dynamic("x").callDynamic("__mul__", 200000).asString)
   write(scratch + "/outside/secret.txt", "secret")
@@ -293,8 +315,8 @@ private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.Dynamic) => 
 
   val files = new WebApp:
     host = WebApp.Loopback
-    routes = []
-    fallback = WebApp.Fallback(() => fileRoute(root), maxBodyBytes = limit)
+    routes = [Route.assets("/assets/", root)]
+    fallback = WebApp.Fallback(() => fileRoute(root), maxReqBody = limit)
 
   val result = py.try(body(root, files.wsgi()))
   py.module("shutil").rmtree(scratch)
@@ -308,12 +330,12 @@ private def tabled(reached: py.List): WebApp =
   new WebApp:
     host = WebApp.Loopback
     routes = List:
-      Route.Get("/api/info", info, maxBodyBytes = limit)
-      Route.Post("/api/message", () => echoed(reached), maxBodyBytes = limit)
-      Route.Post("/api/upload", () => echoed(reached), maxBodyBytes = 4096)
-      Route.Delete("/api/session", () => Response.json(py.dict("ok" ~ true)), maxBodyBytes = limit)
-      Route.Prefix("/assets/", () => Response.complete(Http.Status.Success, Http.Mime.Text, "asset"), maxBodyBytes = limit)
-    fallback = WebApp.Fallback(() => Response.html("<p>the page</p>"), maxBodyBytes = limit)
+      Route.Get("/api/info", info, maxReqBody = limit)
+      Route.Post("/api/message", () => echoed(reached), maxReqBody = limit)
+      Route.Post("/api/upload", () => echoed(reached), maxReqBody = 4096)
+      Route.Delete("/api/session", () => Response.json(py.dict("ok" ~ true)), maxReqBody = limit)
+      Route.Prefix("/assets/", () => Response.complete(Http.Status.Success, Http.Mime.Text, "asset"), maxReqBody = limit)
+    fallback = WebApp.Fallback(() => Response.html("<p>the page</p>"), maxReqBody = limit)
 
 private def info(): Response receives request = Response.json(py.dict("name" ~ "clair"))
 
@@ -345,7 +367,7 @@ private def roomyApp(): (py.Dynamic, py.Dynamic) => py.Dynamic =
   val app = new WebApp:
     host = WebApp.Loopback
     routes = []
-    fallback = WebApp.Fallback(() => route(py.list()), maxBodyBytes = 1048576)
+    fallback = WebApp.Fallback(() => route(py.list()), maxReqBody = 1048576)
   app.wsgi()
 
 //[ The application under test. `reached` records what its routes saw. //]
@@ -689,7 +711,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     val big = new WebApp:
       host = WebApp.Loopback
       routes = []
-      fallback = WebApp.Fallback(() => route(py.list()), maxBodyBytes = 1048576)
+      fallback = WebApp.Fallback(() => route(py.list()), maxReqBody = 1048576)
     val spooled = call(big.wsgi(), "POST", "/save?into=" + into, [], long)
     check("across blocks", spooled.status == 200 && spooled.text == "{\"written\": 150000}")
     check("every one of them", py.module("os").path.getsize(into).asInt == 150000)
@@ -717,7 +739,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("a path no route claims", missing.status == 404)
     check("as a page, since a browser is what reaches it", missing.header("Content-Type") is Some(kind) && kind.startsWith("text/html"))
     check("the bundled one, not the bare fallback", missing.text.contains("That page does not exist"))
-    check("reads no body, so the limit is the route's", covered.maxRequestBodyBytes == Route.defaultMaxBodyBytes)
+    check("reads no body, so the limit is the route's", covered.maxReqBody == Route.defaultMaxReqBody)
     check("a body sent there is refused first", call(wsgi, "POST", "/nothing", [], "hello").status == 413)
 
   test: "answers an application's own 404 page, and harpe's when it cannot be read", () =>
@@ -741,7 +763,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
   test: "checks the host by default, without an application saying so", () =>
     val plain = new WebApp(
       routes = [],
-      fallback = WebApp.Fallback(() => route(py.list()), maxBodyBytes = Route.defaultMaxBodyBytes))
+      fallback = WebApp.Fallback(() => route(py.list()), maxReqBody = Route.defaultMaxReqBody))
 
     val wsgi = plain.wsgi()
     check("loopback is what a prototype gets", get(wsgi, "/dynamic").status == 200)
@@ -790,21 +812,30 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
     val strict = new WebApp(
       routes = [],
-      fallback = WebApp.Fallback(() => route(py.list()), maxBodyBytes = limit),
+      fallback = WebApp.Fallback(() => route(py.list()), maxReqBody = limit),
       crossSite = WebApp.NoCrossSite).wsgi()
     check("the read too", call(strict, "GET", "/dynamic", [host, foreign], "").status == 403)
     check("and the write", call(strict, "POST", "/echo", [host, foreign], "x").status == 403)
     check("a direct visit still arrives", call(strict, "GET", "/dynamic", [host, Header("Sec-Fetch-Site", "none")], "").status == 200)
     check("and the application's own page", call(strict, "GET", "/dynamic", [host, Header("Sec-Fetch-Site", "same-origin")], "").status == 200)
 
+    // A person following a link from another site, which the page itself cannot fake:
+    // a form navigates too, and an embedding asks for `iframe` rather than `document`.
+    val navigate = Header("Sec-Fetch-Mode", "navigate")
+    val visit = [host, foreign, navigate, Header("Sec-Fetch-Dest", "document")]
+    val framed = [host, foreign, navigate, Header("Sec-Fetch-Dest", "iframe")]
+    check("a link from another site opens the page", call(strict, "GET", "/dynamic", visit, "").status == 200)
+    check("but the form it posts is refused", call(strict, "POST", "/echo", visit, "x").status == 403)
+    check("and so is another site framing it", call(strict, "GET", "/dynamic", framed, "").status == 403)
+
     val byDefault = new WebApp(
       routes = [],
-      fallback = WebApp.Fallback(() => route(py.list()), maxBodyBytes = limit)).wsgi()
+      fallback = WebApp.Fallback(() => route(py.list()), maxReqBody = limit)).wsgi()
     check("which is what an application naming no policy gets", call(byDefault, "GET", "/dynamic", [host, foreign], "").status == 403)
 
     val open = new WebApp(
       routes = [],
-      fallback = WebApp.Fallback(() => route(py.list()), maxBodyBytes = limit),
+      fallback = WebApp.Fallback(() => route(py.list()), maxReqBody = limit),
       crossSite = WebApp.AnyCrossSite).wsgi()
     check("nothing is refused", call(open, "POST", "/echo", [host, foreign], "x").status == 200)
 
@@ -856,8 +887,8 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("and that one did not run", reached.size == 1)
 
   test: "reports the largest limit any handler allows, for the server to match", () =>
-    check("the upload's", tabled(py.list()).maxRequestBodyBytes == 4096)
-    check("the fallback's, with no routes", applicationFor(WebApp.Loopback, py.list()).maxRequestBodyBytes == limit)
+    check("the upload's", tabled(py.list()).maxReqBody == 4096)
+    check("the fallback's, with no routes", applicationFor(WebApp.Loopback, py.list()).maxReqBody == limit)
 
   //[ The index is built when the `WebApp` is, so a clash is a startup failure. //]
   //[ Refused where the bad value came from, not at the write, so a route's answer can be trusted. //]
@@ -909,6 +940,23 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
       check("an HTML file too", headerOf(page, "Content-Type") == "text/html; charset=utf-8")
       check("and cannot be framed elsewhere", headerOf(page, "Content-Security-Policy") == "frame-ancestors 'self'")
 
+  //[ A file stored under one name and served under another: what `filename` names is what
+    ! the browser saves and what the type is read from, since the stored name carries neither.
+  //]
+  test: "saves a file under a name its path does not carry", () =>
+    withFiles: (root: String, wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic) =>
+      val report = get(wsgi, "/attach?name=Q3%20report.pdf")
+      check("200", report.status == 200 && report.text == "report")
+      check("typed from the filename", headerOf(report, "Content-Type") == "application/pdf")
+      check("saved under it", headerOf(report, "Content-Disposition") == "attachment; filename=\"Q3 report.pdf\"; filename*=UTF-8''Q3%20report.pdf")
+
+      // A name the client chose reaches the header and never the path.
+      val hostile = get(wsgi, "/attach?name=../../etc/passwd")
+      check("a name that looks like a path is still just a name", hostile.status == 200 && hostile.text == "report")
+      check("and reaches the header alone", headerOf(hostile, "Content-Disposition") == "attachment; filename=\"../../etc/passwd\"; filename*=UTF-8''..%2F..%2Fetc%2Fpasswd")
+
+      check("a path the application got wrong aborts", get(wsgi, "/attach-missing").text.contains("no file at"))
+
   //[ A file response must not cost its own size in memory, so the handle goes to
     ! the server rather than the bytes. What that looks like from here: the
     ! wrapper the server offered was called, with one block as its size, and the
@@ -941,11 +989,37 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
   test: "refuses a file name that leaves its root, or names no file", () =>
     withFiles: (root: String, wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic) =>
-      check("dot-dot", get(wsgi, "/download?name=../outside/secret.txt").status == 404)
-      check("dot-dot inside", get(wsgi, "/download?name=css/../../outside/secret.txt").status == 404)
-      check("absolute", get(wsgi, "/download?name=" + root + "/hello.txt").status == 404)
-      check("a symlink out", get(wsgi, "/download?name=link").status == 404)
-      check("a directory", get(wsgi, "/download?name=css").status == 404)
-      check("missing", get(wsgi, "/download?name=missing.txt").status == 404)
-      check("empty", get(wsgi, "/download?name=").status == 404)
-      check("a backslash", get(wsgi, "/download?name=css%5Capp.css").status == 404)
+      check("dot-dot", get(wsgi, "/show?name=../outside/secret.txt").status == 404)
+      check("dot-dot inside", get(wsgi, "/show?name=css/../../outside/secret.txt").status == 404)
+      check("absolute", get(wsgi, "/show?name=" + root + "/hello.txt").status == 404)
+      check("a symlink out", get(wsgi, "/show?name=link").status == 404)
+      check("a directory holding no index", get(wsgi, "/show?name=css").status == 404)
+      check("missing", get(wsgi, "/show?name=missing.txt").status == 404)
+      check("empty", get(wsgi, "/show?name=").status == 404)
+      check("a backslash", get(wsgi, "/show?name=css%5Capp.css").status == 404)
+
+  //[ `Route.assets` reads the tail of its prefix and the index convention, which
+    ! is routing rather than response building: `Response.static` answers 404 for
+    ! every one of these directories on its own.
+  //]
+  test: "serves an asset tree, reading a trailing slash as its index page", () =>
+    withFiles: (root: String, wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic) =>
+      val nested = get(wsgi, "/assets/css/app.css")
+      check("the tail of the prefix names the file", nested.status == 200 && nested.text == "body {}")
+      check("typed from it", headerOf(nested, "Content-Type") == "text/css; charset=utf-8")
+
+      val dir = get(wsgi, "/assets/guide/")
+      check("a trailing slash asks for the index beside it", dir.status == 200 && dir.text == "<p>guide</p>")
+      check("named as the page it resolved to", headerOf(dir, "Content-Disposition") == "inline; filename=\"index.html\"; filename*=UTF-8''index.html")
+
+      val top = get(wsgi, "/assets/")
+      check("and the prefix itself is the root's own index", top.status == 200 && top.text == "<p>hi</p>")
+
+      // The rule is lexical, so nothing here asks the filesystem what a directory is.
+      check("without the slash it names no file", get(wsgi, "/assets/guide").status == 404)
+      check("a directory holding no index is a 404", get(wsgi, "/assets/css/").status == 404)
+      check("and a name leaving the root still is", get(wsgi, "/assets/../outside/secret.txt").status == 404)
+
+      // What the route adds is the tail and the index: the builder alone has neither.
+      check("the builder answers 404 for a directory", get(wsgi, "/show?name=guide").status == 404)
+      check("and for an empty name", get(wsgi, "/show?name=").status == 404)

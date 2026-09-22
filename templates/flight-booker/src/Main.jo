@@ -61,6 +61,9 @@ private def webServe(): Unit receives stdout, appHome =
     host = host
     port = port
     threads = 16
+    // The server gets the application's own limit, so an oversized body is
+    // refused and discarded here rather than spooled whole and refused later.
+    max_request_body_size = application.maxRequestBodyBytes
 
   println """
 

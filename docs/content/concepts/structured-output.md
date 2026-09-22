@@ -70,7 +70,7 @@ Sometimes the structured output is not data for a capability. It is an
 instruction to the **application** about how to present the turn. A program
 cannot do that, because the application, not the sandbox, owns presentation.
 
-The tool call itself carries the structure. The web agent delivers files this
+The tool call itself carries the structure. The PDF processing agent delivers files this
 way, with a tool that moves no bytes at all:
 
 ```jo

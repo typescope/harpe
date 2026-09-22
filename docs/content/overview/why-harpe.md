@@ -7,6 +7,13 @@ It is designed for agentic workflows that rely on code generation to act on
 critical infrastructure and sensitive data, or to perform consequential
 operations.
 
+<aside class="callout-warning" role="note" aria-labelledby="preview-warning">
+  <p class="callout-title" id="preview-warning">Developer preview</p>
+  <p>Harpe is in developer preview and ready for serious experimentation. Its
+  capability model, turn engine, and public APIs are still stabilizing and may
+  change between releases.</p>
+</aside>
+
 ## Why specialized agents?
 
 A general-purpose agent asks to be trusted with broad authority. That is not a
@@ -63,6 +70,20 @@ useful, but they should be confined to only permitted operations.
 Following PoLA, we think that granted authority should be explicit, narrow, and
 mechanically checked.
 
+## Minimizing attack surface
+
+A sandbox's security also depends on the surface area that untrusted code can reach.
+In *VMs won't contain cyber-capable agents* [[4]](#reference-trail-of-bits),
+Trail of Bits reports an agent escaping a QEMU/KVM virtual machine by chaining
+vulnerabilities in its virtualization and networking stack, including previously
+unknown bugs. Each exposed feature gives an agent more code to probe for a way
+across the boundary.
+
+Harpe reduces that the attack surface through narrow capability interfaces. A calendar agent
+can receive operations to check availability and reserve a slot, with credentials
+and network access kept in trusted implementations. LLM-generated Jo code has no
+ambient access to a shell, raw sockets, FFI, or virtual devices.
+
 ## The cost and benefits of typed trust boundaries
 
 To develop a secure specialized agent, the trust boundary has to be defined
@@ -70,7 +91,7 @@ explicitly. You design the capability interfaces the agent acts through, and
 provide trustworthy implementations behind them. The compiler verifies generated
 code can only use explicitly granted capabilities.
 
-In an ACM Queue article, *Safe Coding* [[4]](#reference-safe-coding),
+In an ACM Queue article, *Safe Coding* [[5]](#reference-safe-coding),
 Christoph Kern distills decades of Google's security engineering into a principle
 of rigorous modular reasoning:
 
@@ -97,6 +118,9 @@ makes those boundaries durable.
    Anthropic, 2025.
 3. <span id="reference-cloudflare"></span>[Code Mode: give agents an entire API
    in 1,000 tokens](https://blog.cloudflare.com/code-mode-mcp/). Cloudflare, 2026.
-4. <span id="reference-safe-coding"></span>[Safe Coding: Rigorous modular
+4. <span id="reference-trail-of-bits"></span>[VMs won't contain cyber-capable
+   agents](https://blog.trailofbits.com/2026/08/26/vms-wont-contain-cyber-capable-agents/).
+   Artem Dinaburg, Trail of Bits, 2026.
+5. <span id="reference-safe-coding"></span>[Safe Coding: Rigorous modular
    reasoning about software safety](https://queue.acm.org/doi/10.1145/3773098).
    Christoph Kern, 2025.
