@@ -25,6 +25,19 @@ the name sent now both come from the file that resolved, so a directory is
 served as `index.html`, and a symlink under the name it points at rather than
 the name that was asked for.
 
+**`NoCrossSite` lets a person arrive at a page.** It refused every cross-site
+request, which included the GET behind a link, so an application under the
+default policy answered 403 to anyone clicking through to it. It now serves a
+cross-site GET the browser calls a top-level navigation to a document, and
+refuses everything else a page sends: a fetch, an image, a form post, and an
+embedding, which asks for `iframe` rather than `document`.
+
+That keeps what the policy is for — a tab open on another site cannot reach a
+local application, and CORS would stop it reading a reply but never stop it
+sending the request — while letting a link work. An application that wants the
+old behavior has no policy for it, since refusing a visit refuses the
+application itself.
+
 **`Response.download` takes an optional `filename`.** It is what the browser
 saves the file as, and the type is guessed from it. Naming none keeps today's
 behavior, the last segment of `path`. Name one where the stored name and the

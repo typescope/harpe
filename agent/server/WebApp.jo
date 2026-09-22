@@ -183,12 +183,19 @@ section WebApp
 
   //[ What a browser on another site may send
     !
-    ! `NoCrossSite` is the default and refuses every cross-site request, read
-    ! included, which suits the local private application the other defaults
-    ! describe. A site other pages link to wants `NoCrossSiteWrite`, which
-    ! refuses only a cross-site POST, PUT or DELETE — that is CSRF protection,
-    ! and it lets the GET behind every inbound link through. `AnyCrossSite`
-    ! refuses nothing, for a server whose own checks come first.
+    ! `NoCrossSite` is the default and refuses every cross-site request a page
+    ! makes — a fetch, an image, a form post — which suits the local private
+    ! application the other defaults describe: a tab open on another site
+    ! cannot reach this one, and CORS would stop it reading a reply but never
+    ! stop it sending the request. What it does let through is a person
+    ! arriving: a cross-site GET the browser calls a top-level navigation to a
+    ! document, so a link to the application still opens it. An `iframe` is
+    ! not that, and neither is a form post.
+    !
+    ! `NoCrossSiteWrite` refuses only a cross-site POST, PUT or DELETE — that
+    ! is CSRF protection alone, and it lets every cross-site read through, for
+    ! a site whose pages other sites embed from. `AnyCrossSite` refuses
+    ! nothing, for a server whose own checks come first.
     !
     ! Clients that are not browsers send neither header this reads, so an API
     ! client or a webhook gets through whichever is named.
@@ -200,7 +207,7 @@ section WebApp
     match policy
     case AnyCrossSite     => false
     case NoCrossSiteWrite => Request.crossSiteWrite(method, environ)
-    case NoCrossSite      => Request.crossSiteRequest(environ)
+    case NoCrossSite      => Request.crossSiteRequest(environ) && !Request.pageVisit(method, environ)
 
   //[ Whether the `Host` this request carries is one `host` answers to. //]
   private[server] def hostAllowed(environ: py.Dynamic, host: Loopback | AnyHost | String): Bool =

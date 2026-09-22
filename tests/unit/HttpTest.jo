@@ -819,6 +819,15 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("a direct visit still arrives", call(strict, "GET", "/dynamic", [host, Header("Sec-Fetch-Site", "none")], "").status == 200)
     check("and the application's own page", call(strict, "GET", "/dynamic", [host, Header("Sec-Fetch-Site", "same-origin")], "").status == 200)
 
+    // A person following a link from another site, which the page itself cannot fake:
+    // a form navigates too, and an embedding asks for `iframe` rather than `document`.
+    val navigate = Header("Sec-Fetch-Mode", "navigate")
+    val visit = [host, foreign, navigate, Header("Sec-Fetch-Dest", "document")]
+    val framed = [host, foreign, navigate, Header("Sec-Fetch-Dest", "iframe")]
+    check("a link from another site opens the page", call(strict, "GET", "/dynamic", visit, "").status == 200)
+    check("but the form it posts is refused", call(strict, "POST", "/echo", visit, "x").status == 403)
+    check("and so is another site framing it", call(strict, "GET", "/dynamic", framed, "").status == 403)
+
     val byDefault = new WebApp(
       routes = [],
       fallback = WebApp.Fallback(() => route(py.list()), maxBodyBytes = limit)).wsgi()
