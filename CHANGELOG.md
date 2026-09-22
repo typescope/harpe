@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased
+
+**`Response.static(root, path)` serves the static tree, and is the only builder
+that resolves a name a client chose.** It is where `Response.file(root, name)`
+was, under a name that says what it serves. `file` and `download` now take a
+path the application already holds:
+
+```jo
+Response.static(root, path)              // contained, client-named
+Response.file(path)                      // a path the app holds, shown
+Response.download(path, filename = ...)  // a path the app holds, saved
+```
+
+Splitting them puts the containment where the untrusted name is, rather than on
+every call. A path built from what a client sent belongs to `static` — `file`
+and `download` resolve nothing, and a `path` with no file at it aborts, since
+the application named it.
+
+**`Response.static` serves a directory by the `index.html` inside it**, which is
+what a link ending in `/` asks for, and an empty `path` is the root's own index.
+A directory holding no index stays a 404, since nothing lists one. The type and
+the name sent now both come from the file that resolved, so a directory is
+served as `index.html`, and a symlink under the name it points at rather than
+the name that was asked for.
+
+**`Response.download` takes an optional `filename`.** It is what the browser
+saves the file as, and the type is guessed from it. Naming none keeps today's
+behavior, the last segment of `path`. Name one where the stored name and the
+served name differ — a file stored by hash, or disambiguated against a collision
+the way the web template's `uniqueName` does.
+
+Migrating: `file(root, name)` and `static` differ in name only, so a call moves
+across unchanged. `download(root, name)` still *compiles*, since `name` fits the
+new `filename`, and aborts on the first request with `no file at '<root>'` —
+pass `download(root + "/" + name)`, or `static` where the name came from a
+client.
+
 ## 0.11.0 — 2026-09-21
 
 **The body readers are members of `Request`.** `Request.body()`,

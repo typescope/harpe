@@ -101,16 +101,23 @@ section Response
   def badRequest(detail: String): Response =
     complete(Status.BadRequest, Mime.Json, JSON.dumps(py.dict("error" ~ "bad_request", "detail" ~ detail)))
 
-  //[ The file under `root` that `name` names, shown in the browser
+  //[ The static file under `root` that `path` names, shown in the browser
     !
-    ! `name` is a relative path, as a client sent it. A name that is empty,
-    ! absolute, has a `..` segment, or resolves outside `root` through a
-    ! symlink is a 404, and so is a directory or a missing file, and a client
-    ! cannot tell which. The type is guessed from the name.
+    ! `path` is relative, as a client sent it — the tail of an asset prefix.
+    ! This is the one builder that contains a name a client chose: `file` and
+    ! `download` take a path the application already holds. An absolute
+    ! `path`, one with a `..` segment, and one resolving outside `root`
+    ! through a symlink are a 404, and so is a missing file, and a client
+    ! cannot tell which.
     !
-    ! The browser renders what it can — a page, an image, a PDF — in this
-    ! application's origin, so answer with `download` for a file a user
-    ! uploaded.
+    ! A `path` naming a directory is served by the `index.html` inside it,
+    ! which is what a link ending in `/` asks for, and an empty `path` is
+    ! `root`'s own index. A directory holding no index is a 404 — nothing here
+    ! lists one.
+    !
+    ! The type and the name sent both come from the file that was resolved, so
+    ! a directory is served as `index.html` and a symlink under the name it
+    ! points at.
     !
     ! The file is read a block at a time, so its size is not its cost in
     ! memory, and it is opened when the response is written rather than here:
@@ -119,25 +126,75 @@ section Response
     ! Sends `Cache-Control: no-store` unless `headers` names one of its own,
     ! and sends `headers` after `Content-Disposition`.
   //]
-  def file(root: String, name: String, headers: List[Header] = NoHeaders): Response =
-    stored(root, name, Inline, headers)
+  def static(root: String, path: String, headers: List[Header] = NoHeaders): Response =
+    val target = resolve(root, path) rescue None => return notFound()
+    served(target, Inline, os.path.basename(target), fileType(target), headers)
 
-  //[ The same as `file`, except the browser saves it rather than showing it. //]
-  def download(root: String, name: String, headers: List[Header] = NoHeaders): Response =
-    stored(root, name, Attachment, headers)
+  //[ The file at `path`, shown in the browser
+    !
+    ! `path` is the application's own — a file it wrote, or one it stored and
+    ! can name again. Nothing here contains it under a root, so a path built
+    ! from what a client sent belongs to `static`. One with no file at it
+    ! aborts, since the application named it.
+    !
+    ! The browser renders what it can — a page, an image, a PDF — in this
+    ! application's origin, so answer with `download` for a file a user
+    ! uploaded.
+  //]
+  def file(path: String, headers: List[Header] = NoHeaders): Response =
+    fromPath(path, Inline, os.path.basename(path), headers)
+
+  //[ The file at `path`, saved by the browser rather than shown
+    !
+    ! `path` is the application's own, on the same terms as `file`'s.
+    !
+    ! `filename` is what the browser saves it as, and the type is guessed from
+    ! it. Naming none takes `path`'s own last segment, which is what a file
+    ! stored under the name it is served by wants. Name one where the two
+    ! differ — a file stored by hash, or disambiguated against a collision.
+  //]
+  def download(path: String, filename: String | None = None, headers: List[Header] = NoHeaders): Response =
+    val shown = match filename
+                case given: String => given
+                case _             => os.path.basename(path)
+    fromPath(path, Attachment, shown, headers)
 
   //[ Whether a browser shows a file or saves it. //]
   private union Disposition = Inline | Attachment
 
-  //[ The response `file` and `download` share, which differ only in `Content-Disposition`. //]
-  private def stored(root: String, name: String, disposition: Disposition, headers: List[Header]): Response =
-    val target = resolve(root, name) rescue None => return notFound()
-    val shown = Header("Content-Disposition", dispositionValue(disposition, os.path.basename(name)))
+  //[ What `file` and `download` share: a path the application named, which must be a file. //]
+  private def fromPath(path: String, disposition: Disposition, filename: String, headers: List[Header]): Response =
+    if filename == "" then abort "'\{path}' ends in no name: name one to serve it under"
+    if !os.path.isfile(path) then abort "no file at '\{path}': this names a path the application holds"
+    served(path, disposition, filename, fileType(filename), headers)
+
+  //[ The real path `path` names under `root`, or None when it is not a file inside it
+    !
+    ! A directory answers the `index.html` inside it, so the containment check
+    ! runs before the index is appended and the result is a file under `root`
+    ! either way.
+  //]
+  private def resolve(root: String, path: String): Option[String] =
+    val refused = path.startsWith("/") || path.contains("\\") || path.contains("\u{0}")
+    if refused || path.split("/").contains("..") then return None
+
+    val base = os.path.realpath(root)
+    val target = os.path.realpath(os.path.join(base, path))
+    if target != base && !target.startsWith(base + "/") then return None
+    if os.path.isfile(target) then return Some(target)
+    if !os.path.isdir(target) then return None
+
+    val index = os.path.join(target, "index.html")
+    if os.path.isfile(index) then Some(index) else None
+
+  //[ The `OnDisk` every builder answers with, once it has its path and the name to send. //]
+  private def served(path: String, disposition: Disposition, filename: String, kind: Mime.Type, headers: List[Header]): Response =
+    val shown = Header("Content-Disposition", dispositionValue(disposition, filename))
     OnDisk:
       Status.Success
-      headersFor(Status.Success, fileType(target), [shown] ++ headers)
-      target
-      os.path.getsize(target)
+      headersFor(Status.Success, kind, [shown] ++ headers)
+      path
+      os.path.getsize(path)
 
   //[ The headers every builder sends: the type, the caching rule, then the caller's own. //]
   private def headersFor(status: Status.Code, kind: Mime.Type, headers: List[Header]): List[Header] =
@@ -148,15 +205,6 @@ section Response
   //[ The type a file's name implies, `application/octet-stream` when it implies none. //]
   private def fileType(path: String): Mime.Type =
     Mime.parse(File.mimeType(path).getOrElse("application/octet-stream"))
-
-  //[ The real path of `name` under `root`, or None when it is not a file inside it. //]
-  private def resolve(root: String, name: String): Option[String] =
-    val refused = name == "" || name.startsWith("/") || name.contains("\\") || name.contains("\u{0}")
-    if refused || name.split("/").contains("..") then return None
-
-    val base = os.path.realpath(root)
-    val target = os.path.realpath(os.path.join(base, name))
-    if target.startsWith(base + "/") && os.path.isfile(target) then Some(target) else None
 
   //[ `inline` or `attachment`, naming the file both as ASCII and, per RFC 6266, as UTF-8. //]
   private def dispositionValue(disposition: Disposition, filename: String): String =
