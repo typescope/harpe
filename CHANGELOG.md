@@ -25,6 +25,31 @@ the name sent now both come from the file that resolved, so a directory is
 served as `index.html`, and a symlink under the name it points at rather than
 the name that was asked for.
 
+**`Route.assets(prefix, root)` serves a directory of files in development.** A
+deployment's assets are the proxy's to serve, and this gives a prototype the
+same behavior: it reads the tail of its own prefix, where `Route.Prefix` leaves
+the handler to count the prefix out by hand, and it reads a path ending in `/`
+as the `index.html` beside it, with `/assets/` itself asking for the root's own.
+It takes nothing else — no cache rule, since what a deployment caches is the
+proxy's to decide, and no body at all.
+
+That rule is the route's, not `Response.static`'s, which answers 404 for a
+directory and for an empty path as it did before. It is also purely lexical, so
+nothing asks the filesystem what a directory is, and the containment check stays
+inside `Response.static`. A site wanting another convention — an extensionless
+`.html`, or one page answering every path — writes `Prefix` and its own handler.
+
+**The body limit is `maxReqBody` everywhere.** It names the same thing on every
+`Route` constructor, on `WebApp.Fallback`, and on `WebApp` itself, where
+`maxRequestBodyBytes` — the largest of them, and the limit to give the server —
+now carries the name of the parts it is the maximum of.
+`Route.defaultMaxBodyBytes` is `Route.defaultMaxReqBody`. The old names never
+said whether they bounded the request or the response.
+
+Note that `WebApp.maxRequestBodyBytes` was itself `WebApp.ceiling` in 0.11, so
+an application coming from 0.10 meets this field under a third name. This is the
+one it keeps.
+
 **`NoCrossSite` lets a person arrive at a page.** It refused every cross-site
 request, which included the GET behind a link, so an application under the
 default policy answered 403 to anyone clicking through to it. It now serves a

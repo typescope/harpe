@@ -110,14 +110,12 @@ section Response
     ! through a symlink are a 404, and so is a missing file, and a client
     ! cannot tell which.
     !
-    ! A `path` naming a directory is served by the `index.html` inside it,
-    ! which is what a link ending in `/` asks for, and an empty `path` is
-    ! `root`'s own index. A directory holding no index is a 404 — nothing here
-    ! lists one.
+    ! A directory is a 404, as is an empty `path`. Which file a URL means is
+    ! the route's to decide, and `Route.assets` is the one that reads a
+    ! trailing `/` as the `index.html` beside it.
     !
     ! The type and the name sent both come from the file that was resolved, so
-    ! a directory is served as `index.html` and a symlink under the name it
-    ! points at.
+    ! a symlink is served under the name it points at.
     !
     ! The file is read a block at a time, so its size is not its cost in
     ! memory, and it is opened when the response is written rather than here:
@@ -175,17 +173,12 @@ section Response
     ! either way.
   //]
   private def resolve(root: String, path: String): Option[String] =
-    val refused = path.startsWith("/") || path.contains("\\") || path.contains("\u{0}")
+    val refused = path == "" || path.startsWith("/") || path.contains("\\") || path.contains("\u{0}")
     if refused || path.split("/").contains("..") then return None
 
     val base = os.path.realpath(root)
     val target = os.path.realpath(os.path.join(base, path))
-    if target != base && !target.startsWith(base + "/") then return None
-    if os.path.isfile(target) then return Some(target)
-    if !os.path.isdir(target) then return None
-
-    val index = os.path.join(target, "index.html")
-    if os.path.isfile(index) then Some(index) else None
+    if target.startsWith(base + "/") && os.path.isfile(target) then Some(target) else None
 
   //[ The `OnDisk` every builder answers with, once it has its path and the name to send. //]
   private def served(path: String, disposition: Disposition, filename: String, kind: Mime.Type, headers: List[Header]): Response =

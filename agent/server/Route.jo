@@ -5,12 +5,12 @@ import harpe.server.Http.Verb
 import harpe.server.request
 import harpe.server.Response
 
-//[ One route. `maxBodyBytes` is the largest body it accepts, 0 for none at all. //]
+//[ One route. `maxReqBody` is the largest body it accepts, 0 for none at all. //]
 class Route(
       method: Verb.Method,
       path: String,
       prefix: Bool,
-      maxBodyBytes: Int,
+      maxReqBody: Int,
       handler: () => Response receives request)
 
 //[ The routes an application answers, declared as a table.
@@ -21,35 +21,35 @@ class Route(
 //]
 section Route
   //[ The body limit a route takes when it names none. //]
-  def defaultMaxBodyBytes: Int = 1048576
+  def defaultMaxReqBody: Int = 1048576
 
   //[ A route answering GET at exactly `path`. //]
   def Get(
       path: String,
       handler: (() => Response receives request),
-      maxBodyBytes: Int = defaultMaxBodyBytes): Route =
-    new Route(Verb.Get, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
+      maxReqBody: Int = defaultMaxReqBody): Route =
+    new Route(Verb.Get, path, prefix = false, maxReqBody = maxReqBody, handler = handler)
 
   //[ A route answering POST at exactly `path`. //]
   def Post(
       path: String,
       handler: (() => Response receives request),
-      maxBodyBytes: Int = defaultMaxBodyBytes): Route =
-    new Route(Verb.Post, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
+      maxReqBody: Int = defaultMaxReqBody): Route =
+    new Route(Verb.Post, path, prefix = false, maxReqBody = maxReqBody, handler = handler)
 
   //[ A route answering PUT at exactly `path`. //]
   def Put(
       path: String,
       handler: (() => Response receives request),
-      maxBodyBytes: Int = defaultMaxBodyBytes): Route =
-    new Route(Verb.Put, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
+      maxReqBody: Int = defaultMaxReqBody): Route =
+    new Route(Verb.Put, path, prefix = false, maxReqBody = maxReqBody, handler = handler)
 
   //[ A route answering DELETE at exactly `path`. //]
   def Delete(
       path: String,
       handler: (() => Response receives request),
-      maxBodyBytes: Int = defaultMaxBodyBytes): Route =
-    new Route(Verb.Delete, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
+      maxReqBody: Int = defaultMaxReqBody): Route =
+    new Route(Verb.Delete, path, prefix = false, maxReqBody = maxReqBody, handler = handler)
 
   //[ A route answering OPTIONS at exactly `path`
     !
@@ -60,8 +60,8 @@ section Route
   def Options(
       path: String,
       handler: (() => Response receives request),
-      maxBodyBytes: Int = defaultMaxBodyBytes): Route =
-    new Route(Verb.Options, path, prefix = false, maxBodyBytes = maxBodyBytes, handler = handler)
+      maxReqBody: Int = defaultMaxReqBody): Route =
+    new Route(Verb.Options, path, prefix = false, maxReqBody = maxReqBody, handler = handler)
 
   //[ Everything under `path`, which must end in `/` — the assets of a page
     !
@@ -72,9 +72,37 @@ section Route
       path: String,
       handler: (() => Response receives request),
       method: Verb.Method = Verb.Get,
-      maxBodyBytes: Int = defaultMaxBodyBytes): Route =
+      maxReqBody: Int = defaultMaxReqBody): Route =
     if !path.endsWith("/") then abort "a prefix route's path must end in '/': '\{path}'"
-    new Route(method, path, prefix = true, maxBodyBytes = maxBodyBytes, handler = handler)
+    new Route(method, path, prefix = true, maxReqBody = maxReqBody, handler = handler)
+
+  //[ The files under `root`, served at `prefix` — the proxy's job, for development
+    !
+    ! A deployment's assets are nginx's or Apache's to serve. This gives a
+    ! prototype, and a single container running without one, the same
+    ! behavior: `prefix` must end in `/`, the rest of the path names the file,
+    ! and a path ending in `/` asks for the `index.html` beside it, with
+    ! `/assets/` itself asking for `root`'s own.
+    !
+    ! That index rule is this route's, not `Response.static`'s: a site wanting
+    ! another — an extensionless `.html`, or one page answering every path —
+    ! writes `Prefix` and its own handler.
+    !
+    ! `Response.static` resolves the name, so one leaving `root` is a 404. GET
+    ! only, and no body at all, so a request carrying one is refused 413. It
+    ! names no cache rule and sends `no-store`, since what a deployment caches
+    ! is the proxy's to decide.
+  //]
+  def assets(prefix: String, root: String): Route =
+    if !prefix.endsWith("/") then abort "an assets route's prefix must end in '/': '\{prefix}'"
+    Prefix:
+      prefix
+      () => Response.static(root, named(request.path.substring(prefix.size, request.path.size - prefix.size)))
+      maxReqBody = 0
+
+  //[ The file a URL tail names, which for one ending in `/` is the index beside it. //]
+  private def named(tail: String): String =
+    if tail == "" || tail.endsWith("/") then tail + "index.html" else tail
 
   //[ The exact routes by "VERB path", for a `WebApp` to dispatch through
     !

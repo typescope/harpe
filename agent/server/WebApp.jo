@@ -27,7 +27,7 @@ import jo.py.resource.*
   ! the fallback. One whose routes cover everything names none and takes
   ! `WebApp.notFound()`.
   !
-  ! Every handler names the largest body it accepts, and `maxRequestBodyBytes` is the
+  ! Every handler names the largest body it accepts, and `maxReqBody` is the
   ! largest of them, which is the limit to give the server. `host` defaults to
   ! loopback, so a prototype on `127.0.0.1` runs as it is and a deployment
   ! reached by any other name must name it.
@@ -50,10 +50,10 @@ class WebApp(
        Wsgi.write: environ, startResponse, answer(environ)
 
   //[ The largest body any handler allows, which is the limit to give the server. //]
-  def maxRequestBodyBytes: Int =
-    var most = fallback.maxBodyBytes
+  def maxReqBody: Int =
+    var most = fallback.maxReqBody
     for route in routes do
-      if route.maxBodyBytes > most then most = route.maxBodyBytes
+      if route.maxReqBody > most then most = route.maxReqBody
     most
 
   //[ What this exchange is answered with, refusals included
@@ -98,8 +98,8 @@ class WebApp(
   //[ The body limit for this exchange: the route's own, or the fallback's. //]
   private def limitFor(found: Option[Route]): Int =
     match found
-    case Some(route) => route.maxBodyBytes
-    case None        => fallback.maxBodyBytes
+    case Some(route) => route.maxReqBody
+    case None        => fallback.maxReqBody
 
   //[ The route for this exchange: an exact path first, then the longest prefix that covers it. //]
   private def routeFor(method: Verb.Method, path: String): Option[Route] =
@@ -134,7 +134,7 @@ section WebApp
   //]
   class Fallback(
         handler: (() => Response receives request),
-        maxBodyBytes: Int)
+        maxReqBody: Int)
 
   //[ Answers a 404 page and reads no body, for an application whose routes cover it
     !
@@ -145,7 +145,7 @@ section WebApp
     ! first.
   //]
   def notFound(path: String = ""): Fallback =
-    Fallback(() => pageAt(path), maxBodyBytes = 0)
+    Fallback(() => pageAt(path), maxReqBody = 0)
 
   //[ What `fallback` defaults to, which is `notFound()` under a name a default argument can hold. //]
   def defaultFallback: Fallback = notFound()
