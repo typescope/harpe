@@ -291,13 +291,6 @@ and the extension used to infer the type. All three builders default to
 policy for public assets. They stream file contents through the server's file
 wrapper when available.
 
-When migrating an existing handler, replace `Response.file(root, name)` with
-`Response.static(root, name)`, keeping any `headers`. Update old
-`Response.download(root, name)` calls explicitly: they still compile, but now
-interpret `root` as the file path and `name` as the download filename. Pass the
-full application-owned file path to `download`, or use `static` for a
-client-selected asset path.
-
 ## Behind a reverse proxy
 
 Terminate TLS at the proxy, keep the upstream accessible only to that proxy,

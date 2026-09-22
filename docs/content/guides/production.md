@@ -73,6 +73,16 @@ Configure TLS, preserve the public host, and serve only public assets directly.
 Follow the [reverse-proxy configuration](/guides/serving-http/#behind-a-reverse-proxy)
 for header forwarding, body limits, caching, and cookies.
 
+## Evaluate agent behavior
+
+Compare task success, prompt-injection outcomes, latency, and cost against the
+current deployment before changing prompts, context strategies, skills, tools,
+or model providers. Set release criteria for important workflows and critical
+policy violations, and retain the evidence behind each comparison.
+
+Follow [Evals](/guides/evals/) to build cases, grade outcomes, and make evaluations
+part of the release process.
+
 ## Test the boundaries
 
 - Test that forbidden capability use fails to compile.
