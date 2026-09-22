@@ -1,7 +1,8 @@
 +++
-title = "Create a Telegram Agent"
+title = "Telegram Bot"
 +++
-The Telegram template is an AI-powered bot that long-polls Telegram, keeps
+
+This example is an AI-powered bot that long-polls Telegram, keeps
 persistent state per chat, accepts attachments, and renders replies using
 Telegram-compatible markdown text.
 

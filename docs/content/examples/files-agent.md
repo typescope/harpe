@@ -1,9 +1,10 @@
 +++
-title = "Create a Web Agent"
+title = "File Processing Agent"
 +++
-The web template is a complete browser application with persistent sessions,
-streamed progress, uploads, downloadable files, and a customizable frontend.
-The server and frontend sources are copied into your project.
+
+The file processing agent is an example web application which allows processing uploaded files, e.g. receipts for reimbursement.
+
+The example integrates local PDF manipulation and OCR capabilities, such that it only sends a snapshot of a PDF page to remote LLMs when needed.
 
 ## Create the project
 
