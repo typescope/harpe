@@ -2,7 +2,7 @@
 title = "PDF Processing Agent"
 +++
 
-The file processing agent is an example web application which allows processing uploaded PDF files, e.g. receipts for reimbursement.
+The file processing agent is an example application for processing uploaded PDF files, e.g. receipts for reimbursement.
 
 The example integrates local PDF manipulation and OCR capabilities, such that it only sends a snapshot of a PDF page to remote LLMs when needed.
 
@@ -33,7 +33,7 @@ jo start
 Open `http://127.0.0.1:8765`. Each conversation has its own URL and can resume
 after the process restarts.
 
-[![The Harpe web agent showing persistent conversations, generated-program traces, PDF attachments, an SVG result, and files scoped to the current session.](/img/web-agent.gif)](/img/web-agent.gif)
+[![The Harpe PDF processing agent showing persistent conversations, generated-program traces, PDF attachments, an SVG result, and files scoped to the current session.](/img/pdf-agent.gif)](/img/pdf-agent.gif)
 
 ## Make the first change
 

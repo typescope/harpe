@@ -1,6 +1,6 @@
 //[ Web.jo
   !
-  ! The web agent loop (the Harpe "conversational" trigger, served in a browser)
+  ! The PDF processing agent loop (the Harpe "conversational" trigger, served in a browser)
   ! and its entry point. `jo run` with `jo.main = web.main` starts a local
   ! HTTP server. The chat page talks to it over HTTP. Each user message is one
   ! turn of the shared engine, driven by `WebInteract` so the browser sees
@@ -40,7 +40,7 @@ private def serve(): Unit receives stdout, appHome =
   // so the agent owns and customizes it. Fail fast with a pointer if it is missing.
   if !File.exists(os.path.join(appHome, "assets/index.html")) then
     println "Error: assets/index.html not found — the web driver serves the chat page from the agent's assets/ directory."
-    println "  It ships with the web agent; restore it from the harpe repo (web/assets/index.html)."
+    println "  It ships with the PDF processing agent; restore it from the harpe repo (templates/pdf-agent/assets/index.html)."
     sys.exit(1)
 
   val brain = Model.default()

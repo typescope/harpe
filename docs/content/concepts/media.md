@@ -87,7 +87,7 @@ ends the file is already there. What the driver still needs is which one the use
 should get — and that is structured output, not a capability. The model says it
 by calling a tool.
 
-The Web agent's `sendFile` moves no bytes at all. It checks the name, returns a
+The PDF processing agent's `sendFile` moves no bytes at all. It checks the name, returns a
 line of prose for the model, and the driver reads the calls back off the finished
 turn to render attachments on the reply — see
 [Structured output](/concepts/structured-output/) for the pattern.

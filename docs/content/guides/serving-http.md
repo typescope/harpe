@@ -1,16 +1,14 @@
 +++
 title = "Serving HTTP"
-description = "Deploy a Harpe web agent with WSGI, bounded uploads, responsive turn handling, and a reverse proxy."
+description = "Deploy a Harpe application with WSGI, bounded uploads, responsive turn handling, and a reverse proxy."
 +++
 A `WebApp` declares HTTP routes and the policy checked before a handler runs.
 Its `wsgi()` method returns a plain WSGI application. HTTP handlers belong in
 your trusted application, where they authenticate users, scope sessions, and
 start agent turns.
 
-This guide covers serving an existing agent. Start with
-[Create a Web Agent](/examples/create-web-agent/) if you need an application to
-adapt, and use the [Deployment Checklist](/guides/production/) for the wider
-security and data policy review.
+This guide covers serving an existing agent. Use the [Deployment Checklist](/guides/production/)
+for the wider security and data policy review.
 
 ## Run a WSGI server
 
