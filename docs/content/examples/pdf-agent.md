@@ -9,7 +9,7 @@ The example integrates local PDF manipulation and OCR capabilities, such that it
 ## Create the project
 
 ```sh
-jo new my-agent --template typescope/harpe:web
+jo new my-agent --template typescope/harpe:pdf-agent
 cd my-agent
 pip install -r requirements.txt
 cp .env.example .env

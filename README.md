@@ -49,13 +49,13 @@ prompt, and, where it has them, its own tests.
 
 | Template | Includes | Guide |
 |---|---|---|
-| `web` | browser sessions, streaming, uploads, and downloadable files | [Create a Web Agent](https://harpe.typescope.ai/examples/create-web-agent/) |
-| `telegram` | bot sessions, sender authorization, attachments, and Telegram rendering | [Create a Telegram Agent](https://harpe.typescope.ai/examples/create-telegram-agent/) |
+| `pdf-agent` | browser sessions, PDF uploads and OCR | [PDF Processing Agent](https://harpe.typescope.ai/examples/pdf-agent/) |
+| `telegram` | bot sessions, sender authorization, attachments, and Telegram rendering | [Telegram Bot](https://harpe.typescope.ai/examples/telegram-bot/) |
 | `pr-review` | a GitHub PR reviewer, behind a capability scoped to one external API | [GitHub PR Review](https://harpe.typescope.ai/examples/pr-review/) |
 | `flight-booker` | a booking agent that asks a human before the irreversible step | [Flight Booking](https://harpe.typescope.ai/examples/flight-booker/) |
 
 ```sh
-jo new my-agent --template typescope/harpe:web
+jo new my-agent --template typescope/harpe:pdf-agent
 ```
 
 After creating one:
