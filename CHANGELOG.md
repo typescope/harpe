@@ -18,12 +18,11 @@ every call. A path built from what a client sent belongs to `static` — `file`
 and `download` resolve nothing, and a `path` with no file at it aborts, since
 the application named it.
 
-**`Response.static` serves a directory by the `index.html` inside it**, which is
-what a link ending in `/` asks for, and an empty `path` is the root's own index.
-A directory holding no index stays a 404, since nothing lists one. The type and
-the name sent now both come from the file that resolved, so a directory is
-served as `index.html`, and a symlink under the name it points at rather than
-the name that was asked for.
+**The type and the name `Response.static` sends both come from the file it
+resolved**, where the type came from the real path and the name from the one
+asked for. The two could disagree through a symlink inside the root, which was
+then served as one type under another name. It is now served under the name it
+points at.
 
 **`Route.assets(prefix, root)` serves a directory of files in development.** A
 deployment's assets are the proxy's to serve, and this gives a prototype the
