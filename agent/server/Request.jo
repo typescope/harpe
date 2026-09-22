@@ -359,6 +359,10 @@ section Request
     ! browser sent it. Otherwise an `Origin` must name the same authority as
     ! `Host`. A request carrying neither did not come from a browser page, so a
     ! browser too old to send either is not recognised as cross-site at all.
+    !
+    ! Another origin under the same domain counts as another site — a sibling
+    ! subdomain, or plain HTTP where this is HTTPS — since a subdomain is not
+    ! a boundary this application controls.
   //]
   private[server] def crossSiteRequest(environ: py.Dynamic): Bool =
     match environValue(environ, "HTTP_SEC_FETCH_SITE")
