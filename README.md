@@ -10,6 +10,11 @@ A Harpe agent acts by writing typed Jo programs. Each program is compiled
 against the capabilities you grant before it can run. Code that asks for an
 unavailable capability does not compile.
 
+> [!NOTE]
+> Harpe is in developer preview and ready for serious experimentation. Its
+> capability model, turn engine, and public APIs are still stabilizing and may
+> change between releases.
+
 ## Quick start
 
 Install Jo:

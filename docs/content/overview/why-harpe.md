@@ -7,6 +7,13 @@ It is designed for agentic workflows that rely on code generation to act on
 critical infrastructure and sensitive data, or to perform consequential
 operations.
 
+<aside class="callout-warning" role="note" aria-labelledby="preview-warning">
+  <p class="callout-title" id="preview-warning">Developer preview</p>
+  <p>Harpe is in developer preview and ready for serious experimentation. Its
+  capability model, turn engine, and public APIs are still stabilizing and may
+  change between releases.</p>
+</aside>
+
 ## Why specialized agents?
 
 A general-purpose agent asks to be trusted with broad authority. That is not a
