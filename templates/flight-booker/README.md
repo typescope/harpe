@@ -38,7 +38,7 @@ confirmation card in the chat — approve or reject it there.
 - `sandbox/` — the Duffel capability
 - `skills/` — reference the model can read
 
-[Flight Booking](https://harpe.typescope.ai/case-studies/flight-booker/) walks
+[Flight Booking](https://harpe.typescope.ai/examples/flight-booker/) walks
 through how the approval boundary works.
 
 ## Screenshots

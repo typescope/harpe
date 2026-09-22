@@ -129,9 +129,9 @@ The [sandbox concept guide](/concepts/sandbox/) explains the compiler guarantee.
 
 ## Build a complete application
 
-- [Create a web agent](/tutorial/create-web-agent/) — browser sessions,
+- [Create a web agent](/examples/create-web-agent/) — browser sessions,
   streaming, uploads, and downloadable files.
-- [Create a Telegram agent](/tutorial/create-telegram-agent/) — persistent bot
+- [Create a Telegram agent](/examples/create-telegram-agent/) — persistent bot
   sessions, authorization, attachments, and Telegram rendering.
 - [Create a custom capability](/tutorial/create-custom-capabilities/) — give
   model-written programs narrowly typed access to your own systems.

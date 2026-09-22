@@ -8,7 +8,7 @@ your trusted application, where they authenticate users, scope sessions, and
 start agent turns.
 
 This guide covers serving an existing agent. Start with
-[Create a Web Agent](/tutorial/create-web-agent/) if you need an application to
+[Create a Web Agent](/examples/create-web-agent/) if you need an application to
 adapt, and use the [Deployment Checklist](/guides/production/) for the wider
 security and data policy review.
 
