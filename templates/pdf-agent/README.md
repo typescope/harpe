@@ -22,9 +22,6 @@ jo start
 
 Then open <http://127.0.0.1:8765>.
 
-HTTP requests and their response statuses are logged to the terminal by passing
-`stdout` to `application.wsgi(output = stdout)` in `src/Web.jo`.
-
 Click **Logs** in the sidebar, or open <http://127.0.0.1:8765/journal>, to
 inspect logs live. The viewer keeps the latest 5,000 entries across sessions
 since the server started. Click a session scope to focus on its turns and tool
