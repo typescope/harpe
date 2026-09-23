@@ -40,7 +40,7 @@ jo start
 Follow [Build Your First Agent](https://harpe.typescope.ai/tutorial/build-your-first-agent/)
 to inspect each part.
 
-## Start from an application
+## Start from a template
 
 | Template | Guide |
 |---|---|
