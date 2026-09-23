@@ -35,13 +35,19 @@ def suite(name: String, content: () => Unit receives thisSuite): Unit receives t
 
 section Testing
   //[ An individual test //]
-  class Failure(source: SourceLocation, message: String)
+  class NotTrue(label: String)
+
+  class NotEqual(label: String, actual: String, expect: String)
+
+  type Reason = NotTrue | NotEqual
+
+  class Failure(source: SourceLocation, reason: Reason)
 
   class TestResult
     private val recorded = List.builder[Failure]
 
-    def record(source: SourceLocation, message: String): Unit =
-      recorded.add(new Failure(source, message))
+    def record(source: SourceLocation, reason: Reason): Unit =
+      recorded.add(new Failure(source, reason))
 
     def failures: List[Failure] = recorded.result
 

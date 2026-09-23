@@ -231,8 +231,14 @@ section Runner
 
   private def formatFailures(failures: List[Testing.Failure]): String =
     failures
-      .map: f => "\{f.message} \{Style.muted("(\{f.source.file}:\{f.source.line})")}"
+      .map: f => "\{formatFailure(f)} \{Style.muted("(\{f.source.file}:\{f.source.line})")}"
       .join("\n")
+
+  private def formatFailure(failure: Testing.Failure): String =
+    match failure.reason
+    case notTrue: Testing.NotTrue => notTrue.label
+    case unequal: Testing.NotEqual =>
+      "\{unequal.label}: expected [\{unequal.expect}] but got [\{unequal.actual}]"
 
   private def reportTest(full: String, t: Testing.Test, indent: String, tally: Tally, done: Outcome)
   : Unit receives stdout =

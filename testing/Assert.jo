@@ -15,11 +15,12 @@ import jo.compile.SourceLocation
   ! continues so later checks in the same scenario still run.
 //]
 def check(label: String, cond: Bool)(auto source: SourceLocation): Unit receives testResult =
-  if !cond then testResult.record(source, label)
+  if !cond then testResult.record(source, harpe.testing.Testing.NotTrue(label))
 
 //[ Record a failure unless `actual` equals `expected`, quoting both values. //]
 def checkEquals[T](label: String, actual: T, expected: T)(
     auto eq: Eq[T] with [[T].==], show: Show[T] with [[T].toString], source: SourceLocation)
-    : Unit receives testResult =
+: Unit receives testResult =
   if !eq.equal(actual, expected) then
-    testResult.record(source, "\{label}: expected [\{show.show(expected)}] but got [\{show.show(actual)}]")
+    testResult.record(source, harpe.testing.Testing.NotEqual(
+      label, show.show(actual), show.show(expected)))
