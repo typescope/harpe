@@ -182,6 +182,7 @@ section CliAgent
   //]
   private def prepareHome(application: Driver.Application): String =
     val home = tempfile.mkdtemp()
+    File.ensureDir: os.path.join(home, "prompts")
     File.write:
       os.path.join(home, "prompts/SYSTEM.md")
       File.read(application.path("prompts/SYSTEM.md"))
