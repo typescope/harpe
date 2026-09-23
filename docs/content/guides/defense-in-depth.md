@@ -21,7 +21,7 @@ may also add file and network rules for defense in depth.
 
 ## Enable the wrapper
 
-From a generated CLI, web, or Telegram project:
+From a generated template project:
 
 ```sh
 cp sandbox/run.sh.example sandbox/run.sh

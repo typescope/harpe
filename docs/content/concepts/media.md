@@ -61,8 +61,7 @@ rest:
 - [OCR](/capabilities/ocr/) — `ocr`
 
 Generated code sees relative paths, never the agent's own directories or a host
-path. Web and Telegram both take uploads this way. Keep file bytes, credentials,
-storage keys, and host paths out of the transcript.
+path. Keep file bytes, credentials, storage keys, and host paths out of the transcript.
 
 ## On-demand file reading
 
@@ -104,7 +103,7 @@ protocol instead. Whatever it is, keep it distinct from `uploadMedia`:
 
 ## Customizing media support
 
-The CLI, Web, and Telegram templates declare file and document capabilities in
+The templates declare file and document capabilities in
 `sandbox/SandboxAPI.jo`:
 
 ```jo

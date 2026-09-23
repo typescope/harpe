@@ -7,8 +7,7 @@ File-system support has three interfaces:
 - `TextFile` is an open handle for whole, windowed, or lazy line reads.
 - `BinaryFile` is an open handle for byte reads and writes.
 
-The application chooses the tree's root; the CLI, Web, and Telegram templates
-bind it to the current session's data directory.
+The application defines the root of the file system.
 
 All paths are portable and relative. `""` names the root. Absolute paths,
 parent traversal, backslashes, drive prefixes, and empty path segments are

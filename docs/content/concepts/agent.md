@@ -100,7 +100,7 @@ establishes user and session scope, invokes turns, and delivers results. It also
 owns lifecycle concerns such as concurrency, persistence, and logging.
 
 “Driver” describes an architectural role, not a required class or interface.
-The CLI, Web, and Telegram applications implement that role differently while
+The PDF processing agent and Telegram bot implement that role differently while
 using the same core components.
 
 The [Turn](/concepts/turn/) concept describes the model-tool loop and the events

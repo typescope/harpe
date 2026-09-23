@@ -123,11 +123,6 @@ resumed. An application can still log requests and decisions for auditing.
 
 ## Interaction and timeouts
 
-Harpe's CLI, Web, and Telegram drivers present approval through their own user
-interfaces. A custom driver provides the same behavior by implementing
-`Interact.approve`. See [Turn](/concepts/turn/) for the complete interaction
-contract.
-
 The application controls how long its interaction waits. A timeout is different
 from rejection because the user never made a decision.
 

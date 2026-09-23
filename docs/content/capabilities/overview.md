@@ -1,8 +1,7 @@
 +++
 title = "Overview"
 +++
-Harpe provides a set of typed capabilities for common agent work. The CLI, Web,
-and Telegram templates grant them by default:
+Harpe provides a set of typed capabilities for common agent work:
 
 - a confined [file system](/capabilities/file-system/)
 - [PDF](/capabilities/pdf/), [Excel](/capabilities/excel/), and

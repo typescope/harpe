@@ -11,8 +11,8 @@ model-provider access.
 Authenticate users before they can start a turn. Derive user and tenant scope
 from trusted session state, not from identifiers supplied by the model.
 
-Isolate each session's files, transcript, and approvals. The Web and
-Telegram applications demonstrate per-session data directories. Define
+Isolate each session's files, transcript, and approvals. The PDF processing agent and
+Telegram bot demonstrate per-session data directories. Define
 authentication, authorization, retention, and deletion for your application.
 
 ## Capability review

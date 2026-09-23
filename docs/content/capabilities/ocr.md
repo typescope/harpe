@@ -36,7 +36,7 @@ def runTask(): Unit receives stdout, fs, pdfReader, ocr =
     pdf.close()
 ```
 
-CLI and Web bind `TesseractOcr`. Telegram binds `RapidOcr`. Change the binding
+Harpe provides two OCR engines: `TesseractOcr` and `RapidOcr`. Change the binding
 in `SandboxRuntime.jo` to select another implementation.
 
 ## Interface reference
