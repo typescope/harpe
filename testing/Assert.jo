@@ -17,7 +17,9 @@ import jo.compile.SourceLocation
 def check(label: String, cond: Bool)(auto source: SourceLocation): Unit receives testResult =
   if !cond then testResult.record(source, label)
 
-//[ Fail the enclosing test unless `actual` equals `expected`, quoting both. //]
-def checkEquals(label: String, actual: String, expected: String)(auto source: SourceLocation): Unit receives testResult =
-  if actual != expected then
-    testResult.record(source, "\{label}: expected [\{expected}] but got [\{actual}]")
+//[ Record a failure unless `actual` equals `expected`, quoting both values. //]
+def checkEquals[T](label: String, actual: T, expected: T)(
+    auto eq: Eq[T] with [[T].==], show: Show[T] with [[T].toString], source: SourceLocation)
+    : Unit receives testResult =
+  if !eq.equal(actual, expected) then
+    testResult.record(source, "\{label}: expected [\{show.show(expected)}] but got [\{show.show(actual)}]")
