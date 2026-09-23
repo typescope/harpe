@@ -23,7 +23,7 @@
   ! fails inside another process.
 //]
 
-namespace web.tests
+namespace pdf.agent.tests
 
 
 import harpe.ffi.os
@@ -146,7 +146,7 @@ section WebAgent
         // Exiting immediately while something IS serving here is the collision:
         // a sibling lane bound this port first and ours could not.
         if answers(agent) then return false
-        abort "web e2e: the agent exited during startup (code \{proc.poll().asInt}):\n\{agent.serverLog}"
+        abort "pdf-agent e2e: the agent exited during startup (code \{proc.poll().asInt}):\n\{agent.serverLog}"
 
       match py.try(Rest.get(agent, "/api/info"))
       // Answering is not enough — a sibling agent answers exactly the same way.
@@ -155,7 +155,7 @@ section WebAgent
       case Ok(answer) if answer.status == 200 => return servesMarker(agent, marker)
       case _ => py.module("time").sleep(0.05)
 
-    abort "web e2e: the agent never answered on port \{agent.port}:\n\{agent.serverLog}"
+    abort "pdf-agent e2e: the agent never answered on port \{agent.port}:\n\{agent.serverLog}"
 
   //[ Is anything at all serving on this port? //]
   private def answers(agent: Agent): Bool =
@@ -213,7 +213,7 @@ section WebAgent
     case Ok(_) =>
       Driver.discardHome(home)
       assert: left > 1,
-        "web e2e: lost the port to another scenario \{portAttempts} times running"
+        "pdf-agent e2e: lost the port to another scenario \{portAttempts} times running"
       attempt(application, modelBaseUrl, scenario, left - 1)
 
     // The home is left behind on failure: its `server.log` holds the traceback

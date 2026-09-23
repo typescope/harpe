@@ -9,7 +9,7 @@
   ! printed, both named in the failure.
 //]
 
-namespace web.tests.Main
+namespace pdf.agent.tests.Main
 
 import jo.IO.stdout
 import harpe.logging.Logging
@@ -18,13 +18,13 @@ import harpe.testing.Testing
 import harpe.testing.Runner
 import harpe.testing.suite
 import harpe.testing.thisSuite
-import web.tests.WebTest
+import pdf.agent.tests.WebTest
 
 def main(): Unit receives stdout =
   Logging.withLogger(Logging.discard, () => run())
 
 private def run(): Unit receives stdout, logger =
-  val root = Testing.define("web", () => suites())
+  val root = Testing.define("pdf-agent", () => suites())
   val passed = Runner.run(root, Runner.filterFromArgs(), Runner.lanesFromEnv())
   if !passed then py.module("sys").exit(1)
 

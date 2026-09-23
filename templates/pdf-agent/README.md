@@ -1,4 +1,4 @@
-# web
+# pdf-agent
 
 A browser agent. It serves a local chat page and runs one turn per message,
 streaming progress as it goes. Uploads and downloadable files are supported.
