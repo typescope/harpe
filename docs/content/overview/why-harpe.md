@@ -74,7 +74,7 @@ vulnerabilities in its virtualization and networking stack.
 Harpe can reduce attack surface by narrowing the capability interface. A calendar agent
 can only receive operations to check availability and reserve a slot,
 without accessing credentials and network. In Harpe, the
-LLM-generated code has no access to a shell, file system, raw sockets, or virtual devices.
+LLM-generated code has no ambient access to a shell, file system, raw sockets, or virtual devices.
 
 ## The cost and benefits of typed trust boundaries
 
