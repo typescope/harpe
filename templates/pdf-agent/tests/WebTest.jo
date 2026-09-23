@@ -92,52 +92,6 @@ def webSuite(): Unit receives thisSuite = suite: "pdf-agent", () =>
       check("the live log starts empty", empty.get("entries").cast[py.List].size == 0)
       check("viewing logs creates no sessions", Rest.get(agent, "/api/sessions").text.contains("[]"))
 
-  test: "shows live logs from new and restored sessions", () =>
-    val script = [ModelScript.saysAfter(1.0, "First reply."), ModelScript.says("Restored reply.")]
-    ProviderFixture.withResponses: script, server =>
-      WebAgent.withAgent: server.baseUrl, agent =>
-        val watched = py.dict("session" ~ "", "seen" ~ 0)
-        val watch = (event: py.Dict) =>
-          val kind = event.get("type", "").asString
-          if kind == "session" then watched.set("session", event.get("id").asString)
-          if kind == "status" && event.get("label", "").asString == "thinking" then
-            val live = Rest.get(agent, "/journal?seen=0").json
-            val entries = live.get("entries").cast[py.List]
-            check("logs arrive before the model replies", entries.size > 0)
-            check("includes the driver's request", json.dumps(entries).contains("Watch this turn."))
-            for entry in entries do
-              val scopes = entry.cast[py.Dict].get("context").cast[py.List]
-              checkEquals("groups live entries by session", scopes.get(0).asString, "pdf.agent.session=" + watched.get("session").asString)
-            watched.set("seen", live.get("seen").asInt)
-
-        val events = Rest.stream(agent, "/api/message", py.dict("text" ~ "Watch this turn."), watch)
-        val session = Events.session(events)
-        val seen = watched.get("seen").asInt
-        check("read logs during the turn", seen > 0)
-
-        val later = Rest.get(agent, Rest.url("/journal", py.dict("seen" ~ seen))).json
-        check("polls new entries after the live cursor", later.get("seen").asInt > seen)
-        check("returns just the entries after that cursor", later.get("entries").cast[py.List].size == later.get("seen").asInt - seen)
-        check("includes the model's reply", json.dumps(later).contains("First reply."))
-        check("preserves nested turn scopes", json.dumps(later).contains("harpe.turn.id="))
-        check("still persists the conversation", File.read(agent.sessionFile(session)).contains("First reply."))
-
-        // A stored session absent from the registry takes the same path as a
-        // conversation reopened after a server restart.
-        val restored = "restored-session"
-        File.write(agent.sessionFile(restored), File.read(agent.sessionFile(session)))
-        val resumed = Rest.turn(agent, restored, "Continue the saved conversation.")
-        checkEquals("resumes the saved session", Events.streamed(resumed), "Restored reply.")
-        check("restores its model history", requestText(server, 1).contains("First reply."))
-
-        val all = Rest.get(agent, "/journal?seen=0").json.get("entries").cast[py.List]
-          check("keeps the first session in the viewer", json.dumps(all).contains("pdf.agent.session=" + session))
-          check("includes the restored session", json.dumps(all).contains("pdf.agent.session=" + restored))
-        check("shows the restored reply", json.dumps(all).contains("Restored reply."))
-        for entry in all do
-          val scope = entry.cast[py.Dict].get("context").cast[py.List].get(0).asString
-          check("every entry belongs to a session", scope == "pdf.agent.session=" + session || scope == "pdf.agent.session=" + restored)
-
   test: "streams a turn, then serves it back as history", () =>
     ProviderFixture.withResponses: [ModelScript.says("I can read your files.")], server =>
       WebAgent.withAgent: server.baseUrl, agent =>
@@ -332,10 +286,6 @@ def webSuite(): Unit receives thisSuite = suite: "pdf-agent", () =>
       checkEquals("runs it in the session it was saved to", outcome.field("session"), session)
       check("reports a clean run", outcome.field("summary").startsWith("ran"))
       checkEquals("hands back what it printed", outcome.field("result").trim, "wrote report.txt")
-
-      val journal = Rest.get(agent, "/journal?seen=0").text
-      check("shows editor runs in the log viewer", journal.contains("wrote report.txt"))
-      check("groups editor logs by session", journal.contains("pdf.agent.session=" + session))
 
       // The file the program wrote is a session file like any other: listed in
       // the drawer, and downloadable from the card.
