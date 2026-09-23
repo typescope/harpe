@@ -34,7 +34,9 @@ In `.env`:
 jo review -- https://github.com/owner/repo/pull/123
 ```
 
-That builds the sandbox guest and runs one turn.
+The startup output prints a local log viewer URL, normally
+<http://127.0.0.1:8766>. Set `VIEW_HOST` or `VIEW_PORT` to change it. The
+command builds the sandbox guest and runs one turn.
 
 ## Layout
 
