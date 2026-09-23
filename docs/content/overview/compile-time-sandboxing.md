@@ -15,7 +15,7 @@ They cannot enforce access rules at application level, for example,
 “only this customer's rows”,  “calendar reads but no writes” or
 “draft a refund but require approval.”
 
-Harpe enforces those application level rules as typed interfaces.
+Harpe enforces those application-level rules as typed interfaces.
 
 | Runtime sandboxing | Compile-time sandboxing |
 |---|---|
