@@ -19,6 +19,7 @@ import harpe.server.WebApp
 import harpe.server.Route
 import harpe.Toolset
 import harpe.Tool
+import harpe.observability.ViewLogger
 
 param appHome: String
 
@@ -39,7 +40,8 @@ private def webServe(): Unit receives stdout, appHome =
 
   val brain = Model.default()
   val sandboxEnv = Map("DUFFEL_API_KEY" ~ duffelKey)
-  val server = new Server(brain, appHome, sandboxEnv)
+  val viewLog = new ViewLogger(capacity = 5000)
+  val server = new Server(brain, appHome, sandboxEnv, viewLog)
 
   val host = os.getenv("HOST", "127.0.0.1")
   val port = Int.parse(os.getenv("PORT", "8765")) rescue None => 8765
@@ -77,6 +79,7 @@ private def webServe(): Unit receives stdout, appHome =
   """
 
   println "  Live at http://\{host}:\{port}"
+  println "  Logs at http://\{host}:\{port}/journal"
   println "  Ctrl-C to stop"
 
   Process.shutdownOnSigint("\n  ✈ Sky stopped.")

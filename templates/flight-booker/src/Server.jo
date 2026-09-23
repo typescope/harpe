@@ -37,6 +37,7 @@ import harpe.util.File
 import harpe.context.WindowedContext
 import harpe.transcript.Journal
 import harpe.logging.logger
+import harpe.logging.TeeLogger
 import harpe.Model
 import harpe.Toolset
 import harpe.Tool
@@ -44,9 +45,11 @@ import harpe.server.Http
 import harpe.server.Request
 import harpe.server.request
 import harpe.server.Response
+import harpe.observability.ViewLogger
+import harpe.observability.Viewer
 
 
-class Server(brain: Model, home: String, sandboxEnv: Map[String, String])
+class Server(brain: Model, home: String, sandboxEnv: Map[String, String], viewLog: ViewLogger)
   private val registry = py.dict()
   private val registryLock = threading.Lock()
   private val runTool: harpe.tools.RunCodeTool =
@@ -59,6 +62,7 @@ class Server(brain: Model, home: String, sandboxEnv: Map[String, String])
   private def dispatch(): Response receives request, appHome =
     match request
     case Request.Get("/")              => page()
+    case Request.Get("/journal")       => Viewer.respond(viewLog, "Sky · harpe journal")
     case Request.Get("/api/info")      => Response.json(py.dict("name" ~ "Sky"))
     case Request.Get("/api/events")    => handleEvents()
     case Request.Post("/api/message")  => handleMessage()
@@ -210,6 +214,7 @@ class Server(brain: Model, home: String, sandboxEnv: Map[String, String])
       brain
       sessionTools()
       context
+      viewLog
 
     registryLock.acquire()
     registry.set(id, session)
