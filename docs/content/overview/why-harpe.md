@@ -37,7 +37,7 @@ For each agent action step, the model writes a Jo program. Harpe compiles it as 
 untrusted guest against capability interfaces predefined by the application.
 Trusted implementations retain credentials, tenant scope, and validation.
 
-The capability interface scopes the agent action's authority:
+The capability interface scopes the agent's authority:
 
 - broad authority can be attenuated into narrow domain operations, such as
 a read-only, tenant-scoped query
