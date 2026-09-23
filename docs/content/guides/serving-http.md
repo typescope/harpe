@@ -46,6 +46,18 @@ val httpd = py.module("waitress").create_server:
 httpd.run()
 ```
 
+`application.wsgi()` is quiet by default. Pass an output callback to receive each
+request's method, path, query string, and response status when response headers
+are accepted. Console writes are serialized across request threads, so an
+application can pass `stdout` directly or provide its own sink:
+
+```jo
+application.wsgi(output = stdout)
+application.wsgi(output = (line: String) => saveAccessLog(line))
+```
+
+The default quiet sink and custom output use no logging package.
+
 The two `host` settings have different jobs. `WebApp.host` is the hostname
 clients use, without a scheme, path, or port. Waitress's `host` is the interface
 to bind. Here, a reverse proxy on the same machine accepts HTTPS for

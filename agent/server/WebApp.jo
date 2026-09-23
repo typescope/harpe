@@ -10,6 +10,8 @@ import harpe.server.request
 import harpe.server.Response
 import harpe.server.Route
 import harpe.server.Wsgi
+import harpe.ffi.json as JSON
+import harpe.ffi.threading
 import harpe.util.File
 import jo.resource.*
 import jo.py.resource.*
@@ -44,10 +46,34 @@ class WebApp(
   //[ The exact routes, indexed once when the application is built. //]
   private val exact: py.Dict = Route.indexed(routes)
 
-  //[ This application as the WSGI callable a server is given. //]
-  def wsgi(): (py.Dynamic, py.Dynamic) => py.Dynamic =
-    (environ: py.Dynamic, startResponse: py.Dynamic) =>
-       Wsgi.write: environ, startResponse, answer(environ)
+  //[ This application as the WSGI callable a server is given.
+    ! The output sink receives each request and its status when response headers
+    ! are accepted. It is quiet by default. Output writes are locked;
+    ! request handlers still run concurrently.
+  //]
+  def wsgi(output: (String => Unit) | None = WebApp.quiet): (py.Dynamic, py.Dynamic) => py.Dynamic =
+    match output
+    case None =>
+        (environ: py.Dynamic, startResponse: py.Dynamic) =>
+            Wsgi.write: environ, startResponse, answer(environ)
+    case sink: (String => Unit) =>
+        val lock = threading.Lock()
+        (environ: py.Dynamic, startResponse: py.Dynamic) =>
+            val loggedStart = (status: py.Dynamic, headers: py.Dynamic) =>
+                val write = py.call(startResponse, status, headers)
+                val method = environ.get("REQUEST_METHOD", "GET").asString
+                val path = Request.decodedPath(environ).getOrElse(environ.get("PATH_INFO", "").asString)
+                val query = environ.get("QUERY_STRING", "").asString
+                val target = environ.get("SCRIPT_NAME", "").asString + path + (if query == "" then "" else "?" + query)
+                // Quote control characters so a request always occupies one log line.
+                val line = JSON.dumps(method + " " + target) + " " + status.asString
+                lock.acquire()
+                // A failing output sink must not break the response or leave the lock held.
+                val _ = py.try(sink(line))
+                lock.release()
+                write
+
+            Wsgi.write: environ, py.dynamic(loggedStart), answer(environ)
 
   //[ The largest body any handler allows, which is the limit to give the server. //]
   def maxReqBody: Int =
@@ -126,6 +152,9 @@ end
 
 //[ What a `WebApp` constructor takes beyond its routes, and the checks behind them. //]
 section WebApp
+  //[ An output sink that deliberately discards access log lines. //]
+  def quiet: (String => Unit) | None = None
+
   //[ What answers a request no route claims, and the largest body it accepts
     !
     ! The limit is named outright because the fallback is often the only

@@ -1,7 +1,8 @@
 //[ HttpTest.jo
   !
   ! Unit tests for `harpe.server`. They call a `WebApp`'s WSGI callable in
-  ! memory, through `call` below, with no socket and no thread.
+  ! memory, through `call` below, with no socket. Access logging is also
+  ! exercised from concurrent request threads.
 //]
 
 namespace harpe.test.unit.HttpTest
@@ -15,6 +16,7 @@ import harpe.server.request
 import harpe.server.Response
 import harpe.ffi.os
 import harpe.ffi.json
+import harpe.util.Process
 import harpe.testing.thisSuite
 import harpe.testing.suite
 import harpe.testing.test
@@ -391,7 +393,77 @@ private def carrying(wsgi: (py.Dynamic, py.Dynamic) => py.Dynamic, cookie: Strin
   val named = if cookie.startsWith("sid=") then cookie else "sid=" + cookie
   call(wsgi, "GET", "/signed?value=ignored", [Header("Cookie", named)], "").text
 
+//[ Capture the console for one serial test, restoring it even when work fails. //]
+private def consoleOutput(work: () => Unit): String =
+  val output = py.module("io").StringIO()
+  val redirect = py.module("contextlib").redirect_stdout(output)
+  val _ = redirect.__enter__()
+  val result = py.try(work())
+  val _ = redirect.__exit__(py.none(), py.none(), py.none())
+  match result
+  case Ok(_)    => output.getvalue().asString
+  case Err(err) => abort err.message
+
 def httpSuite(): Unit receives thisSuite = suite: "http", () =>
+
+  test: "sends request and response statuses to a custom output", () =>
+    val printed = consoleOutput: () =>
+      val output: String => Unit = (line: String) => py.print(line)
+      val wsgi = applicationFor(WebApp.Loopback, py.list()).wsgi(output = output)
+      val page = get(wsgi, "/page?v=two")
+      check("still returns the response body", page.text == "<p>two</p>")
+      check("still returns response headers", headerOf(page, "Content-Type") == "text/html; charset=utf-8")
+      check("logs a missing page too", get(wsgi, "/missing").status == 404)
+      check("and a refusal before routing", call(wsgi, "TRACE", "/page", [], "").status == 501)
+
+    check("one line per response, including the query and status", printed ==
+      "\"GET /page?v=two\" 200 OK\n\"GET /missing\" 404 Not Found\n\"TRACE /page\" 501 Not Implemented\n")
+
+  test: "the default output is quiet without changing responses or exceptions", () =>
+    val printed = consoleOutput: () =>
+      val wsgi = applicationFor(WebApp.Loopback, py.list()).wsgi()
+      check("still serves the request", get(wsgi, "/page").text == "<p>one</p>")
+      check("still refuses unsupported methods", call(wsgi, "TRACE", "/page", [], "").status == 501)
+      match py.try(get(wsgi, "/boom"))
+      case Ok(_)    => check("the exception must propagate", false)
+      case Err(err) => check("keeps the original exception", err.message.contains("boom"))
+
+    check("prints nothing", printed == "")
+
+  test: "quotes request control characters into one console line", () =>
+    val printed = consoleOutput: () =>
+      val output: String => Unit = (line: String) => py.print(line)
+      val wsgi = applicationFor(WebApp.Loopback, py.list()).wsgi(output = output)
+      val _ = get(wsgi, "/missing%0A%1B[31m")
+    check("escapes newlines and terminal controls", printed == "\"GET /missing\\n\\u001b[31m\" 404 Not Found\n")
+
+  test: "keeps concurrent request log lines whole without serializing handlers", () =>
+    val workers = [0, 1, 2, 3, 4, 5, 6, 7]
+    val rounds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    val printed = consoleOutput: () =>
+      // All handlers must run together to cross the barrier. Holding the
+      // console lock while running a handler would make this time out.
+      val barrier = py.module("threading").Barrier(workers.size)
+      val handler: () => Response receives request = () =>
+        val _ = barrier.wait(timeout = 5.0)
+        Response.html("ok")
+      val application = new WebApp(routes = [Route.Get("/parallel", handler)])
+      val output: String => Unit = (line: String) => py.print(line)
+      val wsgi = application.wsgi(output = output)
+      var threads: List[py.Dynamic] = []
+      for worker in workers do
+        val thread = Process.daemon: () =>
+          for round in rounds do
+            val _ = get(wsgi, "/parallel?worker=\{worker}&round=\{round}")
+        thread.start()
+        threads = threads + thread
+      for thread in threads do thread.join()
+
+    val lines = printed.trim.split("\n")
+    check("one complete line per request", lines.size == workers.size * rounds.size)
+    for worker in workers do
+      for round in rounds do
+        check("each request appears once", lines.contains("\"GET /parallel?worker=\{worker}&round=\{round}\" 200 OK"))
 
   test: "names a status line for every code", () =>
     val wsgi = appFor(py.list())
