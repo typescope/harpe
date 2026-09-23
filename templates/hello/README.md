@@ -23,8 +23,12 @@ It reads a line, answers it, and repeats.
 
 ## Layout
 
-- `prompts/`
-  - `SYSTEM.md` — the runtime system prompt
-- `src/Main.jo` — the whole agent
-- `sandbox/` — the capabilities a generated program may call
-- `skills/` — Jo syntax guidance the agent can read on demand
+```text
+hello/
+  prompts/
+    SYSTEM.md
+  src/
+    Main.jo
+  sandbox/
+  skills/
+```

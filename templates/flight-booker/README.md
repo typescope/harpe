@@ -32,12 +32,15 @@ confirmation card in the chat — approve or reject it there.
 
 ## Layout
 
-- `prompts/`
-  - `SYSTEM.md` — the runtime system prompt
-- `src/` — the driver: server, sessions, the approval interaction
-- `assets/` — the chat page
-- `sandbox/` — the Duffel capability
-- `skills/` — reference the model can read
+```text
+flight-booker/
+  prompts/
+    SYSTEM.md
+  src/
+  assets/
+  sandbox/
+  skills/
+```
 
 [Flight Booking](https://harpe.typescope.ai/examples/flight-booker/) walks
 through how the approval boundary works.

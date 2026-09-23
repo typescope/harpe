@@ -34,10 +34,13 @@ reaches no network.
 
 ## Layout
 
-- `prompts/`
-  - `SYSTEM.md` — the runtime system prompt
-- `src/` — the driver: server, sessions, rendering
-- `assets/` — the chat page
-- `sandbox/` — the capabilities a generated program may call
-- `skills/` — reference the model can read
-- `tests/` — the end-to-end suite
+```text
+pdf-agent/
+  prompts/
+    SYSTEM.md
+  src/
+  assets/
+  sandbox/
+  skills/
+  tests/
+```

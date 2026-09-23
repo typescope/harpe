@@ -35,13 +35,14 @@ That builds the sandbox guest and runs one turn.
 
 ## Layout
 
-- `prompts/`
-  - `SYSTEM.md` — the runtime system prompt, including what the review should
-    and should not comment on
-- `src/` — the driver
-- `sandbox/` — the GitHub capability: `getPR`, `readFile`, `findDefinition`,
-  and draft-only `saveDraftReview`
-- `skills/` — reference the model can read
+```text
+pr-review/
+  prompts/
+    SYSTEM.md
+  src/
+  sandbox/
+  skills/
+```
 
 [GitHub PR Review](https://harpe.typescope.ai/examples/pr-review/) walks
 through how the capability boundary is built.

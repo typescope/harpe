@@ -31,8 +31,11 @@ jo start
 
 ## Layout
 
-- `prompts/`
-  - `SYSTEM.md` — the runtime system prompt
-- `src/` — the driver: poll loop, sessions, Telegram client
-- `sandbox/` — the capabilities a generated program may call
-- `skills/` — reference the model can read
+```text
+telegram/
+  prompts/
+    SYSTEM.md
+  src/
+  sandbox/
+  skills/
+```
