@@ -44,9 +44,9 @@ scope, retries, and validation behind the interface. Capability requirements
 are tracked through nested calls, so generated code cannot use ungranted capabilities in a
 helper.
 
-The result is:
+The implications are:
 
-- **least authority:**  only operations a agent needs are granted
+- **least authority:**  grant only operations a agent needs
 - **fine-grained confinement:** scope access to one tenant, directory, or API
 - **auditable boundaries:** review typed interfaces in version control
 - **fail before run:** invalid authority becomes a compiler error
