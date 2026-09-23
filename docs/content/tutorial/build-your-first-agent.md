@@ -44,7 +44,8 @@ The project contains:
 ```text
 my-agent/
   jo.toml
-  prompts/SYSTEM.md
+  prompts/
+    SYSTEM.md
   src/
     Main.jo
   skills/

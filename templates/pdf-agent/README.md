@@ -34,7 +34,8 @@ reaches no network.
 
 ## Layout
 
-- `prompts/SYSTEM.md` — the runtime system prompt
+- `prompts/`
+  - `SYSTEM.md` — the runtime system prompt
 - `src/` — the driver: server, sessions, rendering
 - `assets/` — the chat page
 - `sandbox/` — the capabilities a generated program may call

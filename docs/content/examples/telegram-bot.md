@@ -46,7 +46,8 @@ jo start
 
 ```text
 my-agent/
-  prompts/SYSTEM.md
+  prompts/
+    SYSTEM.md
   src/
     Telegram.jo          # startup, authorization, updates, and agent assembly
     TelegramClient.jo    # Telegram Bot API client

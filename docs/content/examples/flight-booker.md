@@ -119,7 +119,8 @@ the airline, the airports and times, and the fare.](/img/flight-booker-record.gi
 
 ```text
 my-booker/
-  prompts/SYSTEM.md      # Sky's booking workflow and reply formatting
+  prompts/
+    SYSTEM.md             # Sky's booking workflow and reply formatting
   src/
     Main.jo              # startup, credential checks, and HTTP server
     Session.jo           # per-session state and the agent turn

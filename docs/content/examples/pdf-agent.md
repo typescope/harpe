@@ -54,7 +54,8 @@ again. The conversation should still be present.
 
 ```text
 my-agent/
-  prompts/SYSTEM.md
+  prompts/
+    SYSTEM.md
   src/
     Web.jo             # application startup and model selection
     Server.jo          # HTTP routes, uploads, and event streaming
