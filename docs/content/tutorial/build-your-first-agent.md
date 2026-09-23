@@ -15,6 +15,10 @@ This installs the `jo` command used to create and run the agent.
 ```sh
 jo new my-agent --template typescope/harpe:hello
 cd my-agent
+
+python3 -m venv .venv
+. .venv/bin/activate
+
 pip install -r requirements.txt
 cp .env.example .env
 ```
