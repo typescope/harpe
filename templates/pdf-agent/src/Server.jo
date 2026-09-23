@@ -6,6 +6,7 @@
   !
   !   GET  /                the chat page (new chat)
   !   GET  /c/<id>          the chat page for an existing session (the JS loads it)
+  !   GET  /journal         the live log viewer across sessions
   !   GET  /api/info        the agent's name
   !   GET  /api/sessions    the persisted sessions, newest first (for the picker)
   !   DELETE /api/session   remove one idle session and its files
@@ -41,6 +42,8 @@ import harpe.ffi.builtins
 import harpe.Agent
 import harpe.Interact
 import harpe.logging.logger
+import harpe.observability.ViewLogger
+import harpe.observability.Viewer
 import harpe.Model
 import harpe.Model.Assistant
 import harpe.Model.Message
@@ -110,6 +113,9 @@ section SendFileTool
         attachments = []
 
 class ChatServer(brain: Model, name: String, home: String)
+  // One bounded window across sessions, retained for this server's lifetime.
+  private val viewLog = new ViewLogger(capacity = 5000)
+
   // Resident sessions, id -> Session. Persisted sessions not yet touched this
   // run are loaded from disk on first access. The server is threaded (each
   // request on its own thread), so registry access is guarded by registryLock.
@@ -142,6 +148,7 @@ class ChatServer(brain: Model, name: String, home: String)
   private def dispatch(): Response receives request, appHome =
     match request
     case Request.Get("/")             => page()
+    case Request.Get("/journal")      => Viewer.respond(viewLog, name)
 
     // The client routes on the path, so /c/<id> is the page too. `Segments` is
     // gone; a route that needs a path's parts splits it once.
@@ -376,7 +383,7 @@ class ChatServer(brain: Model, name: String, home: String)
 
     val session = new Session:
       id
-      Session.forSession(id)
+      Session.forSession(id, viewLog)
       brain
       tools(id)
       context
@@ -403,7 +410,7 @@ class ChatServer(brain: Model, name: String, home: String)
     case Some(session) => session
 
     case None =>
-      val log = Session.forSession(id)
+      val log = Session.forSession(id, viewLog)
       // `Session.load` caps the replayed transcript (a RAM backstop). The full
       // transcript stays on disk.
       val context = new WindowedContext:

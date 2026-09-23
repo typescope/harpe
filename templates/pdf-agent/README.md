@@ -22,6 +22,12 @@ jo start
 
 Then open <http://127.0.0.1:8765>.
 
+Click **Logs** in the sidebar, or open <http://127.0.0.1:8765/journal>, to
+inspect logs live. The viewer keeps the latest 5,000 entries across sessions
+since the server started. Click a session scope to focus on its turns and tool
+calls. Complete session logs remain in `logs/sessions/<session>.jsonl` across
+restarts; the viewer's in-memory window starts fresh each time.
+
 `jo run tests` runs the end-to-end suite: it starts the agent as its own process and
 drives it over HTTP against a scripted model, so it needs no API key and
 reaches no network.
