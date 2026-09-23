@@ -71,7 +71,7 @@ In *VMs won't contain cyber-capable agents* [[4]](#reference-trail-of-bits),
 Trail of Bits reports an agent escaping a QEMU/KVM virtual machine by chaining
 vulnerabilities in its virtualization and networking stack.
 
-Harpe can reduce security attack surface by narrowing capability interface. A calendar agent
+Harpe can reduce attack surface by narrowing the capability interface. A calendar agent
 can only receive operations to check availability and reserve a slot,
 without accessing credentials and network. In Harpe, the
 LLM-generated code has no access to a shell, file system, raw sockets, or virtual devices.
