@@ -1,7 +1,7 @@
 name: Docs
 
 on:
-  push:
+  pull_request:
     branches: [main]
     paths:
       - 'docs/**'
@@ -39,11 +39,13 @@ jobs:
         run: zola build
 
       - uses: actions/upload-pages-artifact@v3
+        if: github.event_name == 'workflow_dispatch'
         with:
           path: docs/public
 
   deploy:
     needs: build
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
