@@ -14,7 +14,9 @@ so the model never sees the token and cannot publish, comment, or merge.
 ## Setup
 
 ```sh
-pip install -r requirements.txt
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
@@ -28,6 +30,7 @@ In `.env`:
 ## Running
 
 ```sh
+. .venv/bin/activate
 jo review -- https://github.com/owner/repo/pull/123
 ```
 

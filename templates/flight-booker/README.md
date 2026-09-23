@@ -10,7 +10,9 @@ money is charged, and booking references are test PNRs.
 ## Setup
 
 ```sh
-pip install -r requirements.txt
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
@@ -24,6 +26,7 @@ In `.env`:
 ## Running
 
 ```sh
+. .venv/bin/activate
 jo start
 ```
 

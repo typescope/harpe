@@ -6,7 +6,9 @@ The smallest complete Harpe agent. No sessions or logs — the whole loop is in
 ## Setup
 
 ```sh
-pip install -r requirements.txt
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
@@ -16,6 +18,7 @@ In `.env`, set `MODEL` and one provider key: `ANTHROPIC_API_KEY`,
 ## Running
 
 ```sh
+. .venv/bin/activate
 jo start
 ```
 

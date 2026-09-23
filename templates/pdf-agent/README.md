@@ -6,7 +6,9 @@ streaming progress as it goes. Uploads and downloadable files are supported.
 ## Setup
 
 ```sh
-pip install -r requirements.txt
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
@@ -17,6 +19,7 @@ default to `127.0.0.1` and `8765`.
 ## Running
 
 ```sh
+. .venv/bin/activate
 jo start
 ```
 
