@@ -76,7 +76,7 @@
           <div class="caps" aria-hidden="true">
             <span class="chip on locked">stdout</span>
             <span class="chip on">booking</span>
-            <span class="chip" id="paychip">payment</span>
+            <span class="chip on" id="paychip">payment</span>
           </div>
           <button class="toggle" id="grantBtn" type="button" aria-pressed="true">
             Grant <b>payment</b>
@@ -112,7 +112,7 @@
           <div class="grant">
             <div class="caps" aria-hidden="true">
               <span class="chip on locked">stdout</span>
-              <span class="chip" id="fschip">fileWrite</span>
+              <span class="chip on" id="fschip">fileWrite</span>
             </div>
             <button class="toggle" id="grantBtn2" type="button" aria-pressed="true">
               Grant <b>fileWrite</b>
@@ -190,15 +190,14 @@
       <div class="showcase-grid">
         {% for project in section.extra.showcase %}
         {% set project_page = get_page(path=project.path) %}
-        <a class="showcase-card{% if project.kind == 'Case study' %} showcase-card--featured{% endif %}" href="{{ project_page.path }}"
-           target="_blank" rel="noopener" aria-label="{{ project.title }} (opens in a new tab)">
-          {% include "showcase_preview.html" %}
+        <div class="showcase-card{% if project.kind == 'Case study' %} showcase-card--featured{% endif %}">
           <div class="showcase-copy">
             <span class="showcase-kind">{{ project.kind }}</span>
-            <h3 id="project-{{ project.preview }}">{{ project.title }} <span aria-hidden="true">↗</span></h3>
+            <h3 id="project-{{ project.preview }}">{{ project.title }} <a href="{{ project_page.path }}" target="_blank" rel="noopener" aria-label="{{ project.title }} (opens in a new tab)" aria-hidden="true" tabindex="-1">↗</a></h3>
             <p>{{ project.description }}</p>
           </div>
-        </a>
+          {% include "showcase_preview.html" %}
+        </div>
         {% endfor %}
       </div>
     </div>
