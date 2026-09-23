@@ -16,7 +16,7 @@ import harpe.tools.RunCodeTool
 import harpe.tools.SkillTools
 import harpe.context.FullContext
 
-//[ Where this application's files live: `sandbox/`, `skills/`, `logs/`, `AGENT.md`
+//[ Where this application's files live: `sandbox/`, `skills/`, `logs/`, `prompts/SYSTEM.md`
   ! — its own convention, not the framework's.
 //]
 param appHome: String
@@ -35,7 +35,7 @@ def main(): Unit receives args, stdout =
       () => review(pr)
 
 private def review(pr: String): Unit receives stdout, appHome, logger =
-  val basePrompt = File.read(os.path.join(appHome, "AGENT.md"))
+  val basePrompt = File.read(os.path.join(appHome, "prompts/SYSTEM.md"))
   val runCode = RunCodeTool(os.path.join(appHome, "sandbox"), approvalDeadline = 610)
   val skillsDir = os.path.join(appHome, "skills")
 

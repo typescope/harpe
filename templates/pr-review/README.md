@@ -35,7 +35,7 @@ That builds the sandbox guest and runs one turn.
 
 ## Layout
 
-- `AGENT.md` — the system prompt, including what the review should and should
+- `prompts/SYSTEM.md` — the runtime system prompt, including what the review should and should
   not comment on
 - `src/` — the driver
 - `sandbox/` — the GitHub capability: `getPR`, `readFile`, `findDefinition`,

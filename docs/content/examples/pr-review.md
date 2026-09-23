@@ -87,7 +87,7 @@ prints each tool call as it works, so you can watch it fetching the PR, compilin
 
 ### Interface Extension
 
-`AGENT.md` instructs the agent to submit reviews as **pending** drafts, and the
+`prompts/SYSTEM.md` instructs the agent to submit reviews as **pending** drafts, and the
 capability interface enforces that policy.
 
 To add other capabilities like the publishing operation, widen the interface and protect side effect with the trusted [human approval](/concepts/approvals/) if needed.

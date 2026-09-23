@@ -44,7 +44,7 @@ The project contains:
 ```text
 my-agent/
   jo.toml
-  AGENT.md
+  prompts/SYSTEM.md
   src/
     Main.jo
   skills/
@@ -66,7 +66,7 @@ val brain = Model.default()
 // The context is the one piece that must outlive a turn: it carries the
 // conversation from one turn to the next.
 val context = new FullContext:
-  baseSystem = File.read("AGENT.md")
+  baseSystem = File.read("prompts/SYSTEM.md")
   initial = []
 
 // Skills give the model Jo syntax on demand without carrying the full

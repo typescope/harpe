@@ -32,7 +32,7 @@ confirmation card in the chat — approve or reject it there.
 
 ## Layout
 
-- `AGENT.md` — the system prompt
+- `prompts/SYSTEM.md` — the runtime system prompt
 - `src/` — the driver: server, sessions, the approval interaction
 - `assets/` — the chat page
 - `sandbox/` — the Duffel capability

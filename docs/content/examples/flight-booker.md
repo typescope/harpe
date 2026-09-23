@@ -119,7 +119,7 @@ the airline, the airports and times, and the fare.](/img/flight-booker-record.gi
 
 ```text
 my-booker/
-  AGENT.md               # Sky's booking workflow and reply formatting
+  prompts/SYSTEM.md      # Sky's booking workflow and reply formatting
   src/
     Main.jo              # startup, credential checks, and HTTP server
     Session.jo           # per-session state and the agent turn
@@ -136,7 +136,7 @@ my-booker/
     index.html           # the web UI
 ```
 
-- Edit `AGENT.md` to change the booking workflow, the offer formatting, or how
+- Edit `prompts/SYSTEM.md` to change the booking workflow, the offer formatting, or how
   much Sky asks before searching.
 - Edit `sandbox/API.jo` to change what the agent may do — add seat selection,
   or remove `createOrder` to make the app search-only — then update

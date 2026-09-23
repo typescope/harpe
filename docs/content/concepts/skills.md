@@ -15,7 +15,7 @@ An agent receives guidance and authority from different places:
 
 | Component | What it provides | When it is available |
 | --- | --- | --- |
-| `AGENT.md` | The agent's role and always-on instructions | In context from the start |
+| `prompts/SYSTEM.md` | The agent's role and always-on instructions | In context from the start |
 | Skills | Optional instructions and reference material | When the model chooses to read them |
 | Tools | Operations implemented by the host application | When added to the turn's `Toolset` |
 | Capabilities | Operations available to generated code | When granted by the sandbox API |
@@ -26,7 +26,7 @@ may use.
 
 ## Progressive disclosure
 
-Putting every reference in `AGENT.md` makes the model receive all of it on every
+Putting every reference in `prompts/SYSTEM.md` makes the model receive all of it on every
 turn, whether it is relevant or not. Skills let the model load information in
 stages:
 
@@ -69,7 +69,7 @@ Useful skill content includes:
 - terminology and domain rules
 - review checklists
 
-Keep the agent's identity and rules that must always apply in `AGENT.md`. Put
+Keep the agent's identity and rules that must always apply in `prompts/SYSTEM.md`. Put
 details needed only for particular tasks in skills.
 
 ## Adding skills to an agent
@@ -104,7 +104,7 @@ returns the complete file, which is another reason to keep files focused.
 ## Telling the agent when to use skills
 
 Adding the tools makes skills available, but the model still needs to understand
-when they matter. Give it a short pointer in `AGENT.md`:
+when they matter. Give it a short pointer in `prompts/SYSTEM.md`:
 
 > Reference material is available through the skill tools. Before writing Jo,
 > read `jo-cheat-sheet.md`. For payment tasks, consult `api/payments.md`.

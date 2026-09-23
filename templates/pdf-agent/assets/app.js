@@ -117,7 +117,7 @@ var md = (typeof markdownit !== 'undefined')
   : null;
 
 // A `[text](chordbox:name)` link points at a file in this session's data dir.
-// The agent uses this scheme (see AGENT.md) rather than guessing a filesystem
+// The agent uses this scheme (see prompts/SYSTEM.md) rather than guessing a filesystem
 // path. We rewrite it to the real `/api/file` download URL at render time — the
 // session is known then, not when the rule is installed — and reduce `name` to a
 // basename so a stray path (e.g. a copied `/mnt/data/...`) still resolves.

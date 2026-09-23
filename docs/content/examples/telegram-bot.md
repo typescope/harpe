@@ -30,7 +30,7 @@ You can set `OPENAI_API_KEY` instead. To use OpenRouter, set
 
 The assistant is called **Carmen**. Use that name when registering the bot if
 you want its Telegram profile and replies to match. You can rename it later in
-Telegram and `AGENT.md`.
+Telegram and `prompts/SYSTEM.md`.
 
 Access is closed by default. `TELEGRAM_ALLOWED_SENDERS` is a comma-separated
 list of numeric Telegram user IDs. If an unlisted user messages the bot
@@ -46,7 +46,7 @@ jo start
 
 ```text
 my-agent/
-  AGENT.md
+  prompts/SYSTEM.md
   src/
     Telegram.jo          # startup, authorization, updates, and agent assembly
     TelegramClient.jo    # Telegram Bot API client
@@ -61,7 +61,7 @@ my-agent/
     jo-syntax.md
 ```
 
-- Edit `AGENT.md` to define the bot's role.
+- Edit `prompts/SYSTEM.md` to define the bot's role.
 - Keep `TELEGRAM_ALLOWED_SENDERS` narrow while developing: the bot can run
   model-written programs, so possession of its username must not imply access.
 - Edit `src/Telegram.jo` to change the model, tools, context, budgets, commands,

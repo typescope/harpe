@@ -378,7 +378,7 @@ class ChatServer(brain: Model, name: String, home: String)
   private def createSession(): Session receives appHome =
     val id = time.strftime("%Y%m%dT%H%M%S") + "-" + secrets.token_hex(2)
     val context = new WindowedContext:
-      baseSystem = File.read(os.path.join(appHome, "AGENT.md"))
+      baseSystem = File.read(os.path.join(appHome, "prompts/SYSTEM.md"))
       initial = []
 
     val session = new Session:
@@ -414,7 +414,7 @@ class ChatServer(brain: Model, name: String, home: String)
       // `Session.load` caps the replayed transcript (a RAM backstop). The full
       // transcript stays on disk.
       val context = new WindowedContext:
-        baseSystem = File.read(os.path.join(appHome, "AGENT.md"))
+        baseSystem = File.read(os.path.join(appHome, "prompts/SYSTEM.md"))
         initial = Session.load(id)
 
       val session = new Session(id, log, brain, tools(id), context)
