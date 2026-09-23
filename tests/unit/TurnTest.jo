@@ -358,7 +358,7 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
       val retryAfterModel: Model =
         (base, maxOut) => (results, offered, interact) => RetryAfter("rate limited", 75.0)
       val _ = scenario: tools(), 50, 2, retryAfterModel, retryAfterState
-      checkEquals("Retry-After delay", retryAfterState.pausedFor.toString, "75.0")
+      checkEquals("Retry-After delay", retryAfterState.pausedFor, 75.0)
 
   suite: "cancellation", () =>
     test: "bails before asking the model when already requested", () =>

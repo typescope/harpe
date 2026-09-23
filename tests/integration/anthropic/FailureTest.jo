@@ -11,6 +11,7 @@ import harpe.testing.thisSuite
 import harpe.testing.suite
 import harpe.testing.test
 import harpe.testing.check
+import harpe.testing.checkEquals
 import harpe.test.integration.ProviderFixture
 import harpe.test.integration.ModelDriver
 
@@ -64,13 +65,13 @@ def failureSuite(): Unit receives thisSuite, logger = suite: "failure", () =>
       val turn = ModelDriver.start(model(server), prompt = "Say hello.")
       val detail = turn.expectRetryAfter()
       check("classified rate limited", detail != "")
-      check("retry-after", turn.retryAfterSeconds == 5.0)
+      checkEquals("retry-after", turn.retryAfterSeconds, 5.0)
 
   test: "529 is transient", () =>
     ProviderFixture.withResponses: [failure("529 Overloaded", "overloaded_error", "busy")], server =>
       val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectTransient()
       check("classified transient", detail != "")
-      check("one request", server.requestCount == 1)
+      checkEquals("one request", server.requestCount, 1)
 
   test: "401 is fatal", () =>
     ProviderFixture.withResponses: [failure("401 Unauthorized", "authentication_error", "bad key")], server =>

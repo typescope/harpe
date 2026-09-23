@@ -292,7 +292,7 @@ def engineSuite(): Unit receives thisSuite, logger = suite: "engine", () =>
       checkEquals("result", EngineDriver.resultTag(turn), "Success")
       checkEquals("answer", turn.finalText, "hello")
       check("backed off once", recorder.waits.size == 1)
-      checkEquals("first backoff", recorder.waits.get(0).toString, "1.0")
+      checkEquals("first backoff", recorder.waits.get(0), 1.0)
 
   test: "waits as long as a 429 asked it to, not as long as its own backoff", () =>
     ProviderFixture.withResponses: [rateLimited(), says("hello")], server =>
@@ -308,7 +308,7 @@ def engineSuite(): Unit receives thisSuite, logger = suite: "engine", () =>
       // response header, through the SDK and its classifier, to the wait.
       checkEquals("result", EngineDriver.resultTag(turn), "Success")
       check("waited once", recorder.waits.size == 1)
-      checkEquals("honoured Retry-After", recorder.waits.get(0).toString, "7.0")
+      checkEquals("honoured Retry-After", recorder.waits.get(0), 7.0)
 
   test: "loses the turn on a fatal provider error, retrying nothing", () =>
     ProviderFixture.withResponses: [unauthorized()], server =>
