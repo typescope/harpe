@@ -46,7 +46,7 @@ a read-only, tenant-scoped query
 
 ## Why let the agent write code?
 
-Programming is a more flexible and efficient than using fixed-function tools. It provides loops, branching, error handling,
+Programming is more flexible and efficient than using fixed tools. It provides loops, branching, error handling,
 and data transformation without routing every intermediate value through the
 model.
 
