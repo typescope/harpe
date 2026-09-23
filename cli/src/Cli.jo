@@ -37,7 +37,7 @@ import harpe.tools.*
 import harpe.context.WindowedContext
 import harpe.turns.TurnResult
 
-//[ Where this application's files live: `sandbox/`, `skills/`, `data/`, `logs/`, `AGENT.md`
+//[ Where this application's files live: `sandbox/`, `skills/`, `data/`, `logs/`, `prompts/SYSTEM.md`
   !
   ! This driver's own convention, not the framework's. Provided once at startup
   ! and picked up as context by every layer that resolves a path, so nothing
@@ -78,7 +78,7 @@ private def runChat(): Unit receives stdout, appHome =
   // The context is what carries the conversation between turns, so it is built
   // once here and handed to every turn below.
   val context = new WindowedContext:
-    baseSystem = File.read(os.path.join(appHome, "AGENT.md"))
+    baseSystem = File.read(os.path.join(appHome, "prompts/SYSTEM.md"))
     initial = Session.load(sessionPath)
 
   // One local working directory for the whole run.

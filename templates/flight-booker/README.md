@@ -10,7 +10,9 @@ money is charged, and booking references are test PNRs.
 ## Setup
 
 ```sh
-pip install -r requirements.txt
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
@@ -24,6 +26,7 @@ In `.env`:
 ## Running
 
 ```sh
+. .venv/bin/activate
 jo start
 ```
 
@@ -32,11 +35,15 @@ confirmation card in the chat — approve or reject it there.
 
 ## Layout
 
-- `AGENT.md` — the system prompt
-- `src/` — the driver: server, sessions, the approval interaction
-- `assets/` — the chat page
-- `sandbox/` — the Duffel capability
-- `skills/` — reference the model can read
+```text
+flight-booker/
+  prompts/
+    SYSTEM.md
+  src/
+  assets/
+  sandbox/
+  skills/
+```
 
 [Flight Booking](https://harpe.typescope.ai/examples/flight-booker/) walks
 through how the approval boundary works.

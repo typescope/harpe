@@ -59,7 +59,7 @@ def cliSuite(): Unit receives thisSuite = suite: "cli", () =>
         check("sends what was typed", requestText(server, 0).contains("What do you do?"))
         check("offers its tools", server.recorded(0).jsonBody.get("tools").cast[py.List].size > 0)
 
-        checkEquals("exits cleanly on quit", agent.quit().toString, "0")
+        checkEquals("exits cleanly on quit", agent.quit(), 0)
 
         // The conversation is on disk, which is what makes a CLI run resumable.
         val journal = File.read(agent.journal)
@@ -104,7 +104,7 @@ def cliSuite(): Unit receives thisSuite = suite: "cli", () =>
         // The program read the file, and what it printed reached the model.
         check("feeds the program's output back", requestText(server, 1).contains("the quick brown fox"))
 
-        checkEquals("exits cleanly", agent.quit().toString, "0")
+        checkEquals("exits cleanly", agent.quit(), 0)
         check("journals the run", File.read(agent.journal).contains("harpe.tools.runCode"))
 
   test: "carries the conversation into the next turn", () =>
@@ -125,7 +125,7 @@ def cliSuite(): Unit receives thisSuite = suite: "cli", () =>
         check("sends the new question", asked.contains("And the weather?"))
 
         // Both turns land in one journal, which is the file a resume replays.
-        checkEquals("exits cleanly", agent.quit().toString, "0")
+        checkEquals("exits cleanly", agent.quit(), 0)
         val journal = File.read(agent.journal)
         check("journals the first turn", journal.contains("Where am I?"))
         check("journals the second", journal.contains("And the weather?"))

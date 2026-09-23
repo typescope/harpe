@@ -1,16 +1,26 @@
 //[ Assert.jo
   !
-  ! The assertions a test body fails with. They say only what was expected — the
+  ! The assertions a test body records. They say only what was expected — the
   ! runner supplies which test was running and where it sits in the tree, so a
   ! label here names the property, not the scenario.
 //]
 
 namespace harpe.testing
 
-//[ Fail the enclosing test with `label` unless `cond` holds. //]
-def check(label: String, cond: Bool): Unit =
-  assert: cond, label
+import jo.compile.SourceLocation
 
-//[ Fail the enclosing test unless `actual` equals `expected`, quoting both. //]
-def checkEquals(label: String, actual: String, expected: String): Unit =
-  assert: actual == expected, "\{label}: expected [\{expected}] but got [\{actual}]"
+//[ Record a failure for `label` unless `cond` holds.
+  !
+  ! The compiler supplies the call site's location, and the enclosing test
+  ! continues so later checks in the same scenario still run.
+//]
+def check(label: String, cond: Bool)(auto source: SourceLocation): Unit receives testResult =
+  if !cond then testResult.record(source, harpe.testing.Testing.NotTrue(label))
+
+//[ Record a failure unless `actual` equals `expected`, quoting both values. //]
+def checkEquals[T](label: String, actual: T, expected: T)(
+    auto eq: Eq[T] with [[T].==], show: Show[T] with [[T].toString], source: SourceLocation)
+: Unit receives testResult =
+  if !eq.equal(actual, expected) then
+    testResult.record(source, harpe.testing.Testing.NotEqual(
+      label, show.show(actual), show.show(expected)))

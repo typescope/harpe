@@ -23,7 +23,7 @@
   ! other half is the requests below.
 //]
 
-namespace web.tests.WebTest
+namespace pdf.agent.tests.WebTest
 
 import harpe.ffi.json
 import harpe.ffi.os
@@ -34,12 +34,12 @@ import harpe.testing.suite
 import harpe.testing.test
 import harpe.testing.check
 import harpe.testing.checkEquals
-import web.tests.ProviderFixture
-import web.tests.WebAgent
-import web.tests.ModelScript
-import web.tests.Rest
-import web.tests.Events
-import web.tests.Driver
+import pdf.agent.tests.ProviderFixture
+import pdf.agent.tests.WebAgent
+import pdf.agent.tests.ModelScript
+import pdf.agent.tests.Rest
+import pdf.agent.tests.Events
+import pdf.agent.tests.Driver
 
 //[ An agent whose model is never asked anything — for the routes that answer alone. //]
 private def withIdleAgent(scenario: WebAgent.Agent => Unit): Unit =
@@ -64,7 +64,7 @@ private def files(agent: WebAgent.Agent, session: String): py.List =
 private def requestText(server: ProviderFixture.Server, index: Int): String =
   json.dumps(server.recorded(index).jsonBody)
 
-def webSuite(): Unit receives thisSuite = suite: "web", () =>
+def webSuite(): Unit receives thisSuite = suite: "pdf-agent", () =>
   thisSuite.parallel = true
   thisSuite.beforeSuite = () => Driver.application().build()
 
@@ -73,6 +73,7 @@ def webSuite(): Unit receives thisSuite = suite: "web", () =>
       val page = Rest.get(agent, "/")
       check("page 200", page.status == 200)
       check("serves the agent's own index.html", page.text.contains("id=\"messages\""))
+      check("links to the live logs", page.text.contains("href=\"/journal\""))
 
       // Served from the agent's assets/ directory, so an edit needs no rebuild.
       check("serves the script", Rest.get(agent, "/app.js").status == 200)
@@ -82,6 +83,14 @@ def webSuite(): Unit receives thisSuite = suite: "web", () =>
       checkEquals("agent name", Rest.get(agent, "/api/info").field("name"), "Clair")
       check("an unknown route is a 404", Rest.get(agent, "/api/nope").status == 404)
       check("no sessions yet", Rest.get(agent, "/api/sessions").text.contains("[]"))
+
+      val journal = Rest.get(agent, "/journal")
+      check("serves the log viewer", journal.status == 200)
+      check("names the agent in the viewer", journal.text.contains("Clair · harpe journal"))
+      check("bundles the viewer assets", !journal.text.contains("__STYLE__") && !journal.text.contains("__SCRIPT__"))
+      val empty = Rest.get(agent, "/journal?seen=0").json
+      check("the live log starts empty", empty.get("entries").cast[py.List].size == 0)
+      check("viewing logs creates no sessions", Rest.get(agent, "/api/sessions").text.contains("[]"))
 
   test: "streams a turn, then serves it back as history", () =>
     ProviderFixture.withResponses: [ModelScript.says("I can read your files.")], server =>

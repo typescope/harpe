@@ -8,6 +8,7 @@ import harpe.testing.thisSuite
 import harpe.testing.suite
 import harpe.testing.test
 import harpe.testing.check
+import harpe.testing.checkEquals
 import harpe.test.integration.ProviderFixture
 import harpe.test.integration.ModelDriver
 
@@ -39,8 +40,8 @@ def failureSuite(): Unit receives thisSuite, logger = suite: "failure", () =>
       val turn = ModelDriver.start(model(server), prompt = "Say hello.")
       val detail = turn.expectRetryAfter()
       check("classified rate limited", detail != "")
-      check("retry-after", turn.retryAfterSeconds == 7.0)
-      check("one request", server.requestCount == 1)
+      checkEquals("retry-after", turn.retryAfterSeconds, 7.0)
+      checkEquals("one request", server.requestCount, 1)
 
   test: "503 is transient", () =>
     ProviderFixture.withResponses: [error("503 Service Unavailable", "unavailable")], server =>

@@ -9,9 +9,8 @@ operations.
 
 <aside class="callout-warning" role="note" aria-labelledby="preview-warning">
   <p class="callout-title" id="preview-warning">Developer preview</p>
-  <p>Harpe is in developer preview and ready for serious experimentation. Its
-  capability model, turn engine, and public APIs are still stabilizing and may
-  change between releases.</p>
+  <p>Harpe is in developer preview and ready for serious experimentation.
+  The public APIs are still stabilizing and may change between releases.</p>
 </aside>
 
 ## Why specialized agents?

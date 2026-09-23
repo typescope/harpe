@@ -20,7 +20,7 @@ def main(): Unit receives stdout =
   Logging.withLogger(Logging.discard, () => chat())
 
 // This application keeps its files beside itself — `sandbox/`, `data/`, and
-// `AGENT.md` — and is run from its own directory, so paths are relative to it.
+// `prompts/SYSTEM.md` — and is run from its own directory, so paths are relative to it.
 // That is this application's arrangement, not the framework's: every tool below
 // is handed the directory it works in.
 private def chat(): Unit receives stdout, logger =
@@ -31,7 +31,7 @@ private def chat(): Unit receives stdout, logger =
   // The context is the one piece that must outlive a turn: it carries the
   // conversation from one turn to the next.
   val context = new FullContext:
-    baseSystem = File.read("AGENT.md")
+    baseSystem = File.read("prompts/SYSTEM.md")
     initial = []
 
   // Skills give the model Jo syntax on demand without carrying the full

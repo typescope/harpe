@@ -13,7 +13,7 @@
   !
   ! What is faked is what the web suite fakes, and no more: the model is a
   ! `ProviderFixture` on localhost, and the home is a temporary directory holding
-  ! copies of the agent's `AGENT.md` and `skills/`. Programs the agent writes are
+  ! copies of the agent's `prompts/SYSTEM.md` and `skills/`. Programs the agent writes are
   ! compiled by the real toolchain and run as their own processes.
   !
   ! Reading is on demand rather than on a thread: `expect` pulls from the pty
@@ -177,14 +177,15 @@ section CliAgent
 
   //[ A fresh agent home: the prompt it loads, the skills it offers, empty state
     !
-    ! `AGENT.md` and `skills/` are the agent's real ones, so a scenario reading
+    ! `prompts/SYSTEM.md` and `skills/` are the agent's real ones, so a scenario reading
     ! the system prompt or listing skills is reading what ships.
   //]
   private def prepareHome(application: Driver.Application): String =
     val home = tempfile.mkdtemp()
+    File.ensureDir: os.path.join(home, "prompts")
     File.write:
-      os.path.join(home, "AGENT.md")
-      File.read(application.path("AGENT.md"))
+      os.path.join(home, "prompts/SYSTEM.md")
+      File.read(application.path("prompts/SYSTEM.md"))
 
     py.module("shutil").copytree:
       application.path("skills")

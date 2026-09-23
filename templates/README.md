@@ -9,13 +9,22 @@ tests.
 ```sh
 jo new my-agent --template typescope/harpe:pdf-agent
 cd my-agent
-pip install -r requirements.txt
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements.txt
 cp .env.example .env
 jo start
 ```
 
 `jo-templates.jsonl` at the repository root is what names these and maps each to
 its directory here.
+
+## Developing with a coding assistant
+
+Each template includes an `AGENTS.md` with development commands and constraints.
+It also links to Jo and Harpe documentation and source.
+This file is copied into the scaffolded project. Keep it current as you develop it.
+Runtime agent instructions live in `prompts/SYSTEM.md`.
 
 ## The agents
 

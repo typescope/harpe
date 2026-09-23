@@ -1,8 +1,8 @@
 //[ Runner.jo
   !
   ! Walks a declared tree, runs the tests a filter selects, and reports. A
-  ! failing test is caught rather than fatal, so one broken scenario no longer
-  ! hides every result that would have followed it.
+  ! Assertion failures are recorded so one scenario can report every failed
+  ! check. Unexpected failures are still caught at the test boundary.
   !
   ! The report mirrors the tree: a suite prints its name and indents what it
   ! holds, so a test line carries only its own name. Full paths are kept for the
@@ -221,9 +221,24 @@ section Runner
       execute(t)
 
   private def execute(t: Testing.Test): Outcome =
-    match py.try(t.run())
-    case Ok(_) => new Outcome(false, "")
-    case Err(err) => new Outcome(true, err.message)
+    val result = new Testing.TestResult
+    match py.try(with testResult = result in t.run())
+    case Ok(_) => new Outcome(result.failed, formatFailures(result.failures))
+    case Err(err) =>
+      val recorded = formatFailures(result.failures)
+      val message = if result.failed then recorded + "\n" + err.message else err.message
+      new Outcome(true, message)
+
+  private def formatFailures(failures: List[Testing.Failure]): String =
+    failures
+      .map: f => "\{formatFailure(f)} \{Style.muted("(\{f.source.file}:\{f.source.line})")}"
+      .join("\n")
+
+  private def formatFailure(failure: Testing.Failure): String =
+    match failure.reason
+    case notTrue: Testing.NotTrue => notTrue.label
+    case unequal: Testing.NotEqual =>
+      "\{unequal.label}: expected [\{unequal.expect}] but got [\{unequal.actual}]"
 
   private def reportTest(full: String, t: Testing.Test, indent: String, tally: Tally, done: Outcome)
   : Unit receives stdout =

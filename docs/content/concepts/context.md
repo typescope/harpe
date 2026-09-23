@@ -17,7 +17,7 @@ Create one context for a conversation and pass the same object to every
 
 ```jo
 val context = new WindowedContext:
-  baseSystem = File.read(os.path.join(appHome, "AGENT.md"))
+  baseSystem = File.read(os.path.join(appHome, "prompts/SYSTEM.md"))
   initial = []
 
 val first = Agent.ask:
@@ -65,7 +65,7 @@ At each model-call boundary, a context produces:
 class Rendered(system: String, messages: List[Message])
 ```
 
-- `system` contains the base instructions, usually loaded from `AGENT.md`. A
+- `system` contains the base instructions, usually loaded from `prompts/SYSTEM.md`. A
   summarizing strategy may add its rolling summary here.
 - `messages` contains the conversation history selected by the strategy,
   including the active turn.

@@ -39,7 +39,7 @@ import harpe.transcript.Journal
 import harpe.logging.Value
 import harpe.logging.logger
 
-//[ Where this application's files live: `sandbox/`, `skills/`, `data/`, `logs/`, `AGENT.md`
+//[ Where this application's files live: `sandbox/`, `skills/`, `data/`, `logs/`, `prompts/SYSTEM.md`
   !
   ! This driver's own convention, not the framework's. Provided once at startup
   ! and picked up as context by every layer that resolves a path.
@@ -456,7 +456,7 @@ private class TelegramBot(
       // `Session.load` caps the replayed transcript (a RAM backstop). The full
       // transcript stays on disk.
       val context = new WindowedContext:
-        baseSystem = File.read(os.path.join(appHome, "AGENT.md"))
+        baseSystem = File.read(os.path.join(appHome, "prompts/SYSTEM.md"))
         initial = Session.load(chatId)
 
       // Each chat is its own session, rooted at its own data directory:

@@ -6,7 +6,9 @@ The smallest complete Harpe agent. No sessions or logs — the whole loop is in
 ## Setup
 
 ```sh
-pip install -r requirements.txt
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
@@ -16,6 +18,7 @@ In `.env`, set `MODEL` and one provider key: `ANTHROPIC_API_KEY`,
 ## Running
 
 ```sh
+. .venv/bin/activate
 jo start
 ```
 
@@ -23,7 +26,12 @@ It reads a line, answers it, and repeats.
 
 ## Layout
 
-- `AGENT.md` — the system prompt
-- `src/Main.jo` — the whole agent
-- `sandbox/` — the capabilities a generated program may call
-- `skills/` — Jo syntax guidance the agent can read on demand
+```text
+hello/
+  prompts/
+    SYSTEM.md
+  src/
+    Main.jo
+  sandbox/
+  skills/
+```

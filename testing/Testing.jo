@@ -8,18 +8,23 @@
   ! A suite may be declared to be sequential (default) or parallel. A parallel
   ! suite tells the test runner that its direct children can in parallel.
   !
-  ! Declaring and running are deliberately separate phases. A test body is a
-  ! plain `() => Unit` that captures whatever context it needs at the point of
-  ! its definition.
+  ! Declaring and running are deliberately separate phases. A test body receives
+  ! a fresh result object while it runs, so assertions can record several
+  ! failures before the scenario is reported.
 //]
 
 namespace harpe.testing
 
+import jo.compile.SourceLocation
+
 //[ The suite for the current context  //]
 param thisSuite: Testing.Suite
 
+//[ The result collected during one execution of a test. //]
+param testResult: Testing.TestResult
+
 //[ Declare one test in the enclosing suite. //]
-def test(name: String, body: () => Unit): Unit receives thisSuite =
+def test(name: String, body: () => Unit receives testResult): Unit receives thisSuite =
   thisSuite.addTest(name, body)
 
 //[ Declare a nested suite, collecting `content` into it. //]
@@ -30,7 +35,26 @@ def suite(name: String, content: () => Unit receives thisSuite): Unit receives t
 
 section Testing
   //[ An individual test //]
-  class Test(name: String, run: () => Unit)
+  class NotTrue(label: String)
+
+  class NotEqual(label: String, actual: String, expect: String)
+
+  type Reason = NotTrue | NotEqual
+
+  class Failure(source: SourceLocation, reason: Reason)
+
+  class TestResult
+    private val recorded = List.builder[Failure]
+
+    def record(source: SourceLocation, reason: Reason): Unit =
+      recorded.add(new Failure(source, reason))
+
+    def failures: List[Failure] = recorded.result
+
+    def failed: Bool = recorded.size > 0
+  end
+
+  class Test(name: String, run: () => Unit receives testResult)
 
   //[ A suite contains a list of suites or tests
     !
@@ -80,7 +104,7 @@ section Testing
     //]
     var beforeSuite: () => Unit = () => pass
 
-    def addTest(name: String, run: () => Unit): Unit =
+    def addTest(name: String, run: () => Unit receives testResult): Unit =
       requireAvailable(name)
       children = children + new Test(name, run)
 

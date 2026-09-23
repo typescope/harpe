@@ -13,7 +13,7 @@
   ! localhost, reached through `OPENAI_BASE_URL` — every scenario scripts what
   ! the agent hears back, so a turn is deterministic and no key is needed. The
   ! HOME is a fresh temporary directory holding a copy of the agent's `assets/`
-  ! and `AGENT.md`, so sessions, uploads, and logs land there rather than in the
+  ! and `prompts/SYSTEM.md`, so sessions, uploads, and logs land there rather than in the
   ! repository's own data and logs. The sandbox is NOT faked: a program a
   ! scenario runs is compiled by the real toolchain and executed as its own
   ! process, against the guest built from the same spec as the agent.
@@ -23,7 +23,7 @@
   ! fails inside another process.
 //]
 
-namespace web.tests
+namespace pdf.agent.tests
 
 
 import harpe.ffi.os
@@ -57,7 +57,7 @@ section WebAgent
 
   //[ A fresh agent home: the assets it serves, the prompt it loads, empty state
     !
-    ! `assets/` and `AGENT.md` are the agent's real ones — a scenario that loads
+    ! `assets/` and `prompts/SYSTEM.md` are the agent's real ones — a scenario that loads
     ! the chat page or asserts on the system prompt is asserting about the files
     ! that ship. Everything the agent WRITES is new here, so scenarios cannot see
     ! each other's sessions, and none of them touch the repo.
@@ -82,9 +82,10 @@ section WebAgent
 
       """
 
+    File.ensureDir: os.path.join(home, "prompts")
     File.write:
-      os.path.join(home, "AGENT.md")
-      File.read: application.path("AGENT.md")
+      os.path.join(home, "prompts/SYSTEM.md")
+      File.read: application.path("prompts/SYSTEM.md")
 
     // The sandbox the agent compiles programs into.
     application.installGuest(home)
@@ -146,7 +147,7 @@ section WebAgent
         // Exiting immediately while something IS serving here is the collision:
         // a sibling lane bound this port first and ours could not.
         if answers(agent) then return false
-        abort "web e2e: the agent exited during startup (code \{proc.poll().asInt}):\n\{agent.serverLog}"
+        abort "pdf-agent e2e: the agent exited during startup (code \{proc.poll().asInt}):\n\{agent.serverLog}"
 
       match py.try(Rest.get(agent, "/api/info"))
       // Answering is not enough — a sibling agent answers exactly the same way.
@@ -155,7 +156,7 @@ section WebAgent
       case Ok(answer) if answer.status == 200 => return servesMarker(agent, marker)
       case _ => py.module("time").sleep(0.05)
 
-    abort "web e2e: the agent never answered on port \{agent.port}:\n\{agent.serverLog}"
+    abort "pdf-agent e2e: the agent never answered on port \{agent.port}:\n\{agent.serverLog}"
 
   //[ Is anything at all serving on this port? //]
   private def answers(agent: Agent): Bool =
@@ -213,7 +214,7 @@ section WebAgent
     case Ok(_) =>
       Driver.discardHome(home)
       assert: left > 1,
-        "web e2e: lost the port to another scenario \{portAttempts} times running"
+        "pdf-agent e2e: lost the port to another scenario \{portAttempts} times running"
       attempt(application, modelBaseUrl, scenario, left - 1)
 
     // The home is left behind on failure: its `server.log` holds the traceback

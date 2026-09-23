@@ -43,7 +43,7 @@ Change the agent name shown in the left sidebar. In `src/Web.jo`, find:
 val server = new ChatServer(brain, "Clair", …)
 ```
 
-Replace `"Clair"` with your agent's name. Edit `AGENT.md` to give it a matching
+Replace `"Clair"` with your agent's name. Edit `prompts/SYSTEM.md` to give it a matching
 role, then restart `jo start` and reload the page. The new name should appear in
 the sidebar, and replies should follow the new instructions.
 
@@ -54,7 +54,8 @@ again. The conversation should still be present.
 
 ```text
 my-agent/
-  AGENT.md
+  prompts/
+    SYSTEM.md
   src/
     Web.jo             # application startup and model selection
     Server.jo          # HTTP routes, uploads, and event streaming
@@ -72,7 +73,7 @@ my-agent/
     jo-syntax.md
 ```
 
-- Edit `AGENT.md` to define the agent.
+- Edit `prompts/SYSTEM.md` to define the agent.
 - Edit `assets/` to change the interface. The server reads these files from the
   project, so they remain fully under your control.
 - Edit `src/Web.jo` to change startup and model selection.

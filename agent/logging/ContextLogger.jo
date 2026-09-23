@@ -2,7 +2,8 @@
   !
   ! A `Logger` decorator that stamps ambient context — the "which user / which
   ! session" of a turn — onto every entry before passing it to the wrapped
-  ! logger. A driver installs one per turn via `Logging.withContext`. Because
+  ! logger. Construct one directly when composing loggers, or use
+  ! `Logging.withContext` to scope the logging of an action. Because
   ! the stamping happens in `logEntry` (the choke point every record flows
   ! through), it catches `log`, the severity helpers, and direct `logEntry`
   ! alike.
@@ -20,7 +21,7 @@
 
 namespace harpe.logging
 
-private[harpe] class ContextLogger(inner: Logger, scope: String)
+class ContextLogger(inner: Logger, scope: String)
   view Logger
 
   def logEntry(entry: Entry): Unit =
