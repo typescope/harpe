@@ -18,7 +18,7 @@ operations.
 A general-purpose agent is usually granted with broad authorities.
 It can cause severe security issues when the agent is manipulated by either malicious prompt or incorrect AI instruction.
 
-A specialized agent has pre-defined roles, so its authority can be
+A specialized agent has a pre-defined role, so its authority can be
 scoped and checked. That is the
 [**principle of least authority**](https://en.wikipedia.org/wiki/Principle_of_least_privilege)
 (PoLA), and we believe it is the right way to make an agent fit for high-stake
