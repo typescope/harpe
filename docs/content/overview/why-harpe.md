@@ -79,7 +79,7 @@ LLM-generated code has no ambient access to a shell, file system, raw sockets, o
 ## The cost and benefits of typed trust boundaries
 
 To develop a secure specialized agent, the trust boundary has to be defined
-explicitly. You scope and implement the capability interfaces the agent acts
+explicitly. You design the capability interfaces the agent acts through, and
 through, the compiler verifies generated
 code can only use explicitly granted capabilities.
 
