@@ -19,8 +19,10 @@ A general-purpose agent is usually granted with broad authorities.
 It can cause severe security issues when the agent is manipulated by either malicious prompt or incorrect AI instruction.
 
 A specialized agent has pre-defined roles, so its authority can be
-scoped and checked. That is the [**principle of least authority**](https://en.wikipedia.org/wiki/Principle_of_least_privilege)(PoLA).
-And we believe it is the right way to make an agent fit for high-stake critical infrastructure and sensitive data use cases.
+scoped and checked. That is the
+[**principle of least authority**](https://en.wikipedia.org/wiki/Principle_of_least_privilege)
+(PoLA), and we believe it is the right way to make an agent fit for high-stake
+critical infrastructure and sensitive data use cases.
 
 ![A general agent and a specialized agent side by side. The same five systems appear in both as bubbles: database, REST APIs, files, shell and email. For the general agent every bubble is open, so all of every system is in reach. For the specialized agent three bubbles are masked out entirely, and the two that remain are open only over a small patch of themselves.](/img/general-vs-specialized.svg)
 
