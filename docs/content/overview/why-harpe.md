@@ -80,7 +80,7 @@ LLM-generated code has no ambient access to a shell, file system, raw sockets, o
 
 To develop a secure specialized agent, the trust boundary has to be defined
 explicitly. You design the capability interfaces the agent acts through, and
-through, the compiler verifies generated
+provide trustworthy implementations behind them. The compiler verifies generated
 code can only use explicitly granted capabilities.
 
 In an ACM Queue article, *Safe Coding* [[5]](#reference-safe-coding),
