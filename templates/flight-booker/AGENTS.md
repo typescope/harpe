@@ -35,6 +35,8 @@ Inspect the diff before handing off. Report checks run and any that could not ru
   Update affected prompt examples.
 - Keep [skills/api.jo](skills/api.jo) in sync with [sandbox/API.jo](sandbox/API.jo).
 - Do not edit generated `.build/` output.
+- If Jo or Harpe crashes or appears to have a bug, reduce it to a small
+  reproduction and submit an issue with the reproduction and version details.
 
 ## References
 

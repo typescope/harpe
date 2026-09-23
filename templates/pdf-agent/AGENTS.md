@@ -37,6 +37,8 @@ Inspect the diff before handing off. Report checks run and any that could not ru
 - Change capability APIs, runtime bindings, and the `runTask` placeholder together.
   Update affected prompt and skill examples.
 - Do not edit generated `.build/` output.
+- If Jo or Harpe crashes or appears to have a bug, reduce it to a small
+  reproduction and submit an issue with the reproduction and version details.
 
 ## References
 
