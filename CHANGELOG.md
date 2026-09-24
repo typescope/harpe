@@ -1,6 +1,28 @@
 # Changelog
 
-## Unreleased
+## 0.12.0 — 2026-09-24
+
+The first release from the public `typescope/harpe` repository. All three
+packages are published as GitHub release assets and discovered by Jo's public
+registry. Requires Jo 0.13.5 or later; the manifests use its `0.13` compatibility
+line.
+
+**`ContextLogger` is public.** Applications can compose persistent and live
+loggers while keeping session context on every entry. `WebApp.wsgi(output =
+sink)` optionally writes escaped access log lines to a caller-provided sink;
+the default remains quiet.
+
+**Test assertions collect failures with source locations.** `check` and
+`checkEquals` receive `testResult`, and the runner reports every failed check
+in a scenario. `checkEquals` accepts any type with equality and display
+instances. Helpers that call assertions must receive `testResult`; test
+callbacks receive it from the runner. Unexpected exceptions still stop the
+scenario and are reported alongside earlier assertion failures.
+
+`harpe-caps` has no API changes and moves to 0.12.0 with the other packages.
+The CLI and templates load runtime prompts from `prompts/SYSTEM.md`, keeping
+them separate from contributor instructions in `AGENTS.md`. Template API
+migrations and live log viewers follow in a separate PR after registry discovery.
 
 **`Response.static(root, path)` serves the static tree, and is the only builder
 that resolves a name a client chose.** It is where `Response.file(root, name)`

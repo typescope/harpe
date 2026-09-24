@@ -1,7 +1,7 @@
 # Harpe
 
 [![CI](https://github.com/typescope/harpe/actions/workflows/ci.yml/badge.svg)](https://github.com/typescope/harpe/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/release-v0.11.0-blue.svg)](https://github.com/typescope/harpe/releases/tag/v0.11.0)
+[![Release](https://img.shields.io/badge/release-v0.12.0-blue.svg)](https://github.com/typescope/harpe/releases/tag/v0.12.0)
 [![Docs](https://img.shields.io/badge/docs-harpe.typescope.ai-teal.svg)](https://harpe.typescope.ai)
 
 Harpe is an agent framework for the secure programming language [Jo](https://jo-lang.org/).
@@ -64,4 +64,3 @@ to inspect each part.
 - [Compile-time sandboxing](https://harpe.typescope.ai/overview/compile-time-sandboxing/)
 - [Create a custom capability](https://harpe.typescope.ai/tutorial/create-custom-capabilities/)
 - [Deployment checklist](https://harpe.typescope.ai/guides/production/)
-
