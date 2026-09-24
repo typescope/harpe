@@ -106,6 +106,13 @@ Package only from the clean merged commit, with the compiler used for validation
 jo package caps
 jo package harpe
 jo package testing
+jo doc caps
+jo doc harpe
+jo doc testing
+python3 scripts/package-api-docs.py "$VERSION" --output /tmp/harpe-api-release
+for archive in /tmp/harpe-api-release/*-api-docs-v$VERSION.zip; do
+  (cd "$(dirname "$archive")" && sha512sum --check "$(basename "$archive").sha512")
+done
 
 (cd .build/caps/release && sha512sum --check harpe-caps-v$VERSION.joy.sha512 && sha512sum --check harpe-caps-v$VERSION-sources.zip.sha512)
 (cd .build/harpe/release && sha512sum --check harpe-v$VERSION.joy.sha512 && sha512sum --check harpe-v$VERSION-sources.zip.sha512)
@@ -144,6 +151,12 @@ gh release create v$VERSION \
   .build/testing/release/harpe-testing-python-v$VERSION.joy.sha512 \
   .build/testing/release/harpe-testing-python-v$VERSION-sources.zip \
   .build/testing/release/harpe-testing-python-v$VERSION-sources.zip.sha512 \
+  /tmp/harpe-api-release/harpe-caps-api-docs-v$VERSION.zip \
+  /tmp/harpe-api-release/harpe-caps-api-docs-v$VERSION.zip.sha512 \
+  /tmp/harpe-api-release/harpe-api-docs-v$VERSION.zip \
+  /tmp/harpe-api-release/harpe-api-docs-v$VERSION.zip.sha512 \
+  /tmp/harpe-api-release/harpe-testing-python-api-docs-v$VERSION.zip \
+  /tmp/harpe-api-release/harpe-testing-python-api-docs-v$VERSION.zip.sha512 \
   --repo typescope/harpe --verify-tag \
   --title "Harpe $VERSION" --notes-file /tmp/harpe-release-notes.md
 ~~~
@@ -211,6 +224,13 @@ Build the application and all sandbox guests, run its documented tests, and
 include the results in the PR. Leave these PRs for downstream review.
 
 ## 7. Deploy the documentation
+
+The docs workflow reads the append-only `docs/api-versions.jsonl` manifest,
+downloads each available `*-api-docs-vVERSION.zip` asset, and unpacks it under
+its package and version path. It writes the available versions to
+`docs/api-docs.json`; the site uses that metadata to render the API dropdown,
+with the newest version first for each library. Older generated docs remain
+available at their original versioned paths when a new release is published.
 
 After the template PR is merged and both downstream PRs are open, deploy the
 public repository's current `main`:
