@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.12.1 — 2026-09-24
+
+`WebApp.wsgi(output = sink)` now terminates every access-log record with a
+newline before passing it to the sink. Raw sinks such as `sys.stdout.write`
+therefore preserve the documented one-record-per-line format without requiring
+the caller to add a delimiter.
+
+The bundled journal viewer restores its favicon and uses the same mark in the
+page header. `harpe-caps` and `harpe-testing-python` have no API changes and move
+to 0.12.1 with `harpe`.
+
 ## 0.12.0 — 2026-09-24
 
 The first release from the public `typescope/harpe` repository. All three
