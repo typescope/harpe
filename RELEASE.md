@@ -11,6 +11,10 @@ The order is: validate locally, merge a green release PR, publish the GitHub
 release, wait for Jo's registry, merge a separate template PR, open the two
 downstream upgrade PRs, then deploy the documentation.
 
+A maintainer performs every PR merge. Release automation prepares and validates
+the PRs, waits for their merge, and then continues with publication or deployment.
+It must not merge PRs itself.
+
 ~~~sh
 VERSION=0.12.0
 MINOR=${VERSION%.*}
@@ -81,9 +85,15 @@ so the release PR does not depend on an unpublished package.
 
 ~~~sh
 gh pr checks --repo typescope/harpe RELEASE_PR
-gh pr merge --repo typescope/harpe RELEASE_PR --merge --match-head-commit HEAD_SHA
+gh pr view --repo typescope/harpe RELEASE_PR --json state,mergeCommit
+~~~
+
+Wait for the maintainer to merge the green PR. Once its state is `MERGED`, fetch
+and check out the reported merge commit:
+
+~~~sh
 git fetch origin main
-git switch --detach origin/main
+git switch --detach MERGE_COMMIT
 git status --short
 ~~~
 
@@ -182,8 +192,8 @@ declared test suite. Check `jo new` against the PR commit as well, now that the
 repository is public.
 
 Open the template PR against `typescope/harpe:main`. Check that its diff contains
-published package pins, with no temporary source references. Merge only when
-the `Jo` job and all `Templates` jobs pass on its final head. `jo new` serves
+published package pins, with no temporary source references. The maintainer
+merges only when the `Jo` job and all `Templates` jobs pass on its final head. `jo new` serves
 the default branch, so these checks protect newly created projects.
 
 ## 6. Open the downstream upgrade PRs
