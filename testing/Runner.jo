@@ -29,6 +29,7 @@
 namespace harpe.testing
 
 import jo.IO.stdout
+import jo.IO.args
 
 private class Tally
   var passed: Int = 0
@@ -121,9 +122,8 @@ section Runner
     ! `jo run test -- providers/openai/chat` runs one subtree, `jo run test`
     ! runs all.
   //]
-  private def filterFromArgs: String =
-    val argv = py.module("sys").argv.cast[py.List]
-    if argv.size > 1 then argv.get(1).asString else ""
+  private def filterFromArgs(args: Array[String]): String =
+    if args.size > 0 then args[0] else ""
 
   //[ How many tests a parallel suite may have in flight at once
     !
@@ -160,22 +160,27 @@ section Runner
   //[ Run every test under `root` whose path starts with `filter`
     !
     ! Prints the tree as it goes, then a summary. Returns true when nothing
-    ! failed. By default, reads the filter from the first command-line argument
-    ! and the worker count from `HARPE_TEST_WORKERS` (or the available CPUs).
+    ! failed. The caller supplies the filter. A negative `lanes` value uses
+    ! `HARPE_TEST_WORKERS` (or the available CPUs).
   //]
-  def run(root: Testing.Suite, filter: String = filterFromArgs, lanes: Int = lanesFromEnv)
+  def run(root: Testing.Suite, filter: String, lanes: Int = -1)
   : Bool receives stdout =
     val started = time.monotonic()
     val tally = new Tally
     val outcomes = new OutcomeStore
+    val workerLanes = if lanes < 0 then lanesFromEnv() else lanes
 
     // The root has no report line of its own before preparation.
     if holdsSelected(root, "", filter) then root.beforeSuite()
 
     println Style.strong("\{root.name}:")
-    walk(root, "", "  ", filter, tally, outcomes, lanes, prepared = false)
+    walk(root, "", "  ", filter, tally, outcomes, workerLanes, prepared = false)
     report(tally, time.monotonic() - started)
     tally.failures.isEmpty
+
+  //[ Convenience entry point for the conventional first-argument filter. //]
+  def runWithArgs(root: Testing.Suite): Bool receives stdout, args =
+    run(root, filterFromArgs(args))
 
   // The root contributes no path segment, so a filter reads as `providers/openai`.
   private def walk(

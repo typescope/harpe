@@ -23,6 +23,7 @@
 namespace harpe.test
 
 import jo.IO.stdout
+import jo.IO.args
 import harpe.logging.Logging
 import harpe.logging.logger
 import harpe.Interact
@@ -57,10 +58,10 @@ import harpe.test.integration.RunCodeTest
 // suites included: `define` below declares every body inside this scope, and a
 // body carries what it captured. (RunCodeTest still self-provides, because the
 // threads IT spawns are built inside a call that never discharged the effect.)
-def main(): Unit receives stdout =
+def main(): Unit receives stdout, args =
   with logger = Logging.discard in run()
 
-private def run(): Unit receives stdout, logger =
+private def run(): Unit receives stdout, logger, args =
   // `define` runs the declaration bodies, and each test body captures the scope
   // it is declared in — so this call has to sit inside `with logger`, not around
   // the `Runner.run` below it.
@@ -68,7 +69,8 @@ private def run(): Unit receives stdout, logger =
 
   // The runner has already printed what failed and where, so exit on that rather
   // than aborting and burying the report under a host traceback.
-  val ok = Runner.run(declared)
+  val filter = if args.size > 0 then args[0] else ""
+  val ok = Runner.run(declared, filter)
   if !ok then py.module("sys").exit(1)
   println ""
   println "all harpe tests passed"
