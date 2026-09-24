@@ -56,7 +56,7 @@ private def webServe(): Unit receives stdout, appHome =
     // name puts that name here instead, as a string.
     host = WebApp.Loopback
     routes = []
-    fallback = WebApp.Fallback(() => server.route(), maxBodyBytes = Route.defaultMaxBodyBytes)
+    fallback = WebApp.Fallback(() => server.route(), maxReqBody = Route.defaultMaxReqBody)
 
   val httpd = py.module("waitress").create_server:
     application.wsgi()
@@ -65,7 +65,7 @@ private def webServe(): Unit receives stdout, appHome =
     threads = 16
     // The server gets the application's own limit, so an oversized body is
     // refused and discarded here rather than spooled whole and refused later.
-    max_request_body_size = application.maxRequestBodyBytes
+    max_request_body_size = application.maxReqBody
 
   println """
 
