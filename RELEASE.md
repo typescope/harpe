@@ -1,8 +1,7 @@
 # Release workflow
 
-Releases are made in the public repository, `typescope/harpe`.
-`typescope/harpe-dev` is the private development repository. Confirm that
-`origin` points to the public repository before pushing a release branch or tag.
+Releases are made in `typescope/harpe`. Confirm that `origin` points to this
+repository before pushing a release branch or tag.
 
 Harpe publishes three packages together: `harpe-caps` (pure capability
 interfaces), `harpe` (the Python runtime, depending on `harpe-caps`), and
