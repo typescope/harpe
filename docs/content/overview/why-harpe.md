@@ -16,7 +16,7 @@ operations.
 ## Why specialized agents?
 
 A general-purpose agent is usually granted with broad authorities.
-It can cause severe security issues when the agent is manipulated by either malicious prompt or incorrect AI instruction.
+It can cause severe security issues when the agent is manipulated by either malicious prompts or incorrect AI instructions.
 
 A specialized agent has a pre-defined role, so its authority can be
 scoped and checked. That is the
@@ -51,10 +51,9 @@ and data transformation without routing every intermediate value through the
 model.
 
 This is not unique to Harpe. CodeAct
-[[1]](#reference-codeact) evaluated 17 LLMs on API-Bank and M³ToolEval, a
-benchmark of its own, and reported up to a
+[[1]](#reference-codeact) evaluated 17 LLMs and reported up to a
 20% higher success rate for code than
-for the common text and JSON action formats.
+for the text-based and JSON-based action formats.
 
 ![Task success rate by action format on the M³ToolEval benchmark. GPT-4-1106 scores 74.4% with code against 52.4% with JSON and 53.7% with text. Claude-2 scores 54.9% against 39.0% and 29.3%. GPT-3.5-turbo scores 51.2% against 26.8% and 20.7%. These are three of the seventeen models evaluated, and code came first on twelve of them.](/img/codeact-success-rate.svg)
 
@@ -66,7 +65,7 @@ the model context.
 
 ## Minimizing attack surface
 
-A sandbox's security also depends on the surface area that untrusted code can reach.
+The security of a traditional sandbox depends on the surface area that untrusted code can reach.
 In *VMs won't contain cyber-capable agents* [[4]](#reference-trail-of-bits),
 Trail of Bits reports an agent escaping a QEMU/KVM virtual machine by chaining
 vulnerabilities in its virtualization and networking stack.
@@ -74,7 +73,8 @@ vulnerabilities in its virtualization and networking stack.
 Harpe can reduce attack surface by narrowing the capability interface. A calendar agent
 can be granted capabilities to only check availability and reserve a slot,
 without access to credentials and non-granted API end points. In Harpe, the
-LLM-generated code has no ambient access to a shell, file system, raw sockets, or virtual devices.
+LLM-generated code has no direct access to [system calls](https://en.wikipedia.org/wiki/System_call),
+thus there are no ambient access to a shell, file system, raw sockets, virtual devices.
 
 ## The cost and benefits of typed trust boundaries
 
