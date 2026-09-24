@@ -121,7 +121,7 @@ section Runner
     ! `jo run test -- providers/openai/chat` runs one subtree, `jo run test`
     ! runs all.
   //]
-  def filterFromArgs(): String =
+  private def filterFromArgs: String =
     val argv = py.module("sys").argv.cast[py.List]
     if argv.size > 1 then argv.get(1).asString else ""
 
@@ -133,7 +133,7 @@ section Runner
     ! back on one thread, which is the first thing to try when a parallel run
     ! fails and a serial one does not.
   //]
-  def lanesFromEnv(): Int =
+  private def lanesFromEnv: Int =
     val setting = os.getenv("HARPE_TEST_WORKERS", "")
     if setting != "" then builtins.int(setting) else availableCores()
 
@@ -160,9 +160,11 @@ section Runner
   //[ Run every test under `root` whose path starts with `filter`
     !
     ! Prints the tree as it goes, then a summary. Returns true when nothing
-    ! failed.
+    ! failed. By default, reads the filter from the first command-line argument
+    ! and the worker count from `HARPE_TEST_WORKERS` (or the available CPUs).
   //]
-  def run(root: Testing.Suite, filter: String, lanes: Int): Bool receives stdout =
+  def run(root: Testing.Suite, filter: String = filterFromArgs, lanes: Int = lanesFromEnv)
+  : Bool receives stdout =
     val started = time.monotonic()
     val tally = new Tally
     val outcomes = new OutcomeStore

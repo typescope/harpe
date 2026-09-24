@@ -19,6 +19,11 @@ instances. Helpers that call assertions must receive `testResult`; test
 callbacks receive it from the runner. Unexpected exceptions still stop the
 scenario and are reported alongside earlier assertion failures.
 
+**The test runner owns its command-line and environment defaults.** Test entry
+points now call `Runner.run(root)`; an explicit filter and worker count remain
+optional. `filterFromArgs`, `lanesFromEnv`, terminal styling, and the testing
+framework's Python bindings are private implementation details.
+
 `harpe-caps` has no API changes and moves to 0.12.0 with the other packages.
 The CLI and templates load runtime prompts from `prompts/SYSTEM.md`, keeping
 them separate from contributor instructions in `AGENTS.md`. Template API
