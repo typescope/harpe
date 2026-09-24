@@ -408,7 +408,8 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
   test: "sends request and response statuses to a custom output", () =>
     val printed = consoleOutput: () =>
-      val output: String => Unit = (line: String) => py.print(line)
+      // A raw output sink, like `stdout`, adds neither a newline nor a flush.
+      val output: String => Unit = (text: String) => py.module("sys").stdout.write(text)
       val wsgi = applicationFor(WebApp.Loopback, py.list()).wsgi(output = output)
       val page = get(wsgi, "/page?v=two")
       check("still returns the response body", page.text == "<p>two</p>")
@@ -432,7 +433,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
   test: "quotes request control characters into one console line", () =>
     val printed = consoleOutput: () =>
-      val output: String => Unit = (line: String) => py.print(line)
+      val output: String => Unit = (text: String) => py.module("sys").stdout.write(text)
       val wsgi = applicationFor(WebApp.Loopback, py.list()).wsgi(output = output)
       val _ = get(wsgi, "/missing%0A%1B[31m")
     check("escapes newlines and terminal controls", printed == "\"GET /missing\\n\\u001b[31m\" 404 Not Found\n")
@@ -448,7 +449,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
         val _ = barrier.wait(timeout = 5.0)
         Response.html("ok")
       val application = new WebApp(routes = [Route.Get("/parallel", handler)])
-      val output: String => Unit = (line: String) => py.print(line)
+      val output: String => Unit = (text: String) => py.module("sys").stdout.write(text)
       val wsgi = application.wsgi(output = output)
       var threads: List[py.Dynamic] = []
       for worker in workers do

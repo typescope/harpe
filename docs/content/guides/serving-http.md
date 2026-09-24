@@ -46,10 +46,11 @@ val httpd = py.module("waitress").create_server:
 httpd.run()
 ```
 
-`application.wsgi()` is quiet by default. Pass an output callback to receive each
-request's method, path, query string, and response status when response headers
-are accepted. Console writes are serialized across request threads, so an
-application can pass `stdout` directly or provide its own sink:
+`application.wsgi()` is quiet by default. Pass an output callback to receive one
+newline-terminated record containing each request's method, path, query string,
+and response status when response headers are accepted. Writes are serialized
+across request threads, so an application can pass `stdout` directly or provide
+its own sink:
 
 ```jo
 application.wsgi(output = stdout)
