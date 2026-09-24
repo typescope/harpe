@@ -47,9 +47,9 @@ class WebApp(
   private val exact: py.Dict = Route.indexed(routes)
 
   //[ This application as the WSGI callable a server is given.
-    ! The output sink receives each request and its status when response headers
-    ! are accepted. It is quiet by default. Output writes are locked;
-    ! request handlers still run concurrently.
+    ! The output sink receives one newline-terminated record for each request
+    ! when response headers are accepted. It is quiet by default. Output writes
+    ! are locked; request handlers still run concurrently.
   //]
   def wsgi(output: (String => Unit) | None = WebApp.quiet): (py.Dynamic, py.Dynamic) => py.Dynamic =
     match output
@@ -66,7 +66,7 @@ class WebApp(
                 val query = environ.get("QUERY_STRING", "").asString
                 val target = environ.get("SCRIPT_NAME", "").asString + path + (if query == "" then "" else "?" + query)
                 // Quote control characters so a request always occupies one log line.
-                val line = JSON.dumps(method + " " + target) + " " + status.asString
+                val line = JSON.dumps(method + " " + target) + " " + status.asString + "\n"
                 lock.acquire()
                 // A failing output sink must not break the response or leave the lock held.
                 val _ = py.try(sink(line))

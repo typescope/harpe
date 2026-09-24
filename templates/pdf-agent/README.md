@@ -31,9 +31,6 @@ since the server started. Click a session scope to focus on its turns and tool
 calls. Complete session logs remain in `logs/sessions/<session>.jsonl` across
 restarts; the viewer's in-memory window starts fresh each time.
 
-HTTP requests and their response statuses are logged to the terminal by passing
-`stdout` to `application.wsgi(output = stdout)` in `src/Web.jo`.
-
 `jo run tests` runs the end-to-end suite: it starts the agent as its own process and
 drives it over HTTP against a scripted model, so it needs no API key and
 reaches no network.

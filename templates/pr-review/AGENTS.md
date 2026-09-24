@@ -15,6 +15,8 @@ Activate the environment in each shell before installing dependencies or running
 - Install dependencies: `python -m pip install -r requirements.txt`.
 - Build the application: `jo build agent`.
 - Build the sandbox: `jo build --spec sandbox/jo.toml guest`.
+- Query resolved APIs: `jo compile --query jo.List,jo.Map` (replace the selectors
+  with the APIs you need).
 - Run a review after configuration:
   `jo review -- https://github.com/owner/repo/pull/123`.
   A live run can save a pending review on that pull request.
