@@ -105,8 +105,9 @@ place to record it.
 | `harpe.tools.runCode.ran` | `code`, `compileSeconds`, `runSeconds`, `exitCode`, `output` | a program that compiled and ran |
 | `harpe.tools.runCode.compileFailed` | `code`, `compileSeconds`, `compileError` | it did not compile |
 | `harpe.tools.runCode.compileTimedOut` / `.timedOut` / `.approvalTimedOut` | | a clock ran out during the build, the run, or the approval the run was waiting on |
+| `harpe.model.sent` | `provider`, `model` | one attempt handed to a provider. Compare its timestamp with the following `replied` or `failed` event to measure call latency |
 | `harpe.model.replied` | `provider`, `model` | one attempt that came back with a reply |
-| `harpe.model.failed` | `provider`, `model`, `error`, `status`, `retryable` | one attempt that did not, as attributable as a successful one. `status` is 0 when the request never reached the server |
+| `harpe.model.failed` | `provider`, `model`, `error`, `retryable` | one attempt that did not, as attributable as a successful one |
 | `harpe.model.retried` / `harpe.model.gaveUp` | `attempt`, `retryInSeconds` / `retries` | what the engine decided about the `harpe.model.failed` record just before it |
 | `harpe.metering.usage` | `provider`, `model`, `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens` | one call billed in tokens. The one record with a codec of its own — see [Explicit contracts](/guides/data-bus-and-contracts/) |
 | `harpe.tools.skills.read` / `.searched` | `name` / `query` | content reached through the skill tools |

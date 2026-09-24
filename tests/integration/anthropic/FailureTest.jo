@@ -4,6 +4,7 @@ namespace harpe.test.integration.anthropic.FailureTest
 
 import harpe.models.anthropic
 import harpe.models.Anthropic
+import harpe.Agent
 import harpe.logging.logger
 import harpe.logging.Logger
 import harpe.logging.Entry
@@ -31,7 +32,6 @@ private class ModelRecords
   var event: String = ""
   var provider: String = ""
   var model: String = ""
-  var status: Int = 0
   var retryable: Bool = false
 
   def logEntry(entry: Entry): Unit =
@@ -40,7 +40,6 @@ private class ModelRecords
       event = entry.event
       provider = d.get("provider", "").asString
       model = d.get("model", "").asString
-      status = d.get("status", 0).asInt
       retryable = d.get("retryable", false).asBool
 
   def close(): Unit = pass
@@ -84,12 +83,11 @@ def failureSuite(): Unit receives thisSuite, logger = suite: "failure", () =>
     ProviderFixture.withResponses: [failure("401 Unauthorized", "authentication_error", "bad key")], server =>
       val records = new ModelRecords
       with logger = records in
-        val _ = ModelDriver.start(model(server), prompt = "Say hello.").expectFatal()
+        val _ = Agent.ask("Say hello.", brain = model(server))
 
       check("event", records.event == "harpe.model.failed")
       check("provider", records.provider == "anthropic")
       check("model", records.model == "test-model")
-      check("status", records.status == 401)
       check("not retryable", !records.retryable)
 
   test: "a malformed stream is fatal", () =>

@@ -18,7 +18,6 @@ import harpe.util.File
 import harpe.util.Process
 import harpe.*
 import harpe.logging.*
-import harpe.models.ModelLog
 import harpe.metering.Usage
 import harpe.testing.thisSuite
 import harpe.testing.suite
@@ -71,7 +70,7 @@ private def emitOne(): Unit receives logger =
 
 //[ Write one record of every shape this suite asserts on, and read them back
   !
-  ! One file for all six, because that a single JSONL file carries every
+  ! One file for all four, because that a single JSONL file carries every
   ! event name is itself part of the contract.
 //]
 private def withRecords(body: List[py.Dict] => Unit): Unit =
@@ -81,7 +80,6 @@ private def withRecords(body: List[py.Dict] => Unit): Unit =
   jsonl.log("runs", "code" ~ "y", "exitCode" ~ 1)
   jsonl.log("tools", "name" ~ "read")
   jsonl.warn("harpe.test", "rate limited", "attempt" ~ 3)
-  with logger = jsonl in ModelLog.logReplied(billed)
   jsonl.close()
   body(readRecords(path))
 
@@ -111,7 +109,7 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
   suite: "JsonlLogger", () =>
     test: "writes every event to one file", () =>
       withRecords: all =>
-        check("all six", all.size == 6)
+        check("all four", all.size == 4)
         check("event is a field", all.get(0).get("event", "").asString == "runs")
         // Categories coexist, distinguished by the field (jq's job downstream).
         check("another event", all.get(2).get("event", "").asString == "tools")
@@ -158,19 +156,6 @@ def loggingSuite(): Unit receives thisSuite = suite: "logging", () =>
 
       val all = readRecords(path)
       check("every record arrived, none torn", all.size == workers.size * rounds)
-
-    test: "a reply records the attempt and the charge as two events", () =>
-      withRecords: all =>
-        val attempt = all.get(4)
-        check("attempt event", attempt.get("event", "").asString == "harpe.model.replied")
-        check("attempt provider", fieldsOf(attempt).get("provider", "").asString == "anthropic")
-        check("attempt carries no counts", !fieldsOf(attempt).contains("inputTokens"))
-
-        val charge = all.get(5)
-        check("charge event", charge.get("event", "").asString == "harpe.metering.usage")
-        check("provider", fieldsOf(charge).get("provider", "").asString == "anthropic")
-        check("input tokens", fieldsOf(charge).get("inputTokens", -1).asInt == 100)
-        check("output tokens", fieldsOf(charge).get("outputTokens", -1).asInt == 20)
 
   suite: "usage codec", () =>
     test: "a logged usage reads back as the value that was written", () =>

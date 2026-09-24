@@ -17,7 +17,6 @@ import harpe.Model.*
 import harpe.metering.Usage
 import harpe.Tool
 import harpe.Tool.*
-import harpe.logging.logger
 
 private section CompatibleChat
   def toolSpec(t: Tool): py.Dict =
@@ -132,12 +131,15 @@ end
 private class CompatibleModel(client: py.Dynamic, model: String, extraBody: py.Dict)
   view Model
 
+  def name: String = model
+  def provider: String = "openai-compatible"
+
   def startTurn(base: Rendered, maxOutputTokens: Int): Session =
-    new CompatibleSession(client, model, maxOutputTokens, extraBody, base)
+    new CompatibleSession(this, client, model, maxOutputTokens, extraBody, base)
 end
 
 private class CompatibleSession(
-    client: py.Dynamic, model: String, maxOutputTokens: Int,
+    owner: Model, client: py.Dynamic, modelName: String, maxOutputTokens: Int,
     extraBody: py.Dict, base: Rendered)
   view Session
 
@@ -149,7 +151,9 @@ private class CompatibleSession(
   //]
   private var committed: Option[py.List] = None
 
-  def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult receives logger =
+  def model: Model = owner
+
+  def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult =
     val messages = py.list()
 
     match committed
@@ -163,7 +167,7 @@ private class CompatibleSession(
     val specs = py.list()
     for t in tools do specs.append(CompatibleChat.toolSpec(t))
 
-    match compatibleCreate(client, model, messages, specs, maxOutputTokens, extraBody, interact)
+    match compatibleCreate(client, modelName, messages, specs, maxOutputTokens, extraBody, interact)
     case Ok(response) =>
       val usage = response.usage
       val inTok = if usage.isNone then 0 else usage.prompt_tokens.asInt
@@ -178,13 +182,11 @@ private class CompatibleSession(
       val used =
         new Usage:
           "openai-compatible"
-          model
+          modelName
           inputTokens = inTok
           outputTokens = outTok
           cacheReadTokens = if details.isNone then 0 else Util.usageInt(details, "cached_tokens")
           cacheWriteTokens = 0
-
-      ModelLog.logReplied(used)
 
       // Preserve the provider's complete assistant message, including unknown
       // extension fields. Failed requests never mutate `committed`.
@@ -194,7 +196,7 @@ private class CompatibleSession(
       committed = Some(messages)
 
       Model.Reply(CompatibleChat.parseResponse(response), used)
-    case Err(err) => classifyError(err, "openai-compatible", model)
+    case Err(err) => classifyError(err)
 end
 
 private def compatibleCreate(

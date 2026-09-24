@@ -112,8 +112,10 @@ private class CaptureLogger
   view Logger
 
   var events: List[String] = []
+  var entries: List[Entry] = []
 
   def logEntry(entry: Entry): Unit =
+    entries = entries + entry
     if entry.event == "harpe.turn.message" then
       val d = Entry.toDict(entry).get("fields", py.dict()).cast[py.Dict]
       val role = d.get("role", "").asString
@@ -193,6 +195,31 @@ private def tools(): List[TestTool] = [echoTool()]
 
 private def live(): State = State(cancelled = false, pause = false)
 
+private class TestModel(
+    start: (Rendered, Int) => (List[ToolResult], List[Tool], Interact) => ReplyResult)
+  view Model
+
+  def name: String = "test-model"
+  def provider: String = "test"
+  def startTurn(base: Rendered, maxOutputTokens: Int): Session =
+    new TestSession(this, start(base, maxOutputTokens))
+end
+
+private class TestSession(
+    owner: Model,
+    respond: (List[ToolResult], List[Tool], Interact) => ReplyResult)
+  view Session
+
+  def model: Model = owner
+  def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult =
+    respond(results, tools, interact)
+end
+
+private def testModel(
+    start: (Rendered, Int) => (List[ToolResult], List[Tool], Interact) => ReplyResult)
+: Model =
+  new TestModel(start)
+
 def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
   suite: "ending a turn", () =>
     test: "a plain text reply ends it immediately", () =>
@@ -202,13 +229,13 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
           tools()
           maxToolRounds = 50
           maxRetries = 4
-          model = (base, maxOut) => (results, tools, interact) => textReply("hi")
+          model = testModel((base, maxOut) => (results, tools, interact) => textReply("hi"))
           state = live()
         expected = "Answered(hi) | start,end"
 
     // The per-turn counter lives in `startTurn`, so it is fresh for each turn.
     test: "runs one tool, then the next text reply ends it", () =>
-      val askB: Model = (base, maxOut) =>
+      val askB: Model = testModel: (base, maxOut) =>
         val stepB = py.list(0)
         (results, tools, interact) =>
           val n = stepB.get(0).asInt
@@ -223,7 +250,7 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
     // Once the budget is spent the model is re-asked with no tools and must
     // answer with text. The scripted model returns text only when offered none.
     test: "spends its tool budget, then must answer with text", () =>
-      val askC: Model = (base, maxOut) => (results, tools, interact) =>
+      val askC: Model = testModel: (base, maxOut) => (results, tools, interact) =>
         if tools.isEmpty then textReply("final") else toolReply("echo")
 
       checkEquals:
@@ -237,7 +264,7 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
     // context would report "1,2".
     test: "a defaulted turn is self-contained", () =>
       val sizes = py.list("")
-      val askN: Model = (base, maxOut) =>
+      val askN: Model = testModel: (base, maxOut) =>
         val prev = sizes.get(0).asString
         sizes.set(0, if prev == "" then "\{base.messages.size}" else prev + ",\{base.messages.size}")
         (results, tools, interact) => textReply("ok")
@@ -257,14 +284,30 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
           tools()
           maxToolRounds = 50
           maxRetries = 4
-          model = (base, maxOut) => (results, tools, interact) => Fatal("bad key")
+          model = testModel((base, maxOut) => (results, tools, interact) => Fatal("bad key"))
           state = live()
         expected = "Failed(bad key) | start,end"
+
+    test: "logs a classified failure from the session's model", () =>
+      val capture = new CaptureLogger
+      with logger = capture in
+        val _ = Agent.ask:
+          "fail"
+          brain = testModel((base, maxOut) => (results, tools, interact) => Fatal("HTTP 401 · bad key"))
+
+      checkEquals:
+        "failure order"
+        capture.events.join(",")
+        "user,harpe.model.sent,harpe.model.failed,harpe.model.gaveUp,harpe.turn.failed"
+
+      val fields = Entry.toDict(capture.entries.get(2)).get("fields").cast[py.Dict]
+      checkEquals("provider from session model", fields.get("provider", "").asString, "test")
+      checkEquals("name from session model", fields.get("model", "").asString, "test-model")
 
     // Only the provisional assistant/tool tail is rolled back.
     test: "a failed turn keeps its user message in the live context", () =>
       val failedContext = new WindowedContext("", [])
-      val failedBrain: Model = (base, maxOut) => (results, tools, interact) => Fatal("bad key")
+      val failedBrain: Model = testModel((base, maxOut) => (results, tools, interact) => Fatal("bad key"))
       val failedChannel = new TestInteract(live())
       val failedResult =
         Agent.ask:
@@ -285,7 +328,7 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
     test: "answers a call to a tool nobody wired", () =>
       val toldU = py.list("")
       val refusedU = py.list(true)
-      val askU: Model = (base, maxOut) =>
+      val askU: Model = testModel: (base, maxOut) =>
         val stepU = py.list(0)
         (results, tools, interact) =>
           val n = stepU.get(0).asInt
@@ -312,7 +355,7 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
     // `runSafely` turns the exception into an error result the model sees, and
     // the next (text) reply ends the turn.
     test: "a tool that raises does not crash the turn", () =>
-      val askJ: Model = (base, maxOut) =>
+      val askJ: Model = testModel: (base, maxOut) =>
         val stepJ = py.list(0)
         (results, tools, interact) =>
           val n = stepJ.get(0).asInt
@@ -333,13 +376,13 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
           tools()
           maxToolRounds = 50
           maxRetries = 0
-          model = (base, maxOut) => (results, tools, interact) => Transient("rate limited")
+          model = testModel((base, maxOut) => (results, tools, interact) => Transient("rate limited"))
           state = live()
         expected = "Failed(rate limited) | start,end,reset"
 
     // With a fake Interrupt, `pause` returns instantly — no real 1s wait.
     test: "recovers after one transient failure", () =>
-      val askG: Model = (base, maxOut) =>
+      val askG: Model = testModel: (base, maxOut) =>
         val stepG = py.list(0)
         (results, tools, interact) =>
           val n = stepG.get(0).asInt
@@ -355,7 +398,7 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
     // capped at the ordinary 30-second ceiling.
     test: "honours a provider Retry-After hint over its own backoff", () =>
       val retryAfterState = State(cancelled = false, pause = true)
-      val retryAfterModel: Model =
+      val retryAfterModel: Model = testModel:
         (base, maxOut) => (results, offered, interact) => RetryAfter("rate limited", 75.0)
       val _ = scenario: tools(), 50, 2, retryAfterModel, retryAfterState
       checkEquals("Retry-After delay", retryAfterState.pausedFor, 75.0)
@@ -368,13 +411,13 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
           tools()
           50
           4
-          (base, maxOut) => (results, tools, interact) => toolReply("echo")
+          testModel((base, maxOut) => (results, tools, interact) => toolReply("echo"))
           State(cancelled = true, pause = true)
         "Interrupted | "
 
     test: "discards a reply that arrives after cancelling", () =>
       val stateH2 = State(cancelled = false, pause = false)
-      val askH2: Model = (base, maxOut) => (results, tools, interact) =>
+      val askH2: Model = testModel: (base, maxOut) => (results, tools, interact) =>
         stateH2.cancelledNow = true
         textReply("too late")
 
@@ -390,13 +433,13 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
           tools()
           50
           4
-          (base, maxOut) => (results, tools, interact) => new Transient("blip")
+          testModel((base, maxOut) => (results, tools, interact) => new Transient("blip"))
           State(cancelled = false, pause = true)
         "Interrupted | start,end,reset,transient"
 
   suite: "what the interaction sees", () =>
     test: "streams assistant chunks as they arrive", () =>
-      val streamingModel: Model = (base, maxOut) =>
+      val streamingModel: Model = testModel: (base, maxOut) =>
         (results, offered, interact) =>
           interact.emit: TurnEvent.AssistantChunk("rec")
           interact.emit: TurnEvent.AssistantChunk("overed")
@@ -408,7 +451,7 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
         "Answered(recovered) | start,chunk:rec,chunk:overed,end"
 
     test: "delivers assistant text before the tool it accompanies starts", () =>
-      val askM: Model = (base, maxOut) =>
+      val askM: Model = testModel: (base, maxOut) =>
         val step = py.list(0)
         (results, tools, interact) =>
           val n = step.get(0).asInt
@@ -440,7 +483,7 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
       checkEquals:
         "order"
         capture.events.join(",")
-        expected = "user,assistant-calls,tool-invoked,tool_results,assistant-text,harpe.turn.answered"
+        expected = "user,harpe.model.sent,harpe.model.replied,harpe.metering.usage,assistant-calls,tool-invoked,tool_results,harpe.model.sent,harpe.model.replied,harpe.metering.usage,assistant-text,harpe.turn.answered"
 
     // A tool exception must not erase the assistant message that requested it.
     test: "survives the tool raising", () =>
@@ -456,7 +499,7 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
       checkEquals:
         "order"
         capture.events.join(",")
-        expected = "user,assistant-calls,tool-failed,tool_results,assistant-text,harpe.turn.answered"
+        expected = "user,harpe.model.sent,harpe.model.replied,harpe.metering.usage,assistant-calls,tool-failed,tool_results,harpe.model.sent,harpe.model.replied,harpe.metering.usage,assistant-text,harpe.turn.answered"
 
   // Crossing the threshold after a completed tool round replaces the provider
   // session while preserving the tool effect and the logical turn.
@@ -474,7 +517,7 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
       30
       1
       rendered => Some("COMPACTED")
-    val brain: Model = (base, maxOut) =>
+    val brain: Model = testModel: (base, maxOut) =>
       starts.set(0, starts.get(0).asInt + 1)
       if base.system.contains("COMPACTED") then
         (results, offered, interact) => textReply("continued")
@@ -494,7 +537,7 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
       "Answered(continued) | starts=2 | calls=1 | start,end,tool+count,tool-count,compact,start,end"
 
 // A model that asks for a tool once, then answers with text.
-private def toolThenText(): Model = (base, maxOut) =>
+private def toolThenText(): Model = testModel: (base, maxOut) =>
   val step = py.list(0)
   (results, tools, interact) =>
     val n = step.get(0).asInt

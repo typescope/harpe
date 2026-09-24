@@ -188,7 +188,9 @@ end
 `startTurn` creates a `Model.Session` from the prepared context. The session
 continues model requests across tool calls. It may keep provider-specific state
 such as reasoning handles or a server-side response ID. That state lasts only
-for the current turn.
+for the current turn. `session.model` points back to the model that created it,
+which lets the turn engine attribute every request without provider-specific
+logging.
 
 `interact` carries streamed text and cancellation. See [Turn](/concepts/turn/)
 for the event contract and streaming behavior.
@@ -203,19 +205,21 @@ union ReplyResult =
   | Fatal(detail: String)
 ```
 
-The adapter classifies failures and reports token usage. The turn engine owns
-retry policy. A failed request does not commit pending tool results or mutate
-the accepted turn state.
+The adapter classifies failures and reports token usage. Relevant transport
+details, such as an HTTP status, belong in `detail`. The turn engine owns logging
+and retry policy. `Session.reply` deliberately receives no logger. A failed
+request does not commit pending tool results or mutate the accepted turn state.
 
 `harpe.metering.Usage` is the metered record of one call, and carries everything
 a charge is computed from — the `provider` and `model` that were asked,
 `inputTokens` and `outputTokens`, and the `cacheReadTokens`/`cacheWriteTokens`
-that break the input total down. The adapter writes the same value to the log as
-`harpe.metering.usage` — its own event, beside the `harpe.model.replied` that says
-the attempt succeeded — and `Usage.decode` reads it back, so a bill drawn from a
-journal months later is the value the loop saw. A `Context` sizing itself reads
-`inputTokens` and ignores the rest: caching changes what a prefix costs, never
-what it contains. See [Billing](/concepts/logging/#building-usage-billing-and-stats).
+that break the input total down. The turn engine writes the same value to the log
+as `harpe.metering.usage` — its own event, beside the `harpe.model.replied` that
+says the attempt succeeded — and `Usage.decode` reads it back, so a bill drawn
+from a journal months later is the value the loop saw. A `Context` sizing itself
+reads `inputTokens` and ignores the rest: caching changes what a prefix costs,
+never what it contains. See
+[Billing](/concepts/logging/#building-usage-billing-and-stats).
 
 ## Custom models
 
@@ -227,8 +231,12 @@ without keeping additional provider state:
 class MyModel(client: Client)
   view Model
 
+  def name: String = "my-model"
+  def provider: String = "my-provider"
+
   def startTurn(base: Rendered, maxOutputTokens: Int): Model.Session =
     new SimpleSession:
+      this
       base
       (rendered, tools, interact) =>
         send(client, rendered, tools, interact, maxOutputTokens)
@@ -239,5 +247,7 @@ Implement `Model.Session` directly when the provider carries state between
 `reply` calls. The built-in Anthropic and OpenAI implementations do this to
 preserve [reasoning](/concepts/reasoning/) state.
 
-A custom implementation must translate Harpe messages and tools to the provider
-protocol, classify failures as `Transient` or `Fatal`, and report token usage.
+A custom implementation must identify its model and provider, translate Harpe
+messages and tools to the provider protocol, classify failures as `Transient`
+or `Fatal`, and return token usage. The turn engine logs each request, reply,
+failure, and usage uniformly.

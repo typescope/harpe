@@ -11,20 +11,10 @@
 namespace harpe.models
 import harpe.ffi.builtins
 import harpe.ffi.time
-import harpe.logging.logger
-
-
 import harpe.Model.*
-import harpe.Tool.*
 
 
 //[ Classify a failed provider call: retryable (`Transient`) or not (`Fatal`).
-  !
-  ! Records it too, as one `harpe.model` failure (see `ModelLog.logFailed`). This is the
-  ! only point that holds every fact about the failure at once — which model was
-  ! asked, what the provider said, and whether that is worth retrying — so it is
-  ! where the record is written. The `ReplyResult` it returns stays pure control
-  ! flow: what the loop should DO, carrying nothing the log needs.
   !
   ! By HTTP status when present (`err.status_code`, carried by `APIStatusError`
   ! subclasses) — 408 (request timeout), 429 (rate limit), and 5xx (server
@@ -33,7 +23,7 @@ import harpe.Tool.*
   ! failures that never reached the server — fall back to the class name:
   ! connection/timeout blips are transient, the rest fatal.
 //]
-private def classifyError(err: py.Error, provider: String, model: String): ReplyResult receives logger =
+private def classifyError(err: py.Error): ReplyResult =
   val status = statusOf(err)
   val name = err.typeName
 
@@ -43,8 +33,8 @@ private def classifyError(err: py.Error, provider: String, model: String): Reply
     else
       name.contains("Connection") || name.contains("Timeout")
 
-  val detail = "\{name}: \{err.message}"
-  ModelLog.logFailed(provider, model, detail, status, transient)
+  val plain = "\{name}: \{err.message}"
+  val detail = if status > 0 then "HTTP \{status} · \{plain}" else plain
 
   if transient then
     match retryAfterOf(err)

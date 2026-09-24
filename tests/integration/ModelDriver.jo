@@ -27,7 +27,6 @@ import harpe.metering.Usage
 import harpe.Tool
 import harpe.Tool.*
 import harpe.turns.TurnEvent
-import harpe.logging.logger
 
 //[ Empty defaults, so a scenario spells out only what it is supplying. //]
 private def noResults: List[ToolResult] = []
@@ -93,13 +92,13 @@ section ModelDriver
     def retryAfterSeconds: Float = delay
 
     //[ Send one request, recording afresh so `streamed` covers this reply only. //]
-    private def ask(results: List[ToolResult], tools: List[Tool]): ReplyResult receives logger =
+    private def ask(results: List[ToolResult], tools: List[Tool]): ReplyResult =
       recorder = new RecordingInteract
       session.reply(results, tools, recorder)
 
     //[ Require an assistant message, and hand it back. //]
     def expectReply(results: List[ToolResult] = noResults, tools: List[Tool] = noTools)
-    : Assistant receives logger =
+    : Assistant =
       match ask(results, tools)
       case Reply(message, used) =>
         reported = used
@@ -114,7 +113,7 @@ section ModelDriver
       ! request that dies on the wire never gets far enough for either to
       ! matter, and no scenario here asks one to.
     //]
-    def expectTransient(): String receives logger =
+    def expectTransient(): String =
       match ask(noResults, noTools)
       case Transient(detail) => detail
       case RetryAfter(detail, _) => abort "unexpectedly supplied retry-after: \{detail}"
@@ -124,7 +123,7 @@ section ModelDriver
     //[ Require a retryable failure carrying a delay (read it off
       ! `retryAfterSeconds`), and hand back its detail.
     //]
-    def expectRetryAfter(): String receives logger =
+    def expectRetryAfter(): String =
       match ask(noResults, noTools)
       case RetryAfter(detail, seconds) =>
         delay = seconds
@@ -134,7 +133,7 @@ section ModelDriver
       case Reply(_, _) => abort "unexpectedly succeeded"
 
     //[ Require an unretryable failure, and hand back its detail. //]
-    def expectFatal(): String receives logger =
+    def expectFatal(): String =
       match ask(noResults, noTools)
       case Fatal(detail) => detail
       case Transient(detail) => abort "unexpectedly transient: \{detail}"
