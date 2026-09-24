@@ -74,6 +74,7 @@ def webSuite(): Unit receives thisSuite = suite: "pdf-agent", () =>
       check("page 200", page.status == 200)
       check("serves the agent's own index.html", page.text.contains("id=\"messages\""))
       check("links to the live logs", page.text.contains("href=\"/journal\""))
+      check("links back to Harpe", page.text.contains("href=\"https://harpe.typescope.ai\""))
 
       // Served from the agent's assets/ directory, so an edit needs no rebuild.
       check("serves the script", Rest.get(agent, "/assets/app.js").status == 200)
