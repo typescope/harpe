@@ -34,8 +34,8 @@ for package in "${PACKAGES[@]}"; do
       echo "  $package $version — asset is not a readable zip, skipping"
       continue
     fi
-    if [[ ! -f "$OUT_DIR/$package/$version/index.html" ]]; then
-      echo "  $package $version — asset is missing index.html, skipping"
+    if [[ ! -f "$OUT_DIR/$package/$version/index.html" || ! -f "$OUT_DIR/$package/$version/data.js" ]]; then
+      echo "  $package $version — asset is missing index.html or data.js, skipping"
       rm -rf "$OUT_DIR/$package/$version"
       continue
     fi
