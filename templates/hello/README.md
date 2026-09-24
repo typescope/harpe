@@ -1,7 +1,7 @@
 # hello
 
 The smallest complete Harpe agent. The whole loop is in `src/Main.jo`; it also
-keeps a simple log and live viewer. It provides `runCode` and a Jo syntax skill.
+shows an in-memory live log. It provides `runCode` and a Jo syntax skill.
 
 ## Setup
 
