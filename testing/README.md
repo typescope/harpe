@@ -65,15 +65,15 @@ itself or choose a worker count.
 Build and run the test module from the project root:
 
 ```sh
-jo build --spec tests/jo.toml
-jo run --spec tests/jo.toml tests
+jo build tests
+jo run tests
 ```
 
 Pass a path after `--` to run only part of the tree:
 
 ```sh
-jo run --spec tests/jo.toml tests -- math
-jo run --spec tests/jo.toml tests -- math/adds\ numbers
+jo run tests -- math
+jo run tests -- "math/adds numbers"
 ```
 
 Parallel suites use one worker per available CPU by default. Set
