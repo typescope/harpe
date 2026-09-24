@@ -35,7 +35,6 @@ reports all of its failures together.
 ```jo
 namespace my.tests
 
-import jo.IO.args
 import jo.IO.stdout
 import harpe.testing.Runner
 import harpe.testing.Testing
@@ -46,8 +45,7 @@ import harpe.testing.thisSuite
 
 def main(): Unit receives stdout, args =
   val root = Testing.define("my tests", () => suites())
-  val filter = if args.size > 0 then args[0] else ""
-  if !Runner.run(root, filter) then
+  if !Runner.runWithArgs(root) then
     py.module("sys").exit(1)
 
 private def suites(): Unit receives thisSuite =
@@ -56,9 +54,11 @@ private def suites(): Unit receives thisSuite =
       check("one plus one", 1 + 1 == 2)
 ```
 
-The runner reports the suite tree and returns `false` when any test fails. A
-filter selects tests whose path starts with the supplied value; for the example
+The runner reports the suite tree and returns `false` when any test fails.
+`runWithArgs` reads the first command-line argument as a filter; for the example
 above, `math` selects the whole suite and `math/adds numbers` selects one test.
+Use `Runner.run(root, filter, lanes)` when the caller needs to parse arguments
+itself or choose a worker count.
 
 ## Run tests
 
