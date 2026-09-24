@@ -75,8 +75,10 @@ def webSuite(): Unit receives thisSuite = suite: "pdf-agent", () =>
       check("serves the agent's own index.html", page.text.contains("id=\"messages\""))
       check("links to the live logs", page.text.contains("href=\"/journal\""))
       check("links back to Harpe", page.text.contains("href=\"https://harpe.typescope.ai\""))
+      check("links to its favicon", page.text.contains("href=\"/assets/favicon.svg\""))
 
       // Served from the agent's assets/ directory, so an edit needs no rebuild.
+      check("serves the favicon", Rest.get(agent, "/assets/favicon.svg").status == 200)
       check("serves the script", Rest.get(agent, "/assets/app.js").status == 200)
       check("serves the stylesheet", Rest.get(agent, "/assets/app.css").status == 200)
       check("a session URL serves the same page", Rest.get(agent, "/c/anything").status == 200)
