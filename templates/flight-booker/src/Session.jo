@@ -27,6 +27,7 @@ import harpe.Model.Message
 import harpe.turns.TurnData
 import harpe.transcript.Journal
 import harpe.logging.Logger
+import harpe.logging.TeeLogger
 import harpe.logging.logger
 import harpe.logging.Value
 import harpe.turns.TurnResult
@@ -44,9 +45,9 @@ end
   ! so concurrent requests from the same tab cannot interleave. `idle` is set
   ! when no turn is running, so `POST /api/stop` has a sensible no-op path.
 //]
-class Session(id: String, brain: Model, tools: Toolset, context: Context)
+class Session(id: String, brain: Model, tools: Toolset, context: Context, viewLog: Logger)
   val path = os.path.join(appHome, "logs/sessions", id + ".jsonl")
-  val log =  new harpe.logging.JsonlLogger(path)
+  val log = new TeeLogger([new harpe.logging.JsonlLogger(path), viewLog])
   val transcript = new Journal(log)
   val lock = threading.Lock()
   val stop = threading.Event()

@@ -9,7 +9,10 @@ import harpe.ffi.time
 import harpe.util.Process
 import harpe.logging.Logging
 import harpe.logging.JsonlLogger
+import harpe.logging.TeeLogger
 import harpe.logging.logger
+import harpe.observability.ViewLogger
+import harpe.observability.Viewer
 import harpe.Model.UserInput
 import harpe.turns.TurnResult
 import harpe.tools.RunCodeTool
@@ -29,9 +32,18 @@ def main(): Unit receives args, stdout =
   val pr = args[0]
 
   Process.loadDotenv(".env")
+  File.ensureDir(os.path.join(os.path.abspath("."), "logs"))
+  val host = os.getenv("VIEW_HOST", "127.0.0.1")
+  val port = Int.parse(os.getenv("VIEW_PORT", "8766")) rescue None => 8766
+  val viewLog = new ViewLogger(capacity = 5000)
+  Viewer.start(viewLog, "PR Review · harpe journal", host, port)
+  println "Logs at http://\{host}:\{port}"
   with appHome = os.path.abspath(".") in
     Logging.withLogger:
-      new JsonlLogger: os.path.join(appHome, "logs/agent.jsonl")
+      new TeeLogger([
+        new JsonlLogger(os.path.join(appHome, "logs/agent.jsonl")),
+        viewLog
+      ])
       () => review(pr)
 
 private def review(pr: String): Unit receives stdout, appHome, logger =

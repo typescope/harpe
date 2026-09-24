@@ -154,9 +154,6 @@ class ChatServer(brain: Model, name: String, home: String)
     // gone; a route that needs a path's parts splits it once.
     case Request.Get(path) if Request.segments(path) is ["c", _] => page()
 
-    case Request.Get("/app.css")         => staticAsset("app.css")
-    case Request.Get("/app.js")          => staticAsset("app.js")
-
     case Request.Get("/api/info")        => Response.json(py.dict("name" ~ name))
     case Request.Get("/api/sessions")    => handleSessions()
     case Request.Get("/api/history")     => handleHistory()
@@ -187,26 +184,6 @@ class ChatServer(brain: Model, name: String, home: String)
   //[ The chat page itself, read from disk per request. //]
   private def page(): Response receives request, appHome =
     Response.html(File.read(indexPath()))
-
-  //[ Serve the page's split stylesheet/script (`/app.css`, `/app.js`)
-    !
-    ! From the agent's `assets/` directory — read from disk per request, like
-    ! the page, so editing them needs no rebuild. The name is reduced to a
-    ! basename, so the path can never escape `assets/`. A missing file is a 404.
-  //]
-  private def staticAsset(asset: String): Response receives request, appHome =
-    val name = sanitizeName(asset)   // basename → strips any traversal
-    val p = os.path.join(appHome, "assets", name)
-
-    if name == "" || !os.path.isfile(p) then
-      Response.notFound()
-
-    else
-      val kind: Http.Mime.Type =
-        if name.endsWith(".css") then Http.Mime.Css
-        else if name.endsWith(".js") then Http.Mime.JavaScript
-        else Http.Mime.Text
-      Response.complete(Http.Status.Success, kind, File.read(p))
 
   //[ Start one turn, and answer at once with the session and cursor to poll.
     !

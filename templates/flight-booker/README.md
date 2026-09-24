@@ -33,6 +33,9 @@ jo start
 Then open <http://127.0.0.1:8765>. When the agent is ready to book it shows a
 confirmation card in the chat — approve or reject it there.
 
+Open <http://127.0.0.1:8765/journal> to inspect the live log viewer. The
+startup output prints the same URL.
+
 ## Layout
 
 ```text

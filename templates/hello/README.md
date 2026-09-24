@@ -1,7 +1,7 @@
 # hello
 
-The smallest complete Harpe agent. No sessions or logs — the whole loop is in
-`src/Main.jo`. It provides `runCode` and a Jo syntax skill.
+The smallest complete Harpe agent. The whole loop is in `src/Main.jo`; it also
+shows an in-memory live log. It provides `runCode` and a Jo syntax skill.
 
 ## Setup
 
@@ -22,7 +22,9 @@ In `.env`, set `MODEL` and one provider key: `ANTHROPIC_API_KEY`,
 jo start
 ```
 
-It reads a line, answers it, and repeats.
+The startup output prints a local log viewer URL, normally
+<http://127.0.0.1:8766>. Set `VIEW_HOST` or `VIEW_PORT` to change it. It reads
+a line, answers it, and repeats.
 
 ## Layout
 

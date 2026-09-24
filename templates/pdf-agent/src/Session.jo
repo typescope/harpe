@@ -30,6 +30,8 @@ import harpe.transcript.Journal
 import harpe.turns.TurnData
 import harpe.logging.JsonlLogger
 import harpe.logging.Logger
+import harpe.logging.ContextLogger
+import harpe.logging.TeeLogger
 import harpe.logging.logger
 import harpe.logging.Entry
 import harpe.logging.Value
@@ -359,17 +361,15 @@ section Session
 
       files.sortBy(f => f.modified).reverse
 
-  //[ An append log for this session. The file is created lazily.
-    ! `ContextLogger` becomes visible to applications in the next Harpe release;
-    ! until then, this writes the durable session log only.
+  //[ An append log for this session, with a scoped copy sent to the shared viewer.
+    ! The file is created lazily. The scoped logger borrows `viewLog`, so closing
+    ! a session closes only its file.
   //]
   def forSession(id: String, viewLog: Logger): Logger receives appHome =
-    new JsonlLogger(sessionPath(id))
-    // Future viewer integration after the next Harpe release:
-    // new TeeLogger([
-    //   new JsonlLogger(sessionPath(id)),
-    //   new ContextLogger(viewLog, "pdf.agent.session=\{id}")
-    // ])
+    new TeeLogger([
+      new JsonlLogger(sessionPath(id)),
+      new ContextLogger(viewLog, "pdf.agent.session=\{id}")
+    ])
 
   //[ Permanently remove a session's transcript and data directory. //]
   def removeStored(id: String): Unit receives appHome =

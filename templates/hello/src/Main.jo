@@ -11,13 +11,20 @@ import harpe.util.File
 import harpe.ffi.os
 import harpe.logging.Logging
 import harpe.logging.logger
+import harpe.observability.ViewLogger
+import harpe.observability.Viewer
 import harpe.tools.RunCodeTool
 import harpe.tools.SkillTools
 import harpe.turns.TurnResult
 
 def main(): Unit receives stdout =
   Process.loadDotenv(".env")
-  Logging.withLogger(Logging.discard, () => chat())
+  val host = os.getenv("VIEW_HOST", "127.0.0.1")
+  val port = Int.parse(os.getenv("VIEW_PORT", "8766")) rescue None => 8766
+  val viewLog = new ViewLogger(capacity = 5000)
+  Viewer.start(viewLog, "Hello · harpe journal", host, port)
+  println "Logs at http://\{host}:\{port}"
+  Logging.withLogger(viewLog, () => chat())
 
 // This application keeps its files beside itself — `sandbox/`, `data/`, and
 // `prompts/SYSTEM.md` — and is run from its own directory, so paths are relative to it.

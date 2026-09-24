@@ -38,6 +38,8 @@ import harpe.context.WindowedContext
 import harpe.transcript.Journal
 import harpe.logging.Value
 import harpe.logging.logger
+import harpe.observability.ViewLogger
+import harpe.observability.Viewer
 
 //[ Where this application's files live: `sandbox/`, `skills/`, `data/`, `logs/`, `prompts/SYSTEM.md`
   !
@@ -58,6 +60,7 @@ private def serve(): Unit receives stdout, appHome =
     sys.exit(1)
 
   val brain = Model.default()
+  val viewLog = new ViewLogger(capacity = 5000)
   val rawAllowed = os.getenv("TELEGRAM_ALLOWED_SENDERS", "")
   var allowed: List[String] = []
 
@@ -80,7 +83,11 @@ private def serve(): Unit receives stdout, appHome =
   val result = me.get("result").cast[py.Dict]
   val username = result.get("username").asString
   val botId = result.get("id").asInt
-  val bot = new TelegramBot(brain, client, allowed, username, botId)
+  val bot = new TelegramBot(brain, client, allowed, username, botId, viewLog)
+
+  val viewerHost = os.getenv("VIEW_HOST", "127.0.0.1")
+  val viewerPort = Int.parse(os.getenv("VIEW_PORT", "8766")) rescue None => 8766
+  Viewer.start(viewLog, "Carmen · harpe journal", viewerHost, viewerPort)
 
   println """
 
@@ -94,6 +101,7 @@ private def serve(): Unit receives stdout, appHome =
     """
 
   println "  Live as @\{username}"
+  println "  Logs at http://\{viewerHost}:\{viewerPort}"
   println "  Ctrl-C to stop"
 
   if allowed.isEmpty then
@@ -165,7 +173,7 @@ end
 
 private class TelegramBot(
     brain: Model, client: TelegramClient, allowed: List[String],
-    botUsername: String, botId: Int)
+    botUsername: String, botId: Int, viewLog: ViewLogger)
 
   // Resident sessions, chatId -> Session. A chat not yet touched this run is
   // loaded from disk on first message. Guarded by `registryLock` for the one
@@ -452,7 +460,7 @@ private class TelegramBot(
     registryLock.release()
 
     if !live then
-      val log = Session.forSession(chatId)
+      val log = Session.forSession(chatId, viewLog)
       // `Session.load` caps the replayed transcript (a RAM backstop). The full
       // transcript stays on disk.
       val context = new WindowedContext:

@@ -18,7 +18,7 @@ on:
     paths: ['templates/**', 'jo-templates.jsonl', '.github/workflows/templates.yml']
 
 env:
-  JO_REGISTRY_URL: https://pkg.typescope.ai
+  JO_REGISTRY_URL: https://pkg.jo-lang.org
 
 jobs:
   agent:
@@ -84,8 +84,7 @@ jobs:
         run: |
           if [ -d tests ]; then jo run tests; else echo "no tests for ${{ matrix.agent }}"; fi
 
-  # The path a user actually takes. It needs the repository to be public — `jo
-  # new` fetches over plain HTTPS and cannot authenticate — so it stays disabled
-  # until then rather than failing on every run.
-  #
-  #  jo new probe --template typescope/harpe#${{ github.sha }}:web
+      # Exercise the public path a user takes, at this exact PR commit.
+      - name: Create from the public template
+        working-directory: ${{ runner.temp }}
+        run: jo new probe --template typescope/harpe#${{ github.sha }}:${{ matrix.agent }}

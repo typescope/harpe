@@ -18,6 +18,7 @@ import harpe.ffi.signal
 import harpe.util.File
 
 import jo.IO.stdout
+import harpe.server.Route
 import harpe.server.WebApp
 import harpe.Model
 import harpe.ffi.os
@@ -64,15 +65,15 @@ private def serve(): Unit receives stdout, appHome =
     // Answers to localhost, 127.0.0.1 and ::1. A deployment reached by another
     // name puts that name here instead, as a string.
     host = WebApp.Loopback
-    routes = []
-    fallback = WebApp.Fallback(() => server.route(), maxBodyBytes = 26214400)
+    routes = [Route.assets("/assets/", os.path.join(appHome, "assets"))]
+    fallback = WebApp.Fallback(() => server.route(), maxReqBody = 26214400)
 
   val httpd = py.module("waitress").create_server:
-    application.wsgi()
+    application.wsgi(output = stdout)
     host = host
     port = port
     threads = 16
-    max_request_body_size = application.maxRequestBodyBytes
+    max_request_body_size = application.maxReqBody
 
   println """
 

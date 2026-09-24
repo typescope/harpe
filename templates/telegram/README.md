@@ -32,6 +32,9 @@ In `.env`:
 jo start
 ```
 
+The startup output prints a local log viewer URL, normally
+<http://127.0.0.1:8766>. Set `VIEW_HOST` or `VIEW_PORT` to change it.
+
 ## Layout
 
 ```text

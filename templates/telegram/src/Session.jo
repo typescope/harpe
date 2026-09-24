@@ -21,6 +21,7 @@ import harpe.Toolset
 import harpe.transcript.Journal
 import harpe.logging.JsonlLogger
 import harpe.logging.Logger
+import harpe.logging.TeeLogger
 import harpe.logging.logger
 import harpe.Model
 import harpe.Tool
@@ -233,8 +234,8 @@ section Session
     dir
 
   //[ An append log for this chat's session (its file is created lazily). //]
-  def forSession(chatId: String): Logger receives appHome =
-    new JsonlLogger(sessionPath(chatId))
+  def forSession(chatId: String, viewLog: Logger): Logger receives appHome =
+    new TeeLogger([new JsonlLogger(sessionPath(chatId)), viewLog])
 
   //[ The files this turn delivered, in the order the agent sent them
     !
