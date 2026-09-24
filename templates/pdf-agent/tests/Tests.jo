@@ -26,8 +26,7 @@ def main(): Unit receives stdout, args =
 
 private def run(): Unit receives stdout, logger, args =
   val root = Testing.define("pdf-agent", () => suites())
-  val filter = if args.size > 0 then args[0] else ""
-  val passed = Runner.run(root, filter)
+  val passed = Runner.runWithArgs(root)
   if !passed then py.module("sys").exit(1)
 
   println ""
