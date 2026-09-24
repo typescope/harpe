@@ -13,7 +13,7 @@ preview = "logistics"
 title = "Personalized discounting"
 kind = "Case study"
 path = "case-studies/personalized-discounting.md"
-description = "Plan individual discounts from purchase history while keeping personal data private."
+description = "Plan individualized discounts while keeping customer data private."
 preview = "discounting"
 
 [[extra.showcase]]

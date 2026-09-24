@@ -15,15 +15,14 @@ operations.
 
 ## Why specialized agents?
 
-A general-purpose agent asks to be trusted with broad authority. That is not a
-secure solution for transferring money, changing an official record, or touching a
-patient's file.
+A general-purpose agent is usually granted with broad authorities.
+It can cause severe security issues when the agent is manipulated by either malicious prompt or incorrect AI instruction.
 
-A specialized agent has a pre-defined role, so its authority can be cut down to
-the role and checked. That is the
+A specialized agent has a pre-defined role, so its authority can be
+scoped and checked. That is the
 [**principle of least authority**](https://en.wikipedia.org/wiki/Principle_of_least_privilege)
-(PoLA), and we believe it is the only way to make an agent fit for high-stake
-critical infrastructure and sensitive data.
+(PoLA), and we believe it is the right way to make an agent fit for high-stake
+critical infrastructure and sensitive data use cases.
 
 ![A general agent and a specialized agent side by side. The same five systems appear in both as bubbles: database, REST APIs, files, shell and email. For the general agent every bubble is open, so all of every system is in reach. For the specialized agent three bubbles are masked out entirely, and the two that remain are open only over a small patch of themselves.](/img/general-vs-specialized.svg)
 
@@ -35,53 +34,47 @@ Harpe enforces fine-grained permissions through
 ![Model-generated code is confined behind a typed boundary. It can reach the trusted runtime and outside world only through capabilities explicitly exposed by the application's API.](/img/typed-sandbox.svg)
 
 For each agent action step, the model writes a Jo program. Harpe compiles it as an
-untrusted guest against capability interfaces chosen by the application.
+untrusted guest against capability interfaces predefined by the application.
 Trusted implementations retain credentials, tenant scope, and validation.
 
-The capability interface scopes the guest's authority:
+The capability interface scopes the agent's authority:
 
-- broad authority can be attenuated into narrow domain operations, such as a
-  read-only, tenant-scoped query
+- broad authority can be attenuated into narrow domain operations, such as
+a read-only, tenant-scoped query
 - undeclared capabilities, FFI, and ambient host access are unavailable
 - the compiler checks direct and transitive capability usage
 
 ## Why let the agent write code?
 
-Code is a compact action language. It provides loops, branching, error handling,
+Programming is more flexible and efficient than using fixed tools. It provides loops, branching, error handling,
 and data transformation without routing every intermediate value through the
 model.
 
 This is not unique to Harpe. CodeAct
 [[1]](#reference-codeact) evaluated 17 LLMs on API-Bank and M³ToolEval, a
-benchmark of its own, and reported up to a 20% higher success rate for code than
+benchmark of its own, and reported up to a
+20% higher success rate for code than
 for the common text and JSON action formats.
 
 ![Task success rate by action format on the M³ToolEval benchmark. GPT-4-1106 scores 74.4% with code against 52.4% with JSON and 53.7% with text. Claude-2 scores 54.9% against 39.0% and 29.3%. GPT-3.5-turbo scores 51.2% against 26.8% and 20.7%. These are three of the seventeen models evaluated, and code came first on twelve of them.](/img/codeact-success-rate.svg)
 
 Anthropic
 [[2]](#reference-anthropic) and Cloudflare
-[[3]](#reference-cloudflare) have shown how code execution can reduce
+[[3]](#reference-cloudflare) have also shown how code execution can reduce
 tool-schema overhead, compose operations, and process intermediate data outside
 the model context.
-
-Harpe takes a defending position on the security consequence: LLM-generated code is
-useful, but they should be confined to only permitted operations.
-Following PoLA, we think that granted authority should be explicit, narrow, and
-mechanically checked.
 
 ## Minimizing attack surface
 
 A sandbox's security also depends on the surface area that untrusted code can reach.
 In *VMs won't contain cyber-capable agents* [[4]](#reference-trail-of-bits),
 Trail of Bits reports an agent escaping a QEMU/KVM virtual machine by chaining
-vulnerabilities in its virtualization and networking stack, including previously
-unknown bugs. Each exposed feature gives an agent more code to probe for a way
-across the boundary.
+vulnerabilities in its virtualization and networking stack.
 
-Harpe reduces that the attack surface through narrow capability interfaces. A calendar agent
-can receive operations to check availability and reserve a slot, with credentials
-and network access kept in trusted implementations. LLM-generated Jo code has no
-ambient access to a shell, raw sockets, FFI, or virtual devices.
+Harpe can reduce attack surface by narrowing the capability interface. A calendar agent
+can be granted capabilities to only check availability and reserve a slot,
+without access to credentials and non-granted API end points. In Harpe, the
+LLM-generated code has no ambient access to a shell, file system, raw sockets, or virtual devices.
 
 ## The cost and benefits of typed trust boundaries
 
