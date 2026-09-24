@@ -17,7 +17,6 @@ import harpe.Model.*
 import harpe.metering.Usage
 import harpe.Tool
 import harpe.Tool.*
-import harpe.logging.logger
 
 
 section Anthropic
@@ -187,8 +186,11 @@ private class AnthropicModel(
     client: py.Dynamic, model: String, cache: Anthropic.Cache, extraBody: py.Dict)
   view Model
 
+  def name: String = model
+  def provider: String = "anthropic"
+
   def startTurn(base: Rendered, maxOutputTokens: Int): Session =
-    new AnthropicSession(client, model, cache, maxOutputTokens, extraBody, base)
+    new AnthropicSession(this, client, model, cache, maxOutputTokens, extraBody, base)
 end
 
 //[ A reasoning-preserving turn on the Messages API.
@@ -201,7 +203,7 @@ end
   ! the reasoning rides in the wire history, never in the semantic `Message`.
 //]
 private class AnthropicSession(
-    client: py.Dynamic, model: String, cache: Anthropic.Cache,
+    owner: Model, client: py.Dynamic, modelName: String, cache: Anthropic.Cache,
     maxOutputTokens: Int, extraBody: py.Dict, base: Rendered)
   view Session
 
@@ -210,7 +212,9 @@ private class AnthropicSession(
   private var messages: py.List = py.list()
   private var initialized: Bool = false
 
-  def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult receives logger =
+  def model: Model = owner
+
+  def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult =
     if !initialized then
       messages = anthropicToMessages(base.messages, cache)
       initialized = true
@@ -233,7 +237,7 @@ private class AnthropicSession(
 
     val attempt = anthropicCreate:
       client
-      model
+      modelName
       cache
       base.system
       outgoing
@@ -259,16 +263,15 @@ private class AnthropicSession(
       val used =
         new Usage:
           "anthropic"
-          model
+          modelName
           inputTokens = Util.usageInt(u, "input_tokens") + cacheRead + cacheWrite
           outputTokens = u.output_tokens.asInt
           cacheReadTokens = cacheRead
           cacheWriteTokens = cacheWrite
 
-      ModelLog.logReplied(used)
       Reply(anthropicParseReply(response), used)
 
-    case Err(err) => classifyError(err, "anthropic", model)
+    case Err(err) => classifyError(err)
 end
 
 //[ A user turn carrying tool_result blocks for `results`.

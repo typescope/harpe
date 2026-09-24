@@ -7,10 +7,10 @@
   ! runs the tools. The model only turns (system, history, tools) into the next
   ! reply.
   !
-  ! The interface names no provider. The one exception is `Model.default`, the
-  ! ready-made model the drivers wire in: it picks a provider from the
-  ! environment, so it has to know them all. It lives here because what it
-  ! returns is a `Model` and nothing else about it is a provider's business.
+  ! The interface exposes only a model's identity (`name` and `provider`), so
+  ! the turn engine can attribute and time calls uniformly. Provider protocol
+  ! details remain behind `startTurn`. `Model.default`, the ready-made model the
+  ! drivers wire in, picks a provider from the environment.
 //]
 
 namespace harpe
@@ -23,7 +23,6 @@ import harpe.Model.Session
 import harpe.Tool
 import harpe.Tool.ToolResult
 import harpe.Tool.ToolCall
-import harpe.logging.logger
 import harpe.models.*
 import harpe.ffi.os
 import harpe.ffi.sys
@@ -43,6 +42,12 @@ import harpe.ffi.sys
   ! never learn reasoning exists.
 //]
 interface Model
+  //[ The provider's model identifier (for example `claude-opus-4-6`). //]
+  def name: String
+
+  //[ The provider or endpoint family used to reach the model. //]
+  def provider: String
+
   //[ Begin one user turn
     !
     ! `maxOutputTokens` bounds what the model may PRODUCE in a single reply, and
@@ -208,9 +213,8 @@ section Model
     !
     ! `reply` receives the active `Interact`: a streaming provider emits
     ! provisional text chunks and observes cancellation while it assembles the
-    ! complete `ReplyResult`. It also `receives logger` at call time so a
-    ! provider can emit token usage to the turn's logging context (see
-    ! `harpe.models.ModelLog.logReplied`).
+    ! complete `ReplyResult`. It has no logging capability: request, reply,
+    ! failure, and usage records are emitted uniformly by the turn engine.
     ! An attachment carries its own `path`, so nothing here needs to be told a
     ! data directory to resolve it against.
     !
@@ -220,7 +224,10 @@ section Model
     ! failed attempt mutates nothing. The caller never tracks what it committed.
   //]
   interface Session
-    def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult receives logger
+    //[ The model that created this session. //]
+    def model: Model
+
+    def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult
 
   //[ SimpleSession
     !
@@ -230,12 +237,14 @@ section Model
     ! Providers that carry intra-turn state (e.g. reasoning handles) implement
     ! `Session` directly instead.
   //]
-  class SimpleSession(base: Rendered, send: (Rendered, List[Tool], Interact) => ReplyResult receives logger)
+  class SimpleSession(owner: Model, base: Rendered, send: (Rendered, List[Tool], Interact) => ReplyResult)
     view Session
 
     private var messages: List[Message] = base.messages
 
-    def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult receives logger =
+    def model: Model = owner
+
+    def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult =
       // Build the request WITHOUT committing, so a failed attempt leaves the tail
       // untouched and a retry (same results) re-sends identically.
       val outgoing =

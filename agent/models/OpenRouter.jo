@@ -16,7 +16,6 @@ import harpe.Model.*
 import harpe.metering.Usage
 import harpe.Tool
 import harpe.Tool.*
-import harpe.logging.logger
 
 private section OpenRouterResponses
   def toolSpec(t: Tool): py.Dict =
@@ -122,12 +121,15 @@ private class OpenRouterModel(
     client: py.Dynamic, model: String, effort: String, extraBody: py.Dict)
   view Model
 
+  def name: String = model
+  def provider: String = "openrouter"
+
   def startTurn(base: Rendered, maxOutputTokens: Int): Session =
-    new OpenRouterSession(client, model, effort, maxOutputTokens, extraBody, base)
+    new OpenRouterSession(this, client, model, effort, maxOutputTokens, extraBody, base)
 end
 
 private class OpenRouterSession(
-    client: py.Dynamic, model: String, effort: String,
+    owner: Model, client: py.Dynamic, modelName: String, effort: String,
     maxOutputTokens: Int, extraBody: py.Dict, base: Rendered)
   view Session
 
@@ -148,7 +150,9 @@ private class OpenRouterSession(
   //]
   private var committedInput: Option[py.List] = None
 
-  def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult receives logger =
+  def model: Model = owner
+
+  def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult =
     val input = py.list()
 
     match committedInput
@@ -170,7 +174,7 @@ private class OpenRouterSession(
     for t in tools do specs.append(OpenRouterResponses.toolSpec(t))
 
     match openRouterCreate(
-      client, model, effort, base.system, input, specs, maxOutputTokens, extraBody, interact)
+      client, modelName, effort, base.system, input, specs, maxOutputTokens, extraBody, interact)
     case Ok(response) =>
       // Preserve every raw output item, including reasoning, messages, and
       // function calls. OpenRouter requires these items unchanged and in order
@@ -191,15 +195,14 @@ private class OpenRouterSession(
       val used =
         new Usage:
           "openrouter"
-          model
+          modelName
           inputTokens = inTok
           outputTokens = outTok
           cacheReadTokens = if details.isNone then 0 else Util.usageInt(details, "cached_tokens")
           cacheWriteTokens = 0
 
-      ModelLog.logReplied(used)
       Model.Reply(OpenRouterResponses.parseResponse(response), used)
-    case Err(err) => classifyError(err, "openrouter", model)
+    case Err(err) => classifyError(err)
 end
 
 //[ One `responses.create` call against OpenRouter.

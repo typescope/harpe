@@ -15,8 +15,11 @@ import harpe.metering.Usage
 private class EchoModel
   view Model
 
+  def name: String = "echo"
+  def provider: String = "echo"
+
   def startTurn(base: Rendered, maxOutputTokens: Int): Session =
-    new SimpleSession(base, (rendered, tools, interact) => echoReply(rendered))
+    new SimpleSession(this, base, (rendered, tools, interact) => echoReply(rendered))
 
 //[ Reply with the last user message, prefixed — no tool calls, so the turn ends. //]
 private def echoReply(rendered: Rendered): ReplyResult =
