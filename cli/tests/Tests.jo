@@ -14,6 +14,7 @@
 namespace harpe.cli.tests.Main
 
 import jo.IO.stdout
+import jo.IO.args
 import harpe.logging.Logging
 import harpe.logging.logger
 import harpe.testing.Testing
@@ -22,12 +23,13 @@ import harpe.testing.suite
 import harpe.testing.thisSuite
 import harpe.cli.tests.CliTest
 
-def main(): Unit receives stdout =
+def main(): Unit receives stdout, args =
   Logging.withLogger(Logging.discard, () => run())
 
-private def run(): Unit receives stdout, logger =
+private def run(): Unit receives stdout, logger, args =
   val root = Testing.define("cli", () => suites())
-  val passed = Runner.run(root, Runner.filterFromArgs(), Runner.lanesFromEnv())
+  val filter = if args.size > 0 then args[0] else ""
+  val passed = Runner.run(root, filter)
   if !passed then py.module("sys").exit(1)
 
   println ""

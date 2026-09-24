@@ -16,7 +16,7 @@ namespace harpe.testing
 
 //[ Python's `os` module, in the part this framework uses. //]
 @py.interop
-interface OsApi
+private interface OsApi
   //[ The process environment as a string map. //]
   @py.property
   def environ: py.Dict
@@ -26,7 +26,7 @@ interface OsApi
 
 //[ Python's `time` module, in the part this framework uses. //]
 @py.interop
-interface TimeApi
+private interface TimeApi
   //[ Seconds from an unspecified origin, never going backwards.
     !
     ! For measuring elapsed time, where the wall clock could jump.
@@ -35,7 +35,7 @@ interface TimeApi
 
 //[ Python's `threading` module, in the part this framework uses. //]
 @py.interop
-interface ThreadingApi
+private interface ThreadingApi
   //[ A mutual-exclusion lock (`acquire`/`release`). //]
   def Lock(): py.Dynamic
 
@@ -44,7 +44,7 @@ interface ThreadingApi
 
 //[ Python's builtins, in the part this framework uses. //]
 @py.interop
-interface BuiltinsApi
+private interface BuiltinsApi
   //[ The character with code point `code`. //]
   def chr(code: Int): String
 
@@ -54,13 +54,13 @@ interface BuiltinsApi
   //[ `x` as an integer. //]
   def int(x: Any): Int
 
-def os: OsApi = py.module("os").cast[OsApi]
+private def os: OsApi = py.module("os").cast[OsApi]
 
-def time: TimeApi = py.module("time").cast[TimeApi]
+private def time: TimeApi = py.module("time").cast[TimeApi]
 
-def threading: ThreadingApi = py.module("threading").cast[ThreadingApi]
+private def threading: ThreadingApi = py.module("threading").cast[ThreadingApi]
 
-def builtins: BuiltinsApi = py.module("builtins").cast[BuiltinsApi]
+private def builtins: BuiltinsApi = py.module("builtins").cast[BuiltinsApi]
 
 //[ A daemon thread running `target` — it dies with the process. Call `.start()`. //]
-def daemon(target: Any): py.Dynamic = threading.Thread(target = target, daemon = true)
+private def daemon(target: Any): py.Dynamic = threading.Thread(target = target, daemon = true)

@@ -1,8 +1,7 @@
 # Release workflow
 
-Releases are made in the public repository, `typescope/harpe`.
-`typescope/harpe-dev` is the private development repository. Confirm that
-`origin` points to the public repository before pushing a release branch or tag.
+Releases are made in `typescope/harpe`. Confirm that `origin` points to this
+repository before pushing a release branch or tag.
 
 Harpe publishes three packages together: `harpe-caps` (pure capability
 interfaces), `harpe` (the Python runtime, depending on `harpe-caps`), and
@@ -11,6 +10,10 @@ interfaces), `harpe` (the Python runtime, depending on `harpe-caps`), and
 The order is: validate locally, merge a green release PR, publish the GitHub
 release, wait for Jo's registry, merge a separate template PR, open the two
 downstream upgrade PRs, then deploy the documentation.
+
+A maintainer performs every PR merge. Release automation prepares and validates
+the PRs, waits for their merge, and then continues with publication or deployment.
+It must not merge PRs itself.
 
 ~~~sh
 VERSION=0.12.0
@@ -82,9 +85,15 @@ so the release PR does not depend on an unpublished package.
 
 ~~~sh
 gh pr checks --repo typescope/harpe RELEASE_PR
-gh pr merge --repo typescope/harpe RELEASE_PR --merge --match-head-commit HEAD_SHA
+gh pr view --repo typescope/harpe RELEASE_PR --json state,mergeCommit
+~~~
+
+Wait for the maintainer to merge the green PR. Once its state is `MERGED`, fetch
+and check out the reported merge commit:
+
+~~~sh
 git fetch origin main
-git switch --detach origin/main
+git switch --detach MERGE_COMMIT
 git status --short
 ~~~
 
@@ -97,6 +106,13 @@ Package only from the clean merged commit, with the compiler used for validation
 jo package caps
 jo package harpe
 jo package testing
+jo doc caps
+jo doc harpe
+jo doc testing
+python3 scripts/package-api-docs.py "$VERSION" --output /tmp/harpe-api-release
+for archive in /tmp/harpe-api-release/*-api-docs-v$VERSION.zip; do
+  (cd "$(dirname "$archive")" && sha512sum --check "$(basename "$archive").sha512")
+done
 
 (cd .build/caps/release && sha512sum --check harpe-caps-v$VERSION.joy.sha512 && sha512sum --check harpe-caps-v$VERSION-sources.zip.sha512)
 (cd .build/harpe/release && sha512sum --check harpe-v$VERSION.joy.sha512 && sha512sum --check harpe-v$VERSION-sources.zip.sha512)
@@ -135,6 +151,12 @@ gh release create v$VERSION \
   .build/testing/release/harpe-testing-python-v$VERSION.joy.sha512 \
   .build/testing/release/harpe-testing-python-v$VERSION-sources.zip \
   .build/testing/release/harpe-testing-python-v$VERSION-sources.zip.sha512 \
+  /tmp/harpe-api-release/harpe-caps-api-docs-v$VERSION.zip \
+  /tmp/harpe-api-release/harpe-caps-api-docs-v$VERSION.zip.sha512 \
+  /tmp/harpe-api-release/harpe-api-docs-v$VERSION.zip \
+  /tmp/harpe-api-release/harpe-api-docs-v$VERSION.zip.sha512 \
+  /tmp/harpe-api-release/harpe-testing-python-api-docs-v$VERSION.zip \
+  /tmp/harpe-api-release/harpe-testing-python-api-docs-v$VERSION.zip.sha512 \
   --repo typescope/harpe --verify-tag \
   --title "Harpe $VERSION" --notes-file /tmp/harpe-release-notes.md
 ~~~
@@ -183,8 +205,8 @@ declared test suite. Check `jo new` against the PR commit as well, now that the
 repository is public.
 
 Open the template PR against `typescope/harpe:main`. Check that its diff contains
-published package pins, with no temporary source references. Merge only when
-the `Jo` job and all `Templates` jobs pass on its final head. `jo new` serves
+published package pins, with no temporary source references. The maintainer
+merges only when the `Jo` job and all `Templates` jobs pass on its final head. `jo new` serves
 the default branch, so these checks protect newly created projects.
 
 ## 6. Open the downstream upgrade PRs
@@ -202,6 +224,13 @@ Build the application and all sandbox guests, run its documented tests, and
 include the results in the PR. Leave these PRs for downstream review.
 
 ## 7. Deploy the documentation
+
+The docs workflow reads the append-only `docs/api-versions.jsonl` manifest,
+downloads each available `*-api-docs-vVERSION.zip` asset, and unpacks it under
+its package and version path. It writes the available versions to
+`docs/api-docs.json`; the site uses that metadata to render the API dropdown,
+with the newest version first for each library. Older generated docs remain
+available at their original versioned paths when a new release is published.
 
 After the template PR is merged and both downstream PRs are open, deploy the
 public repository's current `main`:

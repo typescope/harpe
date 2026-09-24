@@ -1,4 +1,5 @@
 {% import "macros_svg.html" as macros_svg %}
+{% set api_docs = load_data(path="api-docs.json", required=false) %}
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
@@ -22,6 +23,21 @@
     </a>
     <nav class="nav-links">
       <a href="/overview/why-harpe/">Docs</a>
+      {% if api_docs and api_docs.libraries %}
+      <details class="nav-menu">
+        <summary>API <span aria-hidden="true">⌄</span></summary>
+        <div class="nav-menu-panel">
+          {% for library in api_docs.libraries %}
+          <div class="nav-menu-library">
+            <span>{{ library.name }}</span>
+            {% for version in library.versions %}
+            <a href="{{ version.path | safe }}">{{ version.version }}{% if loop.first %} <small>latest</small>{% endif %}</a>
+            {% endfor %}
+          </div>
+          {% endfor %}
+        </div>
+      </details>
+      {% endif %}
       <a href="https://jo-lang.org" target="_blank" rel="noopener noreferrer">Jo Language ↗</a>
       <a class="nav-cta" href="{{ config.extra.github }}" target="_blank" rel="noopener noreferrer" aria-label="GitHub" title="GitHub">
         <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false">

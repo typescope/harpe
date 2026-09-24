@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
+      - '.github/scripts/fetch-api-docs.sh'
+      - 'docs/api-versions.jsonl'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
@@ -27,6 +29,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+
+      - name: Fetch versioned API documentation
+        run: .github/scripts/fetch-api-docs.sh
 
       - name: Install Zola ${{ env.ZOLA_VERSION }}
         run: |
