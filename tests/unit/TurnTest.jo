@@ -298,7 +298,7 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
       checkEquals:
         "failure order"
         capture.events.join(",")
-        "user,harpe.model.sent,harpe.model.failed,harpe.model.gaveUp,harpe.turn.failed"
+        "user,harpe.model.send,harpe.model.failed,harpe.model.gaveUp,harpe.turn.failed"
 
       val fields = Entry.toDict(capture.entries.get(2)).get("fields").cast[py.Dict]
       checkEquals("provider from session model", fields.get("provider", "").asString, "test")
@@ -483,7 +483,7 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
       checkEquals:
         "order"
         capture.events.join(",")
-        expected = "user,harpe.model.sent,harpe.model.replied,harpe.metering.usage,assistant-calls,tool-invoked,tool_results,harpe.model.sent,harpe.model.replied,harpe.metering.usage,assistant-text,harpe.turn.answered"
+        expected = "user,harpe.model.send,harpe.model.replied,harpe.metering.usage,assistant-calls,tool-invoked,tool_results,harpe.model.send,harpe.model.replied,harpe.metering.usage,assistant-text,harpe.turn.answered"
 
     // A tool exception must not erase the assistant message that requested it.
     test: "survives the tool raising", () =>
@@ -499,7 +499,7 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
       checkEquals:
         "order"
         capture.events.join(",")
-        expected = "user,harpe.model.sent,harpe.model.replied,harpe.metering.usage,assistant-calls,tool-failed,tool_results,harpe.model.sent,harpe.model.replied,harpe.metering.usage,assistant-text,harpe.turn.answered"
+        expected = "user,harpe.model.send,harpe.model.replied,harpe.metering.usage,assistant-calls,tool-failed,tool_results,harpe.model.send,harpe.model.replied,harpe.metering.usage,assistant-text,harpe.turn.answered"
 
   // Crossing the threshold after a completed tool round replaces the provider
   // session while preserving the tool effect and the logical turn.
