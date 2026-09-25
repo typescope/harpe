@@ -50,7 +50,7 @@ skills directory:
 
 ```text
 skills/
-  jo-cheat-sheet.md
+  jo-syntax.md
   reviews/
     pull-requests.md
   api/
@@ -107,7 +107,7 @@ Adding the tools makes skills available, but the model still needs to understand
 when they matter. Give it a short pointer in `prompts/SYSTEM.md`:
 
 > Reference material is available through the skill tools. Before writing Jo,
-> read `jo-cheat-sheet.md`. For payment tasks, consult `api/payments.md`.
+> read `jo-syntax.md`. For payment tasks, consult `api/payments.md`.
 
 Name important skills when the choice is predictable. When the collection is
 larger or changes often, tell the agent to list or search it before beginning a
