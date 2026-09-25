@@ -235,7 +235,7 @@ section Agent
 
   //[ The engine's own events for how it handled a model request
     !
-    ! The attempt itself is `harpe.model.sent`, followed by `replied` or `failed`.
+    ! The attempt itself is `harpe.model.send`, followed by `replied` or `failed`.
     ! What is left here is the decision the loop took about a failure it was
     ! handed — retry, or stop — and neither is a fact about the request. Reading
     ! the subtree in order gives the whole story: what was attempted, then what
@@ -279,7 +279,7 @@ section Agent
 
       interact.emit: TurnEvent.ModelRequestStarted(attempt, maxRetries)
       val model = session.model
-      logger.log("harpe.model.sent", "provider" ~ model.provider, "model" ~ model.name)
+      logger.log("harpe.model.send", "provider" ~ model.provider, "model" ~ model.name)
 
       // `reply` is idempotent — the Session commits `results` only on success, so
       // every attempt (including retries) passes the same `results`.

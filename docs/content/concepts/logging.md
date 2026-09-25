@@ -105,7 +105,7 @@ place to record it.
 | `harpe.tools.runCode.ran` | `code`, `compileSeconds`, `runSeconds`, `exitCode`, `output` | a program that compiled and ran |
 | `harpe.tools.runCode.compileFailed` | `code`, `compileSeconds`, `compileError` | it did not compile |
 | `harpe.tools.runCode.compileTimedOut` / `.timedOut` / `.approvalTimedOut` | | a clock ran out during the build, the run, or the approval the run was waiting on |
-| `harpe.model.sent` | `provider`, `model` | one attempt handed to a provider. Compare its timestamp with the following `replied` or `failed` event to measure call latency |
+| `harpe.model.send` | `provider`, `model` | one attempt handed to a provider. Compare its timestamp with the following `replied` or `failed` event to measure call latency |
 | `harpe.model.replied` | `provider`, `model` | one attempt that came back with a reply |
 | `harpe.model.failed` | `provider`, `model`, `error`, `retryable` | one attempt that did not, as attributable as a successful one |
 | `harpe.model.retried` / `harpe.model.gaveUp` | `attempt`, `retryInSeconds` / `retries` | what the engine decided about the `harpe.model.failed` record just before it |
