@@ -11,6 +11,17 @@ import harpe.*
 import harpe.Model.*
 import harpe.metering.Usage
 
+//[ A context that keeps only the active turn.
+  !
+  ! `baseSystem` is included in every model request. The user's input and all
+  ! assistant and tool messages appended during the turn remain available at
+  ! subsequent model-call boundaries in that turn. `commitTurn` and
+  ! `abortTurn` both clear those messages, so no conversation history is carried
+  ! into the next turn.
+  !
+  ! Use this strategy when turns are independent or when an application exposes
+  ! prior conversation explicitly through a transcript-retrieval tool.
+//]
 class TurnContext(baseSystem: String)
   view Context
 
