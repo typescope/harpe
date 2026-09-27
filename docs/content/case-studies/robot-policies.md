@@ -8,6 +8,8 @@ change used to need a robotics engineer to reprogram the arm by hand. With a
 language model, the operator at the station can just say what they want, and the
 model writes the program that moves the arm.
 
+![An operator standing outside a robot cell says: line up the red parts along the top edge, biggest on the left. The AI writes a program for it, and the program runs in the cell. The cell is an arm, its work table, a fence and a light curtain on the operator's side. The arm is placing red parts in a row on the table, biggest on the left.](/img/robot-policies-cell.svg)
+
 ## The problem
 
 An operator at a packing station tells the arm:
