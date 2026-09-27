@@ -5,6 +5,8 @@
 
 namespace harpe.models
 
+import harpe.Interact
+import harpe.turns.TurnEvent
 import harpe.ffi.builtins
 
 private section Util
@@ -48,4 +50,45 @@ private section Util
       val result = py.try: body(stream)
       val _ = py.try: stream.close()
       result
+
+  //[ The final response of a Responses API event stream
+    !
+    ! Text deltas reach `interact` as they arrive. A `completed` response is
+    ! returned, and so is an `incomplete` one, which the adapter's parser marks
+    ! as truncated. A `failed` response or an `error` event raises with the
+    ! provider's code and message. A stream that ends with no final event raises
+    ! too, naming the last event it saw.
+  //]
+  def responsesStreamResult(stream: py.Dynamic, interact: Interact): py.Dynamic =
+    var last = "none"
+    val events = builtins.iter(stream)
+    while true do
+      val event = builtins.next(events, py.none)
+      if event.isNone then break
+      if interact.cancelled then abort "model request cancelled"
+
+      val kind = builtins.getattrOr(event, "type", "").asString
+      last = kind
+      if kind == "response.output_text.delta" then
+        interact.emit: TurnEvent.AssistantChunk(event.delta.asString)
+      else if kind == "response.completed" || kind == "response.incomplete" then
+        return event.response
+      else if kind == "response.failed" then
+        abort "provider response failed: \{errorText(builtins.getattrOr(event.response, "error", py.none))}"
+      else if kind == "error" then
+        abort "provider stream error: \{errorText(event)}"
+
+    abort "provider stream ended without a completed response (last event: \{last})"
+
+  //[ A provider error's code and message, as far as it gives them. //]
+  private def errorText(error: py.Dynamic): String =
+    if error.isNone then return "no detail given"
+    val code = builtins.getattrOr(error, "code", py.none)
+    val message = builtins.getattrOr(error, "message", py.none)
+    val codeText = if code.isNone then "" else py.module("builtins").str(code).asString
+    val messageText = if message.isNone then "" else message.asString
+    if codeText == "" && messageText == "" then "no detail given"
+    else if codeText == "" then messageText
+    else if messageText == "" then codeText
+    else "\{codeText}: \{messageText}"
 end
