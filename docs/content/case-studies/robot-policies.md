@@ -2,8 +2,9 @@
 title = "The Robot Policy Problem"
 +++
 
-A robot arm on a small-batch line changes jobs every few days. Each change used
-to mean a robotics engineer and a teach pendant. With a language model, the
+A robot cell on a small-batch line changes jobs every few days. The cell is the
+arm, its work table, and the fences and light curtains that guard them. Each
+change used to mean a robotics engineer and a teach pendant. With a language model, the
 person at the station can just say what they want, and the model writes the
 program that moves the arm.
 
