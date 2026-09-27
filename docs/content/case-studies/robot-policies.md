@@ -27,6 +27,8 @@ controller process, next to everything else the controller can reach: the raw
 joint driver that bypasses the speed and workspace limits, the camera feed, the
 file system, and the plant network.
 
+![The job needs pick-and-place, but the program can reach the whole controller. An operator tells the arm to line up the red parts along the top edge, biggest on the left. The AI writes a program, which runs as soon as it is written. Inside the robot controller it can reach checked pick-and-place, which the job needs, and also the raw joint driver that skips the speed and zone limits, the camera feed that sees the operator, the controller's files, and the plant network.](/img/robot-policies-conflict.svg)
+
 **How can a program that a model wrote a second ago move the arm, yet reach
 nothing but the moves it is supposed to make?**
 
@@ -64,16 +66,18 @@ talks to the real controller.
 ```jo
 // Positions are millimetres on the table, from its front-left corner.
 class Point(x: Int, y: Int)
-class Part(id: String, color: String, pos: Point, widthMm: Int)
+class Part(id: String, color: String, sizeMm: Int, pos: Point)
 class Table(widthMm: Int, depthMm: Int)
+class Zone(name: String, minX: Int, minY: Int, maxX: Int, maxY: Int)
 
 interface Scene
   def table(): Table
   def parts(): List[Part]
+  def keepOut(): List[Zone]
 end
 
 interface Arm
-  // Refused outside the table, in a keep-out zone, or onto another part.
+  // Refused over an edge, in a keep-out zone, or touching another part.
   // Returns "ok", or says why the move was refused.
   def place(partId: String, target: Point): String
   def say(text: String): Unit
@@ -88,14 +92,13 @@ A program for the command above is ordinary code:
 ```jo
 def runTask(): Unit receives IO.stdout, scene, arm =
   val table = scene.table()
-  val red = scene.parts().filter(p => p.color == "red")
-  val biggestFirst = red.sortBy(p => 0 - p.widthMm)
+  val red = scene.parts().select(p => p.color == "red").sortBy(p => 0 - p.sizeMm)
   val gap = 20
-  var x = gap
-  for part in biggestFirst do
-    val target = new Point(x + part.widthMm / 2, table.depthMm - 40)
+  var left = gap
+  for part in red do
+    val target = new Point(left + part.sizeMm / 2, table.depthMm - gap - part.sizeMm / 2)
     println "\{part.id}: \{arm.place(part.id, target)}"
-    x = x + part.widthMm + gap
+    left = left + part.sizeMm + gap
 ```
 
 **What the program cannot name.** The joint driver, the camera frames, files,
@@ -116,18 +119,26 @@ follows every call through every helper, however it came to be. The compiler
 can therefore tell whether a program touches the arm at all, even when the call
 is buried three helpers deep.
 
-**Questions do not need an arm.** Not every command is a motion. "How many red
-parts are left?" or "which part is closest to the bin?" only look at the table.
-Those programs get a grant with no arm in it:
+**Asking needs no arm.** "How many red parts are left?" or "which part is
+closest to the bin?" only look at the table. The operator sends those with
+**Ask**, and the program is compiled against the same interface with a grant
+that leaves the arm out. **Move** adds it:
 
 ```jo
-defer def answer(): Unit receives IO.stdout, scene
-defer def act(): Unit receives IO.stdout, scene, arm
+defer def runTask(): Unit receives IO.stdout, scene        // Ask
+defer def runTask(): Unit receives IO.stdout, scene, arm   // Move
 ```
 
-If a helper written for a question calls `arm.place`, the question program does
-not compile. The error traces the path from `answer` through each helper down
-to the call.
+After Ask, the arm stays still whatever the model makes of the request. If a
+helper calls `arm.place`, the program does not compile, and the error traces
+the path from `runTask` through each helper down to the call.
+
+![A program sent with Ask counts the parts of each colour, then calls a helper named tidy that moves parts near the back edge. The compiler rejects it: the arm is not provided, and the trace runs from the call to tidy in runTask down to arm.place inside it. Nothing ran and nothing moved.](/img/robot-policies-compile-error.png)
+
+The operator's button picks the grant, never the model. A model that decided
+whether a request needs the arm would be choosing its own authority. In a real
+cell the choice need not be a button: the light curtain can allow only Ask
+whenever a person is inside.
 
 **Nothing moves before the whole program checks.** With `exec`, a mistake on
 line 12 surfaces after lines 1 to 11 have already moved the arm, and the job
@@ -139,7 +150,7 @@ belongs, stops it while every part is still where it was.
 simulator can implement it too. A new kind of command can be tried against the
 simulated table, then run unchanged against the real arm.
 
-![The model writes a Jo program. The compiler checks it against the grant: scene and arm for a command, scene only for a question. A program that names the joint driver, a file or the network is rejected before anything moves. A program that passes calls the Arm interface, whose trusted implementation checks each move against the table and the keep-out zones before the controller moves the arm.](/img/robot-policies-boundary.svg)
+![The model writes a Jo program. The compiler checks it against the grant: scene and arm after Move, scene only after Ask. A program that names the joint driver, a file or the network is rejected before anything moves. A program that passes calls the Arm interface, whose trusted implementation checks each move against the table and the keep-out zones before the controller moves the arm.](/img/robot-policies-boundary.svg)
 
 ## What it does not guarantee
 
@@ -156,7 +167,33 @@ simulated table, then run unchanged against the real arm.
 
 ## Try the demo
 
-*To be written.*
+The [Robot Policies](https://github.com/typescope/robot-policies) demo is a
+simulated pick-and-place cell: a table seen from above, eleven coloured parts,
+the operator's strip along the front edge, and a fixture in one corner. The
+operator types a request and presses **Ask** or **Move**, which decides the
+grant.
+
+Five example programs run without an AI key. One lines up the red parts. One
+tries to bring the blue parts to the front, where every move is refused, so it
+places them just behind the operator's strip instead:
+
+![Running "Bring the blue parts to me". The arm reaches for each blue part and tries to set it down at the front edge. The cell refuses each move, because the front strip is the operator's keep-out zone, and a red outline marks the refused target. The program reads the reason and places the part just behind the strip instead. The move log fills in as the arm works, alternating refused and completed moves, and the arm says it may not enter the operator's side of the table.](/img/robot-policies-refused.gif)
+
+The other three answer a question after Ask, and show two programs the compiler
+rejects: an Ask program whose helper tidies up, and one that tries to save the
+layout to a file.
+
+```sh
+git clone https://github.com/typescope/robot-policies.git
+cd robot-policies
+pip install -r requirements.txt
+cp .env.example .env
+jo start
+```
+
+Open **http://127.0.0.1:8769**. Every run keeps the programs it tried, including
+the ones that did not compile, with the compiler's error or the program's output
+next to the moves the cell made or refused.
 
 ## Related work
 
