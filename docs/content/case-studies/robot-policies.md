@@ -163,9 +163,9 @@ simulated table, then run unchanged against the real arm.
   and of the emergency stop, which stays outside everything described here.
 - **That the program ends.** The compiler allows a loop that never finishes, so
   the runner needs a time limit.
-- **Instant response.** Compiling adds time to every command. That is fine for
-  pick-and-place, and too slow for a closed control loop at hundreds of hertz,
-  which should stay in the controller anyway.
+- **Instant response.** Each command waits for the model to write a program.
+  That is fine for pick-and-place, and too slow for a closed control loop at
+  hundreds of hertz, which should stay in the controller anyway.
 - **Python's libraries.** The program cannot import `numpy` or `shapely`. The
   geometry it needs has to be written in Jo or offered through the interface.
 
