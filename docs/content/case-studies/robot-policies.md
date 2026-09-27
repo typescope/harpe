@@ -2,24 +2,31 @@
 title = "The Robot Policy Problem"
 +++
 
-A robot cell is an arm, its work table, and the fences and light curtains that
-guard them. On a small-batch line, a cell changes jobs every few days, and each
-change used to need a robotics engineer to reprogram the arm by hand. With a
-language model, the operator at the station can just say what they want, and the
-model writes the program that moves the arm.
+Wherever people ask robots to do things, the requests change from day to day:
+restock the shelves before the store opens, or move materials across a depot.
+No engineer can program every request in advance. With a language model, a person
+just says what they want, and the model writes a program for that one request.
+Robotics researchers call such a program a *policy*.
+
+This page follows one of these robots: a robot cell, which is an arm, its work
+table, and the fences and light curtains that guard them.
 
 ![An operator standing outside a robot cell says: line up the red parts along the top edge, biggest on the left. The AI writes a program for it, and the program runs in the cell. The cell is an arm, its work table, a fence and a light curtain on the operator's side. The arm is placing red parts in a row on the table, biggest on the left.](/img/robot-policies-cell.svg)
 
 ## The problem
 
-An operator at a packing station tells the arm:
+An operator at the cell tells the arm:
 
 > Line up the red parts along the top edge, biggest on the left, and leave a
 > finger's width between them.
 
-The model writes a short program for this. It asks the cameras where the parts
-are, sorts them by size, computes a target spot for each one, and calls a
-pick-and-place routine in a loop. Research systems such as
+Ten minutes later the request is "which part is closest to me?", and after that
+"bring the blue parts to me". Each request is new, each program runs once, and
+the operator expects the arm to move now.
+
+For the first request, the model writes a short program. It asks the cameras
+where the parts are, sorts them by size, computes a target spot for each one,
+and calls a pick-and-place routine in a loop. Research systems such as
 [Code as Policies](https://code-as-policies.github.io/) show that this works,
 and that it beats having the model issue one motion at a time. "Biggest on the
 left" is a sort, and "a finger's width apart" is arithmetic, which is easy in a
@@ -28,9 +35,10 @@ program and unreliable when a model does it step by step.
 So a program is the right choice. But the program runs inside the robot's
 controller, next to everything else the controller can reach: the raw joint
 driver that skips the speed and workspace limits, the camera feed, the file
-system, and the factory network.
+system, and the factory network. The shelf robot and the depot robot have the
+same problem, with shoppers or staff walking past.
 
-![The job needs pick-and-place, but the program can reach the whole controller. An operator tells the arm to line up the red parts along the top edge, biggest on the left. The AI writes a program, which runs as soon as it is written. Inside the robot controller it can reach checked pick-and-place, which the job needs, and also the raw joint driver that skips the speed and zone limits, the camera feed that sees the operator, the controller's files, and the plant network.](/img/robot-policies-conflict.svg)
+![The job needs pick-and-place, but the program can reach the whole controller. An operator tells the arm to line up the red parts along the top edge, biggest on the left. The AI writes a program, which runs as soon as it is written. Inside the robot controller it can reach checked pick-and-place, which the job needs, and also the raw joint driver that skips the speed and zone limits, the camera feed that sees the operator, the controller's files, and the factory network.](/img/robot-policies-conflict.svg)
 
 **How can a program that a model wrote a second ago move the arm, yet reach
 nothing but the moves it is supposed to make?**
@@ -48,18 +56,18 @@ nothing but the moves it is supposed to make?**
 
   A filter lists what is forbidden. Anything reachable that nobody thought to
   list gets through, and every library handed in for convenience adds more.
-- **"Have someone review the program."** The operator speaks the command
-  because they are not a programmer. And they expect the arm to move now, not
-  after a review.
+- **"Have someone review the program."** The operator is not a programmer, and
+  the program runs once. Waiting for an engineer to review it takes longer than
+  doing the task by hand.
 - **"Only give the model motion tools."** Then the model issues one motion at a
   time, and does the sorting and spacing in its head. That is the approach the
   program replaced.
-- **"Run the program in a container."** A container decides which files and
-  sockets a process gets. The rules that matter here are about motion: stay in
-  the workspace, stay out of the operator's side, never skip the speed limit.
-  The program needs the arm to do its job, so the container must let it reach
-  the arm. From then on, the container cannot tell a safe move from a
-  dangerous one.
+- **"Run the program in a sandbox."** A sandbox with no files or network, whose
+  only way out is a checked pick-and-place call, does limit what the program
+  can reach. But it learns what the program does only by running it. A
+  forbidden call or a wrong argument on line 12 stops the program after lines 1
+  to 11 have moved the arm, and half the job is left on the table. On a robot,
+  a mistake has to be caught before the first move.
 
 ## The agentic solution
 
@@ -92,7 +100,7 @@ param scene: Scene
 param arm: Arm
 ```
 
-A program for the command above is ordinary code:
+A program for the first request is ordinary code:
 
 ```jo
 def runTask(): Unit receives IO.stdout, scene, arm =
@@ -118,6 +126,19 @@ implementation chooses. A program may ask for any move, but the implementation
 decides whether it happens. These safety checks live in trusted code that the
 model never writes.
 
+**Nothing moves until the whole program compiles.** A Jo program is checked
+whole before its first motion. A call to something not granted, or a part name
+passed where a position belongs, stops it while every part is still where it
+was. The model then gets the compiler's error, which names the line and the
+reason, and writes a new program. Nothing has moved, so the retry costs
+nothing. Code as Policies tried letting the model fix its own bugs and dropped
+the idea as unreliable. There, a bug shows up while the arm is moving.
+
+**Requests the robot cannot do fail early.** Code as Policies assumes every
+request is feasible, yet its own demo includes "can you throw blocks?". `Arm`
+has no `throw`, so a program that throws does not compile, and the model has to
+tell the operator the cell cannot do that.
+
 **Helpers are checked like the rest.** Models write these programs top-down.
 Code as Policies has the model call helpers such as `line_up` or `spacing`
 before they exist, and generates each one in a later call. In Jo the compiler
@@ -125,10 +146,10 @@ follows every call through every helper, however the helper was written. So
 the compiler can tell whether a program touches the arm at all, even when the
 call is buried three helpers deep.
 
-**Asking needs no arm.** "How many red parts are left?" or "which part is
-closest to the bin?" only look at the table. The operator sends those with
-**Ask**. The program is then compiled with a grant, the list of things it may
-use, and that grant leaves out the arm. **Move** adds it:
+**Asking needs no arm.** "Which part is closest to me?" only looks at the
+table. The operator sends it with **Ask**. The program is then compiled with a
+grant, the list of things it may use, and that grant leaves out the arm.
+**Move** adds it:
 
 ```jo
 defer def runTask(): Unit receives IO.stdout, scene        // Ask
@@ -142,19 +163,19 @@ from `runTask` through each helper down to the call.
 ![A program sent with Ask counts the parts of each colour, then calls a helper named tidy that moves parts near the back edge. The compiler rejects it: the arm is not provided, and the trace runs from the call to tidy in runTask down to arm.place inside it. Nothing ran and nothing moved.](/img/robot-policies-compile-error.png)
 
 The operator's button picks the grant, never the model. If the model decided
-whether a request needs the arm, it would be choosing its own permissions. In a
-real cell, the choice need not be a button. The light curtain can allow only
-Ask whenever a person is inside.
-
-**Nothing moves until the whole program compiles.** With `exec`, a mistake on
-line 12 surfaces after lines 1 to 11 have already moved the arm, and the job
-stops halfway through. A Jo program is compiled whole before its first motion,
-so a call to something not granted, or a part name passed where a position
-belongs, stops it while every part is still where it was.
+whether a request needs the arm, it would be choosing its own permissions. The
+choice need not be a button. In the cell, the light curtain can allow only Ask
+whenever a person is inside. In the supermarket, the shelf robot can get Move
+only after closing.
 
 **The same program runs in simulation first.** `Arm` is an interface, so a
-simulator can implement it too. A new kind of command can be tried against the
+simulator can implement it too. A new kind of request can be tried against the
 simulated table, then run unchanged against the real arm.
+
+**Other robots get their own interface.** For the depot robot, `Scene` lists
+rooms, carts and closed corridors, and the robot offers `goTo` and `drop`
+instead of `place`. The compiler's checks and the trusted implementation work
+the same way.
 
 ![The model writes a Jo program. The compiler checks it against the grant: scene and arm after Move, scene only after Ask. A program that names the joint driver, a file or the network is rejected before anything moves. A program that passes calls the Arm interface, whose trusted implementation checks each move against the table and the keep-out zones before the controller moves the arm.](/img/robot-policies-boundary.svg)
 
@@ -165,7 +186,7 @@ simulated table, then run unchanged against the real arm.
   and of the emergency stop, which stays outside everything described here.
 - **That the program ends.** The compiler allows a loop that never finishes, so
   the runner needs a time limit.
-- **Instant response.** Each command waits for the model to write a program.
+- **Instant response.** Each request waits for the model to write a program.
   That is fine for pick-and-place, and too slow for a closed control loop at
   hundreds of hertz, which should stay in the controller anyway.
 - **Python's libraries.** The program cannot import `numpy` or `shapely`. The
@@ -177,6 +198,8 @@ The [Robot Policies](https://github.com/typescope/robot-policies) demo is a
 simulated pick-and-place cell: a table seen from above, eleven coloured parts,
 the operator's strip along the front edge, and a fixture in one corner. The
 operator types a request and presses **Ask** or **Move** to pick the grant.
+When a program the AI wrote does not compile, the AI reads the error and writes
+another one.
 
 Five example programs run without an AI key. One lines up the red parts.
 Another tries to bring the blue parts to the front. The cell refuses every move
