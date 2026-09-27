@@ -40,8 +40,8 @@ same problem, with shoppers or staff walking past.
 
 ![The job needs pick-and-place, but the program can reach the whole controller. An operator tells the arm to line up the red parts along the top edge, biggest on the left. The AI writes a program, which runs as soon as it is written. Inside the robot controller it can reach checked pick-and-place, which the job needs, and also the raw joint driver that skips the speed and zone limits, the camera feed that sees the operator, the controller's files, and the factory network.](/img/robot-policies-conflict.svg)
 
-**How can a program that a model wrote a second ago move the arm, yet reach
-nothing but the moves it is supposed to make?**
+**How do we make sure a program written by a model never gets around the robot's
+safety rules?**
 
 ## Why the obvious fixes fall short
 
