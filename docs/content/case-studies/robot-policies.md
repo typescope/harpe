@@ -2,8 +2,9 @@
 title = "The Robot Policy Problem"
 +++
 
-Wherever people ask robots to do things, the requests change from day to day:
-restock the shelves before the store opens, or move materials across a depot.
+Wherever people ask robots to do things, the requests change from one task to
+the next: restock the shelves before the store opens, or move materials across
+a depot.
 No engineer can program every request in advance. A language model can turn the
 request into a small program that reads the scene and calls the robot's existing
 motion primitives. In robotics, that program acts as a *policy*: it chooses
