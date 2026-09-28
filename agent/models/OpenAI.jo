@@ -12,7 +12,6 @@
 
 namespace harpe.models
 import harpe.Interact
-import harpe.turns.TurnEvent
 import harpe.ffi.json
 import harpe.ffi.builtins
 import harpe.util.Digest
@@ -327,24 +326,7 @@ private def openaiCreate(
       stream = true
 
   Util.withPyStream: streamResult, stream =>
-    consumeOpenAIStream(stream, interact)
-
-private def consumeOpenAIStream(stream: py.Dynamic, interact: Interact): py.Dynamic =
-  var response: py.Dynamic = py.none
-  val events = builtins.iter(stream)
-  while true do
-    val event = builtins.next(events, py.none)
-    if event.isNone then break
-    if interact.cancelled then abort "model request cancelled"
-
-    val kind = builtins.getattrOr(event, "type", "").asString
-    if kind == "response.output_text.delta" then
-      interact.emit: TurnEvent.AssistantChunk(event.delta.asString)
-    else if kind == "response.completed" then
-      response = event.response
-
-  if response.isNone then abort "provider stream ended without a completed response"
-  response
+    Util.responsesStreamResult(stream, interact)
 
 //[ Build an OpenAI Responses model
   !

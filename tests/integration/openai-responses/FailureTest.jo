@@ -67,3 +67,26 @@ def failureSuite(): Unit receives thisSuite, logger = suite: "failure", () =>
       val impatient = openai("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 1)
       val detail = ModelDriver.start(impatient, prompt = "Say hello.").expectTransient()
       check("classified transient", detail != "")
+
+  // A Responses stream says how it ended in its last event. Each ending that is
+  // not `response.completed` has to reach the caller with the provider's words,
+  // not as a stream that merely stopped.
+  test: "a failed response reports the provider's error", () =>
+    val failed = ProviderFixture.sse:
+      """
+      data: {
+        "type": "response.failed", "sequence_number": 1,
+        "response": {
+          "id": "resp_failed", "object": "response", "created_at": 0, "status": "failed",
+          "error": {"code": "server_error", "message": "upstream provider crashed"},
+          "incomplete_details": null, "model": "test-model", "output": [],
+          "parallel_tool_calls": true, "tool_choice": "auto", "tools": []
+        }
+      }
+
+      data: [DONE]
+      """
+    ProviderFixture.withResponses: [failed], server =>
+      val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectFatal()
+      check("names the failure: \{detail}", detail.contains("provider response failed"))
+      check("carries the provider's code and message", detail.contains("server_error: upstream provider crashed"))

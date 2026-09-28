@@ -336,7 +336,16 @@ private def anthropicCreate(
   Util.withPyContext: managerResult, stream =>
     consumeAnthropicStream(stream, interact)
 
+//[ The finished message, or a failure naming where the stream stopped.
+  !
+  ! The SDK raises on an `error` event itself. What it does not catch is a
+  ! stream that simply stops: before `message_start` it fails a bare assertion,
+  ! and after it returns the partial message as if it were complete. Both raise
+  ! here instead.
+//]
 private def consumeAnthropicStream(stream: py.Dynamic, interact: Interact): py.Dynamic =
+  var last = "none"
+  var stopped = false
   val events = builtins.iter(stream)
   while true do
     val event = builtins.next(events, py.none)
@@ -345,9 +354,14 @@ private def consumeAnthropicStream(stream: py.Dynamic, interact: Interact): py.D
       stream.close()
       abort "model request cancelled"
 
-    if builtins.getattrOr(event, "type", "").asString == "text" then
+    val kind = builtins.getattrOr(event, "type", "").asString
+    last = kind
+    if kind == "text" then
       interact.emit: TurnEvent.AssistantChunk(event.text.asString)
+    else if kind == "message_stop" then
+      stopped = true
 
+  if !stopped then abort "provider stream ended before the message finished (last event: \{last})"
   stream.get_final_message()
 
 

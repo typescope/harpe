@@ -66,3 +66,77 @@ def failureSuite(): Unit receives thisSuite, logger = suite: "failure", () =>
       val impatient = openrouter("test-key", "test-model", baseUrl = server.baseUrl, timeoutSeconds = 1)
       val detail = ModelDriver.start(impatient, prompt = "Say hello.").expectTransient()
       check("classified transient", detail != "")
+
+  // A Responses stream says how it ended in its last event. Each ending that is
+  // not `response.completed` has to reach the caller with the provider's words,
+  // not as a stream that merely stopped.
+  test: "a failed response reports the provider's error", () =>
+    val failed = ProviderFixture.sse:
+      """
+      data: {
+        "type": "response.failed", "sequence_number": 1,
+        "response": {
+          "id": "resp_failed", "object": "response", "created_at": 0, "status": "failed",
+          "error": {"code": "server_error", "message": "upstream provider crashed"},
+          "incomplete_details": null, "model": "test-model", "output": [],
+          "parallel_tool_calls": true, "tool_choice": "auto", "tools": []
+        }
+      }
+
+      data: [DONE]
+      """
+    ProviderFixture.withResponses: [failed], server =>
+      val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectFatal()
+      check("names the failure: \{detail}", detail.contains("provider response failed"))
+      check("carries the provider's code and message", detail.contains("server_error: upstream provider crashed"))
+
+  test: "an error event reports the provider's error", () =>
+    val errored = ProviderFixture.sse:
+      """
+      data: {"type":"error","sequence_number":1,"code":"invalid_prompt","message":"reasoning item not accepted","param":null}
+
+      data: [DONE]
+      """
+    ProviderFixture.withResponses: [errored], server =>
+      val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectFatal()
+      check("names the stream error: \{detail}", detail.contains("provider stream error"))
+      check("carries the provider's code and message", detail.contains("invalid_prompt: reasoning item not accepted"))
+
+  test: "a stream with no final event names the last one it saw", () =>
+    val cut = ProviderFixture.sse:
+      """
+      data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_cut","output_index":0,"content_index":0,"delta":"Hel","logprobs":[]}
+
+      data: [DONE]
+      """
+    ProviderFixture.withResponses: [cut], server =>
+      val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectFatal()
+      check("says the stream ended early: \{detail}", detail.contains("ended without a completed response"))
+      check("names the last event", detail.contains("last event: response.output_text.delta"))
+
+  test: "an incomplete response is a truncated reply", () =>
+    val incomplete = ProviderFixture.sse:
+      """
+      data: {
+        "type": "response.incomplete", "sequence_number": 1,
+        "response": {
+          "id": "resp_cut", "object": "response", "created_at": 0, "status": "incomplete",
+          "error": null, "incomplete_details": {"reason": "max_output_tokens"},
+          "model": "test-model", "parallel_tool_calls": true, "tool_choice": "auto", "tools": [],
+          "output": [{
+            "id": "msg_cut", "type": "message", "status": "incomplete", "role": "assistant",
+            "content": [{"type":"output_text","text":"Hello, wor","annotations":[],"logprobs":[]}]
+          }],
+          "usage": {
+            "input_tokens": 5, "input_tokens_details": {"cached_tokens":0},
+            "output_tokens": 32, "output_tokens_details": {"reasoning_tokens":0}, "total_tokens": 37
+          }
+        }
+      }
+
+      data: [DONE]
+      """
+    ProviderFixture.withResponses: [incomplete], server =>
+      val message = ModelDriver.start(model(server), prompt = "Say hello.").expectReply()
+      check("keeps the text it got: \{message.text}", message.text.startsWith("Hello, wor"))
+      check("marks it truncated", message.text.contains("[Reply truncated"))

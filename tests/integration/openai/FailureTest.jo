@@ -66,3 +66,34 @@ def failureSuite(): Unit receives thisSuite, logger = suite: "failure", () =>
       val impatient = openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 1)
       val detail = ModelDriver.start(impatient, prompt = "Say hello.").expectTransient()
       check("classified transient", detail != "")
+
+  // The SDK raises on a chunk carrying an `error`. A stream that stops before a
+  // `finish_reason` is the case it lets through, as a partial completion.
+  test: "a stream that stops before finish_reason is fatal", () =>
+    val cut = ProviderFixture.sse:
+      """
+      data: {
+        "id": "chatcmpl_cut", "object": "chat.completion.chunk", "created": 0, "model": "test-model",
+        "choices": [{"index":0,"delta":{"role":"assistant","content":"hel"},"finish_reason":null}],
+        "usage": null
+      }
+
+      data: [DONE]
+      """
+    ProviderFixture.withResponses: [cut], server =>
+      val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectFatal()
+      check("says the completion never finished: \{detail}", detail.contains("ended before the completion finished"))
+
+  test: "a stream with no chunk is fatal, and says so", () =>
+    ProviderFixture.withResponses: [ProviderFixture.sse("data: [DONE]")], server =>
+      val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectFatal()
+      check("says no chunk came: \{detail}", detail.contains("ended before any completion chunk"))
+
+  test: "an error chunk reports the provider's message", () =>
+    val errored = ProviderFixture.sse:
+      """
+      data: {"error":{"message":"upstream provider crashed","type":"server_error","code":502}}
+      """
+    ProviderFixture.withResponses: [errored], server =>
+      val detail = ModelDriver.start(model(server), prompt = "Say hello.").expectFatal()
+      check("carries the provider's message: \{detail}", detail.contains("upstream provider crashed"))
