@@ -13,6 +13,8 @@ compiles and runs without an external service or secret.
 ```sh
 jo new clock-agent --template typescope/harpe:hello
 cd clock-agent
+python3 -m venv .venv
+. .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 ```

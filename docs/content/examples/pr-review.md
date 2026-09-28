@@ -57,6 +57,8 @@ The template is a complete project. Copy it into your own directory:
 ```sh
 jo new my-reviewer --template typescope/harpe:pr-review
 cd my-reviewer
+python3 -m venv .venv
+. .venv/bin/activate
 pip install -r requirements.txt
 ```
 

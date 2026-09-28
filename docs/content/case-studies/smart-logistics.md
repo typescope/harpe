@@ -166,6 +166,8 @@ The application is a complete project. Clone it:
 ```sh
 git clone https://github.com/typescope/smart-logistics.git my-depot
 cd my-depot
+python3 -m venv .venv
+. .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 ```

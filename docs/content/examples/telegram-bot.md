@@ -11,6 +11,8 @@ Telegram-compatible markdown text.
 ```sh
 jo new my-agent --template typescope/harpe:telegram
 cd my-agent
+python3 -m venv .venv
+. .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 ```
