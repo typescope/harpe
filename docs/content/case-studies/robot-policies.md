@@ -125,27 +125,20 @@ implementation checks that the part exists, the target lies on the table, the
 part stays outside every keep-out zone, and the placement does not overlap
 another part. It can also delegate trajectory, speed, reachability and collision
 checks to the robot controller. The generated program may request a move; it
-cannot make the implementation skip those checks. The interface is implemented
-in process, so this boundary needs no RPC or serialization. An OS sandbox can
-still wrap the runner as another layer.
+cannot make the implementation skip those checks.
 
 This is where application rules belong. The same pattern can enforce invariants
 such as "the gripper never enters the operator zone", "a loaded cart never uses
-a pedestrian corridor", or "the total payload stays below 20 kg". Invariants
-that span several actions need stateful checks or a plan-level operation: a
-sequence of individually valid moves is not automatically a valid whole task.
+a pedestrian corridor", or "the total payload stays below 20 kg". Where
+possible, the interface *makes invalid actions unrepresentable*: it exposes
+domain operations and validated values instead of raw joints or controller
+commands.
 
 **Capability and type errors fail before execution.** Jo checks the whole
 program before its first motion. A call to an ungranted operation, or a part name
 passed where a position belongs, stops it while every part is still where it
 was. The model receives a compiler error with the line and reason, then can
 write a new program with no physical side effects from the failed attempt.
-
-Compilation does not prove that requested coordinates are reachable or that the
-task will finish successfully. Those facts depend on runtime state and the
-trusted operations. If the fifth move in a loop is refused, the first four may
-already have happened. A task that must be atomic should first submit a complete
-plan to a trusted validator, then execute the accepted plan.
 
 ## What each layer guarantees
 
