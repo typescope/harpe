@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.13.0 — 2026-09-28
+
+**Model attempts are logged uniformly by the turn engine.** Every attempt now
+starts with `harpe.model.send`, followed by `harpe.model.replied` or
+`harpe.model.failed`, so their timestamps measure provider latency and every
+adapter produces the same sequence. Usage is recorded beside a successful reply.
+The `status` field is removed from `harpe.model.failed`; when available, an HTTP
+status is preserved in its `error` text instead.
+
+This changes the custom-model API. A `Model` implementation must provide its
+`name` and `provider`, and a directly implemented `Model.Session` must expose the
+`model` that created it. `Session.reply` and its callback no longer `receive`
+`logger`. Code using `SimpleSession` passes the owning model first:
+
+```jo
+class MyModel(client: Client)
+  view Model
+
+  def name: String = "my-model"
+  def provider: String = "my-provider"
+
+  def startTurn(base: Rendered, maxOutputTokens: Int): Model.Session =
+    new SimpleSession(this, base, (rendered, tools, interact) =>
+      send(client, rendered, tools, interact, maxOutputTokens))
+end
+```
+
+**Provider streams must end explicitly.** Anthropic rejects a stream without
+`message_stop`; OpenAI-compatible chat rejects an empty stream or one without a
+finish reason; and the OpenAI and OpenRouter Responses adapters distinguish
+completed, incomplete, failed, and error events. A connection that closes before
+one of those terminal events is now a model failure instead of a partial reply or
+an SDK assertion. Incomplete Responses replies remain ordinary truncated replies.
+
+`TurnContext` now documents its single-turn retention contract. The prompt-cache
+and skills guides have been corrected, and the flight-booker example includes
+the Jo syntax skill its prompt references. `harpe-caps` and
+`harpe-testing-python` have no API changes and move to 0.13.0 with `harpe`.
+
 ## 0.12.1 — 2026-09-24
 
 `WebApp.wsgi(output = sink)` now terminates every access-log record with a
