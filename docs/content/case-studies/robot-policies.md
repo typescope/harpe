@@ -154,13 +154,6 @@ write a new program with no physical side effects from the failed attempt.
   the generated program and of Harpe. This design does not replace them or by
   itself establish compliance with a robotics safety standard.
 
-The runner also needs a time limit because compilation does not prove that a
-program terminates. Generated policies are suitable for task-level planning,
-not a closed control loop at hundreds of hertz; that loop stays in the
-controller. Libraries such as `numpy` or `shapely` are unavailable unless the
-application deliberately includes equivalent pure code or exposes the required
-geometry through a narrow interface.
-
 ## Run the demo
 
 The [Robot Policies](https://github.com/typescope/robot-policies) demo puts this
