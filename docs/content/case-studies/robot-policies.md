@@ -4,12 +4,13 @@ title = "The Robot Policy Problem"
 
 Wherever people ask robots to do things, the requests change from day to day:
 restock the shelves before the store opens, or move materials across a depot.
-No engineer can program every request in advance. With a language model, a person
-just says what they want, and the model writes a program for that one request.
-Robotics researchers call such a program a *policy*.
+No engineer can program every request in advance. A language model can turn the
+request into a small program that reads the scene and calls the robot's existing
+motion primitives. In robotics, that program acts as a *policy*: it chooses
+actions from observations.
 
-This page follows one of these robots: a robot cell, which is an arm, its work
-table, and the fences and light curtains that guard them.
+This case study develops that design in a simulated robot cell: an arm, its work
+table, and the fences and light curtains around them.
 
 ![An operator standing outside a robot cell says: line up the red parts along the top edge, biggest on the left. The AI writes a program for it, and the program runs in the cell. The cell is an arm, its work table, a fence and a light curtain on the operator's side. The arm is placing red parts in a row on the table, biggest on the left.](/img/robot-policies-cell.svg)
 
@@ -22,32 +23,34 @@ An operator at the cell tells the arm:
 
 Ten minutes later the request is "which part is closest to me?", and after that
 "bring the blue parts to me". Each request is new, each program runs once, and
-the operator expects the arm to move now.
+the operator expects an answer or action now.
 
 For the first request, the model writes a short program. It asks the cameras
 where the parts are, sorts them by size, computes a target spot for each one,
 and calls a pick-and-place routine in a loop. Research systems such as
-[Code as Policies](https://code-as-policies.github.io/) show that this works,
-and that it beats having the model issue one motion at a time. "Biggest on the
-left" is a sort, and "a finger's width apart" is arithmetic, which is easy in a
-program and unreliable when a model does it step by step.
+[Code as Policies](https://code-as-policies.github.io/) show how generated code
+can combine perception, arithmetic, control flow and robot primitives. "Biggest
+on the left" becomes a sort, and "a finger's width apart" becomes arithmetic.
+The program can perform both precisely without sending every intermediate value
+through the model.
 
-So a program is the right choice. But the program runs inside the robot's
-controller, next to everything else the controller can reach: the raw joint
-driver that skips the speed and workspace limits, the camera feed, the file
-system, and the factory network. The shelf robot and the depot robot have the
-same problem, with shoppers or staff walking past.
+So a program is useful, but generated code is untrusted. If it runs in a general
+Python process, it may reach much more than the task needs: low-level drivers,
+camera frames, files, or the factory network. Putting the process in a container
+can restrict the operating system around it, but it does not by itself express
+the rule that this task may use checked pick-and-place and nothing else.
 
 ![The job needs pick-and-place, but the program can reach the whole controller. An operator tells the arm to line up the red parts along the top edge, biggest on the left. The AI writes a program, which runs as soon as it is written. Inside the robot controller it can reach checked pick-and-place, which the job needs, and also the raw joint driver that skips the speed and zone limits, the camera feed that sees the operator, the controller's files, and the factory network.](/img/robot-policies-conflict.svg)
 
-**How do we make sure a program written by a model never gets around the robot's
-safety rules?**
+**How do we let generated code plan a task without letting it bypass the narrow,
+checked operations the robot exposes?**
 
 ## Why the obvious fixes fall short
 
-- **"Filter the code before running it."** Code as Policies rejects any program
-  whose text contains `import` or `__`, then runs it with `exec`. Both of these
-  lines pass that filter and run:
+- **"Filter the code before running it."** The published
+  [Code as Policies demo](https://github.com/google-research/google-research/blob/master/code_as_policies/Interactive_Demo.ipynb)
+  rejects any program whose text contains `import` or `__`, then runs it with
+  `exec`. Both of these lines pass that filter and run:
 
   ```python
   open('/etc/hostname').read()           # exec supplies the builtins anyway
@@ -59,22 +62,20 @@ safety rules?**
 - **"Have someone review the program."** The operator is not a programmer, and
   the program runs once. Waiting for an engineer to review it takes longer than
   doing the task by hand.
-- **"Only give the model motion tools."** Then the model issues one motion at a
-  time, and does the sorting and spacing in its head. That is the approach the
-  program replaced.
-- **"Run the program in a sandbox."** A sandbox with no files or network, whose
-  only way out is a checked pick-and-place call, does limit what the program
-  can reach. But it learns what the program does only by running it. A
-  forbidden call or a wrong argument on line 12 stops the program after lines 1
-  to 11 have moved the arm, and half the job is left on the table. On a robot,
-  a mistake has to be caught before the first move.
+- **"Only give the model motion tools."** Tool permissions help, but a model
+  that calls one tool at a time must repeatedly exchange scene data and
+  intermediate results. A generated program keeps the sort, geometry and loop
+  local while still using the same narrow robot operations.
+- **"Run the program in an OS sandbox."** This is useful defense in depth: it can
+  limit files, network, CPU and memory. But once the isolated process needs to
+  operate the robot, it needs a way through that boundary. A pipe, RPC or REST
+  service can expose a narrow robot API, at the cost of another protocol,
+  serialization, deployment and failure handling.
 
-## The agentic solution
+## A narrow, typed boundary
 
-Give the program the robot as a Jo interface, and nothing else. The model
-writes a Jo program against that interface, and the program is compiled before
-the arm moves. Trusted code, written separately, implements the interface and
-talks to the real controller.
+Using Jo's [compile-time sandboxing](/concepts/sandbox/), we can restrict the
+actions of robot policies to the following narrow interface:
 
 ```jo
 // Positions are millimetres on the table, from its front-left corner.
@@ -90,8 +91,8 @@ interface Scene
 end
 
 interface Arm
-  // Refused over an edge, in a keep-out zone, or touching another part.
-  // Returns "ok", or says why the move was refused.
+  // Preserves the cell's placement invariants or refuses the request.
+  // Returns "ok", or says which invariant would be broken.
   def place(partId: String, target: Point): String
   def say(text: String): Unit
 end
@@ -114,118 +115,91 @@ def runTask(): Unit receives IO.stdout, scene, arm =
     left = left + part.sizeMm + gap
 ```
 
-**What the program cannot name.** The program is compiled with only `scene` and
-`arm` in scope. The joint driver, the camera frames, files, the network and
-Python are simply not there. There is nothing to filter, because there is
-nothing to call. A program that tries to use them fails to compile and never
-starts.
+**The generated program has narrow authority.** Its external capabilities are
+printing, `scene` and `arm`. The joint driver, raw camera frames, files, network
+and Python are outside the guest's build. There is no forbidden-name list to
+maintain: code that requires an unavailable capability does not compile.
 
-**What the arm will not do.** `place` checks every target against the table,
-the keep-out zones and the other parts, and moves at the speed the
-implementation chooses. A program may ask for any move, but the implementation
-decides whether it happens. These safety checks live in trusted code that the
-model never writes.
+**Every permitted operation can enforce invariants.** The trusted `place`
+implementation checks that the part exists, the target lies on the table, the
+part stays outside every keep-out zone, and the placement does not overlap
+another part. It can also delegate trajectory, speed, reachability and collision
+checks to the robot controller. The generated program may request a move; it
+cannot make the implementation skip those checks. The interface is implemented
+in process, so this boundary needs no RPC or serialization. An OS sandbox can
+still wrap the runner as another layer.
 
-**Nothing moves until the whole program compiles.** A Jo program is checked
-whole before its first motion. A call to something not granted, or a part name
+This is where application rules belong. The same pattern can enforce invariants
+such as "the gripper never enters the operator zone", "a loaded cart never uses
+a pedestrian corridor", or "the total payload stays below 20 kg". Invariants
+that span several actions need stateful checks or a plan-level operation: a
+sequence of individually valid moves is not automatically a valid whole task.
+
+**Capability and type errors fail before execution.** Jo checks the whole
+program before its first motion. A call to an ungranted operation, or a part name
 passed where a position belongs, stops it while every part is still where it
-was. The model then gets the compiler's error, which names the line and the
-reason, and writes a new program. Nothing has moved, so the retry costs
-nothing. Code as Policies tried letting the model fix its own bugs and dropped
-the idea as unreliable. There, a bug shows up while the arm is moving.
+was. The model receives a compiler error with the line and reason, then can
+write a new program with no physical side effects from the failed attempt.
 
-**Requests the robot cannot do fail early.** Code as Policies assumes every
-request is feasible, yet its own demo includes "can you throw blocks?". `Arm`
-has no `throw`, so a program that throws does not compile, and the model has to
-tell the operator the cell cannot do that.
+Compilation does not prove that requested coordinates are reachable or that the
+task will finish successfully. Those facts depend on runtime state and the
+trusted operations. If the fifth move in a loop is refused, the first four may
+already have happened. A task that must be atomic should first submit a complete
+plan to a trusted validator, then execute the accepted plan.
 
-**Helpers are checked like the rest.** Models write these programs top-down.
-Code as Policies has the model call helpers such as `line_up` or `spacing`
-before they exist, and generates each one in a later call. In Jo the compiler
-follows every call through every helper, however the helper was written. So
-the compiler can tell whether a program touches the arm at all, even when the
-call is buried three helpers deep.
+## What each layer guarantees
 
-**Asking needs no arm.** "Which part is closest to me?" only looks at the
-table. The operator sends it with **Ask**. The program is then compiled with a
-grant, the list of things it may use, and that grant leaves out the arm.
-**Move** adds it:
+- **The compiler limits authority.** It proves which capabilities and operations
+  the generated program may call, and checks their argument and result types. It
+  does not prove that the program chose a useful sequence of calls.
+- **The trusted interface preserves declared invariants.** It can reject a
+  target, validate a whole plan, and delegate motion checks to the controller.
+  Its guarantees are only as complete as its implementation and the state it
+  observes.
+- **The robot safety system protects people and equipment.** Safety-rated
+  controllers, guards, light curtains and emergency stops remain independent of
+  the generated program and of Harpe. This design does not replace them or by
+  itself establish compliance with a robotics safety standard.
 
-```jo
-defer def runTask(): Unit receives IO.stdout, scene        // Ask
-defer def runTask(): Unit receives IO.stdout, scene, arm   // Move
-```
+The runner also needs a time limit because compilation does not prove that a
+program terminates. Generated policies are suitable for task-level planning,
+not a closed control loop at hundreds of hertz; that loop stays in the
+controller. Libraries such as `numpy` or `shapely` are unavailable unless the
+application deliberately includes equivalent pure code or exposes the required
+geometry through a narrow interface.
 
-With Ask, the arm stays still, however the model reads the request. If a helper
-calls `arm.place`, the program does not compile, and the error shows the path
-from `runTask` through each helper down to the call.
+## Run the demo
 
-![A program sent with Ask counts the parts of each colour, then calls a helper named tidy that moves parts near the back edge. The compiler rejects it: the arm is not provided, and the trace runs from the call to tidy in runTask down to arm.place inside it. Nothing ran and nothing moved.](/img/robot-policies-compile-error.png)
+The [Robot Policies](https://github.com/typescope/robot-policies) demo puts this
+design into a simulated pick-and-place cell. An operator states a task, the
+model writes a Jo policy, and the interface makes the boundary visible: the
+compiler rejects authority the policy was not given, while the trusted cell
+accepts or refuses each permitted operation.
 
-The operator's button picks the grant, never the model. If the model decided
-whether a request needs the arm, it would be choosing its own permissions. The
-choice need not be a button. In the cell, the light curtain can allow only Ask
-whenever a person is inside. In the supermarket, the shelf robot can get Move
-only after closing.
-
-**The same program runs in simulation first.** `Arm` is an interface, so a
-simulator can implement it too. A new kind of request can be tried against the
-simulated table, then run unchanged against the real arm.
-
-**Other robots get their own interface.** For the depot robot, `Scene` lists
-rooms, carts and closed corridors, and the robot offers `goTo` and `drop`
-instead of `place`. The compiler's checks and the trusted implementation work
-the same way.
-
-![The model writes a Jo program. The compiler checks it against the grant: scene and arm after Move, scene only after Ask. A program that names the joint driver, a file or the network is rejected before anything moves. A program that passes calls the Arm interface, whose trusted implementation checks each move against the table and the keep-out zones before the controller moves the arm.](/img/robot-policies-boundary.svg)
-
-## What it does not guarantee
-
-- **Good moves.** The compiler proves which operations a program can call, not
-  that a stack of parts will stand. That is the job of `place` and its checks,
-  and of the emergency stop, which stays outside everything described here.
-- **That the program ends.** The compiler allows a loop that never finishes, so
-  the runner needs a time limit.
-- **Instant response.** Each request waits for the model to write a program.
-  That is fine for pick-and-place, and too slow for a closed control loop at
-  hundreds of hertz, which should stay in the controller anyway.
-- **Python's libraries.** The program cannot import `numpy` or `shapely`. The
-  geometry it needs has to be written in Jo or offered through the interface.
-
-## Try the demo
-
-The [Robot Policies](https://github.com/typescope/robot-policies) demo is a
-simulated pick-and-place cell: a table seen from above, eleven coloured parts,
-the operator's strip along the front edge, and a fixture in one corner. The
-operator types a request and presses **Ask** or **Move** to pick the grant.
-When a program the AI wrote does not compile, the AI reads the error and writes
-another one.
-
-Five example programs run without an AI key. One lines up the red parts.
-Another tries to bring the blue parts to the front. The cell refuses every move
-there, so the program places them just behind the operator's strip instead:
+When asked to bring the blue parts forward, for example, the policy first asks
+to place them inside the operator's strip. The cell refuses those targets, so
+the policy places the parts just behind the strip instead:
 
 ![Running "Bring the blue parts to me". The arm reaches for each blue part and tries to set it down at the front edge. The cell refuses each move, because the front strip is the operator's keep-out zone, and a red outline marks the refused target. The program reads the reason and places the part just behind the strip instead. The move log fills in as the arm works, alternating refused and completed moves, and the arm says it may not enter the operator's side of the table.](/img/robot-policies-refused.gif)
 
-Of the other three, one answers a question under Ask. The compiler rejects the
-last two: an Ask program whose helper tidies up the table, and a program that
-tries to save the layout to a file.
+To run it locally, install Jo 0.13.5 or later and Python 3.12, then:
 
 ```sh
 git clone https://github.com/typescope/robot-policies.git
 cd robot-policies
+python3 -m venv .venv
+. .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 jo start
 ```
 
-Open **http://127.0.0.1:8769**. Every run keeps the programs it tried, including
-the ones that did not compile, with the compiler's error or the program's output
-next to the moves the cell made or refused.
+Open [http://127.0.0.1:8769](http://127.0.0.1:8769). The checked-in examples
+run without an API key; add a supported model key to `.env` for new requests.
 
 ## Related work
 
-[Code as Policies](https://code-as-policies.github.io/) (Liang et al., 2022)
+[Code as Policies](https://arxiv.org/abs/2209.07753) (Liang et al., 2022)
 introduced language-model-generated robot policy code, including the top-down
 generation of helper functions. Its published demo runs the code with Python's
 `exec` behind the text filter shown above.
