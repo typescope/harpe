@@ -175,12 +175,14 @@ separates a reusable `Model` from the model-side state of an active user turn:
 
 ```jo
 interface Model
+  def name: String
+  def provider: String
   def startTurn(base: Rendered, maxOutputTokens: Int): Model.Session
 
 section Model
   interface Session
+    def model: Model
     def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult
-        receives logger
   end
 end
 ```
