@@ -10,8 +10,8 @@ request into a small program that reads the scene and calls the robot's existing
 motion primitives. In robotics, that program acts as a *policy*: it chooses
 actions from observations.
 
-This case study develops that design in a simulated robot cell: an arm, its work
-table, and the fences and light curtains around them.
+This case study develops the design in a simulated robot cell: an arm, its work
+table, the fences and light curtains around them.
 
 ![An operator standing outside a robot cell says: line up the red parts along the top edge, biggest on the left. The AI writes a program for it, and the program runs in the cell. The cell is an arm, its work table, a fence and a light curtain on the operator's side. The arm is placing red parts in a row on the table, biggest on the left.](/img/robot-policies-cell.svg)
 
@@ -22,11 +22,8 @@ An operator at the cell tells the arm:
 > Line up the red parts along the top edge, biggest on the left, and leave a
 > finger's width between them.
 
-Ten minutes later the request is "which part is closest to me?", and after that
-"bring the blue parts to me". Each request is new, each program runs once, and
-the operator expects an answer or action now.
 
-For the first request, the model writes a short program. It asks the cameras
+For the request, the model writes a short program. It asks the cameras
 where the parts are, sorts them by size, computes a target spot for each one,
 and calls a pick-and-place routine in a loop. Research systems such as
 [Code as Policies](https://code-as-policies.github.io/) show how generated code
@@ -38,7 +35,7 @@ through the model.
 So a program is useful, but generated code is untrusted. If it runs in a general
 Python process, it may reach much more than the task needs: low-level drivers,
 camera frames, files, or the factory network. Putting the process in a container
-can restrict the operating system around it, but it does not by itself express
+can restrict the operating system around it, but it does not express
 the rule that this task may use checked pick-and-place and nothing else.
 
 ![The job needs pick-and-place, but the program can reach the whole controller. An operator tells the arm to line up the red parts along the top edge, biggest on the left. The AI writes a program, which runs as soon as it is written. Inside the robot controller it can reach checked pick-and-place, which the job needs, and also the raw joint driver that skips the speed and zone limits, the camera feed that sees the operator, the controller's files, and the factory network.](/img/robot-policies-conflict.svg)
@@ -58,15 +55,15 @@ checked operations the robot exposes?**
   np.savetxt('out.txt', np.zeros(1))     # numpy was handed in for the geometry
   ```
 
-  A filter lists what is forbidden. Anything reachable that nobody thought to
-  list gets through, and every library handed in for convenience adds more.
+  A list filters out what is forbidden, but anything reachable not included in the list can
+ get through.
 - **"Have someone review the program."** The operator is not a programmer, and
   the program runs once. Waiting for an engineer to review it takes longer than
   doing the task by hand.
 - **"Only give the model motion tools."** Tool permissions help, but a model
   that calls one tool at a time must repeatedly exchange scene data and
   intermediate results. A generated program keeps the sort, geometry and loop
-  local while still using the same narrow robot operations.
+  within one execution step while still using the same narrow robot operations.
 - **"Run the program in an OS sandbox."** This is useful defense in depth: it can
   limit files, network, CPU and memory. But once the isolated process needs to
   operate the robot, it needs a way through that boundary. A pipe, RPC or REST
@@ -118,7 +115,7 @@ def runTask(): Unit receives IO.stdout, scene, arm =
 
 **The generated program has narrow authority.** Its external capabilities are
 printing, `scene` and `arm`. The joint driver, raw camera frames, files, network
-and Python are outside the guest's build. There is no forbidden-name list to
+and Python are outside the guest's build. There is no blacklist to
 maintain: code that requires an unavailable capability does not compile.
 
 **Every permitted operation can enforce invariants.** The trusted `place`
@@ -136,10 +133,9 @@ domain operations and validated values instead of raw joints or controller
 commands.
 
 **Capability and type errors fail before execution.** Jo checks the whole
-program before its first motion. A call to an ungranted operation, or a part name
-passed where a position belongs, stops it while every part is still where it
-was. The model receives a compiler error with the line and reason, then can
-write a new program with no physical side effects from the failed attempt.
+program during compiling step. 
+The model receives a compiler error with the line and reason, then can
+write a new program based on the failed attempt.
 
 ## What each layer guarantees
 
