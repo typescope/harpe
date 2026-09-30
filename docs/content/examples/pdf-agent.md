@@ -11,6 +11,8 @@ The example integrates local PDF manipulation and OCR capabilities, such that it
 ```sh
 jo new my-agent --template typescope/harpe:pdf-agent
 cd my-agent
+python3 -m venv .venv
+. .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 ```

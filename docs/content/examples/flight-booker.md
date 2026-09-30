@@ -82,6 +82,8 @@ The template is a complete project. Copy it into your own directory:
 ```sh
 jo new my-booker --template typescope/harpe:flight-booker
 cd my-booker
+python3 -m venv .venv
+. .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 ```

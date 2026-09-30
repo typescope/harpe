@@ -125,6 +125,8 @@ it never reaches the AI.
 ```sh
 git clone https://github.com/typescope/campaign-planner.git
 cd campaign-planner
+python3 -m venv .venv
+. .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 jo start

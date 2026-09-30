@@ -14,8 +14,8 @@ for the wider security and data policy review.
 
 Harpe supports all WSGI-compatible web servers. We recommend
 [Waitress](https://docs.pylonsproject.org/projects/waitress/en/stable/).
-Install it in the Python environment Jo uses, and include it in your project's
-dependencies:
+With the project's virtual environment active, install it in the Python
+environment Jo uses and include it in the project's dependencies:
 
 ```sh
 pip install waitress
