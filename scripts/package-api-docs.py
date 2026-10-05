@@ -10,7 +10,6 @@ from pathlib import Path
 PACKAGES = {
     "caps": "harpe-caps",
     "harpe": "harpe",
-    "testing": "harpe-testing-python",
 }
 
 
