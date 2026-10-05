@@ -3,9 +3,9 @@
 Releases are made in `typescope/harpe`. Confirm that `origin` points to this
 repository before pushing a release branch or tag.
 
-Harpe publishes three packages together: `harpe-caps` (pure capability
-interfaces), `harpe` (the Python runtime, depending on `harpe-caps`), and
-`harpe-testing-python` (the independent test framework).
+Harpe publishes two packages together: `harpe-caps` (pure capability
+interfaces) and `harpe` (the Python runtime, depending on `harpe-caps`).
+Tests use the independently released `jtest` and `jtest-python` packages.
 
 The order is: validate locally, merge a green release PR, publish the GitHub
 release, wait for Jo's registry, merge a separate template PR, open the two
@@ -44,7 +44,7 @@ cannot be repaired once the registry records it.
 
 Prepare the release changes:
 
-- Set all three package versions in the root `jo.toml`.
+- Set both package versions in the root `jo.toml`.
 - Turn the unreleased section of `CHANGELOG.md` into dated release notes,
   including breaking APIs and migration instructions.
 - Update the release badge and link in `README.md`.
@@ -69,7 +69,7 @@ runtime data, or existing build output. Absolute module paths keep copied test
 sandboxes connected to the same sources. The original manifests stay untouched.
 Without `--templates`, it tests this checkout's templates.
 
-If parallel tests exhaust local resources, set `HARPE_TEST_WORKERS=2`.
+If parallel tests exhaust local resources, set `JTEST_WORKERS=2`.
 Fix failures and repeat affected checks. Review the template migrations alongside
 the release so a new API has a tested consumer before publication.
 
@@ -105,10 +105,8 @@ Package only from the clean merged commit, with the compiler used for validation
 ~~~sh
 jo package caps
 jo package harpe
-jo package testing
 jo doc caps
 jo doc harpe
-jo doc testing
 python3 scripts/package-api-docs.py "$VERSION" --output /tmp/harpe-api-release
 for archive in /tmp/harpe-api-release/*-api-docs-v$VERSION.zip; do
   (cd "$(dirname "$archive")" && sha512sum --check "$(basename "$archive").sha512")
@@ -116,16 +114,13 @@ done
 
 (cd .build/caps/release && sha512sum --check harpe-caps-v$VERSION.joy.sha512 && sha512sum --check harpe-caps-v$VERSION-sources.zip.sha512)
 (cd .build/harpe/release && sha512sum --check harpe-v$VERSION.joy.sha512 && sha512sum --check harpe-v$VERSION-sources.zip.sha512)
-(cd .build/testing/release && sha512sum --check harpe-testing-python-v$VERSION.joy.sha512 && sha512sum --check harpe-testing-python-v$VERSION-sources.zip.sha512)
 
 unzip -p .build/harpe/release/harpe-v$VERSION.joy meta.toml
-unzip -p .build/testing/release/harpe-testing-python-v$VERSION.joy meta.toml
 unzip -l .build/harpe/release/harpe-v$VERSION.joy
 ~~~
 
-Confirm that `harpe` depends on the new `harpe-caps` compatibility line, that
-`harpe-testing-python` has no package dependencies, and that Harpe's assets
-are bundled. Verify binary and source checksums for every package.
+Confirm that `harpe` depends on the new `harpe-caps` compatibility line and that
+its assets are bundled. Verify binary and source checksums for every package.
 
 Extract only this version's notes, then tag the merged commit:
 
@@ -147,21 +142,15 @@ gh release create v$VERSION \
   .build/harpe/release/harpe-v$VERSION.joy.sha512 \
   .build/harpe/release/harpe-v$VERSION-sources.zip \
   .build/harpe/release/harpe-v$VERSION-sources.zip.sha512 \
-  .build/testing/release/harpe-testing-python-v$VERSION.joy \
-  .build/testing/release/harpe-testing-python-v$VERSION.joy.sha512 \
-  .build/testing/release/harpe-testing-python-v$VERSION-sources.zip \
-  .build/testing/release/harpe-testing-python-v$VERSION-sources.zip.sha512 \
   /tmp/harpe-api-release/harpe-caps-api-docs-v$VERSION.zip \
   /tmp/harpe-api-release/harpe-caps-api-docs-v$VERSION.zip.sha512 \
   /tmp/harpe-api-release/harpe-api-docs-v$VERSION.zip \
   /tmp/harpe-api-release/harpe-api-docs-v$VERSION.zip.sha512 \
-  /tmp/harpe-api-release/harpe-testing-python-api-docs-v$VERSION.zip \
-  /tmp/harpe-api-release/harpe-testing-python-api-docs-v$VERSION.zip.sha512 \
   --repo typescope/harpe --verify-tag \
   --title "Harpe $VERSION" --notes-file /tmp/harpe-release-notes.md
 ~~~
 
-All three packages are assets of this public release. Private proxy upload
+Both packages are assets of this public release. Private proxy upload
 releases are no longer part of the process. Never move a published tag or
 replace a recorded version's artifacts; fix a bad release with a new version.
 
@@ -178,17 +167,16 @@ The registry scans hourly. To request an immediate scan:
 gh workflow run sync-releases.yml --repo typescope/packages
 ~~~
 
-Wait for all three versions to appear at the public endpoints:
+Wait for both versions to appear at the public endpoints:
 
 ~~~sh
 curl --fail https://pkg.jo-lang.org/harpe-caps.jsonl
 curl --fail https://pkg.jo-lang.org/harpe.jsonl
-curl --fail https://pkg.jo-lang.org/harpe-testing-python.jsonl
 ~~~
 
 Check the exact version, artifact URL, and checksum against the GitHub release.
 A successful sync workflow alone is insufficient: it can finish without adding
-a package. Do not advance the template or downstream pins until all three
+a package. Do not advance the template or downstream pins until both
 entries are available from `pkg.jo-lang.org`.
 
 ## 5. Update the templates in a separate PR
