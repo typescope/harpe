@@ -29,7 +29,7 @@ git rebase --signoff HEAD~3
 
 ## API compatibility
 
-<!-- Harpe publishes `harpe`, `harpe-caps` and `harpe-testing-python`, and the
+<!-- Harpe publishes `harpe` and `harpe-caps`, and the
 templates pin published versions. Describe any change to what they expose. -->
 
 - [ ] Source: existing agents and templates compile unchanged
