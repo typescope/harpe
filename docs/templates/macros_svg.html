@@ -1,6 +1,13 @@
-{% macro mark(size=26, class_name="") %}
+{% macro mark(size=26, class_name="", gradient_id="harpe-tile-nav") %}
 <svg class="harpe-mark{% if class_name %} {{ class_name }}{% endif %}" width="{{ size }}" height="{{ size }}" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-  <rect class="mark-badge" width="32" height="32" rx="7.3"/>
+  <defs>
+    <linearGradient id="{{ gradient_id }}" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="32" y2="32">
+      <stop offset="0" stop-color="#059669"/>
+      <stop offset="0.55" stop-color="#047857"/>
+      <stop offset="1" stop-color="#115E59"/>
+    </linearGradient>
+  </defs>
+  <rect class="mark-badge" width="32" height="32" rx="7.3" fill="url(#{{ gradient_id }})"/>
   <path class="mark-stroke mark-stem" d="M10.7 8v17.3"/>
   <path class="mark-stroke mark-hook" d="M10.7 16.7c0-5 10.6-5 10.6 0V21c0 3-2.6 4.3-5 2.7"/>
 </svg>
