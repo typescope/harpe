@@ -48,10 +48,10 @@ quotes what the agent had printed, both named in the failure.
 cd cli && jo test
 ```
 
-Nothing on this path resolves the package registry: the framework, the CLI agent,
-and both suites all build from these sources, so every check is answerable by the
-pull request that breaks it. The five templates under `templates/` are the
-exception — they pin a published release, which is what lets an API change land
+The framework and CLI agent build from this checkout. Their test suites use
+published `jtest` and `jtest-python` packages from the Jo registry. Set
+`JTEST_WORKERS` to limit parallel test workers. The five templates under
+`templates/` pin a published Harpe release, which is what lets an API change land
 here without being made in five places at once. Their `Templates` workflow runs
 only when a pull request touches them, and retargeting the pins is a step in
 [RELEASE.md](RELEASE.md).
@@ -68,7 +68,6 @@ cd docs && zola serve      # `zola build` also checks internal links
 |---|---|
 | `caps/` | Capability interfaces, published as `harpe-caps`. Pure Jo, no FFI |
 | `agent/` | The framework, published as `harpe` — turn engine, models, tools, context, logging |
-| `testing/` | The test framework, published as `harpe-testing-python`. Depends on nothing, not even `harpe` |
 | `cli/` | The CLI agent and its own end-to-end suite — the framework's only one. Not a template |
 | `templates/` | The five `jo new` templates, each pinned to a published release |
 | `tests/` | The `jo run test` suite: unit and integration |

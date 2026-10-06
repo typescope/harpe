@@ -28,30 +28,6 @@ modules = ["caps"]
 name = "harpe"
 version = "0.13.0"
 
-# The test framework, published as `harpe-testing-python`: the suite tree, the runner,
-# and the assertions.
-#
-# It depends on nothing — not even `harpe`. Nothing in it knows what an agent is:
-# the harness that builds and drives one lives in `tests/e2e/`, and the provider
-# fixture in `tests/integration/`, because both are shaped by this repository's
-# own layout. The nine host calls it makes are bound in `testing/Platform.jo`
-# rather than borrowed from `harpe.ffi`, which is what keeps it free-standing.
-#
-# It is a package rather than part of `tests/` so that a project outside this
-# repository can declare a test module against it. Nothing elsewhere can reach
-# into `tests/`.
-[module.testing]
-kind = "lib"
-platform = "python"
-enable-ffi = true
-src = ["testing/"]
-compile-options = ["--test-pickling", "--check-tree"]
-doc-options = ["--title", "harpe-testing-python", "--readme", "testing/README.md"]
-
-[module.testing.package]
-name = "harpe-testing-python"
-version = "0.13.0"
-
 # A seeded journal, served, for looking at the viewer by hand — a plain
 # exchange, two interleaved sessions, and a lane of deliberate extremes.
 #
@@ -73,5 +49,9 @@ links = [
 kind = "app"
 platform = "python"
 enable-ffi = true
-modules = ["harpe", "caps", "testing"]
+depth = 2
+modules = ["harpe", "caps"]
+packages = [
+  { name = "jtest-python", version = "0.1" }
+]
 src = ["tests/"]

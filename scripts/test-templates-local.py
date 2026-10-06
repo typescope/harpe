@@ -15,8 +15,6 @@ FRAMEWORK = Path(__file__).resolve().parents[1]
 MODULES = {
     "harpe": "harpe",
     "harpe-caps": "caps",
-    "harpe-testing": "testing",
-    "harpe-testing-python": "testing",
 }
 
 
@@ -27,12 +25,20 @@ def use_sources(spec):
         if packages is None:
             continue
         dependencies = tomllib.loads("packages = " + packages[1])["packages"]
+        local = [dep for dep in dependencies if dep["name"] in MODULES]
+        if not local:
+            continue
+        published = [dep for dep in dependencies if dep["name"] not in MODULES]
         sources = ", ".join(
             '{ id = ' + json.dumps(MODULES[dependency["name"]])
             + ', path = ' + json.dumps(str(FRAMEWORK)) + ' }'
-            for dependency in dependencies
+            for dependency in local
         )
-        section = section[:packages.start()] + section[packages.end():]
+        retained = "packages = [" + ", ".join(
+            "{ " + ", ".join(key + " = " + json.dumps(value) for key, value in dep.items()) + " }"
+            for dep in published
+        ) + "]" if published else ""
+        section = section[:packages.start()] + retained + section[packages.end():]
         modules = re.search(r"^modules\s*=\s*\[(.*?)\]", section, re.MULTILINE | re.DOTALL)
         if modules is None:
             section += "\nmodules = [" + sources + "]\n\n"

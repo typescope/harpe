@@ -7,7 +7,7 @@ ASSET_BASE="${HARPE_DOCS_ASSET_BASE:-https://github.com/$REPO/releases/download}
 VERSIONS_FILE="docs/api-versions.jsonl"
 OUT_DIR="docs/static/api"
 METADATA="docs/api-docs.json"
-PACKAGES=(harpe-caps harpe harpe-testing-python)
+PACKAGES=(harpe-caps harpe)
 
 if [[ ! -f "$VERSIONS_FILE" ]]; then
   echo "no $VERSIONS_FILE — skipping Harpe API docs"

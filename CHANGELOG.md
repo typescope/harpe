@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Replace the bundled testing library with the published `jtest` and
+  `jtest-python` packages. Framework, CLI, and PDF template tests now import
+  `jtest`; configure parallel workers with `JTEST_WORKERS`.
+- Stop publishing `harpe-testing-python` and its API documentation from Harpe.
+
 ## 0.13.0 — 2026-09-28
 
 **Model attempts are logged uniformly by the turn engine.** Every attempt now
