@@ -1,11 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.14.0 — 2026-10-13
+
+Requires Jo 0.14.0 or later. Harpe and `harpe-caps` move to the Jo 0.14
+compatibility line.
 
 - Replace the bundled testing library with the published `jtest` and
   `jtest-python` packages. Framework, CLI, and PDF template tests now import
   `jtest`; configure parallel workers with `JTEST_WORKERS`.
 - Stop publishing `harpe-testing-python` and its API documentation from Harpe.
+- Update test projects to `jtest-python` 0.2, which supports Jo 0.14. Its
+  `Runner.runWithArgs` now exits with a non-zero status when tests fail and
+  returns no result; use `Runner.run` when custom failure handling is needed.
 
 ## 0.13.0 — 2026-09-28
 
