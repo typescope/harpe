@@ -45,7 +45,7 @@ Inspect the diff before handing off. Report checks run and any that could not ru
 
 - [Jo documentation](https://jo-lang.org/): syntax, capabilities, and build commands.
 - [Jo GitHub](https://github.com/typescope/jo): implementation and tests.
-- [Harpe documentation](https://harpe.typescope.ai/): concepts and extension patterns.
+- [Harpe documentation](https://harpe.jo-lang.org/): concepts and extension patterns.
 - [Harpe GitHub](https://github.com/typescope/harpe): APIs, examples, and tests.
 
 Use local examples first. Consult documentation and source when unsure.

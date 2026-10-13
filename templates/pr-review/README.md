@@ -49,5 +49,5 @@ pr-review/
   skills/
 ```
 
-[GitHub PR Review](https://harpe.typescope.ai/examples/pr-review/) walks
+[GitHub PR Review](https://harpe.jo-lang.org/examples/pr-review/) walks
 through how the capability boundary is built.

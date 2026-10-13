@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/typescope/harpe/actions/workflows/ci.yml/badge.svg)](https://github.com/typescope/harpe/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/badge/release-v0.14.0-blue.svg)](https://github.com/typescope/harpe/releases/tag/v0.14.0)
-[![Docs](https://img.shields.io/badge/docs-harpe.typescope.ai-teal.svg)](https://harpe.typescope.ai)
+[![Docs](https://img.shields.io/badge/docs-harpe.jo-lang.org-teal.svg)](https://harpe.jo-lang.org)
 
 Harpe is an agent framework for the secure programming language [Jo](https://jo-lang.org/).
 
@@ -46,21 +46,21 @@ Example questions for trial:
 - _What is the biggest prime number under 158942?_
 - _What is the 23th fibonacci number?_
 
-Follow [Build Your First Agent](https://harpe.typescope.ai/tutorial/build-your-first-agent/)
+Follow [Build Your First Agent](https://harpe.jo-lang.org/tutorial/build-your-first-agent/)
 to inspect each part.
 
 ## Start from a template
 
 | Template | Guide |
 |---|---|
-| `pdf-agent` | [PDF Processing Agent](https://harpe.typescope.ai/examples/pdf-agent/) |
-| `telegram` | [Telegram Bot](https://harpe.typescope.ai/examples/telegram-bot/) |
-| `pr-review` | [GitHub PR Review](https://harpe.typescope.ai/examples/pr-review/) |
-| `flight-booker` | [Flight Booking](https://harpe.typescope.ai/examples/flight-booker/) |
+| `pdf-agent` | [PDF Processing Agent](https://harpe.jo-lang.org/examples/pdf-agent/) |
+| `telegram` | [Telegram Bot](https://harpe.jo-lang.org/examples/telegram-bot/) |
+| `pr-review` | [GitHub PR Review](https://harpe.jo-lang.org/examples/pr-review/) |
+| `flight-booker` | [Flight Booking](https://harpe.jo-lang.org/examples/flight-booker/) |
 
 ## Documentation
 
-- [Why Harpe?](https://harpe.typescope.ai/overview/why-harpe/)
-- [Compile-time sandboxing](https://harpe.typescope.ai/overview/compile-time-sandboxing/)
-- [Create a custom capability](https://harpe.typescope.ai/tutorial/create-custom-capabilities/)
-- [Deployment checklist](https://harpe.typescope.ai/guides/production/)
+- [Why Harpe?](https://harpe.jo-lang.org/overview/why-harpe/)
+- [Compile-time sandboxing](https://harpe.jo-lang.org/overview/compile-time-sandboxing/)
+- [Create a custom capability](https://harpe.jo-lang.org/tutorial/create-custom-capabilities/)
+- [Deployment checklist](https://harpe.jo-lang.org/guides/production/)

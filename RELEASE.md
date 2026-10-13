@@ -229,6 +229,6 @@ gh run list --repo typescope/harpe --workflow docs.yml --limit 1
 gh run watch --repo typescope/harpe RUN_ID --exit-status
 ~~~
 
-Confirm the deployment succeeds and `https://harpe.typescope.ai` serves the
+Confirm the deployment succeeds and `https://harpe.jo-lang.org` serves the
 updated site. Documentation PR builds validate the site; only the manual
 workflow dispatch publishes it.
