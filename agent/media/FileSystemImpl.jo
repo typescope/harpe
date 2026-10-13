@@ -198,10 +198,8 @@ private class TextFileImpl(handle: py.Dynamic, encoding: String)
 
   //[ The last `count` lines of `text`. //]
   private def lastLines(text: String, count: Int): List[String] =
-    // `String.lines` yields one trailing empty segment when `text` ends in '\n'.
     val all = text.lines
-    val total =
-      if text.size > 0 && text.get(text.size - 1) == '\n' then all.size - 1 else all.size
+    val total = all.size
 
     var i = if total > count then total - count else 0
     var result = List.empty[String]
