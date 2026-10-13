@@ -970,7 +970,7 @@ New:
   output back off the finished turn can tell a refusal from work done. Nothing
   is sent to the provider for it, and it rides into the transcript, so a
   reloaded turn knows which of its calls were refused. See
-  [Tools](https://harpe.typescope.ai/concepts/tools/).
+  [Tools](https://harpe.jo-lang.org/concepts/tools/).
 
 - `Entry.readJsonl(path)` reads a JSONL log back into `Entry` values — the
   missing half of `JsonlLogger`. It is strict: a missing file raises, because

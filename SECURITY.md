@@ -28,17 +28,17 @@ When reporting a vulnerability, include:
 - **Prompt injection within granted authority.** Text that persuades the model to
   misuse a capability it was legitimately given is the model doing granted work.
   The mitigation is to grant less, or to require
-  [human approval](https://harpe.typescope.ai/concepts/approvals/) in the
+  [human approval](https://harpe.jo-lang.org/concepts/approvals/) in the
   implementation. It is a design discussion, not a vulnerability report.
 - **Capabilities an application chose to grant.** An agent handed a shell, an
   unconfined filesystem, or an unapproved payment operation behaves as
   configured. See the
-  [Deployment Checklist](https://harpe.typescope.ai/guides/production/).
+  [Deployment Checklist](https://harpe.jo-lang.org/guides/production/).
 - **Resource exhaustion inside the guest.** CPU, memory, and disk limits are a
   documented gap in the compile-time boundary. `runCode` applies wall-clock
   timeouts and a concurrency bound. Finer confinement belongs in the optional
   `sandbox/run.sh` wrapper described in
-  [Add Defense in Depth](https://harpe.typescope.ai/guides/defense-in-depth/).
+  [Add Defense in Depth](https://harpe.jo-lang.org/guides/defense-in-depth/).
 - **Model output quality.** Wrong answers, hallucinated file names, and
   non-compiling programs are handled by the turn loop, not by this policy.
 

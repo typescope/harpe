@@ -48,7 +48,7 @@ flight-booker/
   skills/
 ```
 
-[Flight Booking](https://harpe.typescope.ai/examples/flight-booker/) walks
+[Flight Booking](https://harpe.jo-lang.org/examples/flight-booker/) walks
 through how the approval boundary works.
 
 ## Screenshots
