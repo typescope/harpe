@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/typescope/harpe/actions/workflows/ci.yml/badge.svg)](https://github.com/typescope/harpe/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/badge/release-v0.14.0-blue.svg)](https://github.com/typescope/harpe/releases/tag/v0.14.0)
-[![Docs](https://img.shields.io/badge/docs-harpe.jo-lang.org-teal.svg)](https://harpe.jo-lang.org)
+[![Docs](https://img.shields.io/badge/docs-harpe.jo--lang.org-teal.svg)](https://harpe.jo-lang.org)
 
 Harpe is an agent framework for the secure programming language [Jo](https://jo-lang.org/).
 
