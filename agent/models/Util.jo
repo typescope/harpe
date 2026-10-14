@@ -28,7 +28,9 @@ private section Util
       if reason == "max_output_tokens" then "Reply truncated: max_output_tokens reached."
       else if reason == "" then "Reply incomplete: reason not provided."
       else "Reply incomplete: \{reason}."
-    (text + "\n\n[" + note + "]").trim
+    val reply = text.trim
+    val marker = "[" + note + "]"
+    if reply == "" then marker else reply + "\n\n" + marker
 
   //[ Run `body` with the value entered from an SDK context manager.
     !
