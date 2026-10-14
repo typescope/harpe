@@ -126,8 +126,8 @@ private section OpenAIResponses
     !
     ! Text comes from the aggregate `output_text`. `function_call` items in
     ! `output` become tool calls, keyed by the `call_id` the follow-up echoes
-    ! back. An `incomplete` status means the output hit `max_output_tokens`, so
-    ! keep the text with a marker and drop any partial calls.
+    ! back. An `incomplete` status keeps the text with a marker naming the
+    ! provider's reason and drops any partial calls.
   //]
   def parseResponse(response: py.Dynamic): Assistant =
     val ot = response.output_text
@@ -138,7 +138,7 @@ private section OpenAIResponses
     // would fail on the very reply this branch exists for.
     val status = response.status
     if !status.isNone && status.asString == "incomplete" then
-      return new Assistant((text + "\n\n[Reply truncated: max_output_tokens reached.]").trim, [])
+      return new Assistant(Util.incompleteReplyText(response, text), [])
 
     // `type` is a Jo keyword, so read the item's tag with getattr.
     var calls: List[ToolCall] = []

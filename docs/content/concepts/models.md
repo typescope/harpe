@@ -157,13 +157,7 @@ val turn = Agent.ask:
 
 The engine passes it to `Model.startTurn`, and it is fixed for the turn — every
 round of the tool loop is sent with the same bound, so a turn cannot be talked
-into a larger reply as it goes. A reply that reaches the limit comes back with a
-note saying it was truncated rather than as an error, so the model can be asked
-to continue.
-
-The same agent can therefore answer briefly on one turn and write a long report
-on the next without holding two models. A custom `Model` renders the bound as
-whatever its provider calls the limit, and one with no such notion ignores it.
+into a larger reply as it goes.
 
 A model can be shared across sessions. Harpe creates isolated state for each
 active turn.
