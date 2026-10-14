@@ -159,7 +159,9 @@ The engine passes it to `Model.startTurn`, and it is fixed for the turn — ever
 round of the tool loop is sent with the same bound, so a turn cannot be talked
 into a larger reply as it goes. A reply that reaches the limit comes back with a
 note saying it was truncated rather than as an error, so the model can be asked
-to continue.
+to continue. For OpenAI and OpenRouter Responses, other incomplete replies show
+the provider's reported reason, or say that no reason was provided. Harpe keeps
+any reply text but discards partial tool calls.
 
 The same agent can therefore answer briefly on one turn and write a long report
 on the next without holding two models. A custom `Model` renders the bound as

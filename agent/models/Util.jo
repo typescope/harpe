@@ -19,6 +19,17 @@ private section Util
     val raw = builtins.getattrOr(usage, name, py.none)
     if raw.isNone then 0 else raw.asInt
 
+  //[ Label an incomplete Responses API reply with the provider's actual reason. //]
+  def incompleteReplyText(response: py.Dynamic, text: String): String =
+    val details = builtins.getattrOr(response, "incomplete_details", py.none)
+    val rawReason = if details.isNone then py.none else builtins.getattrOr(details, "reason", py.none)
+    val reason = if rawReason.isNone then "" else rawReason.asString
+    val note =
+      if reason == "max_output_tokens" then "Reply truncated: max_output_tokens reached."
+      else if reason == "" then "Reply incomplete: reason not provided."
+      else "Reply incomplete: \{reason}."
+    (text + "\n\n[" + note + "]").trim
+
   //[ Run `body` with the value entered from an SDK context manager.
     !
     ! Opening, entering, and running the body return Python failures as `Err`.
@@ -55,7 +66,7 @@ private section Util
     !
     ! Text deltas reach `interact` as they arrive. A `completed` response is
     ! returned, and so is an `incomplete` one, which the adapter's parser marks
-    ! as truncated. A `failed` response or an `error` event raises with the
+    ! according to its reason. A `failed` response or an `error` event raises with the
     ! provider's code and message. A stream that ends with no final event raises
     ! too, naming the last event it saw.
   //]

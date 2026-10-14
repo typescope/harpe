@@ -120,17 +120,17 @@ private def unavailable(): ProviderFixture.Scripted = ProviderFixture.response:
     {"error":{"message":"unavailable","type":"server_error","code":"server_error"}}
     """
 
-//[ A reply cut off by the token limit, mid tool call. //]
-private def truncated(): ProviderFixture.Scripted = ProviderFixture.sse:
+//[ An incomplete reply with a partial tool call. //]
+private def incomplete(details: String): ProviderFixture.Scripted = ProviderFixture.sse:
   """
   data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_cut","output_index":0,"content_index":0,"delta":"Let me loo","logprobs":[]}
 
   data: {
-    "type": "response.completed", "sequence_number": 2,
+    "type": "response.incomplete", "sequence_number": 2,
     "response": {
       "id": "resp_cut", "object": "response", "created_at": 0,
       "status": "incomplete", "error": null,
-      "incomplete_details": {"reason":"max_output_tokens"},
+      "incomplete_details": \{details},
       "instructions": null, "max_output_tokens": 32, "model": "test-model",
       "output": [
         {
@@ -280,7 +280,7 @@ def contractSuite(): Unit receives thisSuite, logger = suite: "contract", () =>
         !server.recorded(1).jsonBody.contains("previous_response_id")
 
   test: "keeps the text of a truncated reply and drops its calls", () =>
-    ProviderFixture.withResponses: [truncated()], server =>
+    ProviderFixture.withResponses: [incomplete("{\"reason\":\"max_output_tokens\"}")], server =>
       val tool = Tool("lookup", "Look up weather", [Tool.strParam("city", "City to look up")])
       val message = ModelDriver.start(model(server), prompt = "What is the weather in Zurich?")
         .expectReply(tools = [tool])
@@ -293,6 +293,27 @@ def contractSuite(): Unit receives thisSuite, logger = suite: "contract", () =>
       // The call was cut off mid-arguments, so running it would run a tool on
       // half its input. A truncated reply keeps none of them.
       check("drops the calls", message.calls.isEmpty)
+
+  test: "reports a content filter instead of a token limit", () =>
+    ProviderFixture.withResponses: [incomplete("{\"reason\":\"content_filter\"}")], server =>
+      val tool = Tool("lookup", "Look up weather", [Tool.strParam("city", "City to look up")])
+      val message = ModelDriver.start(model(server), prompt = "What is the weather in Zurich?")
+        .expectReply(tools = [tool])
+
+      checkEquals:
+        "names the reported reason"
+        message.text
+        expected = "Let me loo\n\n[Reply incomplete: content_filter.]"
+      check("drops partial calls", message.calls.isEmpty)
+
+  test: "uses a neutral marker when no reason is reported", () =>
+    ProviderFixture.withResponses: [incomplete("null")], server =>
+      val message = ModelDriver.start(model(server), prompt = "Say something.").expectReply()
+      checkEquals:
+        "does not claim a token limit"
+        message.text
+        expected = "Let me loo\n\n[Reply incomplete: reason not provided.]"
+      check("drops partial calls", message.calls.isEmpty)
 
   // Two bytes is a legal file and encodes to a base64 short enough to assert on
   // whole. Nothing here decodes it, so it needs no image structure — only the

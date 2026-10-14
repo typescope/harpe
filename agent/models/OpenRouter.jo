@@ -105,7 +105,7 @@ private section OpenRouterResponses
     // would fail on the very reply this branch exists for.
     val status = response.status
     if !status.isNone && status.asString == "incomplete" then
-      return new Assistant((text + "\n\n[Reply truncated: max_output_tokens reached.]").trim, [])
+      return new Assistant(Util.incompleteReplyText(response, text), [])
 
     var calls: List[ToolCall] = []
     for it in response.output.cast[py.List] do
