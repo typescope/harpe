@@ -17,6 +17,13 @@ description = "Plan individualized discounts while keeping customer data private
 preview = "discounting"
 
 [[extra.showcase]]
+title = "Robot policies"
+kind = "Case study"
+path = "case-studies/robot-policies.md"
+description = "Let AI-written programs move a robot arm, and never outside the cell's checks."
+preview = "robot"
+
+[[extra.showcase]]
 title = "Flight booking"
 kind = "Example"
 path = "examples/flight-booker.md"
