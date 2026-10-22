@@ -108,10 +108,15 @@ class WebApp(
     if WebApp.crossSiteRefused(crossSite, method, environ) then
       return Answer.refuse(Status.Forbidden, "cross-site request refused")
 
-    match matchRoute(method, path)
+    val found = matchRoute(method, path)
+    val bodyLimit = match found
+      case Some(route ~ _) => route.maxReqBody
+      case None            => fallback.maxReqBody
+    if Request.declaredLength(environ) > bodyLimit then
+      return Answer.refuse(Status.TooLarge, "request body too large")
+
+    match found
     case Some(route ~ params) =>
-      if Request.declaredLength(environ) > route.maxReqBody then
-        return Answer.refuse(Status.TooLarge, "request body too large")
       Answer.ran(route.handler, method, path, environ, params)
     case None =>
       val others = otherVerbs(method, path)

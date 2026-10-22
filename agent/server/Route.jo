@@ -53,16 +53,16 @@ class Route
   //[ The params extracted from `path` when `route` is a param route, or an empty map. //]
   def matchPath(path: String): Bool ~ Map[String, String] =
     var result = Map.empty[String, String]
+
     match paramRegex
     case Some(params ~ regex) =>
       match regex.matchFirst(path)
       case Some(m) =>
         for p in params do
           result = result.add(p, m.get(p))
-      case _ => pass
-    case None => false ~ result
-
-    true ~ result
+        true ~ result
+      case _ => return false ~ result
+    case None => return false ~ result
 end
 
 //[ The routes an application answers, declared as a table.
