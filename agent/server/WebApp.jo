@@ -108,12 +108,11 @@ class WebApp(
     if WebApp.crossSiteRefused(crossSite, method, environ) then
       return Answer.refuse(Status.Forbidden, "cross-site request refused")
 
-    val found = routeFor(method, path)
-    if Request.declaredLength(environ) > limitFor(found) then
-      return Answer.refuse(Status.TooLarge, "request body too large")
-
-    match found
-    case Some(route) => Answer.ran(route.handler, method, path, environ, Route.extractParams(route, path))
+    match matchRoute(method, path)
+    case Some(route ~ params) =>
+      if Request.declaredLength(environ) > route.maxReqBody then
+        return Answer.refuse(Status.TooLarge, "request body too large")
+      Answer.ran(route.handler, method, path, environ, params)
     case None =>
       val others = otherVerbs(method, path)
       if others.size == 0 then Answer.ran(fallback.handler, method, path, environ, Map.empty[String, String])
@@ -121,26 +120,19 @@ class WebApp(
         val headers = [Header("Allow", others.join(", "))]
         Response.complete(Status.MethodNotAllowed, Mime.Text, "method not allowed", headers = headers)
 
-  //[ The body limit for this exchange: the route's own, or the fallback's. //]
-  private def limitFor(found: Option[Route]): Int =
-    match found
-    case Some(route) => route.maxReqBody
-    case None        => fallback.maxReqBody
-
-  //[ The route for this exchange: exact first, then longest prefix, then best param match. //]
-  private def routeFor(method: Verb.Method, path: String): Option[Route] =
+  //[ The route for this exchange: exact first, then best param match, then longest prefix. //]
+  private def matchRoute(method: Verb.Method, path: String): Option[Route ~ Map[String, String]] =
+    val emptyParams = Map.empty[String, String]
     val key = Http.verbName(method) + " " + path
-    if exact.contains(key) then return Some(exact.get(key).cast[Route])
+    if exact.contains(key) then return Some(exact.get(key).cast[Route] ~ emptyParams)
 
+    // match parameterized route
     for route in routes do
       if Http.verbName(route.method) == Http.verbName(method) then
-        match route.paramRegex
-        case Some(_ ~ regex) =>
-          match regex.matchFirst(path)
-          case Some(_) => return Some(route)
-          case _ => None
-        case None => pass
+        val ok ~ params = route.matchPath(path)
+        if ok then return Some(route ~ params)
 
+    // select best by longest prefix
     var best: Option[Route] = None
     var longest = -1
     for route in routes do
@@ -149,7 +141,9 @@ class WebApp(
         best = Some(route)
         longest = route.path.size
 
-    best
+    match best
+    case Some(r) => Some(r ~ emptyParams)
+    case None => None
 
   //[ The verbs other routes claim this path under — any at all make a 405, not the fallback. //]
   private def otherVerbs(method: Verb.Method, path: String): List[String] =
@@ -157,9 +151,7 @@ class WebApp(
     for route in routes do
       if Http.verbName(route.method) != Http.verbName(method) then
         val exactMatch = route.paramRegex is None && !route.prefix && route.path == path
-        val paramMatch = match route.paramRegex
-          case Some(regex) => regex.matchFirst(path).IsEmpty
-          case None        => false
+        val paramMatch ~ _ = route.matchPath(path)
         if exactMatch || paramMatch then
           claimed = claimed + Http.verbName(route.method)
     claimed

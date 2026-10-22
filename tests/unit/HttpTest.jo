@@ -332,7 +332,7 @@ private def tabled(reached: py.List): WebApp =
   new WebApp:
     host = WebApp.Loopback
     routes = List:
-      Route.Get("/api/info", info, maxReqBody = limit)
+      Route.Get("/api/info", () => info(), maxReqBody = limit)
       Route.Post("/api/message", () => echoed(reached), maxReqBody = limit)
       Route.Post("/api/upload", () => echoed(reached), maxReqBody = 4096)
       Route.Delete("/api/session", () => Response.json(py.dict("ok" ~ true)), maxReqBody = limit)
@@ -812,7 +812,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("the route never ran", reached.size == 1)
 
   test: "answers 404 by default, for an application whose routes cover it", () =>
-    val covered = new WebApp(routes = List(Route.Get("/api/info", info)))
+    val covered = new WebApp(routes = List(Route.Get("/api/info", () => info())))
     val wsgi = covered.wsgi()
     check("a route it claims", get(wsgi, "/api/info").status == 200)
     val missing = get(wsgi, "/nothing")
@@ -827,13 +827,13 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     py.open(scratch + "/404.html", "wb").write(py.dynamic("<p>nothing here</p>").encode())
 
     val own = new WebApp(
-      routes = List(Route.Get("/api/info", info)),
+      routes = List(Route.Get("/api/info", () => info())),
       fallback = WebApp.notFound(scratch + "/404.html"))
     val answer = get(own.wsgi(), "/nothing")
     check("the application's page", answer.status == 404 && answer.text == "<p>nothing here</p>")
 
     val absent = new WebApp(
-      routes = List(Route.Get("/api/info", info)),
+      routes = List(Route.Get("/api/info", () => info())),
       fallback = WebApp.notFound(scratch + "/gone.html"))
     val fellBack = get(absent.wsgi(), "/nothing")
     check("harpe's, rather than a 500", fellBack.status == 404 && fellBack.text.contains("That page does not exist"))

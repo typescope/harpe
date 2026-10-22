@@ -36,12 +36,12 @@ class Route
     if path.indexOf("/:") == -1 then return None
 
     var regexPat = "^"
-    var names = List[String].Empty
+    var names: List[String] = List.empty()
     for seg in path.split("/").exclude(s => s == "") do
       if seg.startsWith(":") then
         val name = seg.substring(1, seg.size - 1)
-        regexPat +=  "/(?<" + name + ">[^/]+)"
-        names = names.append(name)
+        regexPat = regexPat + "/(?<" + name + ">[^/]+)"
+        names = names + name
       else
         regexPat = regexPat + "/" + Regex.escape(seg)
     regexPat = regexPat + "$"
@@ -49,6 +49,20 @@ class Route
     match Regex.compile(regexPat)
     case Ok(pat) => Some(names ~ pat)
     case Err(error) => abort("compile path with params:" + error)
+
+  //[ The params extracted from `path` when `route` is a param route, or an empty map. //]
+  def matchPath(path: String): Bool ~ Map[String, String] =
+    var result = Map.empty[String, String]
+    match paramRegex
+    case Some(params ~ regex) =>
+      match regex.matchFirst(path)
+      case Some(m) =>
+        for p in params do
+          result = result.add(p, m.get(p))
+      case _ => pass
+    case None => false ~ result
+
+    true ~ result
 end
 
 //[ The routes an application answers, declared as a table.
@@ -105,7 +119,7 @@ section Route
       path: String,
       handler: (() => Response receives request),
       maxReqBody: Int = defaultMaxReqBody): Route =
-    new Route(Verb.Options, path, prefix = false, paramRegex = paramRegexFor(path), maxReqBody = maxReqBody, handler = handler)
+    new Route(Verb.Options, path, prefix = false, maxReqBody = maxReqBody, handler = handler)
 
   //[ Everything under `path`, which must end in `/` — the assets of a page
     !
@@ -169,20 +183,6 @@ section Route
           if paramSeen.contains(key) then abort "two param routes would match the same paths: '\{key}'"
           paramSeen.set(key, true)
     exact
-
-  //[ The params extracted from `path` when `route` is a param route, or an empty map. //]
-  private[server] def extractParams(route: Route, path: String): Map[String, String] =
-    var result = Map.empty[String, String]
-    match route.paramRegex
-    case Some(params ~ regex) =>
-      match regex.matchFirst(path)
-      case Some(m) =>
-        for p in params do
-          result = result.add(p, m.get(p))
-      case _ => pass
-    case None => pass
-
-    result
 
   //[ `path` with every `:name` segment replaced by `*`, for conflict detection. //]
   private def normalisedParamPath(path: String): String =
