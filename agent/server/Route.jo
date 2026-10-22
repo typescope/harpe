@@ -1,17 +1,55 @@
 namespace harpe.server
 
+import jo.regex.*
+
 import harpe.server.Http
 import harpe.server.Http.Verb
 import harpe.server.request
 import harpe.server.Response
 
 //[ One route. `maxReqBody` is the largest body it accepts, 0 for none at all. //]
-class Route(
-      method: Verb.Method,
-      path: String,
-      prefix: Bool,
-      maxReqBody: Int,
-      handler: () => Response receives request)
+class Route
+  val method: Verb.Method
+  val path: String
+  val prefix: Bool
+  val params: Option[List[String] ~ Regex]
+  val maxReqBody: Int
+  val handler: () => Response receives request
+
+  def Route(
+    method: Verb.Method,
+    path: String,
+    prefix: Bool,
+    maxReqBody: Int,
+    handler: () => Response receives request): Route =
+    this.method = method
+    this.path = path
+    this.prefix = prefix
+    this.maxReqBody = maxReqBody
+    this.handler = handler
+    this.params = getParamRegex()
+    this
+
+  def paramRegex(): Option[List[String] ~ Regex] = this.params
+
+  private def getParamRegex(): Option[List[String] ~ Regex] =
+    if path.indexOf("/:") == -1 then return None
+
+    var regexPat = "^"
+    var names = List[String].Empty
+    for seg in path.split("/").exclude(s => s == "") do
+      if seg.startsWith(":") then
+        val name = seg.substring(1, seg.size - 1)
+        regexPat +=  "/(?<" + name + ">[^/]+)"
+        names = names.append(name)
+      else
+        regexPat = regexPat + "/" + Regex.escape(seg)
+    regexPat = regexPat + "$"
+
+    match Regex.compile(regexPat)
+    case Ok(pat) => Some(names ~ pat)
+    case Err(error) => abort("compile path with params:" + error)
+end
 
 //[ The routes an application answers, declared as a table.
   !
@@ -23,28 +61,34 @@ section Route
   //[ The body limit a route takes when it names none. //]
   def defaultMaxReqBody: Int = 1048576
 
-  //[ A route answering GET at exactly `path`. //]
+  //[ A route answering GET at `path`, exactly or by param pattern
+    !
+    ! A segment starting with `:` is a named parameter: `"/users/:id"` matches
+    ! `/users/42` and makes `request.getParam("id")` return `Some("42")`. A route
+    ! with no `:` segments matches exactly. Param names must be valid Python
+    ! identifiers; an invalid name aborts when the `WebApp` is built.
+  //]
   def Get(
       path: String,
       handler: (() => Response receives request),
       maxReqBody: Int = defaultMaxReqBody): Route =
     new Route(Verb.Get, path, prefix = false, maxReqBody = maxReqBody, handler = handler)
 
-  //[ A route answering POST at exactly `path`. //]
+  //[ A route answering POST at `path`, exactly or by param pattern. //]
   def Post(
       path: String,
       handler: (() => Response receives request),
       maxReqBody: Int = defaultMaxReqBody): Route =
     new Route(Verb.Post, path, prefix = false, maxReqBody = maxReqBody, handler = handler)
 
-  //[ A route answering PUT at exactly `path`. //]
+  //[ A route answering PUT at `path`, exactly or by param pattern. //]
   def Put(
       path: String,
       handler: (() => Response receives request),
       maxReqBody: Int = defaultMaxReqBody): Route =
     new Route(Verb.Put, path, prefix = false, maxReqBody = maxReqBody, handler = handler)
 
-  //[ A route answering DELETE at exactly `path`. //]
+  //[ A route answering DELETE at `path`, exactly or by param pattern. //]
   def Delete(
       path: String,
       handler: (() => Response receives request),
@@ -61,7 +105,7 @@ section Route
       path: String,
       handler: (() => Response receives request),
       maxReqBody: Int = defaultMaxReqBody): Route =
-    new Route(Verb.Options, path, prefix = false, maxReqBody = maxReqBody, handler = handler)
+    new Route(Verb.Options, path, prefix = false, paramRegex = paramRegexFor(path), maxReqBody = maxReqBody, handler = handler)
 
   //[ Everything under `path`, which must end in `/` — the assets of a page
     !
@@ -107,14 +151,44 @@ section Route
   //[ The exact routes by "VERB path", for a `WebApp` to dispatch through
     !
     ! Two routes claiming one verb and path abort here, which is when the
-    ! `WebApp` holding them is built.
+    ! `WebApp` holding them is built. Param routes are excluded from the exact
+    ! index and checked separately for conflicts among themselves.
   //]
   private[server] def indexed(routes: List[Route]): py.Dict =
     val exact = py.dict()
+    val paramSeen = py.dict()
     for route in routes do
       if !route.prefix then
-        val key = Http.verbName(route.method) + " " + route.path
-        if exact.contains(key) then abort "two routes claim '\{key}'"
-        exact.set(key, route)
+        match route.paramRegex
+        case None =>
+          val key = Http.verbName(route.method) + " " + route.path
+          if exact.contains(key) then abort "two routes claim '\{key}'"
+          exact.set(key, route)
+        case Some(_) =>
+          val key = Http.verbName(route.method) + " " + normalisedParamPath(route.path)
+          if paramSeen.contains(key) then abort "two param routes would match the same paths: '\{key}'"
+          paramSeen.set(key, true)
     exact
+
+  //[ The params extracted from `path` when `route` is a param route, or an empty map. //]
+  private[server] def extractParams(route: Route, path: String): Map[String, String] =
+    var result = Map.empty[String, String]
+    match route.paramRegex
+    case Some(params ~ regex) =>
+      match regex.matchFirst(path)
+      case Some(m) =>
+        for p in params do
+          result = result.add(p, m.get(p))
+      case _ => pass
+    case None => pass
+
+    result
+
+  //[ `path` with every `:name` segment replaced by `*`, for conflict detection. //]
+  private def normalisedParamPath(path: String): String =
+    val segs = path.split("/").exclude(s => s == "")
+    var result = ""
+    for seg in segs do
+      result = result + "/" + (if seg.startsWith(":") then "*" else seg)
+    result
 end

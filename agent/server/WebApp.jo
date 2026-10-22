@@ -113,10 +113,10 @@ class WebApp(
       return Answer.refuse(Status.TooLarge, "request body too large")
 
     match found
-    case Some(route) => Answer.ran(route.handler, method, path, environ)
+    case Some(route) => Answer.ran(route.handler, method, path, environ, Route.extractParams(route, path))
     case None =>
       val others = otherVerbs(method, path)
-      if others.size == 0 then Answer.ran(fallback.handler, method, path, environ)
+      if others.size == 0 then Answer.ran(fallback.handler, method, path, environ, Map.empty[String, String])
       else
         val headers = [Header("Allow", others.join(", "))]
         Response.complete(Status.MethodNotAllowed, Mime.Text, "method not allowed", headers = headers)
@@ -127,10 +127,19 @@ class WebApp(
     case Some(route) => route.maxReqBody
     case None        => fallback.maxReqBody
 
-  //[ The route for this exchange: an exact path first, then the longest prefix that covers it. //]
+  //[ The route for this exchange: exact first, then longest prefix, then best param match. //]
   private def routeFor(method: Verb.Method, path: String): Option[Route] =
     val key = Http.verbName(method) + " " + path
     if exact.contains(key) then return Some(exact.get(key).cast[Route])
+
+    for route in routes do
+      if Http.verbName(route.method) == Http.verbName(method) then
+        match route.paramRegex
+        case Some(_ ~ regex) =>
+          match regex.matchFirst(path)
+          case Some(_) => return Some(route)
+          case _ => None
+        case None => pass
 
     var best: Option[Route] = None
     var longest = -1
@@ -139,14 +148,20 @@ class WebApp(
       if covers && route.path.size > longest then
         best = Some(route)
         longest = route.path.size
+
     best
 
-  //[ The verbs other routes claim this exact path under — any at all make a 405, not the fallback. //]
+  //[ The verbs other routes claim this path under — any at all make a 405, not the fallback. //]
   private def otherVerbs(method: Verb.Method, path: String): List[String] =
     var claimed: List[String] = []
     for route in routes do
-      if !route.prefix && route.path == path && Http.verbName(route.method) != Http.verbName(method) then
-        claimed = claimed + Http.verbName(route.method)
+      if Http.verbName(route.method) != Http.verbName(method) then
+        val exactMatch = route.paramRegex is None && !route.prefix && route.path == path
+        val paramMatch = match route.paramRegex
+          case Some(regex) => regex.matchFirst(path).IsEmpty
+          case None        => false
+        if exactMatch || paramMatch then
+          claimed = claimed + Http.verbName(route.method)
     claimed
 end
 
@@ -249,8 +264,8 @@ end
 //[ Building the answer: running a route, and the refusals made before one runs. //]
 private section Answer
   //[ Run `handler` with the request bound. //]
-  def ran(handler: (() => Response receives request), method: Verb.Method, path: String, environ: py.Dynamic): Response =
-    with request = new Request(method, path, environ) in handler()
+  def ran(handler: (() => Response receives request), method: Verb.Method, path: String, environ: py.Dynamic, params: Map[String, String]): Response =
+    with request = new Request(method, path, environ, params) in handler()
 
   //[ A refusal made before a request is bound. //]
   def refuse(status: Status.Code, message: String): Response =

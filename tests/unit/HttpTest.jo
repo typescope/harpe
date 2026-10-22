@@ -354,6 +354,14 @@ private def clashing(): WebApp =
       Route.Get("/api/info", () => Response.notFound())
       Route.Get("/api/info", () => Response.notFound())
 
+//[ Two param routes whose patterns would match the same set of paths. //]
+private def clashingParam(): WebApp =
+  new WebApp:
+    host = WebApp.Loopback
+    routes = List:
+      Route.Get("/users/:id", () => Response.notFound())
+      Route.Get("/users/:name", () => Response.notFound())
+
 //[ A `multipart/form-data` body, built the way a browser builds one. //]
 private def multipartBody(boundary: String, parts: List[String], file: py.Dynamic): py.Dynamic =
   var text = ""
@@ -972,6 +980,52 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
 
   test: "refuses two routes claiming the same verb and path", () =>
     check("at construction", py.try(clashing()) is Err(_))
+
+  test: "matches a named path parameter and makes it available in the handler", () =>
+    val app = new WebApp:
+      host = WebApp.Loopback
+      routes = [Route.Get("/users/:id", () => Response.complete(Http.Status.Success, Http.Mime.Text, request.getParam("id").getOrElse("none")))]
+    val wsgi = app.wsgi()
+    check("extracts the segment", get(wsgi, "/users/42").text == "42")
+    check("any value", get(wsgi, "/users/alice").text == "alice")
+    check("too many segments is a 404", get(wsgi, "/users/42/extra").status == 404)
+    check("too few segments is a 404", get(wsgi, "/users").status == 404)
+
+  test: "extracts multiple params from one path", () =>
+    val app = new WebApp:
+      host = WebApp.Loopback
+      routes = [Route.Get("/users/:userId/posts/:postId",
+        () => Response.complete(Http.Status.Success, Http.Mime.Text, request.getParam("userId").getOrElse("?") + "/" + request.getParam("postId").getOrElse("?")))]
+    val wsgi = app.wsgi()
+    check("both params extracted", get(wsgi, "/users/42/posts/7").text == "42/7")
+    check("partial match is a 404", get(wsgi, "/users/42/posts").status == 404)
+
+  test: "prefers an exact route over a param route for the same segment", () =>
+    val app = new WebApp:
+      host = WebApp.Loopback
+      routes = List:
+        Route.Get("/users/me", () => Response.complete(Http.Status.Success, Http.Mime.Text, "me"))
+        Route.Get("/users/:id", () => Response.complete(Http.Status.Success, Http.Mime.Text, "id:" + request.getParam("id").getOrElse("?")))
+    val wsgi = app.wsgi()
+    check("exact wins for the literal path", get(wsgi, "/users/me").text == "me")
+    check("param still matches other values", get(wsgi, "/users/42").text == "id:42")
+
+  test: "answers 405 when a param route of a different verb matches the path", () =>
+    val app = new WebApp:
+      host = WebApp.Loopback
+      routes = [Route.Get("/items/:id", () => Response.complete(Http.Status.Success, Http.Mime.Text, "ok"))]
+    val answer = call(app.wsgi(), "POST", "/items/99", [], "")
+    check("405", answer.status == 405)
+    check("names the verb that does work", headerOf(answer, "Allow") == "GET")
+
+  test: "returns None from request.param when the route has no params", () =>
+    val app = new WebApp:
+      host = WebApp.Loopback
+      routes = [Route.Get("/info", () => Response.complete(Http.Status.Success, Http.Mime.Text, request.getParam("id").getOrElse("none")))]
+    check("None on a non-param route", get(app.wsgi(), "/info").text == "none")
+
+  test: "refuses two param routes that would match the same paths", () =>
+    check("at construction", py.try(clashingParam()) is Err(_))
 
   test: "refuses HEAD with a 501 and no body", () =>
     val reached = py.list()
