@@ -279,7 +279,16 @@ class RunCodeTool(
   //]
   private def findDoneFile: Option[String] =
     val hits = glob.glob(os.path.join(sandboxDir, ".build/*/jo-*/target/*.py.done"), recursive = false)
-    if hits.size == 0 then None else Some(hits.get(0).asString)
+    if hits.size == 0 then None
+    else
+      var modTime: Float = 0.0
+      var latest: py.Dynamic = py.dynamic("")
+      for f in hits do
+        val mtime = os.path.getmtime(f.asString)
+        if mtime > modTime then
+          modTime = mtime
+          latest = f
+      Some(latest.asString)
 
   //[ Compile and run `code` in `runDir`
     !
