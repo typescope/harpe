@@ -273,17 +273,21 @@ class RunCodeTool(
 
   //[ Locate the compiler-invocation record left by `jo build` for the guest
     !
-    ! The path is fully determined by the sandbox's `jo.toml`: the module named
-    ! `guest` compiled with the Jo version declared in that file. No glob is
-    ! needed — `jo = "X.Y"` maps directly to the `jo-X.Y/` build directory, so
-    ! the path is `.build/guest/jo-X.Y/target/guest.py.done`. `None` if the
-    ! file does not exist (the guest has not been built yet).
-    !
-    ! Fails if `jo.toml` is absent or has no `jo = "..."` line — neither is a
-    ! valid sandbox, so an early abort is cleaner than a misleading "not built".
+    ! Reads `jo.toml` to get the declared Jo version (e.g. `0.14`), then checks
+    ! for `.build/guest/jo-{version}/target/guest.py.done`. Returns `None` if
+    ! `jo.toml` is absent or the `.done` file does not exist yet (not built).
+    ! Aborts if `jo.toml` has no `jo = "..."` line — that is a misconfiguration.
   //]
   private def findDoneFile: Option[String] =
-    val joVersion = sandboxJoVersion(sandboxDir)
+    val tomlPath = os.path.join(sandboxDir, "jo.toml")
+    if !File.exists(tomlPath) then return None
+    var joVersion = ""
+    for line in File.read(tomlPath).lines do
+      val pairs = line.split("=")
+      if pairs.size == 2 && pairs[0].trim == "jo" then
+        joVersion = pairs[1].trim.replace("\"", "")
+    if joVersion == "" then
+      abort "jo.toml in '\{sandboxDir}' has no `jo = \"...\"` version line"
     val donePath = os.path.join(sandboxDir, ".build/guest/jo-\{joVersion}/target/guest.py.done")
     if File.exists(donePath) then Some(donePath) else None
 
@@ -441,22 +445,6 @@ class RunCodeTool(
       "output"         ~ result
     new ToolOutcome(result, summary, attachments = [])
 end
-
-//[ The Jo version declared in `sandboxDir/jo.toml` — e.g. `"0.14"`.
-  !
-  ! Reads the `jo = "X.Y"` line and returns the quoted value. Aborts with a
-  ! clear message if the file is absent or the line is missing; both indicate a
-  ! path that is not a valid sandbox, so continuing would only mislead.
-//]
-private def sandboxJoVersion(sandboxDir: String): String =
-  val tomlPath = os.path.join(sandboxDir, "jo.toml")
-  if !File.exists(tomlPath) then
-    abort "no jo.toml found in sandbox directory '\{sandboxDir}' — is this a Jo sandbox project?"
-  for line in File.read(tomlPath).lines do
-    val pairs = line.split("=")
-    if pairs.size == 2 && pairs[0].trim == "jo" then
-      return pairs[1].trim
-  abort "jo.toml in '\{sandboxDir}' has no `jo = \"...\"` version line"
 
 //[ The optional `run.sh` wrapper in `sandboxDir`, refused if it cannot run. //]
 private def checkedRunScript(sandboxDir: String): String =
