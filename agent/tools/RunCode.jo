@@ -28,7 +28,6 @@ namespace harpe.tools
 import harpe.ffi.os
 import harpe.util.Clock
 import harpe.ffi.time
-import harpe.ffi.glob
 import harpe.ffi.threading
 import harpe.util.Process
 import harpe.ffi.builtins
@@ -274,21 +273,19 @@ class RunCodeTool(
 
   //[ Locate the compiler-invocation record left by `jo build` for the guest
     !
-    ! The `*.py.done` sidecar next to the built target. `None` if the guest has
-    ! not been built yet.
+    ! The path is fully determined by the sandbox's `jo.toml`: the module named
+    ! `guest` compiled with the Jo version declared in that file. No glob is
+    ! needed — `jo = "X.Y"` maps directly to the `jo-X.Y/` build directory, so
+    ! the path is `.build/guest/jo-X.Y/target/guest.py.done`. `None` if the
+    ! file does not exist (the guest has not been built yet).
+    !
+    ! Fails if `jo.toml` is absent or has no `jo = "..."` line — neither is a
+    ! valid sandbox, so an early abort is cleaner than a misleading "not built".
   //]
   private def findDoneFile: Option[String] =
-    val hits = glob.glob(os.path.join(sandboxDir, ".build/*/jo-*/target/*.py.done"), recursive = false)
-    if hits.size == 0 then None
-    else
-      var modTime: Float = 0.0
-      var latest: py.Dynamic = py.dynamic("")
-      for f in hits do
-        val mtime = os.path.getmtime(f.asString)
-        if mtime > modTime then
-          modTime = mtime
-          latest = f
-      Some(latest.asString)
+    val joVersion = sandboxJoVersion(sandboxDir)
+    val donePath = os.path.join(sandboxDir, ".build/guest/jo-\{joVersion}/target/guest.py.done")
+    if File.exists(donePath) then Some(donePath) else None
 
   //[ Compile and run `code` in `runDir`
     !
@@ -444,6 +441,22 @@ class RunCodeTool(
       "output"         ~ result
     new ToolOutcome(result, summary, attachments = [])
 end
+
+//[ The Jo version declared in `sandboxDir/jo.toml` — e.g. `"0.14"`.
+  !
+  ! Reads the `jo = "X.Y"` line and returns the quoted value. Aborts with a
+  ! clear message if the file is absent or the line is missing; both indicate a
+  ! path that is not a valid sandbox, so continuing would only mislead.
+//]
+private def sandboxJoVersion(sandboxDir: String): String =
+  val tomlPath = os.path.join(sandboxDir, "jo.toml")
+  if !File.exists(tomlPath) then
+    abort "no jo.toml found in sandbox directory '\{sandboxDir}' — is this a Jo sandbox project?"
+  for line in File.read(tomlPath).lines do
+    val pairs = line.split("=")
+    if pairs.size == 2 AND pairs[0].trim == "jo" then
+      return pairs[1].trim
+  abort "jo.toml in '\{sandboxDir}' has no `jo = \"...\"` version line"
 
 //[ The optional `run.sh` wrapper in `sandboxDir`, refused if it cannot run. //]
 private def checkedRunScript(sandboxDir: String): String =
