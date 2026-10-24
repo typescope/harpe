@@ -216,6 +216,14 @@ class RunCodeTool(
   //]
   private val runScript: String = checkedRunScript(sandboxDir)
 
+  //[ The installed Jo compiler's major.minor version — e.g. `"0.14"`.
+    !
+    ! Detected once at construction by running `jo --version` (which outputs
+    ! the full version, e.g. `0.14.3`). The build directory is named after the
+    ! major.minor only (`jo-0.14/`), so the patch component is dropped.
+  //]
+  private val joMajorMinor: String = detectedJoMajorMinor()
+
   def name: String = "runCode"
 
   def description: String =
@@ -273,22 +281,13 @@ class RunCodeTool(
 
   //[ Locate the compiler-invocation record left by `jo build` for the guest
     !
-    ! Reads `jo.toml` to get the declared Jo version (e.g. `0.14`), then checks
-    ! for `.build/guest/jo-{version}/target/guest.py.done`. Returns `None` if
-    ! `jo.toml` is absent or the `.done` file does not exist yet (not built).
-    ! Aborts if `jo.toml` has no `jo = "..."` line — that is a misconfiguration.
+    ! Constructs the exact path from the installed Jo version: `jo build` names
+    ! its output directory after the compiler's major.minor, so
+    ! `.build/guest/jo-{major.minor}/target/guest.py.done` is deterministic.
+    ! Returns `None` if the file does not exist (sandbox not built yet).
   //]
   private def findDoneFile: Option[String] =
-    val tomlPath = os.path.join(sandboxDir, "jo.toml")
-    if !File.exists(tomlPath) then return None
-    var joVersion = ""
-    for line in File.read(tomlPath).lines do
-      val pairs = line.split("=")
-      if pairs.size == 2 && pairs[0].trim == "jo" then
-        joVersion = pairs[1].trim.replace("\"", "")
-    if joVersion == "" then
-      abort "jo.toml in '\{sandboxDir}' has no `jo = \"...\"` version line"
-    val donePath = os.path.join(sandboxDir, ".build/guest/jo-\{joVersion}/target/guest.py.done")
+    val donePath = os.path.join(sandboxDir, ".build/guest/jo-\{joMajorMinor}/target/guest.py.done")
     if File.exists(donePath) then Some(donePath) else None
 
   //[ Compile and run `code` in `runDir`
@@ -445,6 +444,21 @@ class RunCodeTool(
       "output"         ~ result
     new ToolOutcome(result, summary, attachments = [])
 end
+
+//[ The installed Jo compiler's major.minor version string — e.g. `"0.14"`.
+  !
+  ! Runs `jo --version` (which outputs e.g. `0.14.3`) and returns only the
+  ! major.minor component, which is the directory name `jo build` uses.
+  ! Aborts if the command fails — a missing or broken `jo` cannot build anything.
+//]
+private def detectedJoMajorMinor(): String =
+  val result = Process.runCapped(py.list("jo", "--version"), 10.0)
+  if result.timedOut || result.returnCode != 0 then
+    abort "could not detect Jo compiler version (`jo --version` failed)"
+  val full = result.out.trim
+  val parts = full.split(".")
+  if parts.size < 2 then abort "unexpected `jo --version` output: '\{full}'"
+  parts[0] + "." + parts[1]
 
 //[ The optional `run.sh` wrapper in `sandboxDir`, refused if it cannot run. //]
 private def checkedRunScript(sandboxDir: String): String =
