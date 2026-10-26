@@ -255,7 +255,7 @@ class RunCodeTool(
   def run(code: String, guestEnv: Map[String, String] = noGuestEnv,
           interact: Interact = Interact.unattended)
   : ToolOutcome receives logger =
-    match findDoneFile
+    match findDoneFile(guestEnv.getOrElse("GUEST_MODULE", "guest"))
     case None =>
       new ToolOutcome:
         "The sandbox is not built. Run `jo build` in the sandbox project once before starting the agent."
@@ -279,15 +279,15 @@ class RunCodeTool(
       case Ok(outc) => new ToolOutcome(elide(outc.result, maxResultChars), outc.summary, outc.attachments)
       case Err(e)   => new ToolOutcome("The run failed unexpectedly: \{e.message}", "internal error", attachments = [])
 
-  //[ Locate the compiler-invocation record left by `jo build` for the guest
+  //[ Locate the compiler-invocation record left by `jo build` for `module`
     !
     ! Constructs the exact path from the installed Jo version: `jo build` names
     ! its output directory after the compiler's major.minor, so
-    ! `.build/guest/jo-{major.minor}/target/guest.py.done` is deterministic.
+    ! `.build/{module}/jo-{major.minor}/target/{module}.py.done` is deterministic.
     ! Returns `None` if the file does not exist (sandbox not built yet).
   //]
-  private def findDoneFile: Option[String] =
-    val donePath = os.path.join(sandboxDir, ".build/guest/jo-\{joMajorMinor}/target/guest.py.done")
+  private def findDoneFile(module: String): Option[String] =
+    val donePath = os.path.join(sandboxDir, ".build/\{module}/jo-\{joMajorMinor}/target/\{module}.py.done")
     if File.exists(donePath) then Some(donePath) else None
 
   //[ Compile and run `code` in `runDir`
