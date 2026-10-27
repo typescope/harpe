@@ -108,7 +108,7 @@ class WebApp(
     if WebApp.crossSiteRefused(crossSite, method, environ) then
       return Answer.refuse(Status.Forbidden, "cross-site request refused")
 
-    val matched = root.match(path.split("/").exclude(s => s == ""))
+    val matched = root.find(path)
     val found = matched.get(method)
     val bodyLimit = match found
       case Some(route ~ _) => route.maxReqBody
