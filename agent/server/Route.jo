@@ -60,17 +60,17 @@ private class RouteNode(segs: Map[Seg, RouteNode], exact: Map[Verb.Method, Route
       pathSegs: List[String],
       accParams: Map[String, String]): Map[Verb.Method, Route ~ Map[String, String]] =
     var result = Map.empty[Verb.Method, Route ~ Map[String, String]]
-    if pathSegs.size == 0 then
-      for verb ~ route in exact do
-        result = result.add(verb, route ~ accParams)
-      return result
-
     // wildcard child matches any remaining depth (lowest priority, written first)
     match segs.getOpt(Wild)
     case Some(wildChild) =>
       for verb ~ route in wildChild.exact do
         result = result.add(verb, route ~ accParams)
     case None => pass
+
+    if pathSegs.size == 0 then
+      for verb ~ route in exact do
+        result = result.add(verb, route ~ accParams)
+      return result
 
     val head = pathSegs.get(0)
     val tail = pathSegs.drop(1)
