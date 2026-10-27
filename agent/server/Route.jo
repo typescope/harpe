@@ -64,7 +64,7 @@ private class RouteNode(
     case Some(wildChild) =>
       for verb ~ route in wildChild.exact do
         result = result.add(verb, route ~ accParams)
-    case None => ()
+    case None => pass
 
     val head = pathSegs.get(0)
     val tail = pathSegs.drop(1)
@@ -74,14 +74,14 @@ private class RouteNode(
       case Param(name) =>
         for verb ~ m in child.matchWith(tail, accParams.add(name, head)) do
           result = result.add(verb, m)
-      case _ => ()
+      case _ => pass
 
     // literal child (overwrites param)
     match segs.get(head)
     case Some(child) =>
       for verb ~ m in child.matchWith(tail, accParams) do
         result = result.add(verb, m)
-    case None => ()
+    case None => pass
     result
 end
 
