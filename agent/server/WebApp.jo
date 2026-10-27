@@ -43,8 +43,8 @@ class WebApp(
       host: WebApp.Loopback | WebApp.AnyHost | String = WebApp.Loopback,
       crossSite: WebApp.CrossSite = WebApp.NoCrossSite)
 
-  //[ The exact routes, indexed once when the application is built. //]
-  private val exact: py.Dict = Route.indexed(routes)
+  //[ The routing trie compiled once when the application is built. //]
+  private val root = Route.compile(routes)
 
   //[ This application as the WSGI callable a server is given.
     ! The output sink receives each request and its status when response headers
@@ -108,7 +108,8 @@ class WebApp(
     if WebApp.crossSiteRefused(crossSite, method, environ) then
       return Answer.refuse(Status.Forbidden, "cross-site request refused")
 
-    val found = matchRoute(method, path)
+    val matched = root.match(path.split("/").exclude(s => s == ""))
+    val found = matched.get(method)
     val bodyLimit = match found
       case Some(route ~ _) => route.maxReqBody
       case None            => fallback.maxReqBody
@@ -119,47 +120,14 @@ class WebApp(
     case Some(route ~ params) =>
       Answer.ran(route.handler, method, path, environ, params)
     case None =>
-      val others = otherVerbs(method, path)
+      var others: List[String] = List.empty()
+      for verb ~ _ in matched do
+        if verb != method then others = others + Http.verbName(verb)
       if others.size == 0 then Answer.ran(fallback.handler, method, path, environ, Map.empty[String, String])
       else
         val headers = [Header("Allow", others.join(", "))]
         Response.complete(Status.MethodNotAllowed, Mime.Text, "method not allowed", headers = headers)
 
-  //[ The route for this exchange: exact first, then best param match, then longest prefix. //]
-  private def matchRoute(method: Verb.Method, path: String): Option[Route ~ Map[String, String]] =
-    val emptyParams = Map.empty[String, String]
-    val key = Http.verbName(method) + " " + path
-    if exact.contains(key) then return Some(exact.get(key).cast[Route] ~ emptyParams)
-
-    // match parameterized route
-    for route in routes do
-      if Http.verbName(route.method) == Http.verbName(method) then
-        val ok ~ params = route.matchPath(path)
-        if ok then return Some(route ~ params)
-
-    // select best by longest prefix
-    var best: Option[Route] = None
-    var longest = -1
-    for route in routes do
-      val covers = route.prefix && Http.verbName(route.method) == Http.verbName(method) && path.startsWith(route.path)
-      if covers && route.path.size > longest then
-        best = Some(route)
-        longest = route.path.size
-
-    match best
-    case Some(r) => Some(r ~ emptyParams)
-    case None => None
-
-  //[ The verbs other routes claim this path under — any at all make a 405, not the fallback. //]
-  private def otherVerbs(method: Verb.Method, path: String): List[String] =
-    var claimed: List[String] = []
-    for route in routes do
-      if Http.verbName(route.method) != Http.verbName(method) then
-        val exactMatch = route.paramRegex is None && !route.prefix && route.path == path
-        val paramMatch ~ _ = route.matchPath(path)
-        if exactMatch || paramMatch then
-          claimed = claimed + Http.verbName(route.method)
-    claimed
 end
 
 //[ What a `WebApp` constructor takes beyond its routes, and the checks behind them. //]

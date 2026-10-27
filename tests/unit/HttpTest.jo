@@ -317,7 +317,7 @@ private def withFiles(body: (String, (py.Dynamic, py.Dynamic) => py.Dynamic) => 
 
   val files = new WebApp:
     host = WebApp.Loopback
-    routes = [Route.assets("/assets/", root)]
+    routes = [Route.assets("/assets/*", root)]
     fallback = WebApp.Fallback(() => fileRoute(root), maxReqBody = limit)
 
   val result = py.try(body(root, files.wsgi()))
@@ -336,7 +336,7 @@ private def tabled(reached: py.List): WebApp =
       Route.Post("/api/message", () => echoed(reached), maxReqBody = limit)
       Route.Post("/api/upload", () => echoed(reached), maxReqBody = 4096)
       Route.Delete("/api/session", () => Response.json(py.dict("ok" ~ true)), maxReqBody = limit)
-      Route.Prefix("/assets/", () => Response.complete(Http.Status.Success, Http.Mime.Text, "asset"), maxReqBody = limit)
+      Route.Get("/assets/*", () => Response.complete(Http.Status.Success, Http.Mime.Text, "asset"), maxReqBody = limit)
     fallback = WebApp.Fallback(() => Response.html("<p>the page</p>"), maxReqBody = limit)
 
 private def info(): Response receives request = Response.json(py.dict("name" ~ "clair"))
