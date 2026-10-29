@@ -9,6 +9,7 @@ import harpe.server.Response
 class Route(
   method: Verb.Method,
   path: String,
+  prefix: Bool,
   maxReqBody: Int,
   handler: () => Response receives request)
 
@@ -94,46 +95,49 @@ end
 //[ The routes an application answers, declared as a table.
   !
   ! Paths are compared exactly. A segment starting with `:` is a named
-  ! parameter capture. A trailing `*` matches any remaining path, for a
-  ! single-page application or an asset directory.
+  ! parameter capture. `Prefix` matches any path starting with its argument,
+  ! for a single-page application or an asset directory.
 //]
 section Route
   //[ The body limit a route takes when it names none. //]
   def defaultMaxReqBody: Int = 1048576
 
-  //[ A route answering GET at `path`, exactly or by pattern
+  //[ A route answering GET at `path`, exactly or with named captures
     !
     ! A segment starting with `:` is a named parameter: `"/users/:id"` matches
     ! `/users/42` and makes `request.getParam("id")` return `Some("42")`. A
-    ! trailing `*` matches any remaining path: `"/assets/*"` matches
-    ! `/assets/img/logo.png`. A route with neither matches exactly.
+    ! route with no captures matches exactly.
   //]
   def Get(
       path: String,
       handler: (() => Response receives request),
       maxReqBody: Int = defaultMaxReqBody): Route =
-    new Route(Verb.Get, path, maxReqBody = maxReqBody, handler = handler)
+    if path.contains("*") then abort "route path must not contain '*': '\{path}'"
+    new Route(Verb.Get, path, prefix = false, maxReqBody = maxReqBody, handler = handler)
 
-  //[ A route answering POST at `path`, exactly or by pattern. //]
+  //[ A route answering POST at `path`, exactly or with named captures. //]
   def Post(
       path: String,
       handler: (() => Response receives request),
       maxReqBody: Int = defaultMaxReqBody): Route =
-    new Route(Verb.Post, path, maxReqBody = maxReqBody, handler = handler)
+    if path.contains("*") then abort "route path must not contain '*': '\{path}'"
+    new Route(Verb.Post, path, prefix = false, maxReqBody = maxReqBody, handler = handler)
 
-  //[ A route answering PUT at `path`, exactly or by pattern. //]
+  //[ A route answering PUT at `path`, exactly or with named captures. //]
   def Put(
       path: String,
       handler: (() => Response receives request),
       maxReqBody: Int = defaultMaxReqBody): Route =
-    new Route(Verb.Put, path, maxReqBody = maxReqBody, handler = handler)
+    if path.contains("*") then abort "route path must not contain '*': '\{path}'"
+    new Route(Verb.Put, path, prefix = false, maxReqBody = maxReqBody, handler = handler)
 
-  //[ A route answering DELETE at `path`, exactly or by pattern. //]
+  //[ A route answering DELETE at `path`, exactly or with named captures. //]
   def Delete(
       path: String,
       handler: (() => Response receives request),
       maxReqBody: Int = defaultMaxReqBody): Route =
-    new Route(Verb.Delete, path, maxReqBody = maxReqBody, handler = handler)
+    if path.contains("*") then abort "route path must not contain '*': '\{path}'"
+    new Route(Verb.Delete, path, prefix = false, maxReqBody = maxReqBody, handler = handler)
 
   //[ A route answering OPTIONS at `path`
     !
@@ -145,13 +149,26 @@ section Route
       path: String,
       handler: (() => Response receives request),
       maxReqBody: Int = defaultMaxReqBody): Route =
-    new Route(Verb.Options, path, maxReqBody = maxReqBody, handler = handler)
+    if path.contains("*") then abort "route path must not contain '*': '\{path}'"
+    new Route(Verb.Options, path, prefix = false, maxReqBody = maxReqBody, handler = handler)
+
+  //[ A route answering GET at any path starting with `path`
+    !
+    ! `path` must end in `/`. The handler reads `request.path` for the full
+    ! path. Use for a single-page application and for `Route.assets`.
+  //]
+  def Prefix(
+      path: String,
+      handler: (() => Response receives request),
+      maxReqBody: Int = defaultMaxReqBody): Route =
+    if !path.endsWith("/") then abort "a prefix route's path must end in '/': '\{path}'"
+    new Route(Verb.Get, path, prefix = true, maxReqBody = maxReqBody, handler = handler)
 
   //[ The files under `root`, served at `prefix` — the proxy's job, for development
     !
     ! A deployment's assets are nginx's or Apache's to serve. This gives a
     ! prototype, and a single container running without one, the same
-    ! behavior: `prefix` must end in `/*`, the rest of the path names the file,
+    ! behavior: `prefix` must end in `/`, the rest of the path names the file,
     ! and a path ending in `/` asks for the `index.html` beside it.
     !
     ! `Response.static` resolves the name, so one leaving `root` is a 404. GET
@@ -160,9 +177,9 @@ section Route
     ! is the proxy's to decide.
   //]
   def assets(prefix: String, root: String): Route =
-    if !prefix.endsWith("/*") then abort "an assets route's prefix must end in '/*': '\{prefix}'"
-    val dir = prefix.substring(0, prefix.size - 1)
-    Get:
+    if !prefix.endsWith("/") then abort "an assets route's prefix must end in '/': '\{prefix}'"
+    val dir = prefix
+    Prefix:
       prefix
       () =>
         val tail = request.path.substring(dir.size, request.path.size - dir.size)
@@ -182,24 +199,19 @@ section Route
   private[server] def compile(routes: List[Route]): RouteNode =
     var root = new RouteNode(Map.empty, Map.empty)
     for route in routes do
-      root = root.insert(segsOf(route.path), route)
+      val pathSegs = if route.prefix then segsOf(route.path) + Wild else segsOf(route.path)
+      root = root.insert(pathSegs, route)
     root
 
   //[ Convert a route path string into a typed segment list.
     !
-    ! Segments starting with `:` become `Param` captures; `*` becomes `Wild`;
-    ! all others are literal strings. `*` must be the last segment.
-    ! Used only at construction time; request paths carry no `:` or `*` syntax.
+    ! Segments starting with `:` become `Param` captures; all others are
+    ! literal strings. Used only at construction time.
   //]
   private[server] def segsOf(path: String): List[Seg] =
     var result: List[Seg] = List.empty()
-    var sawWild = false
     for s in path.split("/").exclude(s => s == "") do
-      if sawWild then abort "wildcard `*` must be the last segment in '\{path}'"
-      if s == "*" then
-        sawWild = true
-        result = result + Wild
-      else if s.startsWith(":") then
+      if s.startsWith(":") then
         result = result + Param(name = s.substring(1, s.size - 1))
       else
         result = result + Lit(s)
