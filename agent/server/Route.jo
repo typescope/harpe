@@ -14,15 +14,18 @@ class Route(
   handler: () => Response receives request)
 
 //[ A path segment in a compiled route: a literal string, a named parameter capture, or a wildcard. //]
-private union Seg = Lit(s: String) | Param(name: String) | Wild
+private union Seg = Lit(s: String) | Param(name: String) | Wildcard
   def toString(): String =
     match this
     case Lit(s) => s
-    case Param(n) => n
-    case Wild => "*"
+    case Param(n) => ":" + n
+    case Wildcard => "*"
+
   def compareTo(that: Seg): Int =
     this.toString().compareTo(that.toString)
 end
+
+private type RoutingResult = Route ~ Map[String, String]
 
 //[ A node in the routing trie.
   !
@@ -41,8 +44,12 @@ private class RouteNode(segs: Map[Seg, RouteNode], exact: Map[Verb.Method, Route
       if head is Param(name) then
         for key in segs.keys() if key is Param(existing) && existing != name do
           abort "two param routes at the same position have different names: '\{existing}' vs '\{name}'"
-      val child = segs.getOrElse(head, new RouteNode(Map.empty, Map.empty))
-      new RouteNode(segs.add(head, child.insert(tail, route)), exact)
+      val child = segs.get(head) rescue None => new RouteNode(Map.empty, Map.empty)
+      new RouteNode:
+        segs.add:
+          head,
+          child.insert(tail, route)
+        exact
 
   //[ Match request path segments against this trie, returning per-verb results.
     !
@@ -50,19 +57,19 @@ private class RouteNode(segs: Map[Seg, RouteNode], exact: Map[Verb.Method, Route
     ! captured params. The caller picks the requested verb's entry for dispatch,
     ! and collects the remaining keys for a 405 Allow header when none is found.
     !
-    ! Wild children are explored first (lowest priority), then param children,
+    ! Wildcard children are explored first (lowest priority), then param children,
     ! then literal children, so more specific matches overwrite less specific ones.
   //]
-  def find(path: String): Map[Verb.Method, Route ~ Map[String, String]] =
+  def find(path: String): Map[Verb.Method, RoutingResult] =
     val segs = path.split("/").exclude(s => s == "")
     matchWith(segs, Map.empty())
 
   private def matchWith(
       pathSegs: List[String],
-      accParams: Map[String, String]): Map[Verb.Method, Route ~ Map[String, String]] =
-    var result = Map.empty[Verb.Method, Route ~ Map[String, String]]
+      accParams: Map[String, String]): Map[Verb.Method, RoutingResult] =
+    var result = Map.empty[Verb.Method, RoutingResult]
     // wildcard child matches any remaining depth (lowest priority, written first)
-    match segs.getOpt(Wild)
+    match segs.getOpt(Wildcard)
     case Some(wildChild) =>
       for verb ~ route in wildChild.exact do
         result = result.add(verb, route ~ accParams)
@@ -81,14 +88,12 @@ private class RouteNode(segs: Map[Seg, RouteNode], exact: Map[Verb.Method, Route
       case Param(name) =>
         for verb ~ m in child.matchWith(tail, accParams.add(name, head)) do
           result = result.add(verb, m)
+      // literal child (overwrites param)
+      case Lit(head) =>
+        for verb ~ m in child.matchWith(tail, accParams) do
+          result = result.add(verb, m)
       case _ => pass
 
-    // literal child (overwrites param)
-    match segs.getOpt(Lit(head))
-    case Some(child) =>
-      for verb ~ m in child.matchWith(tail, accParams) do
-        result = result.add(verb, m)
-    case None => pass
     result
 end
 
@@ -199,7 +204,7 @@ section Route
   private[server] def compile(routes: List[Route]): RouteNode =
     var root = new RouteNode(Map.empty, Map.empty)
     for route in routes do
-      val pathSegs = if route.prefix then segsOf(route.path) + Wild else segsOf(route.path)
+      val pathSegs = if route.prefix then segsOf(route.path) + Wildcard else segsOf(route.path)
       root = root.insert(pathSegs, route)
     root
 
