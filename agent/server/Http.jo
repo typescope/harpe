@@ -26,13 +26,12 @@ section Http
     ! These five are what a server here understands. Anything else, HEAD
     ! included, is refused with a 501 before any route is looked at. A route
     ! may claim `Options`, which is how an application answers the CORS
-    ! preflight harpe sends no header of its own for. One no route claims
-    ! answers 405 with `Allow` where another verb claims the path, and the
-    ! fallback's 404 otherwise.
+    ! preflight harpe sends no header of its own for. A request no route
+    ! claims by verb and path falls through to the fallback.
   //]
   section Verb
     union Method = Get | Post | Put | Delete | Options
-      def compareTo(that: Method): Int =
+      private[server] def compareTo(that: Method): Int =
         verbName(this).compareTo(verbName(that))
     end
   end

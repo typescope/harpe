@@ -108,8 +108,7 @@ class WebApp(
     if WebApp.crossSiteRefused(crossSite, method, environ) then
       return Answer.refuse(Status.Forbidden, "cross-site request refused")
 
-    val matched = root.find(path)
-    val found = matched.getOpt(method)
+    val found = Route.find(root, method, path)
     val bodyLimit = match found
       case Some(route ~ _) => route.maxReqBody
       case None            => fallback.maxReqBody
@@ -120,13 +119,7 @@ class WebApp(
     case Some(route ~ params) =>
       Answer.ran(route.handler, method, path, environ, params)
     case None =>
-      var others: List[String] = List.empty()
-      for verb ~ _ in matched do
-        if verb.compareTo(method) != 0 then others = others + Http.verbName(verb)
-      if others.size == 0 then Answer.ran(fallback.handler, method, path, environ, Map.empty[String, String])
-      else
-        val headers = [Header("Allow", others.join(", "))]
-        Response.complete(Status.MethodNotAllowed, Mime.Text, "method not allowed", headers = headers)
+      Answer.ran(fallback.handler, method, path, environ, Map.empty[String, String])
 
 end
 

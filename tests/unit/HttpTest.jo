@@ -945,13 +945,6 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("anything else is the page", get(wsgi, "/c/42").text == "<p>the page</p>")
     check("and the page is HTML", headerOf(get(wsgi, "/c/42"), "Content-Type") == "text/html; charset=utf-8")
 
-  test: "answers 405 with Allow when another verb claims the path", () =>
-    val wsgi = tabled(py.list()).wsgi()
-    val answer = call(wsgi, "POST", "/api/info", [], "")
-    check("405", answer.status == 405)
-    check("naming the verb that works", headerOf(answer, "Allow") == "GET")
-    check("a path no route claims is the fallback, not a 405", get(wsgi, "/nothing").status == 200)
-
   test: "holds each route to its own body limit", () =>
     val reached = py.list()
     val wsgi = tabled(reached).wsgi()
@@ -984,7 +977,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
   test: "matches a named path parameter and makes it available in the handler", () =>
     val app = new WebApp:
       host = WebApp.Loopback
-      routes = [Route.Get("/users/:id", () => Response.complete(Http.Status.Success, Http.Mime.Text, request.getParam("id").getOrElse("none")))]
+      routes = [Route.Get("/users/:id", () => Response.complete(Http.Status.Success, Http.Mime.Text, request.pathParam("id").getOrElse("none")))]
     val wsgi = app.wsgi()
     check("extracts the segment", get(wsgi, "/users/42").text == "42")
     check("any value", get(wsgi, "/users/alice").text == "alice")
@@ -995,7 +988,7 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     val app = new WebApp:
       host = WebApp.Loopback
       routes = [Route.Get("/users/:userId/posts/:postId",
-        () => Response.complete(Http.Status.Success, Http.Mime.Text, request.getParam("userId").getOrElse("?") + "/" + request.getParam("postId").getOrElse("?")))]
+        () => Response.complete(Http.Status.Success, Http.Mime.Text, request.pathParam("userId").getOrElse("?") + "/" + request.pathParam("postId").getOrElse("?")))]
     val wsgi = app.wsgi()
     check("both params extracted", get(wsgi, "/users/42/posts/7").text == "42/7")
     check("partial match is a 404", get(wsgi, "/users/42/posts").status == 404)
@@ -1005,23 +998,25 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
       host = WebApp.Loopback
       routes = List:
         Route.Get("/users/me", () => Response.complete(Http.Status.Success, Http.Mime.Text, "me"))
-        Route.Get("/users/:id", () => Response.complete(Http.Status.Success, Http.Mime.Text, "id:" + request.getParam("id").getOrElse("?")))
+        Route.Get("/users/:id", () => Response.complete(Http.Status.Success, Http.Mime.Text, "id:" + request.pathParam("id").getOrElse("?")))
     val wsgi = app.wsgi()
     check("exact wins for the literal path", get(wsgi, "/users/me").text == "me")
     check("param still matches other values", get(wsgi, "/users/42").text == "id:42")
 
-  test: "answers 405 when a param route of a different verb matches the path", () =>
+  test: "prefers a prefix route over an exact path when the exact route's verb does not match", () =>
     val app = new WebApp:
       host = WebApp.Loopback
-      routes = [Route.Get("/items/:id", () => Response.complete(Http.Status.Success, Http.Mime.Text, "ok"))]
-    val answer = call(app.wsgi(), "POST", "/items/99", [], "")
-    check("405", answer.status == 405)
-    check("names the verb that does work", headerOf(answer, "Allow") == "GET")
+      routes = List:
+        Route.Prefix("/assets/", () => Response.complete(Http.Status.Success, Http.Mime.Text, "prefix"))
+        Route.Post("/assets/style.css", () => Response.complete(Http.Status.Success, Http.Mime.Text, "exact"))
+    val wsgi = app.wsgi()
+    check("GET falls through to the prefix", get(wsgi, "/assets/style.css").text == "prefix")
+    check("POST still hits the exact route", call(wsgi, "POST", "/assets/style.css", [], "").text == "exact")
 
   test: "returns None from request.param when the route has no params", () =>
     val app = new WebApp:
       host = WebApp.Loopback
-      routes = [Route.Get("/info", () => Response.complete(Http.Status.Success, Http.Mime.Text, request.getParam("id").getOrElse("none")))]
+      routes = [Route.Get("/info", () => Response.complete(Http.Status.Success, Http.Mime.Text, request.pathParam("id").getOrElse("none")))]
     check("None on a non-param route", get(app.wsgi(), "/info").text == "none")
 
   test: "refuses two param routes that would match the same paths", () =>
