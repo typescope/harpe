@@ -28,7 +28,6 @@ namespace harpe.tools
 import harpe.ffi.os
 import harpe.util.Clock
 import harpe.ffi.time
-import harpe.ffi.glob
 import harpe.ffi.threading
 import harpe.util.Process
 import harpe.ffi.builtins
@@ -217,6 +216,14 @@ class RunCodeTool(
   //]
   private val runScript: String = checkedRunScript(sandboxDir)
 
+  //[ The installed Jo compiler's major.minor version — e.g. `"0.14"`.
+    !
+    ! Detected once at construction by running `jo --version` (which outputs
+    ! the full version, e.g. `0.14.3`). The build directory is named after the
+    ! major.minor only (`jo-0.14/`), so the patch component is dropped.
+  //]
+  private val joMajorMinor: String = detectedJoMajorMinor()
+
   def name: String = "runCode"
 
   def description: String =
@@ -248,7 +255,7 @@ class RunCodeTool(
   def run(code: String, guestEnv: Map[String, String] = noGuestEnv,
           interact: Interact = Interact.unattended)
   : ToolOutcome receives logger =
-    match findDoneFile
+    match findDoneFile(guestEnv.getOrElse("GUEST_MODULE", "guest"))
     case None =>
       new ToolOutcome:
         "The sandbox is not built. Run `jo build` in the sandbox project once before starting the agent."
@@ -272,14 +279,16 @@ class RunCodeTool(
       case Ok(outc) => new ToolOutcome(elide(outc.result, maxResultChars), outc.summary, outc.attachments)
       case Err(e)   => new ToolOutcome("The run failed unexpectedly: \{e.message}", "internal error", attachments = [])
 
-  //[ Locate the compiler-invocation record left by `jo build` for the guest
+  //[ Locate the compiler-invocation record left by `jo build` for `module`
     !
-    ! The `*.py.done` sidecar next to the built target. `None` if the guest has
-    ! not been built yet.
+    ! Constructs the exact path from the installed Jo version: `jo build` names
+    ! its output directory after the compiler's major.minor, so
+    ! `.build/{module}/jo-{major.minor}/target/{module}.py.done` is deterministic.
+    ! Returns `None` if the file does not exist (sandbox not built yet).
   //]
-  private def findDoneFile: Option[String] =
-    val hits = glob.glob(os.path.join(sandboxDir, ".build/*/jo-*/target/*.py.done"), recursive = false)
-    if hits.size == 0 then None else Some(hits.get(0).asString)
+  private def findDoneFile(module: String): Option[String] =
+    val donePath = os.path.join(sandboxDir, ".build/\{module}/jo-\{joMajorMinor}/target/\{module}.py.done")
+    if File.exists(donePath) then Some(donePath) else None
 
   //[ Compile and run `code` in `runDir`
     !
@@ -435,6 +444,21 @@ class RunCodeTool(
       "output"         ~ result
     new ToolOutcome(result, summary, attachments = [])
 end
+
+//[ The installed Jo compiler's major.minor version string — e.g. `"0.14"`.
+  !
+  ! Runs `jo --version` (which outputs e.g. `0.14.3`) and returns only the
+  ! major.minor component, which is the directory name `jo build` uses.
+  ! Aborts if the command fails — a missing or broken `jo` cannot build anything.
+//]
+private def detectedJoMajorMinor(): String =
+  val result = Process.runCapped(py.list("jo", "--version"), 10.0)
+  if result.timedOut || result.returnCode != 0 then
+    abort "could not detect Jo compiler version (`jo --version` failed)"
+  val full = result.out.trim
+  val parts = full.split(".")
+  if parts.size < 2 then abort "unexpected `jo --version` output: '\{full}'"
+  parts[0] + "." + parts[1]
 
 //[ The optional `run.sh` wrapper in `sandboxDir`, refused if it cannot run. //]
 private def checkedRunScript(sandboxDir: String): String =
