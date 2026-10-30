@@ -31,16 +31,26 @@ class Request
   //[ Whether a reader has taken the body, which WSGI hands over as a stream read once. //]
   private[server] var bodyTaken: Bool = false
 
+  //[ The path parameters extracted when a param route matched, keyed by name. //]
+  private[server] val pathParams: Map[String, String]
+
   //[ Bound by the server, once per exchange. //]
-  private[server] def Request(method: Http.Verb.Method, path: String, environ: py.Dynamic) =
+  private[server] def Request(method: Http.Verb.Method, path: String, environ: py.Dynamic, pathParams: Map[String, String]) =
     this.method = method
     this.path = path
     this.environ = environ
+    this.pathParams = pathParams
 
   //[ A request header, or None when the client did not send it. //]
   def header(name: String): Option[String] =
     Request.environValue(environ, Request.environKey(name))
 
+  //[ A path parameter extracted from the route's `:name` segment, or None when the route has none.
+    !
+    ! A route declared as `Get("/users/:id", ...)` populates `request.pathParam("id")` with
+    ! the segment of the incoming path that matched.
+  //]
+  def pathParam(name: String): Option[String] = pathParams.getOpt(name)
 
 
   //[ The first value of a query parameter

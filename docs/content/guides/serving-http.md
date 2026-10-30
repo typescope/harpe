@@ -104,8 +104,9 @@ appropriate `Access-Control-Allow-*` headers. CORS headers alone do not override
 
 Exact routes match both method and path. Use `Route.Prefix("/c/", handler)`
 for application-defined handling of a path prefix; the prefix must end in `/`.
-An exact match wins over a prefix, and the longest matching prefix wins over a
-shorter one. For static asset trees, use
+An exact match whose method matches wins over a prefix; a prefix whose method
+matches wins over an exact route whose method does not. The longest matching
+prefix wins over a shorter one. For static asset trees, use
 [`Route.assets`](#serve-assets-and-files).
 
 With no explicit `fallback`, unclaimed paths receive `WebApp.notFound()`: a
