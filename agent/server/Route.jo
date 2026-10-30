@@ -15,14 +15,14 @@ class Route(
 
 //[ A path segment in a compiled route: a literal string, a named parameter capture, or a wildcard. //]
 private union Seg = Lit(s: String) | Param(name: String) | Wildcard
-  private[server] def str(): String =
-    match this
-    case Lit(s) => s
-    case Param(n) => ":" + n
-    case Wildcard => "*"
-
   private[server] def compareTo(that: Seg): Int =
-    this.str().compareTo(that.str)
+    def strRepr(seg: Seg): String =
+      match seg
+      case Lit(s) => s
+      case Param(n) => ":" + n
+      case Wildcard => "*"
+    end
+    strRepr(this).compareTo: strRepr(that)
 end
 
 private type RoutingResult = Route ~ Map[String, String]
