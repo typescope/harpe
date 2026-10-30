@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**A path claimed by one verb no longer answers 405 when another verb is used.**
+Previously, `POST /api/info` against a table that only has `GET /api/info`
+returned 405 with an `Allow` header. It now falls through to the fallback,
+like any other unmatched request. A prefix route whose method matches is
+preferred over an exact route whose method does not. Applications that needed
+the 405 signal should handle the unmatched method in the fallback.
+
 **`Response.static(root, path)` serves the static tree, and is the only builder
 that resolves a name a client chose.** It is where `Response.file(root, name)`
 was, under a name that says what it serves. `file` and `download` now take a
