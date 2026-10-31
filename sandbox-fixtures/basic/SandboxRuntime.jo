@@ -3,6 +3,7 @@ namespace sandbox.runtime
 import jo.IO.stdout
 import harpe.logging.*
 import harpe.ffi.os
+import harpe.ffi.json
 import harpe.media.*
 import harpe.caps.*
 import harpe.*
@@ -18,6 +19,13 @@ def main(): Unit receives stdout =
 
 private def run(): Unit receives stdout, logger, approvals =
   logger.info("harpe.sandbox.runtime", "runtime ready")
+
+  // Emit output-file events before running the guest, so they are present even
+  // when the guest crashes. Controlled by HARPE_TEST_OUTPUT_EVENTS:
+  //   "1"     → one valid file event
+  //   "mixed" → valid + malformed + unknown + a second valid event
+  val outputMode = os.getenv("HARPE_TEST_OUTPUT_EVENTS", "")
+  if outputMode != "" then emitTestOutputEvents(outputMode)
 
   // The integration suite enables this probe to exercise the real
   // sandbox → broker → Interact → broker → sandbox approval path.
@@ -37,6 +45,17 @@ private def run(): Unit receives stdout, logger, approvals =
   // where the host runs it — so `.` is that isolated dir, holding out.py).
   val fs = FileSystemImpl.local(".")
   with sandbox.api.fs = fs in sandbox.api.runTask()
+
+private def emitTestOutputEvents(mode: String): Unit =
+  val outputFile = os.getenv("HARPE_OUTPUT_FILE", "")
+  if outputFile == "" then return
+  val f = py.module("builtins").open(outputFile, "a")
+  f.write(json.dumps(py.dict("event" ~ "file", "name" ~ "report.csv", "mime" ~ "text/csv", "size" ~ 42)) + "\n")
+  if mode == "mixed" then
+    f.write("not valid json {{{\n")
+    f.write(json.dumps(py.dict("event" ~ "unknown", "data" ~ "ignored")) + "\n")
+    f.write(json.dumps(py.dict("event" ~ "file", "name" ~ "other.csv", "mime" ~ "text/csv", "size" ~ 10)) + "\n")
+  f.close()
 
 private def auditLogger(): Logger =
   val path = os.getenv("HARPE_AUDIT_LOG", "")

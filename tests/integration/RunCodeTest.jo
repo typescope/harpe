@@ -247,6 +247,47 @@ private def parallelCases(): Unit receives thisSuite =
         new StuckApprovalInteract
       checkEquals("summary", stuck.summary.split(" · ").get(0), "approval timed out")
 
+  suite: "output file events", () =>
+    thisSuite.parallel = true
+
+    // The sandbox runtime emits a `file` event to HARPE_OUTPUT_FILE before
+    // running the guest. The host should surface it as an Attachment.
+    test: "populates attachments from output file events", () =>
+      val out = execWith(fastTool(), guest("  println \"ok\"\n"),
+        Map("HARPE_TEST_OUTPUT_EVENTS" ~ "1"), Interact.unattended)
+      checkEquals("tag", tag(out), "ran")
+      checkEquals("one attachment", "\{out.attachments.size}", "1")
+      val a = out.attachments.get(0)
+      checkEquals("name", a.name, "report.csv")
+      checkEquals("mime", a.mime, "text/csv")
+      checkEquals("size", "\{a.size}", "42")
+      checkEquals("path without data dir", a.path, "report.csv")
+
+    // When HARPE_DATA_DIR is in guestEnv the host should join it with the
+    // filename so callers get an absolute path to the actual file.
+    test: "resolves attachment path against HARPE_DATA_DIR", () =>
+      val out = execWith(fastTool(), guest("  println \"ok\"\n"),
+        Map("HARPE_TEST_OUTPUT_EVENTS" ~ "1", "HARPE_DATA_DIR" ~ "/data"), Interact.unattended)
+      checkEquals("path", out.attachments.get(0).path, "/data/report.csv")
+
+    // Malformed JSON lines and unrecognised event types must be skipped
+    // without crashing the host; valid events on the same file still land.
+    test: "skips malformed and unknown output file events", () =>
+      val out = execWith(fastTool(), guest("  println \"ok\"\n"),
+        Map("HARPE_TEST_OUTPUT_EVENTS" ~ "mixed"), Interact.unattended)
+      checkEquals("two valid attachments", "\{out.attachments.size}", "2")
+      checkEquals("first", out.attachments.get(0).name, "report.csv")
+      checkEquals("second", out.attachments.get(1).name, "other.csv")
+
+    // Events written before a crash must survive: readOutputEvents runs
+    // regardless of the guest exit code.
+    test: "preserves attachments when the program crashes", () =>
+      val out = execWith(fastTool(), guest("  abort \"test crash\"\n"),
+        Map("HARPE_TEST_OUTPUT_EVENTS" ~ "1"), Interact.unattended)
+      checkEquals("tag", tag(out), "crash")
+      checkEquals("attachment preserved", "\{out.attachments.size}", "1")
+      checkEquals("name", out.attachments.get(0).name, "report.csv")
+
   suite: "failing programs", () =>
     thisSuite.parallel = true
 
