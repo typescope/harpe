@@ -16,8 +16,8 @@ may also add file and network rules for defense in depth.
 - kills the whole process group on timeout
 - limits captured output
 - starts the guest with a minimal environment containing only the executable
-  search path, audit-log path, and variables explicitly supplied by the
-  application
+  search path, `HARPE_AUDIT_LOG`, `HARPE_OUTPUT_FILE`, and variables explicitly
+  supplied by the application
 
 ## Enable the wrapper
 
@@ -143,6 +143,6 @@ Exercise each boundary explicitly:
 2. Trigger a long loop and confirm the timeout stops it.
 3. Try to read a file outside the allowed directory.
 4. Try an outbound connection when networking should be disabled.
-5. Confirm the guest environment contains only `PATH`, the audit path, and the
-   values your application intentionally grants.
+5. Confirm the guest environment contains only `PATH`, `HARPE_AUDIT_LOG`,
+   `HARPE_OUTPUT_FILE`, and the values your application intentionally grants.
 6. Review the session log for the recorded tool result.

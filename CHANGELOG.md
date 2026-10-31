@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+**`RunCodeTool` now collects file attachments from a dedicated side-channel.**
+The host sets `HARPE_OUTPUT_FILE` in the guest environment before each run.
+The sandbox runtime appends NDJSON lines to that file to declare produced files:
+
+```json
+{"event":"file","name":"result.csv","mime":"text/csv","size":4096}
+```
+
+The host reads these events after the run — regardless of exit code — and places
+them in `ToolOutcome.attachments`. File paths are resolved relative to
+`HARPE_DATA_DIR` when that key is present in `guestEnv`. Unknown event types are
+silently skipped. This separates machine-readable structured output from the
+human-readable stdout fed to the model.
+
 ## 0.14.0 — 2026-10-13
 
 Requires Jo 0.14.0 or later. Harpe and `harpe-caps` move to the Jo 0.14
