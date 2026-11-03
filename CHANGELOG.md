@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Decode guest stdout and stderr as UTF-8 with replacement, so output that is
+  not valid UTF-8 (for example a multi-byte character cut by `head -c`) no
+  longer fails `RunCodeTool` as an internal error.
+
 ## 0.14.0 — 2026-10-13
 
 Requires Jo 0.14.0 or later. Harpe and `harpe-caps` move to the Jo 0.14
