@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+**Routes can capture named path segments.** A route such as
+`Get("/users/:id", ...)` matches one segment in place of `:id`; the handler
+reads the captured value with `request.pathParam("id")`.
+
 ## 0.14.0 — 2026-10-13
 
 Requires Jo 0.14.0 or later. Harpe and `harpe-caps` move to the Jo 0.14
