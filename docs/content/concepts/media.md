@@ -120,6 +120,20 @@ the driver and its runtime agree on, passed through `runCode`'s `guestEnv`).
 Replace a backend there without changing the guest API. Keep credentials and
 remote clients in the trusted runtime.
 
+When the runtime produces a file the user should receive — for example after
+running a query and writing a CSV — it declares that file by appending a line to
+the path in `HARPE_OUTPUT_FILE` (set by the host before the run starts):
+
+```json
+{"event":"file","name":"result.csv","mime":"text/csv","size":4096}
+```
+
+The host reads these events after the run and places them in
+`ToolOutcome.attachments`. The file name is resolved relative to the data
+directory when `HARPE_DATA_DIR` is present in `guestEnv`. Unknown event types
+are silently skipped, so new event kinds can be added without breaking existing
+hosts.
+
 Parsers and OCR engines still process untrusted input. Use the optional runtime
 isolation described in [Add Defense in Depth](/guides/defense-in-depth/) for
 resource limits and process confinement.

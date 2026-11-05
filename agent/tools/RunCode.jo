@@ -37,6 +37,7 @@ import harpe.util.Terminal
 import harpe.ffi.json
 
 import harpe.*
+import harpe.Model.Attachment
 import harpe.Tool.*
 import harpe.broker.*
 import harpe.logging.*
@@ -292,9 +293,10 @@ class RunCodeTool(
     // Each run emits one `harpe.tools.runCode.*` log entry — the program under test
     // plus the fields specific to how it ended — to the injected channel. What
     // becomes of the entry (format, destination) is the Logger backend's policy.
-    val runSrc   = os.path.join(runDir, "Task.jo")
-    val runOut   = os.path.join(runDir, "out.py")
-    val runAudit = os.path.join(runDir, "audit.jsonl")
+    val runSrc    = os.path.join(runDir, "Task.jo")
+    val runOut    = os.path.join(runDir, "out.py")
+    val runAudit  = os.path.join(runDir, "audit.jsonl")
+    val runOutput = os.path.join(runDir, "output.ndjson")
 
     File.write(runSrc, code)
 
@@ -341,10 +343,12 @@ class RunCodeTool(
     if useRunSh then
       os.chmod(runDir, 493)   // 0o755 — traverse + read the directory
       os.chmod(runOut, 420)   // 0o644 — read the compiled program
-      // Pre-create the audit log world-writable, so a uid-dropping run.sh can still
-      // append to it (the dir is not writable to the dropped user).
+      // Pre-create the audit log and output file world-writable, so a uid-dropping
+      // run.sh can still append to them (the dir is not writable to the dropped user).
       File.write(runAudit, "")
-      os.chmod(runAudit, 438) // 0o666
+      os.chmod(runAudit, 438)  // 0o666
+      File.write(runOutput, "")
+      os.chmod(runOutput, 438) // 0o666
 
     val runCmd = if useRunSh then py.list(runScript, runOut)
                  else py.list("python3", runOut)
@@ -354,6 +358,7 @@ class RunCodeTool(
     // host variables. The trusted compiler above keeps the full toolchain env.
     val runEnv = Process.guestEnv()
     runEnv.set("HARPE_AUDIT_LOG", runAudit)
+    runEnv.set("HARPE_OUTPUT_FILE", runOutput)
 
     // One broker belongs to one sandbox run. Approval requests travel over this
     // socket and are forwarded to the current Interact without entering the model
@@ -416,6 +421,7 @@ class RunCodeTool(
     // Replay the records the sandboxed program logged (a JSONL file it wrote to)
     // through this (contextual) logger, so they carry the turn's session context.
     replayAudit(runAudit)
+    val fileAttachments = readOutputEvents(runOutput, guestEnv)
 
     val result =
       if runReturnCode != 0 then "The program crashed:\n\{runErr}"
@@ -433,8 +439,35 @@ class RunCodeTool(
       "runSeconds"     ~ runSeconds
       "exitCode"       ~ runReturnCode
       "output"         ~ result
-    new ToolOutcome(result, summary, attachments = [])
+    new ToolOutcome(result, summary, attachments = fileAttachments)
 end
+
+//[ Parse NDJSON events from `HARPE_OUTPUT_FILE` and return file attachments.
+  !
+  ! One JSON object per line; lines that are blank or malformed are skipped.
+  ! Unknown `event` types are silently ignored — forward-compatible.
+  ! File paths are resolved relative to `HARPE_DATA_DIR` when that key is set
+  ! in `guestEnv`; otherwise the name is used as-is.
+//]
+private def readOutputEvents(path: String, guestEnv: Map[String, String]): List[Attachment] =
+  if !File.exists(path) then return []
+  val dataDir = guestEnv.getOrElse("HARPE_DATA_DIR", "")
+  var result: List[Attachment] = []
+  for line in File.read(path).lines if line.trim != "" do
+    match py.try(json.loads(line.trim))
+    case Err(_) => pass
+    case Ok(d)  =>
+      val evt = d.cast[py.Dict]
+      match evt.get("event", "").asString
+      case "file" =>
+        val name = evt.get("name", "").asString
+        val mime = evt.get("mime", "application/octet-stream").asString
+        val size = evt.get("size", 0).asInt
+        if name != "" then
+          val absPath = if dataDir != "" then os.path.join(dataDir, name) else name
+          result = result + Attachment(name, size, mime, absPath)
+      case _ => pass  // unknown events silently skipped — forward compatible
+  result
 
 //[ The optional `run.sh` wrapper in `sandboxDir`, refused if it cannot run. //]
 private def checkedRunScript(sandboxDir: String): String =
