@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**Decode guest stdout and stderr as UTF-8 with replacement**. This way, output that is
+not valid UTF-8 (for example a multi-byte character cut by `head -c`) no
+longer fails `RunCodeTool` as an internal error.
+
 **Routes can capture named path segments.** A route such as
 `Get("/users/:id", ...)` matches one segment in place of `:id`; the handler
 reads the captured value with `request.pathParam("id")`.
