@@ -2,9 +2,20 @@
 
 ## Unreleased
 
-- Decode guest stdout and stderr as UTF-8 with replacement, so output that is
-  not valid UTF-8 (for example a multi-byte character cut by `head -c`) no
-  longer fails `RunCodeTool` as an internal error.
+**Decode guest stdout and stderr as UTF-8 with replacement**. This way, output that is
+not valid UTF-8 (for example a multi-byte character cut by `head -c`) no
+longer fails `RunCodeTool` as an internal error.
+
+**Routes can capture named path segments.** A route such as
+`Get("/users/:id", ...)` matches one segment in place of `:id`; the handler
+reads the captured value with `request.pathParam("id")`.
+
+**A path claimed by one verb no longer answers 405 when another verb is used.**
+Previously, `POST /api/info` against a table that only has `GET /api/info`
+returned 405 with an `Allow` header. It now falls through to the fallback,
+like any other unmatched request. A prefix route whose method matches is
+preferred over an exact route whose method does not. Applications that needed
+the 405 signal should handle the unmatched method in the fallback.
 
 ## 0.14.0 — 2026-10-13
 
@@ -99,13 +110,6 @@ bindings are private implementation details.
 The CLI and templates load runtime prompts from `prompts/SYSTEM.md`, keeping
 them separate from contributor instructions in `AGENTS.md`. Template API
 migrations and live log viewers follow in a separate PR after registry discovery.
-
-**A path claimed by one verb no longer answers 405 when another verb is used.**
-Previously, `POST /api/info` against a table that only has `GET /api/info`
-returned 405 with an `Allow` header. It now falls through to the fallback,
-like any other unmatched request. A prefix route whose method matches is
-preferred over an exact route whose method does not. Applications that needed
-the 405 signal should handle the unmatched method in the fallback.
 
 **`Response.static(root, path)` serves the static tree, and is the only builder
 that resolves a name a client chose.** It is where `Response.file(root, name)`
