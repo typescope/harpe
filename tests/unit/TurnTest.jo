@@ -258,6 +258,82 @@ def turnSuite(): Unit receives thisSuite, logger = suite: "turn engine", () =>
         scenario: tools(), 1, 4, askC, live()
         expected = "Answered(final) | start,end,tool+echo,tool-echo,budget,start,end"
 
+    test: "fails an empty final answer and journals the failure", () =>
+      for finalText in ["", " \n\t"] do
+        val capture = new CaptureLogger
+        val journal = new Journal(capture)
+        val context = new WindowedContext("", [])
+        val channel = new TestInteract(live())
+        val brain: Model = testModel: (base, maxOut) => (results, offered, interact) =>
+          if offered.isEmpty then textReply(finalText) else toolReply("echo")
+        val result = with logger = capture in
+          journal.request("question")
+          val outcome = Agent.ask:
+            "question"
+            brain = brain
+            tools = toolsetOf(tools())
+            context = context
+            interact = channel
+            maxToolRounds = 1
+          journal.response("finished")
+          outcome
+
+        checkEquals("failure", resultTag(result), "Failed(tool budget reached and the final reply was empty)")
+        checkEquals("provisional messages discarded", result.messages.size, 0)
+        checkEquals:
+          "durable event order, with no answered terminator"
+          capture.entries.select(entry => entry.event.startsWith("harpe.turn.")).map(entry => entry.event).join(",")
+          "harpe.turn.request,harpe.turn.message,harpe.turn.message,harpe.turn.message,harpe.turn.message,harpe.turn.failed,harpe.turn.response"
+        val failure = capture.entries.select(entry => entry.event == TurnLog.failedEvent).get(0)
+        checkEquals("diagnostic", TurnLog.decodeDetail(failure), "tool budget reached and the final reply was empty")
+        val turn = TurnLog.innerTurn(failure)
+        checkEquals("turn is tagged", turn != "", true)
+        val replies = capture.entries.select(entry => entry.event == TurnLog.messageEvent)
+        match TurnLog.decodeMessage(replies.get(3))
+        case Assistant(text, calls) =>
+          checkEquals("empty reply remains in the audit log", text, finalText)
+          checkEquals("final reply has no calls", calls.size, 0)
+        case _ => checkEquals("final record is an assistant reply", false, true)
+        val projected = Journal.records(capture.entries)
+        checkEquals("one journal turn", projected.size, 1)
+        checkEquals("failure survives replay", resultTag(projected.get(0).data), resultTag(result))
+        checkEquals("replayed provisional messages discarded", projected.get(0).data.messages.size, 0)
+        val reloaded = Journal.fromEntries(capture.entries)
+        val liveMessages = context.compact(channel).rendered.messages
+        checkEquals("user retained in live context", liveMessages.size, 1)
+        checkEquals("user retained after replay", reloaded.size, 1)
+        checkEquals("live user", liveMessages.get(0) is UserInput("question", []), true)
+        checkEquals("replayed user", reloaded.get(0) is UserInput("question", []), true)
+
+    test: "checks the final answer when the tool budget starts at zero", () =>
+      for finalText in ["", "final"] do
+        val brain: Model = testModel: (base, maxOut) => (results, offered, interact) =>
+          if offered.isEmpty then textReply(finalText) else abort "no tools should be offered"
+        val observed = scenario: tools(), 0, 4, brain, live()
+        val expected = if finalText == "" then "Failed(tool budget reached and the final reply was empty)"
+                       else "Answered(final)"
+        checkEquals("zero-budget final reply", observed, expected + " | budget,start,end")
+
+    test: "fails an empty final reply after a retry without repeating the live budget notification", () =>
+      val brain: Model = testModel: (base, maxOut) =>
+        val step = py.list(0)
+        (results, offered, interact) =>
+          val n = step.get(0).asInt
+          step.set(0, n + 1)
+          if n == 0 then toolReply("echo")
+          else if n == 1 then Transient("blip")
+          else textReply("")
+      val observed = scenario: tools(), 1, 2, brain, live()
+      checkEquals:
+        "empty final reply after transport retry"
+        observed
+        "Failed(tool budget reached and the final reply was empty) | start,end,tool+echo,tool-echo,budget,start,end,reset,transient,start,end"
+
+    test: "preserves empty answers before the tool budget is spent", () =>
+      val brain: Model = testModel((base, maxOut) => (results, offered, interact) => textReply(""))
+      val observed = scenario: tools(), 50, 4, brain, live()
+      checkEquals("ordinary empty reply", observed, "Answered() | start,end")
+
     // Everything but the brain defaulted. The model still sees the user's input
     // (a defaulted context holds the turn it is given), and two defaulted turns
     // do not share a transcript (the default is evaluated per call). A shared
