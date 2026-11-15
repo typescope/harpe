@@ -853,6 +853,27 @@ def httpSuite(): Unit receives thisSuite = suite: "http", () =>
     check("another name is refused", rebound.status == 400)
     check("and named in the answer", rebound.text.contains("attacker.example"))
 
+  test: "rejects wildcard bind addresses when constructing the application", () =>
+    for name in ["0.0.0.0", "::", "[::]", "0:0:0:0:0:0:0:0", "[0:0:0:0:0:0:0:0]"] do
+      match py.try(applicationFor(name, py.list()))
+      case Ok(_) => check("rejects bind address '\{name}' before any request", false)
+      case Err(error) =>
+        check("names the mistaken setting", error.message.contains("WebApp.host '\{name}'"))
+        check("explains the bind address", error.message.contains("wildcard server bind address"))
+        check("names the correct setting", error.message.contains("hostname clients request"))
+        check("qualifies AnyHost", error.message.contains("only when a trusted proxy validates"))
+
+  test: "accepts concrete hostnames, IPv4, IPv6, and explicit host policies", () =>
+    for name in ["Agent.Example.com", "127.0.0.1", "192.0.2.1", "::1", "2001:db8::1", "[::1]"] do
+      check("accepts '\{name}'", py.try(applicationFor(name, py.list())).isOk)
+    check("loopback policy", py.try(applicationFor(WebApp.Loopback, py.list())).isOk)
+    val any = applicationFor(WebApp.AnyHost, py.list()).wsgi()
+    check("any-host policy", call(any, "GET", "/dynamic", [Header("Host", "agent.example.com")], "").status == 200)
+    val v4 = applicationFor("192.0.2.1", py.list()).wsgi()
+    check("concrete IPv4 request", call(v4, "GET", "/dynamic", [Header("Host", "192.0.2.1:8080")], "").status == 200)
+    val v6 = applicationFor("2001:db8::1", py.list()).wsgi()
+    check("concrete IPv6 request", call(v6, "GET", "/dynamic", [Header("Host", "[2001:db8::1]:8080")], "").status == 200)
+
   test: "refuses a host the settings do not name", () =>
     val wsgi = appFor(py.list())
     check("loopback by name", call(wsgi, "GET", "/dynamic", [Header("Host", "localhost:8080")], "").status == 200)

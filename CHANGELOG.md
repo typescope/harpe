@@ -23,6 +23,11 @@ the file's content through a binary stream, so a valid workbook stored under a
 content hash opens normally. The stream stays open for lazy row reads and is
 released by `Workbook.close()` or immediately if loading fails.
 
+**`WebApp` rejects wildcard bind addresses as its HTTP host.** Passing
+`0.0.0.0`, `::`, or another spelling of the unspecified IPv6 address as `host`
+now fails at construction with a configuration error. Set the server's bind
+address separately and give `WebApp.host` the hostname clients request.
+
 **Decode guest stdout and stderr as UTF-8 with replacement**. This way, output that is
 not valid UTF-8 (for example a multi-byte character cut by `head -c`) no
 longer fails `RunCodeTool` as an internal error.
