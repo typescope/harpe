@@ -19,6 +19,8 @@ namespace harpe
 import harpe.Tool.*
 import harpe.Model.Attachment
 import harpe.logging.logger
+import harpe.ffi.json
+import harpe.ffi.builtins
 
 //[ A tool spec
   !
@@ -144,9 +146,36 @@ section Tool
 
   //[ A tool call the model wants to make
     !
-    ! A provider id, the tool name, and the typed arguments.
+    ! A provider id, the tool name, and either typed arguments or an invalid
+    ! payload that must be returned to the model without running a handler.
   //]
-  class ToolCall(id: String, name: String, input: ToolInput)
+  class ToolCall(id: String, name: String, input: ToolInput | InvalidToolInput)
+    //[ Arguments for a provider whose tool calls carry JSON text.
+      ! Invalid text is replayed verbatim, including after journal reload.
+    //]
+    def argumentsJson: String =
+      match input
+      case valid: ToolInput => json.dumps(valid.raw)
+      case invalid: InvalidToolInput => invalid.rawArguments
+  end
+
+  //[ Arguments that could not be decoded as a JSON object.
+    ! This is separate from `ToolInput`: invalid input never reaches a handler.
+  //]
+  class InvalidToolInput(rawArguments: String, error: String)
+
+  //[ Decode a provider's JSON argument string, retaining a bad payload for repair. //]
+  private[harpe] def toolCallFromJson(id: String, name: String, arguments: String): ToolCall =
+    match py.try(json.loads(arguments))
+    case Err(error) => ToolCall(id, name, InvalidToolInput(arguments, "invalid JSON: " + error.message))
+    case Ok(value) =>
+      if py.isInstance(value, builtins.dict) then ToolCall(id, name, ToolInput(value.cast[py.Dict]))
+      else ToolCall(id, name, InvalidToolInput(arguments, "expected a JSON object"))
+
+  //[ A provider such as Anthropic supplies a decoded JSON value instead. //]
+  private[harpe] def toolCallFromValue(id: String, name: String, value: py.Dynamic): ToolCall =
+    if py.isInstance(value, builtins.dict) then ToolCall(id, name, ToolInput(value.cast[py.Dict]))
+    else ToolCall(id, name, InvalidToolInput(json.dumps(value), "expected a JSON object"))
 
   //[ The result of running a tool call, fed back to the model next turn.
     !

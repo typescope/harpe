@@ -75,6 +75,41 @@ Every parameter is required, by design. Optionality buys a human caller
 ergonomics a model has no use for, and explicit is better. Give a parameter that
 does not always apply a documented value meaning "not applicable" instead.
 
+## Invalid tool arguments
+
+Tool arguments must decode to a JSON object. If a completed call from OpenAI,
+OpenRouter, or a compatible server contains malformed JSON or another JSON
+value, the built-in executors return a failed tool result explaining the error.
+The handler is not invoked. The model can correct the call on its next round,
+and valid calls in the same batch continue under the selected execution policy.
+These rounds use the ordinary tool budget; no extra provider retry is added.
+Replies truncated by the provider still drop partial tool calls.
+
+Handlers continue to receive `ToolInput`. A model adapter or custom executor
+inspecting `ToolCall.input` must handle its two possible types:
+
+```jo
+match call.input
+case input: ToolInput =>
+  // Dispatch the typed object to the handler.
+  ...
+case invalid: InvalidToolInput =>
+  // Return a failed result; do not run the handler.
+  ...
+```
+
+`InvalidToolInput` retains `rawArguments` and an `error` diagnostic.
+`call.argumentsJson` returns that original string, or serializes a valid input
+object, so JSON-string providers can replay the call after context rebuilding
+or journal reload.
+
+Anthropic supplies already-decoded input through its SDK. Harpe rejects a
+non-object snapshot, but the SDK may reject or normalize malformed streaming
+JSON before Harpe sees it. When a history contains invalid arguments that its
+native `tool_use` format cannot represent, Harpe retains the call and failed
+result as labeled text. Valid calls keep native tool blocks, with native result
+blocks placed before diagnostic text in mixed batches.
+
 See [Structured output](/concepts/structured-output/) for why Harpe usually keeps
 machine-consumed data in the typed Jo program instead of formatting it as the
 agent's final answer.

@@ -158,7 +158,9 @@ def contractSuite(): Unit receives thisSuite, logger = suite: "contract", () =>
       val call = requested.calls.get(0)
       check("tool id", call.id == "call_1")
       check("tool name", call.name == "lookup")
-      check("tool arguments", call.input.string("city") == "Zurich")
+      match call.input
+      case input: ToolInput => check("tool arguments", input.string("city") == "Zurich")
+      case _ => check("valid tool arguments", false)
 
       val answered = turn.expectReply(results = [ToolResult(call.id, "sunny", [])], tools = [tool])
       check("follow-up streams the answer", turn.streamed == "done")

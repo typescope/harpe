@@ -25,6 +25,7 @@ import jtest.thisSuite
 import jtest.suite
 import jtest.test
 import jtest.checkEquals
+import jtest.check
 
 private def threadingMod: py.Dynamic = py.module("threading")
 private def timeMod: py.Dynamic = py.module("time")
@@ -150,6 +151,27 @@ end
 
 def executorSuite(): Unit receives thisSuite, logger = suite: "tool call executor", () =>
   suite: "results", () =>
+    test: "rejects invalid inputs without executing handlers under either policy", () =>
+      for executor in [ToolCallExecutor.sequential, ToolCallExecutor.parallel(2)] do
+        val ran = py.list()
+        val wired = Toolset.of:
+          new NamedTool("echo")
+          (input: ToolInput, channel: Interact) =>
+            ran.append(input["text"])
+            new ToolOutcome(input["text"], "ran")
+        val calls = [
+          toolCallFromJson("bad-json", "echo", "{"),
+          toolCallFromJson("valid", "echo", "{\"text\":\"kept\"}"),
+          toolCallFromJson("bad-object", "echo", "[]")
+        ]
+        val results = executor.run(calls, wired, new Quiet)
+        checkEquals("one handler execution", ran.size, 1)
+        checkEquals("valid input reached handler", ran.get(0).asString, "kept")
+        checkEquals("call order", results.map(result => result.id).join(","), "bad-json,valid,bad-object")
+        check("JSON refusal", !results[0].success && results[0].content.contains("invalid JSON"))
+        check("valid call succeeded", results[1].success && results[1].content == "kept")
+        check("object refusal", !results[2].success && results[2].content.contains("expected a JSON object"))
+
     test: "sequential answers every call in call order", () =>
       checkEquals:
         "sequential order"

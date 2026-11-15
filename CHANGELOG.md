@@ -13,6 +13,25 @@ module immediately after the sandbox path, for example
 produced before a crash ahead of the crash diagnostic, and records both in the
 existing `harpe.tools.runCode.ran` entry's `output` field.
 
+**Malformed tool arguments are returned to the model for correction.** OpenAI
+Responses, OpenRouter, and compatible Chat Completions now retain invalid JSON
+or non-object arguments as a refused tool call. The built-in executors return
+an unsuccessful tool result without invoking its handler; other valid calls
+in the batch still run. Original malformed JSON survives journal reload and
+provider-history reconstruction. Incomplete replies still drop partial calls.
+
+**`ToolCall.input` is now `ToolInput | InvalidToolInput`.** Existing constructors
+with `ToolInput` are unchanged, but code inspecting a call's input must narrow
+the union. `InvalidToolInput` carries `rawArguments` and `error`, and
+`ToolCall.argumentsJson` renders either kind for JSON-string providers. Valid
+journal calls retain their existing `input` object; invalid calls carry
+`arguments` and `inputError` instead. Event names are unchanged.
+
+Anthropic validates SDK-delivered input objects. Invalid input and its failed
+result are represented as labeled text when a native `tool_use` cannot carry
+the payload. Its SDK may reject or normalize malformed stream JSON before
+Harpe receives it; this change does not replace that SDK parser.
+
 **Decode guest stdout and stderr as UTF-8 with replacement**. This way, output that is
 not valid UTF-8 (for example a multi-byte character cut by `head -c`) no
 longer fails `RunCodeTool` as an internal error.

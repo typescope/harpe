@@ -9,7 +9,6 @@
 namespace harpe.models
 import harpe.Interact
 import harpe.turns.TurnEvent
-import harpe.ffi.json
 import harpe.ffi.builtins
 
 import harpe.Model
@@ -72,7 +71,7 @@ private section CompatibleChat
             py.dict:
               "id" ~ c.id
               "type" ~ "function"
-              "function" ~ py.dict("name" ~ c.name, "arguments" ~ json.dumps(c.input.raw))
+              "function" ~ py.dict("name" ~ c.name, "arguments" ~ c.argumentsJson)
 
         val message = py.dict("role" ~ "assistant", "content" ~ text)
         if toolCalls.size > 0 then message.set("tool_calls", toolCalls)
@@ -111,8 +110,7 @@ private section CompatibleChat
     if !rawCalls.isNone then
       for call in rawCalls.cast[py.List] do
         val fn = builtins.getattr(call, "function")
-        val args = json.loads(fn.arguments.asString).cast[py.Dict]
-        calls = calls + ToolCall(call.id.asString, fn.name.asString, ToolInput(args))
+        calls = calls + toolCallFromJson(call.id.asString, fn.name.asString, fn.arguments.asString)
 
     new Assistant(text.trim, calls)
 

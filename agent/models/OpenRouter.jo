@@ -7,7 +7,6 @@
 
 namespace harpe.models
 import harpe.Interact
-import harpe.ffi.json
 import harpe.ffi.builtins
 
 import harpe.Model
@@ -82,7 +81,7 @@ private section OpenRouterResponses
               "type" ~ "function_call"
               "call_id" ~ c.id
               "name" ~ c.name
-              "arguments" ~ json.dumps(c.input.raw)
+              "arguments" ~ c.argumentsJson
 
       case ToolResults(results) =>
         for r in results do
@@ -110,8 +109,7 @@ private section OpenRouterResponses
     var calls: List[ToolCall] = []
     for it in response.output.cast[py.List] do
       if builtins.getattr(it, "type").asString == "function_call" then
-        val args = json.loads(it.arguments.asString).cast[py.Dict]
-        calls = calls + ToolCall(it.call_id.asString, it.name.asString, ToolInput(args))
+        calls = calls + toolCallFromJson(it.call_id.asString, it.name.asString, it.arguments.asString)
 
     new Assistant(text.trim, calls)
 end

@@ -18,6 +18,7 @@ import jtest.thisSuite
 import jtest.suite
 import jtest.test
 import jtest.check
+import jtest.checkEquals
 
 private def rep(c: String, n: Int): String =
   var s = ""
@@ -35,6 +36,33 @@ private def spec(n: String): Tool = Tool(n, "a test tool", [])
 private def pair(): Toolset = Toolset.of(spec("alpha"), noop).add(spec("beta"), noop)
 
 def toolSuite(): Unit receives thisSuite, logger = suite: "tool layer", () =>
+  suite: "tool arguments", () =>
+    test: "retains malformed JSON with its call identity and diagnostic", () =>
+      val raw = "{\"city\":\"Zur"
+      val call = toolCallFromJson("bad", "lookup", raw)
+      checkEquals("id", call.id, "bad")
+      checkEquals("name", call.name, "lookup")
+      checkEquals("wire arguments", call.argumentsJson, raw)
+      match call.input
+      case invalid: InvalidToolInput =>
+        checkEquals("raw payload", invalid.rawArguments, raw)
+        check("parse diagnostic", invalid.error.contains("invalid JSON"))
+      case _ => check("input is invalid", false)
+
+    test: "refuses JSON values that are not argument objects", () =>
+      for raw in ["[]", "null", "42", "true", "\"text\""] do
+        val call = toolCallFromJson("bad", "lookup", raw)
+        checkEquals("original JSON", call.argumentsJson, raw)
+        match call.input
+        case invalid: InvalidToolInput => checkEquals("object diagnostic", invalid.error, "expected a JSON object")
+        case _ => check("non-object is invalid", false)
+
+    test: "keeps ordinary object arguments typed", () =>
+      val call = toolCallFromJson("ok", "lookup", "{\"city\":\"Zurich\"}")
+      match call.input
+      case input: ToolInput => checkEquals("city", input.string("city"), "Zurich")
+      case _ => check("valid object", false)
+
   suite: "ToolInput", () =>
     test: "reads a value of each schema type", () =>
       val full = ToolInput(py.dict("s" ~ "hi", "n" ~ 42, "b" ~ true, "f" ~ 3.5))

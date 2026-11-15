@@ -116,6 +116,11 @@ place to record it.
 | `harpe.turn.answered` / `harpe.turn.interrupted` | | the terminator that closes a turn |
 | `harpe.turn.failed` | `error` | the same, for a turn that did not finish |
 
+Assistant calls inside `harpe.turn.message` normally contain `id`, `name`, and
+the parsed `input` object. A call with invalid arguments instead contains `id`,
+`name`, the original `arguments` string, and `inputError`. Its following tool
+result has `success = false`; the turn can continue with a corrected call.
+
 ## Logging from your own tool
 
 When creating a tool, the logger is already in scope inside the handler.

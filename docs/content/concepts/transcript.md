@@ -45,6 +45,12 @@ During the call, `Agent.ask` records:
 2. each assistant message and batch of tool results
 3. whether the turn answered, was interrupted, or failed
 
+Valid assistant tool calls retain their parsed `input` object. A malformed call
+instead records its original `arguments` string and `inputError` diagnostic.
+Reloading the journal preserves this invalid state and the failed tool result,
+so the model can see the error and correction in resumed history. Older valid
+call records remain readable without migration.
+
 This is the model-facing account of the turn. It does not include every progress
 event or diagnostic written to the application log.
 

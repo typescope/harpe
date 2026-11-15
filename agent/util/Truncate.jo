@@ -10,7 +10,6 @@
 //]
 
 namespace harpe.util
-import harpe.ffi.json
 
 import harpe.Model.*
 
@@ -67,7 +66,7 @@ private def messageChars(m: Message): Int =
 
   case Assistant(text, calls) =>
     var n = text.size
-    for c in calls do n = n + json.dumps(c.input.raw).size
+    for c in calls do n = n + c.argumentsJson.size
     n
 
   case ToolResults(results) =>
