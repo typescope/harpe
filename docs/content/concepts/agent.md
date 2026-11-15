@@ -50,7 +50,7 @@ with logger = Logging.discard in
 For an application, supply the parts you want to keep across turns:
 
 ```jo
-val runCode = RunCodeTool(sandboxDir, approvalDeadline = 610)
+val runCode = RunCodeTool(sandboxDir, "guest", approvalDeadline = 610)
 val tools = SkillTools.toolset(skillsDir) ++ runCode.toolset()
 
 val context = new WindowedContext:

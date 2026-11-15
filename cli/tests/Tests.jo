@@ -22,6 +22,7 @@ import jtest.Runner
 import jtest.suite
 import jtest.thisSuite
 import harpe.cli.tests.CliTest
+import harpe.cli.tests.DriverTest
 
 def main(): Unit receives stdout, args =
   Logging.withLogger(Logging.discard, () => run())
@@ -36,6 +37,7 @@ private def run(): Unit receives stdout, logger, args =
   println "all cli agent tests passed"
 
 private def suites(): Unit receives thisSuite, logger =
+  DriverTest.driverSuite()
   suite: "e2e", () =>
     thisSuite.parallel = true
     CliTest.cliSuite()
