@@ -25,6 +25,7 @@ import harpe.*
 import harpe.tools.*
 import harpe.logging.Logging
 import harpe.logging.logger
+import harpe.logging.Logger
 import harpe.logging.Entry
 import harpe.logging.JsonlLogger
 import harpe.Tool.*
@@ -62,6 +63,38 @@ private def execWith(
 
 private def exec(tool: RunCodeTool, code: String): ToolOutcome =
   execWith(tool, code, Map.empty[String, String], Interact.unattended)
+
+private class Capture
+  view Logger
+
+  private val lock = threading.Lock()
+  var entries: List[Entry] = []
+
+  def logEntry(entry: Entry): Unit =
+    lock.acquire()
+    entries = entries + entry
+    lock.release()
+
+  def close(): Unit = pass
+end
+
+private class AuditedRun(outcome: ToolOutcome, entries: List[Entry])
+
+private def execAudited(
+    tool: RunCodeTool, code: String, guestEnv: Map[String, String], channel: Interact)
+: AuditedRun =
+  val capture = new Capture
+  val outcome = with logger = capture in
+    Logging.withContext("harpe.test.audit=run", () => tool.run(code, guestEnv, channel))
+  new AuditedRun(outcome, capture.entries)
+
+private def checkAudit(run: AuditedRun, outcomeEvent: String): Unit =
+  checkEquals:
+    "runtime audit is replayed once before the outcome"
+    run.entries.map(entry => entry.event).join(",")
+    "harpe.sandbox.runtime," + outcomeEvent
+  for entry in run.entries do
+    check("turn context", entry.context.contains("harpe.test.audit=run"))
 
 private def checkScrubbedEnvironment(): Unit =
   val probed = exec(fastTool(), guest("  println 42\n")).result
@@ -272,7 +305,13 @@ private def parallelCases(): Unit receives thisSuite =
     thisSuite.parallel = true
 
     test: "runs a well-formed one and produces its output", () =>
-      checkEquals("tag", tag(exec(fastTool(), guest("  println 42\n"))), "ran")
+      val run = execAudited:
+        fastTool()
+        guest("  println 42\n")
+        Map.empty[String, String]
+        Interact.unattended
+      checkEquals("tag", tag(run.outcome), "ran")
+      checkAudit(run, "harpe.tools.runCode.ran")
 
     // The guest reads its own run dir — which holds the compiled out.py —
     // through the granted `fs`.
@@ -329,12 +368,13 @@ private def parallelCases(): Unit receives thisSuite =
         approvalDeadline = 1
         buildTimeout = 120
         runTimeout = 5
-      val stuck = execWith:
+      val stuck = execAudited:
         watchdog
         guest("  println 7\n")
         Map("HARPE_TEST_APPROVAL" ~ "1")
         new StuckApprovalInteract
-      checkEquals("summary", stuck.summary.split(" · ").get(0), "approval timed out")
+      checkEquals("summary", stuck.outcome.summary.split(" · ").get(0), "approval timed out")
+      checkAudit(stuck, "harpe.tools.runCode.approvalTimedOut")
 
   suite: "failing programs", () =>
     thisSuite.parallel = true
@@ -376,7 +416,7 @@ private def parallelCases(): Unit receives thisSuite =
         approvalDeadline = 5
         buildTimeout = 120
         runTimeout = 2
-      val spinning = exec:
+      val spinning = execAudited:
         quick
         guest:
           """
@@ -384,7 +424,10 @@ private def parallelCases(): Unit receives thisSuite =
             while i >= 0 do i = i + 1
 
           """
-      checkEquals("tag", tag(spinning), "timeout")
+        Map("HARPE_TEST_PARTIAL_AUDIT" ~ "1")
+        Interact.unattended
+      checkEquals("tag", tag(spinning.outcome), "timeout")
+      checkAudit(spinning, "harpe.tools.runCode.timedOut")
 
 def runCodeSuite(): Unit receives thisSuite = suite: "runCode tool", () =>
   // `jo build` writes shared output, so finish it once before the pool can
