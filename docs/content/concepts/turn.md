@@ -33,6 +33,18 @@ the messages it produced. While the turn is running, `Interact` reports live
 progress such as streamed text, tool execution, and retries. Your application
 decides which updates to show and how to store or present the completed turn.
 
+`maxToolRounds` limits tool-call rounds. When that budget is spent, Harpe emits
+the live `ToolBudgetReached` event and asks for a final reply with no tools
+offered. A zero limit starts with this final request. Transient failures of the
+request still follow `maxRetries`; retries do not repeat the live notification.
+
+If the final reply has no tool calls and its text is empty or whitespace-only,
+the turn fails with `tool budget reached and the final reply was empty`.
+Nonempty final replies still succeed. This uses ordinary failed-turn behavior:
+the context keeps the user's input and rolls back provisional assistant/tool
+messages, while the append-only journal retains them and records the failure
+reason in the existing `harpe.turn.failed` event.
+
 ## Tool call scheduling
 
 A model may request several tools in one reply. How those calls run is your

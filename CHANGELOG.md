@@ -37,6 +37,12 @@ This changes file ownership: move or copy accepted files selected with
 retained files are not removed. Forms without stored file parts create no
 staging directory, and `request.form()` still refuses file storage.
 
+**An empty budget-forced final reply fails the turn clearly.** After
+`maxToolRounds` is spent, a reply with no tool calls and no non-whitespace text
+now returns `TurnResult.Failed("tool budget reached and the final reply was empty")`
+instead of an empty success. Existing failed-turn context rollback applies;
+the journal retains the recorded traffic and failure diagnostic.
+
 **Decode guest stdout and stderr as UTF-8 with replacement**. This way, output that is
 not valid UTF-8 (for example a multi-byte character cut by `head -c`) no
 longer fails `RunCodeTool` as an internal error.

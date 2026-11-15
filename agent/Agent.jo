@@ -67,8 +67,9 @@ section Agent
     ! A session that should remember keeps one context alive across turns.
     !
     ! A turn is bounded to `maxToolRounds` tool-call rounds. Once spent the model
-    ! is asked once more with no tools, forcing a final answer. `maxRetries` is
-    ! transport policy — how often a transient model error is retried.
+    ! is asked once more with no tools, forcing a final answer. An empty final
+    ! reply fails the turn with a diagnostic. `maxRetries` is transport policy
+    ! — how often a transient model error is retried.
     !
     ! `maxOutputTokens` bounds each individual reply, and is the one budget here
     ! the engine cannot enforce itself: it is handed to the `Model` at
@@ -161,9 +162,15 @@ section Agent
           TurnLog.message(reply)
 
           if reply.calls.isEmpty then
-            result = TurnResult.Success
-            context.commitTurn()
-            TurnLog.answered()
+            if rounds >= maxToolRounds && reply.text.trim == "" then
+              val detail = "tool budget reached and the final reply was empty"
+              result = TurnResult.Failed(detail)
+              context.abortTurn()
+              TurnLog.failed(detail)
+            else
+              result = TurnResult.Success
+              context.commitTurn()
+              TurnLog.answered()
             break
 
           if reply.text.trim != "" then
