@@ -67,12 +67,14 @@ class WebApp(
     ! The output sink receives one newline-terminated record for each request
     ! when response headers are accepted. It is quiet by default. Output writes
     ! are locked; request handlers still run concurrently.
+    ! Staged multipart files live until the response iterable is exhausted or
+    ! closed; a WSGI server must close it even after an error or disconnect.
   //]
   def wsgi(output: (String => Unit) | None = WebApp.quiet): (py.Dynamic, py.Dynamic) => py.Dynamic =
     match output
     case None =>
         (environ: py.Dynamic, startResponse: py.Dynamic) =>
-            Wsgi.write: environ, startResponse, answer(environ)
+            exchange(environ, startResponse)
     case sink: (String => Unit) =>
         val lock = threading.Lock()
         (environ: py.Dynamic, startResponse: py.Dynamic) =>
@@ -90,7 +92,15 @@ class WebApp(
                 lock.release()
                 write
 
-            Wsgi.write: environ, py.dynamic(loggedStart), answer(environ)
+            exchange(environ, py.dynamic(loggedStart))
+
+  private def exchange(environ: py.Dynamic, startResponse: py.Dynamic): py.Dynamic =
+    val uploads = new UploadScope
+    match py.try(Wsgi.write(environ, startResponse, answer(environ, uploads), uploads))
+    case Ok(body) => body
+    case Err(error) =>
+      val _ = py.try(uploads.cleanup())
+      Wsgi.rethrow(error)
 
   //[ The largest body any handler allows, which is the limit to give the server. //]
   def maxReqBody: Int =
@@ -112,7 +122,7 @@ class WebApp(
     ! An application wanting its own answer, logged with the session it belongs
     ! to, wraps its own routes: only it knows that context.
   //]
-  private def answer(environ: py.Dynamic): Response =
+  private def answer(environ: py.Dynamic, uploads: UploadScope): Response =
     val raw = environ.get("REQUEST_METHOD", "GET").asString
     val method = Request.verb(raw) rescue None =>
       return if raw == "HEAD" then Answer.unsupportedHead() else Answer.refuse(Status.NotImplemented, "not implemented")
@@ -134,9 +144,9 @@ class WebApp(
 
     match found
     case Some(route ~ params) =>
-      Answer.ran(route.handler, method, path, environ, params)
+      Answer.ran(route.handler, method, path, environ, params, uploads)
     case None =>
-      Answer.ran(fallback.handler, method, path, environ, Map.empty[String, String])
+      Answer.ran(fallback.handler, method, path, environ, Map.empty[String, String], uploads)
 
 end
 
@@ -239,8 +249,8 @@ end
 //[ Building the answer: running a route, and the refusals made before one runs. //]
 private section Answer
   //[ Run `handler` with the request bound. //]
-  def ran(handler: (() => Response receives request), method: Verb.Method, path: String, environ: py.Dynamic, params: Map[String, String]): Response =
-    with request = new Request(method, path, environ, params) in handler()
+  def ran(handler: (() => Response receives request), method: Verb.Method, path: String, environ: py.Dynamic, params: Map[String, String], uploads: UploadScope): Response =
+    with request = new Request(method, path, environ, params, uploads) in handler()
 
   //[ A refusal made before a request is bound. //]
   def refuse(status: Status.Code, message: String): Response =

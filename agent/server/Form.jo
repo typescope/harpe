@@ -8,6 +8,7 @@ namespace harpe.server
 //]
 class Form
   private val values: py.Dict
+
   private val uploads: List[Form.Upload]
 
   //[ Filled by the scan that read the body, which is the only thing that builds one. //]
@@ -32,12 +33,13 @@ end
 
 //[ What a form carries besides its fields. //]
 section Form
-  //[ One file a client sent, written into the route's directory
+  //[ One file a client sent, staged for the lifetime of this response
     !
     ! `path` is where it was written, under a generated name. `filename` is
     ! what the CLIENT called it, which is client-controlled and is never what
-    ! the file was stored as — build no path out of it. A route keeping the
-    ! file renames `path` to a name of its own choosing.
+    ! the file was stored as — build no path out of it. Harpe removes staged
+    ! files when the response ends. A route retaining one moves or copies
+    ! `path` outside its temporary directory to a destination of its own choosing.
   //]
   class Upload(field: String, filename: String, mime: String, path: String, size: Int)
 end

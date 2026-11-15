@@ -28,6 +28,15 @@ released by `Workbook.close()` or immediately if loading fails.
 now fails at construction with a configuration error. Set the server's bind
 address separately and give `WebApp.host` the hostname clients request.
 
+**Multipart uploads are staged and cleaned up with the response.**
+`request.form(uploadDir)` now writes into a private per-request temporary
+subdirectory of the selected directory. Harpe removes remaining staged files
+after response exhaustion or close, including error and disconnect paths.
+This changes file ownership: move or copy accepted files selected with
+`form.files(name)` outside staging to retain them. The caller's directory and
+retained files are not removed. Forms without stored file parts create no
+staging directory, and `request.form()` still refuses file storage.
+
 **Decode guest stdout and stderr as UTF-8 with replacement**. This way, output that is
 not valid UTF-8 (for example a multi-byte character cut by `head -c`) no
 longer fails `RunCodeTool` as an internal error.

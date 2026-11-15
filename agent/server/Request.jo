@@ -34,12 +34,15 @@ class Request
   //[ The path parameters extracted when a param route matched, keyed by name. //]
   private[server] val pathParams: Map[String, String]
 
+  private val uploads: UploadScope
+
   //[ Bound by the server, once per exchange. //]
-  private[server] def Request(method: Http.Verb.Method, path: String, environ: py.Dynamic, pathParams: Map[String, String]) =
+  private[server] def Request(method: Http.Verb.Method, path: String, environ: py.Dynamic, pathParams: Map[String, String], uploads: UploadScope) =
     this.method = method
     this.path = path
     this.environ = environ
     this.pathParams = pathParams
+    this.uploads = uploads
 
   //[ A request header, or None when the client did not send it. //]
   def header(name: String): Option[String] =
@@ -179,16 +182,23 @@ class Request
     ! cannot, and a route reads both the same way. `Form.files` is empty for the
     ! one that carries none.
     !
-    ! `fileStoreDir` is a directory the route owns. Each file is written there
-    ! as it arrives, under a generated name, and its `Upload` carries that path
-    ! beside the name the client sent. A route keeping a file renames it:
+    ! `fileStoreDir` is a directory the route owns. Files are staged in a fresh
+    ! temporary subdirectory there, created only when a file part is stored.
+    ! Each `Upload` carries its generated temporary path beside the name the
+    ! client sent. A route retaining a file moves or copies it outside that
+    ! temporary directory to a durable destination of its own choosing:
     !
     !     val form = request.form(Session.dataDir(id)) rescue None =>
     !       return Response.badRequest("expected a form")
     !
     ! It defaults to None, which refuses every file part, so `request.form()`
-    ! reads a form that should carry none. A route wanting only some of the
-    ! files deletes the rest. An empty string aborts.
+    ! reads a form that should carry none. An empty string aborts.
+    !
+    ! Harpe removes staged files and their temporary directory after the response
+    ! iterable is closed or exhausted, including when the handler or response
+    ! raises. They remain available while a file response is being sent.
+    ! Files moved outside staging are retained; `fileStoreDir` itself is never
+    ! removed. `saveTo(path)` writes to an application-owned path and is not staged.
     !
     ! None unless the request names one of those two types and the body reads
     ! cleanly. Every file already written is unlinked first, so None means
@@ -248,7 +258,13 @@ class Request
     if Request.undeclaredBody(environ) then return None
 
     val mark = Multipart.boundary(header("Content-Type").getOrElse("")) rescue None => return None
-    Multipart.read(environ.get("wsgi.input"), mark, Request.declaredLength(environ), fileStoreDir)
+    match py.try(Multipart.read(environ.get("wsgi.input"), mark, Request.declaredLength(environ), fileStoreDir, uploads))
+    case Ok(form) =>
+      if form is None then uploads.cleanup()
+      form
+    case Err(error) =>
+      val _ = py.try(uploads.cleanup())
+      Wsgi.rethrow(error)
 end
 
 

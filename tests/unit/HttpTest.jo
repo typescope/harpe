@@ -129,6 +129,11 @@ private def route(reached: py.List): Response receives request =
     val note = form.field("note").getOrElse("absent")
     val tags = form.all("tag").join("+")
     val files = form.files("file")
+    // This test handler explicitly retains accepted files in its durable root.
+    match into
+    case dir: String =>
+      for file in files do os.rename(file.path, os.path.join(dir, os.path.basename(file.path)))
+    case None => pass
     val shown = if files.size == 0 then "none"
                 else
                   val one = files.get(0)

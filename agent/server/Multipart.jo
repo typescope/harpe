@@ -1,30 +1,26 @@
 namespace harpe.server
 
 import harpe.ffi.builtins
-import harpe.ffi.os
-import harpe.ffi.secrets
 import harpe.server.Form
 import harpe.server.Form.Upload
 
 //[ `multipart/form-data`: the scan that takes one apart into a `Form`.
   !
-  ! THE ROUTE SAYS WHICH DIRECTORY FILES GO IN. Each file part is written
-  ! straight into it as the body arrives, under a generated name that cannot
-  ! collide with another request's or escape the directory. There is no spool:
-  ! the file is already on the route's own filesystem, so a route keeping one
-  ! renames it, which costs nothing, and a route expecting no files at all
-  ! passes None and every file part is refused.
+  ! THE ROUTE SAYS WHERE TO STAGE FILES. A per-exchange UploadScope lazily
+  ! creates a temporary subdirectory there. Parts are written under generated
+  ! names, and a route retaining one moves or copies it outside staging.
+  ! A route expecting no files passes None and every file part is refused.
   !
   ! A BLOCK AT A TIME. The body is scanned as it arrives and never held whole,
   ! so a form costs one block whatever its size. What an upload route budgets
   ! is the destination's disk, not this process's memory.
   !
   ! NOTHING PARTIAL IS LEFT BEHIND. A body that is malformed, or that stops
-  ! early, unlinks every file this scan created and answers None — so None
+  ! early, makes Request clean up the upload scope and answers None — so None
   ! means nothing was stored, the same contract `Request.saveTo` keeps.
   !
-  ! The route owns what a successful scan wrote: the files are in its own
-  ! directory, to rename or delete as it decides.
+  ! On success the scope stays alive until the response closes. Exceptions
+  ! also leave through Request, which closes the current writer before cleanup.
 //]
 private section Multipart
   //[ How much of a body is read at once, and so what a scan costs in memory. //]
@@ -57,14 +53,14 @@ private section Multipart
         input: py.Dynamic,
         mark: String,
         declared: Int,
-        fileStoreDir: String | None): Option[Form] =
+        fileStoreDir: String | None,
+        scope: UploadScope): Option[Form] =
     val sep = py.dynamic("\r\n--" + mark).encode("utf-8")
     val tail = builtins.len(sep) - 1
     val reader = new Reader(input, declared)
 
     val values = py.dict()
     var uploads: List[Upload] = []
-    var made: List[String] = []
 
     // The opening delimiter carries no leading CRLF, so the buffer starts with
     // one and every delimiter is then found the same way.
@@ -74,28 +70,28 @@ private section Multipart
     var at = reader.find(sep)
     while at < 0 do
       if reader.size > tail then reader.buf = lastOf(reader.buf, tail)
-      if !reader.pull() then return undo(made)
+      if !reader.pull() then return None
       at = reader.find(sep)
     val _ = reader.take(at + builtins.len(sep))
 
     while true do
-      if !reader.want(2) then return undo(made)
+      if !reader.want(2) then return None
       if ascii(upTo(reader.buf, 2)) == "--" then return Some(new Form(values, uploads))
 
       // Transport padding, which RFC 2046 allows between a delimiter and its CRLF.
       while reader.want(1) && isPadding(ascii(upTo(reader.buf, 1))) do
         val _ = reader.take(1)
-      if !reader.want(2) || ascii(upTo(reader.buf, 2)) != "\r\n" then return undo(made)
+      if !reader.want(2) || ascii(upTo(reader.buf, 2)) != "\r\n" then return None
       val _ = reader.take(2)
 
-      if uploads.size + values.size >= maxParts then return undo(made)
+      if uploads.size + values.size >= maxParts then return None
 
-      val header = headerBlock(reader) rescue None => return undo(made)
+      val header = headerBlock(reader) rescue None => return None
       val parsed = headersOf(header)
-      if builtins.len(parsed.defects) > 0 then return undo(made)
+      if builtins.len(parsed.defects) > 0 then return None
 
       val named = parsed.get_param("name", header = "content-disposition")
-      if py.isNone(named) then return undo(made)
+      if py.isNone(named) then return None
       val sent = parsed.get_filename()
       val field = named.asString
       val filename = if py.isNone(sent) then "" else sent.asString
@@ -107,10 +103,9 @@ private section Multipart
       if filename != "" then
         match fileStoreDir
         case dir: String =>
-          val path = os.path.join(dir, secrets.token_hex(16))
+          val path ~ file = scope.openFile(dir)
           target = path
-          handle = Some(py.open(path, "wb"))
-          made = made + path
+          handle = Some(file)
         case _ => pass
 
       val kept = py.list()
@@ -132,10 +127,9 @@ private section Multipart
           val _ = reader.take(builtins.len(sep))
           break
         if !reader.pull() then
-          closed(handle)
-          return undo(made)
+          return None
 
-      closed(handle)
+      scope.closeFile()
 
       match target
       case path: String =>
@@ -143,7 +137,7 @@ private section Multipart
       case _ =>
         if filename == "" then
           val joined = emptyBytes().callDynamic("join", kept)
-          val text = py.try(joined.decode("utf-8").asString) rescue Err(_) => return undo(made)
+          val text = py.try(joined.decode("utf-8").asString) rescue Err(_) => return None
           if !values.contains(field) then values.set(field, py.list())
           values.get(field).cast[py.List].append(text)
 
@@ -196,17 +190,6 @@ private section Multipart
   private def headersOf(block: py.Dynamic): py.Dynamic =
     val parser = py.module("email.parser").BytesParser(policy = py.module("email.policy").HTTP)
     parser.parsebytes(block)
-
-  //[ Undo every file this scan created, so None means nothing was stored. //]
-  private def undo(paths: List[String]): Option[Form] =
-    for path in paths do
-      val _ = py.try(os.unlink(path))
-    None
-
-  private def closed(handle: Option[py.Dynamic]): Unit =
-    match handle
-    case Some(file) => file.close()
-    case None       => pass
 
   private def isPadding(ch: String): Bool = ch == " " || ch == "\t"
 

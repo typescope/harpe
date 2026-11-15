@@ -1,0 +1,51 @@
+namespace harpe.server
+
+import harpe.ffi.os
+import harpe.ffi.secrets
+import harpe.ffi.shutil
+
+//[ Files staged by one exchange, never the caller's upload directory itself.
+  ! Created lazily for the first stored part and retained through the response.
+//]
+private[server] class UploadScope
+  private var directory: String | None = None
+  private var writer: py.Dynamic = py.none
+
+  def hasFiles: Bool = directory is !None
+
+  def openFile(parent: String): String ~ py.Dynamic =
+    val dir = match directory
+      case existing: String => existing
+      case None =>
+        val created = py.module("tempfile").mkdtemp(prefix = "harpe-upload-", dir = parent).asString
+        directory = created
+        created
+    val path = os.path.join(dir, secrets.token_hex(16))
+    val opened = py.open(path, "wb")
+    writer = opened
+    path ~ opened
+
+  def closeFile(): Unit =
+    if !py.isNone(writer) then
+      writer.close()
+      writer = py.none
+
+  // Close an interrupted parser's writer before removal, including on Windows.
+  // Try both operations, retaining a failed directory so a later close can retry.
+  def cleanup(): Unit =
+    val closed = py.try(closeFile())
+    val removed = py.try(removeDirectory())
+    match closed
+    case Err(error) => Wsgi.rethrow(error)
+    case Ok(_) => pass
+    match removed
+    case Err(error) => Wsgi.rethrow(error)
+    case Ok(_) => pass
+
+  private def removeDirectory(): Unit =
+    match directory
+    case None => pass
+    case dir: String =>
+      if os.path.exists(dir) then shutil.rmtree(dir, ignore_errors = false)
+      directory = None
+end
