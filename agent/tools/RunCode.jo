@@ -28,7 +28,6 @@ namespace harpe.tools
 import harpe.ffi.os
 import harpe.util.Clock
 import harpe.ffi.time
-import harpe.ffi.glob
 import harpe.ffi.threading
 import harpe.util.Process
 import harpe.ffi.builtins
@@ -163,6 +162,8 @@ private def replayAudit(path: String): Unit receives logger =
   ! Requires the sandbox to have been built once (`jo build`), which records the
   ! compiler invocation this tool replays. Until then, calls return a "sandbox
   ! not built" message rather than building anything themselves.
+  ! `module` selects the sandbox app module; its build record
+  ! is located using the Jo compatibility line declared in `sandboxDir/jo.toml`.
   !
   ! `buildTimeout` / `runTimeout` are host-side wall-clock backstops (seconds):
   ! a guest stuck compiling or in an infinite loop is killed (process group and
@@ -200,6 +201,7 @@ private def replayAudit(path: String): Unit receives logger =
 //]
 class RunCodeTool(
     sandboxDir: String,
+    module: String,
     approvalDeadline: Int,
     buildTimeout: Int = 120,
     runTimeout: Int = 30,
@@ -248,14 +250,20 @@ class RunCodeTool(
   def run(code: String, guestEnv: Map[String, String] = noGuestEnv,
           interact: Interact = Interact.unattended)
   : ToolOutcome receives logger =
-    match findDoneFile
-    case None =>
+    match py.try(findDoneFile)
+    case Err(error) =>
       new ToolOutcome:
-        "The sandbox is not built. Run `jo build` in the sandbox project once before starting the agent."
+        "Could not read sandbox configuration: \{error.message}"
+        "invalid sandbox configuration"
+        attachments = []
+
+    case Ok(None) =>
+      new ToolOutcome:
+        "The sandbox is not built. Run `jo build \{module}` in the sandbox project once before starting the agent."
         "sandbox not built"
         attachments = []
 
-    case Some(donePath) =>
+    case Ok(Some(donePath)) =>
       // The directory is made before the slot is taken: `mkdtemp` can fail, and
       // failing while holding a permit would retire it from the semaphore for
       // the life of the process.
@@ -274,12 +282,19 @@ class RunCodeTool(
 
   //[ Locate the compiler-invocation record left by `jo build` for the guest
     !
-    ! The `*.py.done` sidecar next to the built target. `None` if the guest has
-    ! not been built yet.
+    ! The module and the Jo compatibility line in `jo.toml` identify the exact
+    ! `*.py.done` sidecar, even when other modules or compiler versions have
+    ! been built in this directory. `None` if the project or target is absent.
   //]
   private def findDoneFile: Option[String] =
-    val hits = glob.glob(os.path.join(sandboxDir, ".build/*/jo-*/target/*.py.done"), recursive = false)
-    if hits.size == 0 then None else Some(hits.get(0).asString)
+    val specPath = os.path.join(sandboxDir, "jo.toml")
+    if !File.exists(specPath) then return None
+
+    val version = sandboxJoVersion(specPath)
+    val donePath = os.path.join:
+      sandboxDir
+      ".build/\{module}/jo-\{version}/target/\{module}.py.done"
+    if File.exists(donePath) then Some(donePath) else None
 
   //[ Compile and run `code` in `runDir`
     !
@@ -437,6 +452,20 @@ class RunCodeTool(
       "output"         ~ result
     new ToolOutcome(result, summary, attachments = [])
 end
+
+// Read the top-level compatibility declaration without interpreting module
+// tables. Jo manifests use a single-line `jo = "MAJOR.MINOR"` string; accept
+// either quote style, horizontal whitespace, and a trailing comment.
+private def sandboxJoVersion(specPath: String): String =
+  val declaration = `^jo[ \t]*=[ \t]*(?:"([0-9]+[.][0-9]+)"|'([0-9]+[.][0-9]+)')[ \t]*(?:#.*)?$`
+  for raw in File.read(specPath).lines do
+    val line = raw.trim
+    if line.startsWith("[") then break
+    match declaration.matchFirst(line)
+    case Some(found) => return found.getOrEmpty(1) + found.getOrEmpty(2)
+    case None => pass
+
+  abort "sandbox jo.toml must declare top-level jo = \"MAJOR.MINOR\""
 
 //[ The optional `run.sh` wrapper in `sandboxDir`, refused if it cannot run. //]
 private def checkedRunScript(sandboxDir: String): String =

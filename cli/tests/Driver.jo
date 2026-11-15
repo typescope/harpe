@@ -59,9 +59,13 @@ section Driver
       !
       ! The record contains absolute paths to its prebuilt libraries. `runCode`
       ! replaces its source, output, and SAST arguments, so no other target file
-      ! is needed in the home.
+      ! is needed in the home. Copy jo.toml too: its compatibility declaration
+      ! selects the record's compiler directory.
     //]
     def installGuest(home: String): Unit =
+      val sandbox = os.path.join(home, "sandbox")
+      File.ensureDir(sandbox)
+      py.module("shutil").copy2(path("sandbox/jo.toml"), os.path.join(sandbox, "jo.toml"))
       val record = newestMatch:
         os.path.join(root, "sandbox/.build/guest", "*/target/*.py.done")
         "built sandbox guest"

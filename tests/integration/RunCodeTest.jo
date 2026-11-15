@@ -18,6 +18,7 @@ import harpe.ffi.os
 import harpe.util.Process
 import harpe.ffi.threading
 import harpe.util.Capped
+import harpe.util.File
 import harpe.ffi.tempfile
 
 import harpe.*
@@ -138,9 +139,38 @@ private def prepareSandbox(): Unit =
 
 private def fastTool(): RunCodeTool = RunCodeTool:
   fixtureSandboxDir()
+  "guest"
   approvalDeadline = 5
   buildTimeout = 120
   runTimeout = 5
+
+// Install a real invocation record under a chosen module, alongside unusable
+// records for another module and an older compatibility line. Only the record
+// matching both the selected module and jo.toml can compile the program.
+private def withBuildRecords(module: String, body: String => Unit): Unit =
+  val dir = tempfile.mkdtemp()
+  File.write:
+    os.path.join(dir, "jo.toml")
+    "# jo = '0.13'\n\tjo\t=\t'0.14' # compatibility line\r\n[module.\{module}]\nkind = 'app'\n"
+
+  val other = os.path.join(dir, ".build/other/jo-0.14/target")
+  File.ensureDir(other)
+  File.write(os.path.join(other, "other.py.done"), "unusable record")
+  val old = os.path.join(dir, ".build/\{module}/jo-0.13/target")
+  File.ensureDir(old)
+  File.write(os.path.join(old, "\{module}.py.done"), "unusable record")
+
+  val target = os.path.join(dir, ".build/\{module}/jo-0.14/target")
+  File.ensureDir(target)
+  py.module("shutil").copy2:
+    os.path.join(fixtureSandboxDir(), ".build/guest/jo-0.14/target/guest.py.done")
+    os.path.join(target, "\{module}.py.done")
+
+  val attempted = py.try(body(dir))
+  py.module("shutil").rmtree(dir)
+  match attempted
+  case Ok(_) => pass
+  case Err(error) => abort error.message
 
 // Fire `n` runCode calls in parallel, each printing a distinct number, and check
 // every call gets back its OWN output. If concurrent runs shared one guest source
@@ -180,8 +210,63 @@ private def parallelCases(): Unit receives thisSuite =
     val unbuilt = tempfile.mkdtemp()
     checkEquals:
       "summary"
-      exec(RunCodeTool(unbuilt, approvalDeadline = 5), guest("  println 1\n")).summary
+      exec(RunCodeTool(unbuilt, "guest", approvalDeadline = 5), guest("  println 1\n")).summary
       "sandbox not built"
+
+  suite: "build record selection", () =>
+    thisSuite.parallel = true
+
+    test: "selects guest and the jo.toml version among other build records", () =>
+      withBuildRecords: "guest", dir =>
+        val tool = RunCodeTool(dir, "guest", approvalDeadline = 5)
+        checkEquals("output", exec(tool, guest("  println 42\n")).result, "42")
+
+    test: "selects a custom module", () =>
+      withBuildRecords: "worker", dir =>
+        val tool = RunCodeTool(dir, "worker", approvalDeadline = 5)
+        checkEquals("output", exec(tool, guest("  println 43\n")).result, "43")
+
+    test: "uses the declared compatibility line rather than the active compiler", () =>
+      withBuildRecords: "guest", dir =>
+        File.write(os.path.join(dir, "jo.toml"), "jo = \"0.13\"\n")
+        py.module("shutil").copy2:
+          os.path.join(dir, ".build/guest/jo-0.14/target/guest.py.done")
+          os.path.join(dir, ".build/guest/jo-0.13/target/guest.py.done")
+        File.write(os.path.join(dir, ".build/guest/jo-0.14/target/guest.py.done"), "unusable record")
+        val tool = RunCodeTool(dir, "guest", approvalDeadline = 5)
+        checkEquals("output", exec(tool, guest("  println 44\n")).result, "44")
+
+    test: "does not fall back to another module or compiler version", () =>
+      withBuildRecords: "guest", dir =>
+        os.unlink(os.path.join(dir, ".build/guest/jo-0.14/target/guest.py.done"))
+        val tool = RunCodeTool(dir, "guest", approvalDeadline = 5)
+        checkEquals("summary", exec(tool, guest("  println 42\n")).summary, "sandbox not built")
+
+    test: "reports malformed sandbox configuration", () =>
+      withBuildRecords: "guest", dir =>
+        File.write(os.path.join(dir, "jo.toml"), "jo = [")
+        val outcome = exec(RunCodeTool(dir, "guest", approvalDeadline = 5), guest("  println 42\n"))
+        checkEquals("summary", outcome.summary, "invalid sandbox configuration")
+        check("diagnostic", outcome.result.contains("Could not read sandbox configuration"))
+
+    test: "requires a Jo compatibility line", () =>
+      withBuildRecords: "guest", dir =>
+        File.write(os.path.join(dir, "jo.toml"), "jo = '0.14.11'\n")
+        val outcome = exec(RunCodeTool(dir, "guest", approvalDeadline = 5), guest("  println 42\n"))
+        checkEquals("summary", outcome.summary, "invalid sandbox configuration")
+        check("diagnostic", outcome.result.contains("MAJOR.MINOR"))
+
+    test: "does not use commented or table-scoped jo declarations", () =>
+      withBuildRecords: "guest", dir =>
+        File.write(os.path.join(dir, "jo.toml"), "# jo = '0.14'\n[module.guest]\njo = '0.14'\n")
+        val outcome = exec(RunCodeTool(dir, "guest", approvalDeadline = 5), guest("  println 42\n"))
+        checkEquals("summary", outcome.summary, "invalid sandbox configuration")
+
+    test: "requires matching quotes around the compatibility line", () =>
+      withBuildRecords: "guest", dir =>
+        File.write(os.path.join(dir, "jo.toml"), "jo = \"0.14'\n")
+        val outcome = exec(RunCodeTool(dir, "guest", approvalDeadline = 5), guest("  println 42\n"))
+        checkEquals("summary", outcome.summary, "invalid sandbox configuration")
 
   suite: "running a program", () =>
     thisSuite.parallel = true
@@ -200,6 +285,7 @@ private def parallelCases(): Unit receives thisSuite =
     test: "isolates concurrent runs from each other", () =>
       val concurrent = RunCodeTool:
         fixtureSandboxDir()
+        "guest"
         approvalDeadline = 5
         buildTimeout = 120
         runTimeout = 5
@@ -239,6 +325,7 @@ private def parallelCases(): Unit receives thisSuite =
     test: "stops a run whose handler never returns", () =>
       val watchdog = RunCodeTool:
         fixtureSandboxDir()
+        "guest"
         approvalDeadline = 1
         buildTimeout = 120
         runTimeout = 5
@@ -285,6 +372,7 @@ private def parallelCases(): Unit receives thisSuite =
     test: "kills an infinite loop on the host wall-clock timeout", () =>
       val quick = RunCodeTool:
         fixtureSandboxDir()
+        "guest"
         approvalDeadline = 5
         buildTimeout = 120
         runTimeout = 2

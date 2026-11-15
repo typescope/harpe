@@ -14,7 +14,7 @@ for code mode, media, and skills. You can also add your own.
 Each provided tool exposes a `toolset` that you can combine with others:
 
 ```jo
-val runCode = RunCodeTool(sandboxDir, approvalDeadline = 610)
+val runCode = RunCodeTool(sandboxDir, "guest", approvalDeadline = 610)
 
 val tools =
     ++ runCode.toolset()
@@ -83,8 +83,10 @@ agent's final answer.
 
 The framework provides the tools, and your driver wires them:
 
-- **`RunCodeTool(sandboxDir, approvalDeadline)`** — `runCode`, which compiles and
-  runs a Jo program in the sandbox.
+- **`RunCodeTool(sandboxDir, module, approvalDeadline)`** — `runCode`, which
+  compiles and runs a Jo program in the selected sandbox app module. Its Jo
+  version comes from `sandboxDir/jo.toml`; build that module before starting the
+  agent.
 - **`UploadMediaTool`** — `uploadMedia`, which shows an image or PDF from the
   data directory directly to the chat model.
 - **`SkillTools`** — `skillsList` / `skillsRead` / `skillsSearch`, read-only

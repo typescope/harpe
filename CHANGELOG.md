@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**`RunCodeTool` selects the sandbox's exact build record.** Its required
+`module` constructor argument and the Jo compatibility line in
+`sandbox/jo.toml` identify the target, so other built modules or compiler
+versions no longer affect compilation. This breaks the constructor API: pass the
+module immediately after the sandbox path, for example
+`RunCodeTool(sandboxDir, "guest", approvalDeadline = 610)`.
+
 **Keep stdout from a crashed guest program.** `RunCodeTool` returns the output
 produced before a crash ahead of the crash diagnostic, and records both in the
 existing `harpe.tools.runCode.ran` entry's `output` field.
