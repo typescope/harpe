@@ -17,7 +17,7 @@ Activate the environment in each shell before installing dependencies or running
 - Build the sandbox: `jo build --spec sandbox/jo.toml guest`.
 - Query resolved APIs: `jo compile --query jo.List,jo.Map` (replace the selectors
   with the APIs you need).
-- Run interactively after configuration: `jo start`.
+- Run interactively after configuration: `jo exec start`.
 
 There is no automated test target yet. Build the modules affected by code changes.
 Build both when changing their integration.

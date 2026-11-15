@@ -20,7 +20,7 @@ default to `127.0.0.1` and `8765`.
 
 ```sh
 . .venv/bin/activate
-jo start
+jo exec start
 ```
 
 Then open <http://127.0.0.1:8765>.

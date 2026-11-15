@@ -122,7 +122,7 @@ The build checks all three sides together:
 Now start the agent:
 
 ```sh
-jo start
+jo exec start
 ```
 
 Ask:

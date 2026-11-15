@@ -41,7 +41,7 @@ privately, it replies with the ID you need to add.
 Start the bot:
 
 ```sh
-jo start
+jo exec start
 ```
 
 ## What to customize

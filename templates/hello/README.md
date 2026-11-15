@@ -19,7 +19,7 @@ In `.env`, set `MODEL` and one provider key: `ANTHROPIC_API_KEY`,
 
 ```sh
 . .venv/bin/activate
-jo start
+jo exec start
 ```
 
 The startup output prints a local log viewer URL, normally

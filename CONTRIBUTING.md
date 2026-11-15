@@ -45,7 +45,7 @@ sandbox. A scenario that fails leaves its temporary agent home in place and
 quotes what the agent had printed, both named in the failure.
 
 ```sh
-cd cli && jo test
+cd cli && jo exec test
 ```
 
 The framework and CLI agent build from this checkout. Their test suites use

@@ -29,10 +29,12 @@ OpenRouter also requires `MODEL`.
 ## Run it
 
 ```sh
-jo start
+jo exec start
 ```
 
-`jo start` builds the sandbox and launches the application:
+`jo exec start` runs the `start` command from `jo.toml`, building the sandbox
+and launching the application. Jo 0.14.12 and later require `jo exec` for
+project commands:
 
 ```text
 Ask the agent something. Type 'quit' to stop.
