@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.15.0 — 2026-11-16
+
+Requires Jo 0.14.0 or later. `harpe-caps` has no API changes and moves to
+0.15.0 with `harpe`. This release changes the `RunCodeTool` constructor,
+multipart upload ownership, and HTTP route fallback behavior as described below.
+
 **`RunCodeTool` selects the sandbox's exact build record.** Its required
 `module` constructor argument and the Jo compatibility line in
 `sandbox/jo.toml` identify the target, so other built modules or compiler
@@ -50,6 +56,15 @@ before the timeout event, just as they do when a program finishes normally.
 **Decode guest stdout and stderr as UTF-8 with replacement**. This way, output that is
 not valid UTF-8 (for example a multi-byte character cut by `head -c`) no
 longer fails `RunCodeTool` as an internal error.
+
+Direct callers of `harpe.ffi.subprocess.Popen` must now supply the `encoding`
+and `errors` keyword arguments. Use `encoding = "utf-8"` and
+`errors = "replace"` to match `RunCodeTool`.
+
+**Incomplete Responses replies report the provider's reason.** The OpenAI and
+OpenRouter Responses adapters distinguish output-token limits from content
+filters and other reasons. They keep any text with a reason-specific marker,
+omit partial tool calls, and avoid leading blank lines when no text was returned.
 
 **Routes can capture named path segments.** A route such as
 `Get("/users/:id", ...)` matches one segment in place of `:id`; the handler
