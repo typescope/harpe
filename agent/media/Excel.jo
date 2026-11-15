@@ -16,21 +16,27 @@ private def openpyxlMod: py.Dynamic = py.module("openpyxl")
 
 //[ The openpyxl `ExcelReader` backend, resolving a relative path against `root`
   !
-  ! Parses once. `Err` for a missing or corrupt file.
+  ! Parses once. The file's content determines its format, so the name need
+  ! not have an extension. `Err` for a missing or corrupt file.
 //]
 class OpenpyxlExcel(root: String)
   view ExcelReader
 
   def open(src: String): Result[Workbook, String] =
     val real = resolvePath(root, src) rescue err: Err[String] => return err
+    val source = orMessage(py.try(py.open(real, "rb"))) rescue err: Err[String] => return err
     val opened = orMessage:
       py.try:
-        openpyxlMod.load_workbook(real, read_only = true, data_only = true)
-    opened.map: wb => new WorkbookImpl(wb)
+        openpyxlMod.load_workbook(source, read_only = true, data_only = true)
+    match opened
+    case Ok(wb) => Ok(new WorkbookImpl(wb, source))
+    case Err(message) =>
+      val _ = py.try(source.close())
+      Err(message)
 end
 
-//[ The open workbook over an openpyxl read-only workbook object. //]
-private class WorkbookImpl(wb: py.Dynamic)
+//[ The open workbook and its source, retained for lazy worksheet reads. //]
+private class WorkbookImpl(wb: py.Dynamic, source: py.Dynamic)
   view Workbook
 
   def sheets: List[String] =
@@ -85,7 +91,12 @@ private class WorkbookImpl(wb: py.Dynamic)
 
       Some(result)
 
-  def close(): Unit = wb.close()
+  def close(): Unit =
+    val closed = py.try(wb.close())
+    source.close()
+    match closed
+    case Ok(_) => pass
+    case Err(error) => abort error.message
 
   //[ The worksheet named `sheet`, or `None` when the workbook has no such sheet. //]
   private def worksheet(sheet: String): Option[py.Dynamic] =

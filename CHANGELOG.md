@@ -18,6 +18,11 @@ existing `harpe.tools.runCode.ran` entry's `output` field.
 `harpe.ffi.shutil` exposes `rmtree(path, ignore_errors = ...)`, preserving
 Python's filesystem behavior and exceptions.
 
+**Open workbooks stored without a filename extension.** `OpenpyxlExcel` reads
+the file's content through a binary stream, so a valid workbook stored under a
+content hash opens normally. The stream stays open for lazy row reads and is
+released by `Workbook.close()` or immediately if loading fails.
+
 **Decode guest stdout and stderr as UTF-8 with replacement**. This way, output that is
 not valid UTF-8 (for example a multi-byte character cut by `head -c`) no
 longer fails `RunCodeTool` as an internal error.
