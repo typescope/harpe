@@ -6,6 +6,7 @@ import harpe.server.Http.Header
 import harpe.server.Response
 import harpe.server.Complete
 import harpe.server.OnDisk
+import harpe.ffi.builtins
 
 //[ Writing a `Response` out to WSGI: the status line, the headers every
   ! response carries, and the body it hands back.
@@ -19,19 +20,105 @@ private section Wsgi
   private def blockBytes: Int = 65536
 
   //[ Write `response` to WSGI. //]
-  def write(environ: py.Dynamic, startResponse: py.Dynamic, response: Response): py.Dynamic =
+  def write(environ: py.Dynamic, startResponse: py.Dynamic, response: Response, uploads: UploadScope): py.Dynamic =
     match response
     case Complete(status, headers, body) =>
       val _ = start(startResponse, status, headers)
-      py.dynamic(py.list(body))
+      scoped(py.dynamic(py.list(body)), uploads)
 
     case OnDisk(status, headers, path, length) =>
       //[ Declared here rather than by the builder, so the length sent and the
         ! file read cannot name different sizes. //]
       val framed = headers ++ [Header("Content-Length", length.toString)]
       val handle = py.open(path, "rb")
-      val _ = start(startResponse, status, framed)
-      blocks(environ, handle)
+      val prepared = py.try(fileBody(environ, startResponse, status, framed, handle, uploads))
+      match prepared
+      case Ok(body) => body
+      case Err(error) =>
+        val _ = py.try(handle.close())
+        rethrow(error)
+
+  private def fileBody(environ: py.Dynamic, startResponse: py.Dynamic, status: Status.Code,
+                       headers: List[Header], handle: py.Dynamic, uploads: UploadScope): py.Dynamic =
+    val _ = start(startResponse, status, headers)
+    scoped(blocks(environ, handle), uploads, handle)
+
+  // Keep the server's native file wrapper for exchanges without staged uploads.
+  private def scoped(body: py.Dynamic, uploads: UploadScope, handle: py.Dynamic = py.none): py.Dynamic =
+    if !uploads.hasFiles then return body
+    val closing = new ClosingBody(body, uploads, handle)
+    // Jo methods are statically dispatched. Bind the Python iterator protocol
+    // explicitly with already-bound callbacks so WSGI can iterate and close it.
+    val response = py.list()
+    val iterate = () => response.get(0)
+    val advance = () => closing.next()
+    val finish = () => closing.close()
+    val protocol = builtins.newType:
+      "HarpeUploadResponse"
+      py.tuple()
+      py.dict("__iter__" ~ py.dynamic(iterate), "__next__" ~ py.dynamic(advance), "close" ~ py.dynamic(finish))
+    val instance = py.call(protocol)
+    response.append(instance)
+    instance
+
+  private class ClosingBody(body: py.Dynamic, uploads: UploadScope, handle: py.Dynamic)
+    private val iterator = builtins.iter(body)
+    private val sentinel = py.module("builtins").callDynamic("object")
+    private var closed = false
+
+    def next(): py.Dynamic =
+      if closed then return exhausted()
+      match py.try(builtins.next(iterator, sentinel))
+      case Err(error) =>
+        val _ = py.try(close())
+        rethrow(error)
+      case Ok(chunk) =>
+        if py.isIdentical(chunk, sentinel) then
+          close()
+          exhausted()
+        else chunk
+
+    def close(): Unit =
+      val stopped = py.try(stopBody())
+      val cleaned = py.try(uploads.cleanup())
+      match stopped
+      case Err(error) => rethrow(error)
+      case Ok(_) => pass
+      match cleaned
+      case Err(error) => rethrow(error)
+      case Ok(_) => pass
+
+    private def stopBody(): Unit =
+      if !closed then
+        closed = true
+        val stopped = py.try(closeBody(body))
+        // A server wrapper's close may fail before closing its file. Release
+        // our handle too before staging cleanup; Python file close is idempotent.
+        val released = py.try(closeFile())
+        match stopped
+        case Err(error) => rethrow(error)
+        case Ok(_) => pass
+        match released
+        case Err(error) => rethrow(error)
+        case Ok(_) => pass
+
+    private def closeFile(): Unit =
+      if !py.isNone(handle) then handle.close()
+
+    private def exhausted(): py.Dynamic =
+      py.module("builtins").next(builtins.iter(py.list()))
+  end
+
+  private def closeBody(body: py.Dynamic): Unit =
+    val closer = builtins.getattrOr(body, "close", py.none)
+    if !py.isNone(closer) then
+      val _ = py.call(closer)
+
+  // Jo has no rethrow intrinsic. The fixed literal preserves the original
+  // Python exception and traceback; no request content is evaluated as code.
+  def rethrow(error: py.Error): Bottom =
+    val _ = py.module("builtins").exec("raise error", py.dict("error" ~ error))
+    abort "unreachable after rethrow"
 
   //[ `handle` as the iterable a server reads a block at a time, and closes
     !

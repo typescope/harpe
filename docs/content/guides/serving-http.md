@@ -227,7 +227,7 @@ Use the file APIs to transfer large bodies incrementally:
 
 | API | Storage behavior |
 |---|---|
-| `request.form(fileStoreDir)` | Writes multipart files under generated names in the directory you choose. Text fields remain in memory. |
+| `request.form(fileStoreDir)` | Stages multipart files in a temporary subdirectory of the directory you choose. Text fields remain in memory. |
 | `request.saveTo(path)` | Copies a raw request body to the chosen path in blocks; replaces an existing file at that path. |
 | `Response.static(...)` / `Response.file(...)` / `Response.download(...)` | Reads a response file in blocks, using the server's file wrapper when available. |
 
@@ -237,12 +237,24 @@ files. That allows a rename instead of a copy. Check whether temporary storage
 is RAM-backed, and budget disk space for both retained files and simultaneous
 uploads. The proxy and WSGI server may also buffer uploads in temporary files.
 
-On a successful multipart parse, your handler owns the written files: validate
-them, keep or rename accepted files, and delete rejected ones. The client's
-filename is metadata; choose the destination path in your handler. Malformed or
-truncated multipart input returns `None` and removes files created by that parse.
-Calling `request.form()` without a directory stores no file parts;
-URL-encoded forms still use the whole-body text reader.
+`request.form(uploadDir)` stages files in a private temporary subdirectory of
+`uploadDir`, created only when a file part is stored. Use `form.files(name)` to
+select accepted files, validate them, and move or copy their temporary `path`
+to a durable destination outside staging. The client's filename is metadata;
+choose the destination path in your handler.
+
+Harpe removes remaining staged files, including unexpected fields, and their
+temporary directory when the response iterable is exhausted or closed. Cleanup
+also runs on parse errors, handler errors, response errors, and disconnects.
+The uploaded file stays available while a file response is being sent. WSGI
+servers must close response iterables even when the client disconnects.
+The caller's `uploadDir` and files retained outside staging are never removed.
+
+Malformed or truncated multipart input returns `None` and removes its staged
+files immediately. Calling `request.form()` without a directory stores no file
+parts, and forms without files create no staging directory. URL-encoded forms
+still use the whole-body text reader. `request.saveTo(path)` writes directly to
+an application-owned path and is not part of this cleanup lifecycle.
 
 ## Serve assets and files
 

@@ -1,0 +1,339 @@
+//[ Request-scoped multipart storage, exercised through the public WSGI callable. //]
+namespace harpe.test.unit.UploadLifecycleTest
+
+import harpe.server.Http
+import harpe.server.WebApp
+import harpe.server.Request
+import harpe.server.request
+import harpe.server.Response
+import harpe.server.Form
+import harpe.ffi.os
+import harpe.ffi.tempfile
+import harpe.util.File
+import jtest.thisSuite
+import jtest.suite
+import jtest.test
+import jtest.check
+import jtest.checkEquals
+
+private def boundary: String = "harpeLifecycleBoundary"
+private def multipartKind: String = "multipart/form-data; boundary=" + boundary
+
+private def part(field: String, text: String): String =
+  "--\{boundary}\r\nContent-Disposition: form-data; name=\"\{field}\"; filename=\"\{field}.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n\{text}\r\n"
+
+private def multipart: py.Dynamic =
+  py.dynamic(part("unexpected", "discarded") + part("file", "retained content") + "--\{boundary}--\r\n").encode("utf-8")
+
+private def environment(body: py.Dynamic, kind: String = multipartKind): py.Dict =
+  val env = py.dict()
+  py.module("wsgiref.util").setup_testing_defaults(env)
+  env.set("REQUEST_METHOD", "POST")
+  env.set("PATH_INFO", "/upload")
+  env.set("CONTENT_TYPE", kind)
+  env.set("CONTENT_LENGTH", py.module("builtins").len(body).asInt.toString)
+  env.set("wsgi.input", py.module("io").BytesIO(body))
+  env
+
+private def startResponse(status: py.Dynamic, headers: py.Dynamic): py.Dynamic =
+  py.dynamic((chunk: py.Dynamic) => pass)
+
+private def application(handler: (() => Response receives request)): WebApp =
+  new WebApp:
+    routes = []
+    fallback = WebApp.Fallback(handler, maxReqBody = 1048576)
+
+private def invoke(handler: (() => Response receives request), env: py.Dict,
+                   start: py.Dynamic = py.none): py.Dynamic =
+  val starter =
+    if py.isNone(start) then
+      py.dynamic((status: py.Dynamic, headers: py.Dynamic) => startResponse(status, headers))
+    else start
+  application(handler).wsgi()(py.dynamic(env), starter)
+
+private def closeBody(body: py.Dynamic): Unit =
+  val close = py.module("builtins").getattr(body, "close", py.none)
+  if !py.isNone(close) then
+    val _ = py.call(close)
+
+// Preserve a fault injected by these tests, so exception identity is observable.
+private def raiseNative(error: py.Dynamic): Bottom =
+  val _ = py.module("builtins").exec("raise error", py.dict("error" ~ error))
+  abort "unreachable after raising test fault"
+
+private def consume(body: py.Dynamic): String =
+  val chunks = py.try(py.module("builtins").list(body))
+  val closed = py.try(closeBody(body))
+  match chunks
+  case Err(error) => raiseNative(py.dynamic(error))
+  case Ok(values) =>
+    match closed
+    case Err(error) => raiseNative(py.dynamic(error))
+    case Ok(_) => py.dynamic("").encode("utf-8").join(values).decode("utf-8").asString
+
+private def checkError[T](attempted: Result[T, py.Error], expected: py.Dynamic): Unit =
+  match attempted
+  case Ok(_) => check("injected exception is raised", false)
+  case Err(error) =>
+    check("original exception identity", py.isIdentical(py.dynamic(error), expected))
+    check("traceback retained", !py.isNone(py.dynamic(error).__traceback__))
+
+private def withDirectory(body: String => Unit): Unit =
+  val dir = tempfile.mkdtemp()
+  val attempted = py.try(body(dir))
+  py.module("shutil").rmtree(dir, ignore_errors = true)
+  match attempted
+  case Ok(_) => pass
+  case Err(error) => abort error.message
+
+private def parsed(dir: String, paths: py.List): Form receives request =
+  val form = request.form(dir) rescue None => abort "expected complete multipart form"
+  for upload in form.files("file") do paths.append(upload.path)
+  form
+
+private def textReply(text: String): Response =
+  Response.complete(Http.Status.Success, Http.Mime.Text, text)
+
+private def receive(dir: String, paths: py.List): Response receives request =
+  val form = parsed(dir, paths)
+  textReply(form.files("file").size.toString)
+
+private def stream(dir: String, paths: py.List): Response receives request =
+  val form = parsed(dir, paths)
+  Response.download(form.files("file").get(0).path)
+
+private def withNoStaging(body: () => Unit): Unit =
+  val original = py.module("tempfile").mkdtemp
+  val patch = py.module("unittest.mock").patch("tempfile.mkdtemp", wraps = original)
+  val maker = patch.__enter__()
+  val attempted = py.try(body())
+  val _ = patch.__exit__(py.none, py.none, py.none)
+  checkEquals("no staging allocation", maker.call_count.asInt, 0)
+  match attempted
+  case Ok(_) => pass
+  case Err(error) => abort error.message
+
+def uploadLifecycleSuite(): Unit receives thisSuite = suite: "upload lifecycle", () =>
+  thisSuite.parallel = false
+
+  test: "removes all staged fields after the response, including unknown fields", () =>
+    withDirectory: dir =>
+      val paths = py.list()
+      val env = environment(multipart)
+      val body = invoke(() => receive(dir, paths), env)
+      val path = paths.get(0).asString
+      check("accepted upload is staged", File.exists(path))
+      check("one request directory", os.listdir(dir).size == 1)
+      check("unknown file also staged", os.listdir(os.path.dirname(path)).size == 2)
+      checkEquals("handler reads only its known field", consume(body), "1")
+      check("request directory removed", os.listdir(dir).size == 0)
+      check("server-owned input remains open", !env.get("wsgi.input").closed.asBool)
+
+  test: "retains a file explicitly moved outside staging", () =>
+    withDirectory: dir =>
+      val kept = os.path.join(dir, "kept.bin")
+      val paths = py.list()
+      val handler: (() => Response receives request) = () =>
+        val form = parsed(dir, paths)
+        os.replace(form.files("file").get(0).path, kept)
+        textReply("saved")
+      checkEquals("response", consume(invoke(handler, environment(multipart))), "saved")
+      checkEquals("durable file", File.read(kept), "retained content")
+      check("only the durable file remains", os.listdir(dir).size == 1)
+
+  test: "keeps a streamed upload readable until exhaustion and then cleans it", () =>
+    withDirectory: dir =>
+      val paths = py.list()
+      val body = invoke(() => stream(dir, paths), environment(multipart))
+      val path = paths.get(0).asString
+      check("upload exists before iteration", File.exists(path))
+      val bytes = py.module("builtins").list(body)
+      checkEquals("streamed bytes", py.dynamic("").encode().join(bytes).decode().asString, "retained content")
+      check("exhaustion removes staging", os.listdir(dir).size == 0)
+      closeBody(body)
+
+  test: "closes a streamed response before cleanup, once, on early disconnect", () =>
+    withDirectory: dir =>
+      val paths = py.list()
+      val closed = py.list()
+      val env = environment(multipart)
+      val wrapper = (handle: py.Dynamic, block: py.Dynamic) =>
+        val native = py.module("unittest.mock").MagicMock()
+        val stop = () =>
+          closed.append(File.exists(paths.get(0).asString))
+          handle.close()
+        py.module("builtins").setattr(native.close, "side_effect", py.dynamic(stop))
+        native
+      env.set("wsgi.file_wrapper", py.dynamic(wrapper))
+      val body = invoke(() => stream(dir, paths), env)
+      closeBody(body)
+      closeBody(body)
+      checkEquals("underlying close once", closed.size, 1)
+      check("underlying close precedes deletion", closed.get(0).asBool)
+      check("disconnect removes staging", os.listdir(dir).size == 0)
+
+  test: "cleans a failed response iteration and preserves the original error", () =>
+    withDirectory: dir =>
+      val paths = py.list()
+      val closed = py.list()
+      val fault = py.module("builtins").OSError("output read failed")
+      val env = environment(multipart)
+      val wrapper = (handle: py.Dynamic, block: py.Dynamic) =>
+        val native = py.module("unittest.mock").MagicMock()
+        py.module("builtins").setattr(native.__iter__, "side_effect", py.dynamic(() => native))
+        py.module("builtins").setattr(native.__next__, "side_effect", fault)
+        val stop = () =>
+          closed.append(File.exists(paths.get(0).asString))
+          handle.close()
+        py.module("builtins").setattr(native.close, "side_effect", py.dynamic(stop))
+        native
+      env.set("wsgi.file_wrapper", py.dynamic(wrapper))
+      val body = invoke(() => stream(dir, paths), env)
+      checkError(py.try(py.module("builtins").list(body)), fault)
+      checkEquals("underlying close once", closed.size, 1)
+      check("underlying close precedes deletion", closed.get(0).asBool)
+      check("iteration failure removes staging", os.listdir(dir).size == 0)
+      closeBody(body)
+      checkEquals("later close remains idempotent", closed.size, 1)
+
+  test: "cleans staging when a handler raises", () =>
+    withDirectory: dir =>
+      val paths = py.list()
+      val fault = py.module("builtins").ValueError("handler failed")
+      val handler: (() => Response receives request) = () =>
+        val _ = parsed(dir, paths)
+        raiseNative(fault)
+      checkError(py.try(invoke(handler, environment(multipart))), fault)
+      check("handler failure removes staging", os.listdir(dir).size == 0)
+
+  test: "cleans a partial parser after input I/O raises", () =>
+    withDirectory: dir =>
+      val fault = py.module("builtins").OSError("input read failed")
+      val env = environment(multipart)
+      val read = py.module("unittest.mock").Mock:
+        side_effect = py.list(py.dynamic(part("file", "prefix")).encode(), fault)
+      env.set("CONTENT_LENGTH", "10000")
+      env.set("wsgi.input", py.module("types").SimpleNamespace(read = read))
+      checkError(py.try(invoke(() => receive(dir, py.list()), env)), fault)
+      check("partial staging removed", os.listdir(dir).size == 0)
+
+  test: "removes malformed uploads before returning None to the handler", () =>
+    withDirectory: dir =>
+      val incomplete = py.dynamic(part("file", "partial")).encode()
+      val handler: (() => Response receives request) = () =>
+        val form = request.form(dir)
+        check("malformed form refused", form is None)
+        check("staging already removed", os.listdir(dir).size == 0)
+        textReply("refused")
+      checkEquals("handler response", consume(invoke(handler, environment(incomplete))), "refused")
+
+  test: "cleans staging and response handles when start_response raises", () =>
+    withDirectory: dir =>
+      val paths = py.list()
+      val fault = py.module("builtins").RuntimeError("headers failed")
+      val start = (status: py.Dynamic, headers: py.Dynamic) => raiseNative(fault)
+      checkError(py.try(invoke(() => stream(dir, paths), environment(multipart), py.dynamic(start))), fault)
+      check("header failure removes staging", os.listdir(dir).size == 0)
+
+  test: "closes the response file and cleans staging when its wrapper cannot be created", () =>
+    withDirectory: dir =>
+      val paths = py.list()
+      val opened = py.list()
+      val fault = py.module("builtins").RuntimeError("wrapper failed")
+      val env = environment(multipart)
+      val wrapper = (handle: py.Dynamic, block: py.Dynamic) =>
+        opened.append(handle)
+        raiseNative(fault)
+      env.set("wsgi.file_wrapper", py.dynamic(wrapper))
+      checkError(py.try(invoke(() => stream(dir, paths), env)), fault)
+      check("opened response file closed", opened.get(0).closed.asBool)
+      check("wrapper failure removes staging", os.listdir(dir).size == 0)
+
+  test: "preserves an iteration failure even when closing the wrapper also fails", () =>
+    withDirectory: dir =>
+      val paths = py.list()
+      val opened = py.list()
+      val fault = py.module("builtins").OSError("iteration failed")
+      val closeFault = py.module("builtins").RuntimeError("close failed")
+      val env = environment(multipart)
+      val wrapper = (handle: py.Dynamic, block: py.Dynamic) =>
+        opened.append(handle)
+        val native = py.module("unittest.mock").MagicMock()
+        py.module("builtins").setattr(native.__iter__, "side_effect", py.dynamic(() => native))
+        py.module("builtins").setattr(native.__next__, "side_effect", fault)
+        py.module("builtins").setattr(native.close, "side_effect", closeFault)
+        native
+      env.set("wsgi.file_wrapper", py.dynamic(wrapper))
+      val body = invoke(() => stream(dir, paths), env)
+      checkError(py.try(py.module("builtins").list(body)), fault)
+      check("raw file closed despite wrapper failure", opened.get(0).closed.asBool)
+      check("staging removed despite close failure", os.listdir(dir).size == 0)
+      closeBody(body)
+
+  test: "cleans staging when opening the response file fails", () =>
+    withDirectory: dir =>
+      val paths = py.list()
+      val handler: (() => Response receives request) = () =>
+        val form = parsed(dir, paths)
+        val path = form.files("file").get(0).path
+        val response = Response.download(path)
+        os.unlink(path)
+        response
+      match py.try(invoke(handler, environment(multipart)))
+      case Ok(_) => check("response file open fails", false)
+      case Err(error) => checkEquals("native error type", error.typeName, "FileNotFoundError")
+      check("response failure removes staging", os.listdir(dir).size == 0)
+
+  test: "isolates overlapping requests using the same upload directory", () =>
+    withDirectory: dir =>
+      val first = py.list()
+      val second = py.list()
+      val a = invoke(() => receive(dir, first), environment(multipart))
+      val b = invoke(() => receive(dir, second), environment(multipart))
+      val firstPath = first.get(0).asString
+      val secondPath = second.get(0).asString
+      check("distinct request directories", os.path.dirname(firstPath) != os.path.dirname(secondPath))
+      closeBody(a)
+      check("first request cleaned", !File.exists(firstPath))
+      check("other request remains live", File.exists(secondPath))
+      checkEquals("second response", consume(b), "1")
+      check("both request directories removed", os.listdir(dir).size == 0)
+
+  test: "allocates no staging for refused files or forms containing only fields", () =>
+    withDirectory: dir =>
+      withNoStaging: () =>
+        val refuse: (() => Response receives request) = () =>
+          val form = request.form() rescue None => abort "expected form"
+          textReply(form.files("file").size.toString)
+        checkEquals("refused file", consume(invoke(refuse, environment(multipart))), "0")
+        val onlyFields = py.dynamic("--\{boundary}\r\nContent-Disposition: form-data; name=\"note\"\r\n\r\nhello\r\n--\{boundary}--\r\n").encode()
+        checkEquals("multipart fields", consume(invoke(() => receive(dir, py.list()), environment(onlyFields))), "0")
+        val encoded = environment(py.dynamic("note=hello").encode(), "application/x-www-form-urlencoded")
+        checkEquals("urlencoded fields", consume(invoke(() => receive(dir, py.list()), encoded)), "0")
+      check("no files written", os.listdir(dir).size == 0)
+
+  test: "leaves explicitly saved raw request bodies caller-owned", () =>
+    withDirectory: dir =>
+      val path = os.path.join(dir, "raw.bin")
+      val handler: (() => Response receives request) = () =>
+        val _ = request.saveTo(path)
+        textReply("saved")
+      val env = environment(py.dynamic("raw content").encode(), "application/octet-stream")
+      checkEquals("response", consume(invoke(handler, env)), "saved")
+      checkEquals("saved body survives response", File.read(path), "raw content")
+
+  test: "retains the server-native wrapper when no upload was staged", () =>
+    withDirectory: dir =>
+      val path = os.path.join(dir, "asset.bin")
+      File.write(path, "asset")
+      val native = py.list()
+      val env = environment(py.dynamic("").encode(), "application/octet-stream")
+      val wrapper = (handle: py.Dynamic, block: py.Dynamic) =>
+        val result = py.module("wsgiref.util").FileWrapper(handle, block)
+        native.append(result)
+        result
+      env.set("wsgi.file_wrapper", py.dynamic(wrapper))
+      val body = invoke(() => Response.download(path), env)
+      check("native wrapper returned unchanged", py.isIdentical(body, native.get(0)))
+      checkEquals("asset response", consume(body), "asset")
+      check("caller-owned asset remains", File.exists(path))
