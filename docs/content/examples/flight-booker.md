@@ -105,7 +105,7 @@ MODEL=claude-opus-4-6
 Start the web app:
 
 ```sh
-jo start
+jo exec start
 ```
 
 Then open [http://127.0.0.1:8765](http://127.0.0.1:8765) in your browser.

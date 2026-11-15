@@ -38,7 +38,7 @@ cp .env.example .env
 Set API key in `.env`, then run:
 
 ```sh
-jo start
+jo exec start
 ```
 
 Example questions for trial:

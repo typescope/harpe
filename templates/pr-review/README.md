@@ -31,7 +31,7 @@ In `.env`:
 
 ```sh
 . .venv/bin/activate
-jo review -- https://github.com/owner/repo/pull/123
+jo exec review -- https://github.com/owner/repo/pull/123
 ```
 
 The startup output prints a local log viewer URL, normally

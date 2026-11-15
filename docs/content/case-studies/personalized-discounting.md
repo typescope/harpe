@@ -129,7 +129,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-jo start
+jo exec start
 ```
 
 Open **http://127.0.0.1:8768**. **Run example program** runs a checked-in

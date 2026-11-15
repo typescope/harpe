@@ -27,7 +27,7 @@ In `.env`:
 
 ```sh
 . .venv/bin/activate
-jo start
+jo exec start
 ```
 
 Then open <http://127.0.0.1:8765>. When the agent is ready to book it shows a

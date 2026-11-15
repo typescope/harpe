@@ -18,7 +18,7 @@ Activate the environment in each shell before installing dependencies or running
 - Query resolved APIs: `jo compile --query jo.List,jo.Map` (replace the selectors
   with the APIs you need).
 - Run a review after configuration:
-  `jo review -- https://github.com/owner/repo/pull/123`.
+  `jo exec review -- https://github.com/owner/repo/pull/123`.
   A live run can save a pending review on that pull request.
 
 There is no automated test target yet. Build the modules affected by code changes.

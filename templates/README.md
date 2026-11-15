@@ -13,7 +13,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r requirements.txt
 cp .env.example .env
-jo start
+jo exec start
 ```
 
 `jo-templates.jsonl` at the repository root is what names these and maps each to

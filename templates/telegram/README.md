@@ -29,7 +29,7 @@ In `.env`:
 
 ```sh
 . .venv/bin/activate
-jo start
+jo exec start
 ```
 
 The startup output prints a local log viewer URL, normally

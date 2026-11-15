@@ -29,7 +29,7 @@ PORT=8765
 Start the application:
 
 ```sh
-jo start
+jo exec start
 ```
 
 Open `http://127.0.0.1:8765`. Each conversation has its own URL and can resume
@@ -46,7 +46,7 @@ val server = new ChatServer(brain, "Clair", …)
 ```
 
 Replace `"Clair"` with your agent's name. Edit `prompts/SYSTEM.md` to give it a matching
-role, then restart `jo start` and reload the page. The new name should appear in
+role, then restart `jo exec start` and reload the page. The new name should appear in
 the sidebar, and replies should follow the new instructions.
 
 Send a message and copy the URL. Restart the application and open that URL

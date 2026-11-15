@@ -81,10 +81,10 @@ present.
 Review a pull request:
 
 ```sh
-jo review -- https://github.com/owner/repo/pull/123
+jo exec review -- https://github.com/owner/repo/pull/123
 ```
 
-`jo review` builds the sandbox guest and then runs a single turn. The agent
+`jo exec review` builds the sandbox guest and then runs a single turn. The agent
 prints each tool call as it works, so you can watch it fetching the PR, compiling a program, and saving its draft review.
 
 ### Interface Extension

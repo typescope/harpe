@@ -176,7 +176,7 @@ Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. OpenRouter works too, but needs
 both `OPENROUTER_API_KEY` and `MODEL`, because it has no default model id.
 
 ```sh
-jo start
+jo exec start
 ```
 
 Open [http://127.0.0.1:8766](http://127.0.0.1:8766). The first run creates
