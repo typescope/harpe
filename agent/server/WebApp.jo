@@ -32,7 +32,8 @@ import jo.py.resource.*
   ! Every handler names the largest body it accepts, and `maxReqBody` is the
   ! largest of them, which is the limit to give the server. `host` defaults to
   ! loopback, so a prototype on `127.0.0.1` runs as it is and a deployment
-  ! reached by any other name must name it.
+  ! reached by any other name must name it. Wildcard server bind addresses
+  ! such as `0.0.0.0` and `::` are rejected at construction.
   !
   ! A deployment runs `wsgi()` on the WSGI server it chooses. `Serve` is
   ! wsgiref, for harpe's own viewer and tests.
@@ -43,8 +44,24 @@ class WebApp(
       host: WebApp.Loopback | WebApp.AnyHost | String = WebApp.Loopback,
       crossSite: WebApp.CrossSite = WebApp.NoCrossSite)
 
-  //[ The routing trie compiled once when the application is built. //]
-  private val root = Route.compile(routes)
+  //[ Validate the host and compile the routing trie when the application is built. //]
+  private val root =
+    validateHost()
+    Route.compile(routes)
+
+  //[ A wildcard listener address is not the hostname clients use in HTTP. //]
+  private def validateHost(): Unit =
+    match host
+    case name: String =>
+      val address =
+        if name.startsWith("[") && name.endsWith("]") then name.substring(1, name.size - 2)
+        else name
+      // IP parsing is local: ordinary hostnames are left to the existing policy.
+      match py.try(py.module("ipaddress").ip_address(address).is_unspecified.asBool)
+      case Ok(true) =>
+        abort "WebApp.host '\{name}' is a wildcard server bind address. Set WebApp.host to the hostname clients request and configure the server bind address separately. Use WebApp.AnyHost only when a trusted proxy validates the Host header."
+      case _ => pass
+    case _ => pass
 
   //[ This application as the WSGI callable a server is given.
     ! The output sink receives one newline-terminated record for each request

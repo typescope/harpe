@@ -66,6 +66,12 @@ to bind. Here, a reverse proxy on the same machine accepts HTTPS for
 another container, bind an interface it can reach and restrict access to the
 upstream port.
 
+`WebApp` rejects wildcard bind addresses such as `0.0.0.0`, `::`, and `[::]`
+as its `host` when it is constructed. Keep those addresses in the WSGI server's
+bind configuration and set `WebApp.host` to the hostname clients request, such
+as `agent.example.com`. Use `WebApp.AnyHost` only when a trusted proxy already
+validates the incoming `Host` header.
+
 For local development, use `WebApp.Loopback`, the default, and visit
 `http://127.0.0.1:8765`. It accepts `localhost`, `127.0.0.1`, and `::1`, and
 rejects other hostnames with 400. Setting only the server's bind address does
