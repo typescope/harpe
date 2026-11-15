@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**Keep stdout from a crashed guest program.** `RunCodeTool` returns the output
+produced before a crash ahead of the crash diagnostic, and records both in the
+existing `harpe.tools.runCode.ran` entry's `output` field.
+
 **Decode guest stdout and stderr as UTF-8 with replacement**. This way, output that is
 not valid UTF-8 (for example a multi-byte character cut by `head -c`) no
 longer fails `RunCodeTool` as an internal error.

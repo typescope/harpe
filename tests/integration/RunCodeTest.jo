@@ -24,6 +24,8 @@ import harpe.*
 import harpe.tools.*
 import harpe.logging.Logging
 import harpe.logging.logger
+import harpe.logging.Entry
+import harpe.logging.JsonlLogger
 import harpe.Tool.*
 import jtest.thisSuite
 import jtest.suite
@@ -249,6 +251,31 @@ private def parallelCases(): Unit receives thisSuite =
 
   suite: "failing programs", () =>
     thisSuite.parallel = true
+
+    test: "keeps stdout before a crash in the result and run log", () =>
+      val path = os.path.join(tempfile.mkdtemp(), "run.jsonl")
+      val failed = Logging.withLogger: new JsonlLogger(path), () =>
+        fastTool().run:
+          guest:
+            """
+              println "step 1: read 2500 rows"
+              println "step 2: total 1250"
+              abort "step 3 failed"
+
+            """
+      checkEquals("tag", tag(failed), "crash")
+      check:
+        "stdout precedes the diagnostic"
+        failed.result.contains("step 1: read 2500 rows\nstep 2: total 1250\n\nThe program crashed:\n")
+      check("failure message", failed.result.contains("step 3 failed"))
+
+      var logged = 0
+      for entry in Entry.readJsonl(path) if entry.event == "harpe.tools.runCode.ran" do
+        logged = logged + 1
+        match entry.fields["output"]
+        case output: String => checkEquals("logged output", output, failed.result)
+        case _ => check("output is a string", false)
+      checkEquals("one run entry", logged, 1)
 
     test: "catches one that does not type-check, with the compiler diagnostic", () =>
       val bad = exec(fastTool(), guest("  println undefinedThing\n"))

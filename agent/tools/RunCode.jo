@@ -418,7 +418,9 @@ class RunCodeTool(
     replayAudit(runAudit)
 
     val result =
-      if runReturnCode != 0 then "The program crashed:\n\{runErr}"
+      if runReturnCode != 0 then
+        val failure = "The program crashed:\n\{runErr}"
+        if runOutText == "" then failure else "\{runOutText}\n\n\{failure}"
       else if runOutText == "" then "(the program produced no output)"
       else runOutText
 

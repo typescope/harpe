@@ -94,6 +94,10 @@ When the model calls `runCode`, Harpe:
 4. Runs the program with the trusted capability implementations if compilation
    succeeds.
 
+If the program crashes, `runCode` returns any stdout it produced before the crash
+followed by the error diagnostic. The run log records the same output before the
+tool limits the text returned to the model.
+
 Each program gets its own source, output, and compiler artifacts. Shared
 dependencies remain read-only. Concurrent runs therefore do not change one
 another's build state.
