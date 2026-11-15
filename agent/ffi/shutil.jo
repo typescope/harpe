@@ -1,0 +1,15 @@
+//[ shutil.jo
+  !
+  ! Python's `shutil` module, bound as a typed value.
+//]
+
+namespace harpe.ffi
+
+//[ Python's `shutil` module. //]
+@py.interop
+interface ShutilApi
+  //[ Remove a directory tree, propagating removal errors unless ignored. //]
+  def rmtree(path: String, ignore_errors: Bool @py.keyword): Unit
+end
+
+def shutil: ShutilApi = py.module("shutil").cast[ShutilApi]
