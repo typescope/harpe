@@ -19,6 +19,13 @@ def main(): Unit receives stdout =
 private def run(): Unit receives stdout, logger, approvals =
   logger.info("harpe.sandbox.runtime", "runtime ready")
 
+  // A killed process can leave an incomplete final audit line. Keep the valid
+  // entry above and append a partial one to exercise tolerant host replay.
+  if os.getenv("HARPE_TEST_PARTIAL_AUDIT", "") == "1" then
+    val audit = py.open(os.getenv("HARPE_AUDIT_LOG", ""), "a")
+    audit.write("{\"event\":")
+    audit.close()
+
   // The integration suite enables this probe to exercise the real
   // sandbox → broker → Interact → broker → sandbox approval path.
   if os.getenv("HARPE_TEST_APPROVAL", "") == "1" then

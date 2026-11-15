@@ -43,6 +43,10 @@ now returns `TurnResult.Failed("tool budget reached and the final reply was empt
 instead of an empty success. Existing failed-turn context rollback applies;
 the journal retains the recorded traffic and failure diagnostic.
 
+**Replay sandbox audit entries after execution and approval timeouts.** Records
+written before the program was stopped now reach the turn's contextual logger
+before the timeout event, just as they do when a program finishes normally.
+
 **Decode guest stdout and stderr as UTF-8 with replacement**. This way, output that is
 not valid UTF-8 (for example a multi-byte character cut by `head -c`) no
 longer fails `RunCodeTool` as an internal error.

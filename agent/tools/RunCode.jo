@@ -406,6 +406,10 @@ class RunCodeTool(
       case Err(error) => abort error.message
     val runSeconds = builtins.round(Clock.now() - t1, 2)
 
+    // Replay before either timeout return: a stopped program may already have
+    // recorded effects. The contextual logger stamps these with the turn.
+    replayAudit(runAudit)
+
     if run.timedOut then
       logger.log:
         if run.pauseTimedOut then approvalTimedOutEvent else timedOutEvent
@@ -427,10 +431,6 @@ class RunCodeTool(
     val runReturnCode = run.returnCode
     val runOutText = run.out.trim
     val runErr = Terminal.stripAnsi(run.err).trim
-
-    // Replay the records the sandboxed program logged (a JSONL file it wrote to)
-    // through this (contextual) logger, so they carry the turn's session context.
-    replayAudit(runAudit)
 
     val result =
       if runReturnCode != 0 then
