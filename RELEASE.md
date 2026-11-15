@@ -16,9 +16,9 @@ the PRs, waits for their merge, and then continues with publication or deploymen
 It must not merge PRs itself.
 
 ~~~sh
-VERSION=0.12.0
+VERSION=0.15.0
 MINOR=${VERSION%.*}
-PREV_MINOR=0.11
+PREV_MINOR=0.14
 ~~~
 
 ## 1. Prepare and validate locally
@@ -39,7 +39,7 @@ done
 Use the same released Jo compiler that CI installs. Compare `jo --version`
 with `gh release view --repo typescope/jo --json tagName --jq .tagName`.
 If they differ, install the current release before validating or packaging.
-For 0.12.0 this is Jo 0.13.5. An artifact built by an incompatible compiler
+For 0.15.0 this is Jo 0.14.12. An artifact built by an incompatible compiler
 cannot be repaired once the registry records it.
 
 Prepare the release changes:
