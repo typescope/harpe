@@ -1,0 +1,228 @@
+// Malformed arguments are model errors: the real adapters and engine return a
+// failed tool result, preserve the payload on the wire, and let the model repair it.
+namespace harpe.test.integration.ToolArgumentsTest
+
+import harpe.*
+import harpe.Model.*
+import harpe.Tool.*
+import harpe.models.openai
+import harpe.models.openrouter
+import harpe.models.anthropic
+import harpe.models.Anthropic
+import harpe.tools.ToolCallExecutor
+import harpe.ffi.json
+import harpe.logging.logger
+import harpe.turns.TurnResult
+import harpe.test.integration.ProviderFixture
+import jtest.thisSuite
+import jtest.suite
+import jtest.test
+import jtest.check
+import jtest.checkEquals
+
+private def model(variant: String, server: ProviderFixture.Server): Model =
+  if variant == "chat" then openai.compatible("test-key", "test-model", server.baseUrl, timeoutSeconds = 2)
+  else if variant == "openrouter" then openrouter("test-key", "test-model", server.baseUrl, timeoutSeconds = 2)
+  else if variant == "anthropic" then
+    anthropic("test-key", "test-model", Anthropic.NoCache, baseUrl = server.baseUrl, timeoutSeconds = 2)
+  else openai("test-key", "test-model", server.baseUrl, timeoutSeconds = 2, store = variant == "stored")
+
+private def response(variant: String, id: String, arguments: List[String], text: String = ""): ProviderFixture.Scripted =
+  if variant == "anthropic" then return anthropicResponse(id, arguments, text)
+  val calls = py.list()
+  var index = 0
+  for raw in arguments do
+    if variant == "chat" then
+      calls.append:
+        py.dict("index" ~ index, "id" ~ "\{id}_\{index}", "type" ~ "function",
+          "function" ~ py.dict("name" ~ "lookup", "arguments" ~ raw))
+    else
+      calls.append:
+        py.dict("id" ~ "fc_\{id}_\{index}", "type" ~ "function_call", "status" ~ "completed",
+          "call_id" ~ "\{id}_\{index}", "name" ~ "lookup", "arguments" ~ raw)
+    index = index + 1
+
+  if variant == "chat" then
+    val delta = py.dict("role" ~ "assistant", "content" ~ text)
+    if calls.size > 0 then delta.set("tool_calls", calls)
+    val first = py.dict("id" ~ id, "object" ~ "chat.completion.chunk", "created" ~ 0, "model" ~ "test-model",
+      "choices" ~ py.list(py.dict("index" ~ 0, "delta" ~ delta, "finish_reason" ~ py.none)))
+    val last = py.dict("id" ~ id, "object" ~ "chat.completion.chunk", "created" ~ 0, "model" ~ "test-model",
+      "choices" ~ py.list(py.dict("index" ~ 0, "delta" ~ py.dict(),
+        "finish_reason" ~ (if calls.size > 0 then "tool_calls" else "stop"))),
+      "usage" ~ py.dict("prompt_tokens" ~ 6, "completion_tokens" ~ 3, "total_tokens" ~ 9))
+    return ProviderFixture.sse("data: " + json.dumps(first) + "\n\ndata: " + json.dumps(last) + "\n\ndata: [DONE]")
+
+  if text != "" then
+    calls.append:
+      py.dict("id" ~ ("msg_" + id), "type" ~ "message", "status" ~ "completed", "role" ~ "assistant",
+        "content" ~ py.list(py.dict("type" ~ "output_text", "text" ~ text, "annotations" ~ py.list(), "logprobs" ~ py.list())))
+  val result = py.dict("id" ~ id, "object" ~ "response", "created_at" ~ 0, "status" ~ "completed",
+    "error" ~ py.none, "incomplete_details" ~ py.none, "model" ~ "test-model", "output" ~ calls,
+    "usage" ~ py.dict("input_tokens" ~ 6, "output_tokens" ~ 3, "total_tokens" ~ 9,
+      "input_tokens_details" ~ py.dict("cached_tokens" ~ 0), "output_tokens_details" ~ py.dict("reasoning_tokens" ~ 0)))
+  ProviderFixture.sse("data: " + json.dumps(py.dict("type" ~ "response.completed", "sequence_number" ~ 1, "response" ~ result)) + "\n\ndata: [DONE]")
+
+private def anthropicFrame(body: py.Dict): String =
+  "event: " + body.get("type").asString + "\ndata: " + json.dumps(body)
+
+private def anthropicResponse(id: String, arguments: List[String], text: String): ProviderFixture.Scripted =
+  var frames = anthropicFrame(py.dict("type" ~ "message_start", "message" ~ py.dict(
+    "id" ~ id, "type" ~ "message", "role" ~ "assistant", "model" ~ "test-model", "content" ~ py.list(),
+    "stop_reason" ~ py.none, "stop_sequence" ~ py.none, "usage" ~ py.dict("input_tokens" ~ 6, "output_tokens" ~ 0))))
+  var index = 0
+  for raw in arguments do
+    val block = py.dict("type" ~ "tool_use", "id" ~ "\{id}_\{index}", "name" ~ "lookup", "input" ~ json.loads(raw))
+    frames = frames + "\n\n" + anthropicFrame(py.dict("type" ~ "content_block_start", "index" ~ index, "content_block" ~ block))
+    frames = frames + "\n\n" + anthropicFrame(py.dict("type" ~ "content_block_stop", "index" ~ index))
+    index = index + 1
+  if text != "" then
+    frames = frames + "\n\n" + anthropicFrame(py.dict("type" ~ "content_block_start", "index" ~ index,
+      "content_block" ~ py.dict("type" ~ "text", "text" ~ text)))
+    frames = frames + "\n\n" + anthropicFrame(py.dict("type" ~ "content_block_stop", "index" ~ index))
+  frames = frames + "\n\n" + anthropicFrame(py.dict("type" ~ "message_delta",
+    "delta" ~ py.dict("stop_reason" ~ (if arguments.isEmpty then "end_turn" else "tool_use"), "stop_sequence" ~ py.none),
+    "usage" ~ py.dict("output_tokens" ~ 3)))
+  ProviderFixture.sse(frames + "\n\n" + anthropicFrame(py.dict("type" ~ "message_stop")))
+
+private def wiring(ran: py.List): Toolset =
+  Toolset.of:
+    Tool("lookup", "Look up a city", [strParam("city", "City")])
+    (input: ToolInput, channel: Interact) =>
+      ran.append(input["city"])
+      new ToolOutcome("sunny", "looked up")
+
+private def argumentStrings(variant: String, body: py.Dict): List[String] =
+  var found: List[String] = []
+  if variant == "chat" then
+    for message in body.get("messages").cast[py.List] do
+      for call in message.get("tool_calls", py.list()).cast[py.List] do
+        found = found + call.get("function").get("arguments").asString
+  else
+    for item in body.get("input").cast[py.List] do
+      if item.get("type", "").asString == "function_call" then found = found + item.get("arguments").asString
+  found
+
+private def resultStrings(variant: String, body: py.Dict): List[String] =
+  var found: List[String] = []
+  if variant == "chat" then
+    for message in body.get("messages").cast[py.List] do
+      if message.get("role").asString == "tool" then found = found + message.get("content").asString
+  else
+    for item in body.get("input").cast[py.List] do
+      if item.get("type", "").asString == "function_call_output" then found = found + item.get("output").asString
+  found
+
+private def providerCases(variant: String): Unit receives thisSuite, logger = suite: variant, () =>
+  test: "returns a malformed call to the model and executes its correction", () =>
+    val raw = " {\"city\":\"Zur"
+    val scripts = [response(variant, "bad", [raw]), response(variant, "fixed", ["{\"city\":\"Zurich\"}"]), response(variant, "done", [], "done")]
+    ProviderFixture.withResponses: scripts, server =>
+      val ran = py.list()
+      val turn = Agent.ask("weather", brain = model(variant, server), tools = wiring(ran), maxRetries = 0)
+      check("turn succeeded", turn.result is TurnResult.Success)
+      checkEquals("final answer", turn.finalText, "done")
+      checkEquals("only corrected call ran", ran.size, 1)
+      checkEquals("corrected city", ran.get(0).asString, "Zurich")
+      checkEquals("three requests", server.requestCount, 3)
+      val followup = server.recorded(1).jsonBody
+      check("model receives parse error", resultStrings(variant, followup).get(0).contains("invalid JSON"))
+      if variant == "stored" then
+        checkEquals("stored continuation", followup.get("previous_response_id").asString, "bad")
+      else checkEquals("raw arguments replayed verbatim", argumentStrings(variant, followup).get(0), raw)
+
+  test: "rejects non-object JSON while valid calls in the batch run", () =>
+    ProviderFixture.withResponses: [response(variant, "batch", ["[]", "{\"city\":\"Zurich\"}"]), response(variant, "done", [], "done")], server =>
+      val ran = py.list()
+      val turn = Agent.ask:
+        "weather"
+        brain = model(variant, server)
+        tools = wiring(ran)
+        executor = ToolCallExecutor.parallel(2)
+        maxRetries = 0
+      check("turn succeeded", turn.result is TurnResult.Success)
+      checkEquals("valid handler only", ran.size, 1)
+      val results = resultStrings(variant, server.recorded(1).jsonBody)
+      check("non-object refused", results[0].contains("expected a JSON object"))
+      checkEquals("valid call result", results[1], "sunny")
+
+  test: "retains malformed arguments when rebuilding provider history", () =>
+    val raw = "{\"city\":"
+    val history: List[Message] = [
+      UserInput("weather", []),
+      Assistant("", [toolCallFromJson("bad", "lookup", raw)]),
+      ToolResults([ToolResult("bad", "invalid JSON", [], success = false)])
+    ]
+    ProviderFixture.withResponses: [response(variant, "done", [], "done")], server =>
+      val session = model(variant, server).startTurn(Rendered("", history), 32)
+      match session.reply([], [], Interact.unattended)
+      case Reply(message, _) => checkEquals("answer", message.text, "done")
+      case _ => check("reply succeeds", false)
+      checkEquals("original malformed payload", argumentStrings(variant, server.requestJson).get(0), raw)
+
+def toolArgumentsSuite(): Unit receives thisSuite, logger = suite: "tool arguments", () =>
+  for variant in ["openrouter", "responses", "stored", "chat"] do providerCases(variant)
+
+  test: "Anthropic resumes mixed invalid history with native results before diagnostics", () =>
+    val raw = "{\"city\":"
+    val history: List[Message] = [
+      UserInput("weather", []),
+      Assistant("", [toolCallFromJson("bad", "lookup", raw), toolCallFromJson("good", "lookup", "{\"city\":\"Zurich\"}")]),
+      ToolResults([ToolResult("bad", "invalid JSON", [], success = false), ToolResult("good", "sunny", [])])
+    ]
+    ProviderFixture.withResponses: [response("anthropic", "done", [], "done")], server =>
+      val session = model("anthropic", server).startTurn(Rendered("", history), 32)
+      match session.reply([], [], Interact.unattended)
+      case Reply(message, _) => checkEquals("answer", message.text, "done")
+      case _ => check("reply succeeds", false)
+      val messages = server.requestJson.get("messages").cast[py.List]
+      val assistant = messages.get(1).get("content").cast[py.List]
+      check("raw text preserved", assistant[0].get("text").asString.contains(raw))
+      checkEquals("valid call stays native", assistant[1].get("type").asString, "tool_use")
+      val results = messages.get(2).get("content").cast[py.List]
+      checkEquals("native result first", results[0].get("tool_use_id").asString, "good")
+      checkEquals("failed invalid result is text", results[1].get("type").asString, "text")
+
+  test: "Anthropic non-object calls fail locally and preserve valid native calls", () =>
+    ProviderFixture.withResponses: [response("anthropic", "batch", ["[]", "{\"city\":\"Zurich\"}"]), response("anthropic", "done", [], "done")], server =>
+      val ran = py.list()
+      val turn = Agent.ask("weather", brain = model("anthropic", server), tools = wiring(ran), maxRetries = 0)
+      check("turn succeeds", turn.result is TurnResult.Success)
+      checkEquals("valid handler only", ran.size, 1)
+      val messages = server.recorded(1).jsonBody.get("messages").cast[py.List]
+      val assistant = messages.get(1).get("content").cast[py.List]
+      check("invalid call is text", assistant[0].get("type").asString == "text" && assistant[0].get("text").asString.contains("[]"))
+      checkEquals("valid call stays native", assistant[1].get("type").asString, "tool_use")
+      val results = messages.get(2).get("content").cast[py.List]
+      checkEquals("native result first", results[0].get("tool_use_id").asString, "batch_1")
+      check("invalid result explains refusal", results[1].get("text").asString.contains("expected a JSON object"))
+
+  test: "Anthropic scopes invalid ids to their batch during continuation", () =>
+    val scripts = [response("anthropic", "same", ["[]"]), response("anthropic", "same", ["{\"city\":\"Zurich\"}"]), response("anthropic", "done", [], "done")]
+    ProviderFixture.withResponses: scripts, server =>
+      val ran = py.list()
+      val turn = Agent.ask("weather", brain = model("anthropic", server), tools = wiring(ran), maxRetries = 0)
+      check("turn succeeds", turn.result is TurnResult.Success)
+      checkEquals("corrected handler ran once", ran.size, 1)
+      val messages = server.recorded(2).jsonBody.get("messages").cast[py.List]
+      val content = messages.get(messages.size - 1).get("content").cast[py.List]
+      checkEquals("corrected call has native result", content[0].get("type").asString, "tool_result")
+      checkEquals("reused call id", content[0].get("tool_use_id").asString, "same_0")
+
+  test: "Anthropic scopes invalid ids to their batch in rebuilt history", () =>
+    val history: List[Message] = [
+      UserInput("weather", []),
+      Assistant("", [toolCallFromJson("same", "lookup", "{")]),
+      ToolResults([ToolResult("same", "invalid JSON", [], success = false)]),
+      Assistant("", [toolCallFromJson("same", "lookup", "{\"city\":\"Zurich\"}")]),
+      ToolResults([ToolResult("same", "sunny", [])])
+    ]
+    ProviderFixture.withResponses: [response("anthropic", "done", [], "done")], server =>
+      val session = model("anthropic", server).startTurn(Rendered("", history), 32)
+      match session.reply([], [], Interact.unattended)
+      case Reply(message, _) => checkEquals("answer", message.text, "done")
+      case _ => check("reply succeeds", false)
+      val messages = server.requestJson.get("messages").cast[py.List]
+      val content = messages.get(4).get("content").cast[py.List]
+      checkEquals("corrected call result remains native", content[0].get("type").asString, "tool_result")
+      checkEquals("reused call id", content[0].get("tool_use_id").asString, "same")

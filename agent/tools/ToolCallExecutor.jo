@@ -106,9 +106,16 @@ section ToolCallExecutor
   private def dispatch(call: ToolCall, tools: Toolset, interact: Interact): ToolOutcome receives logger =
     val toolName = call.name
 
-    if tools.contains(toolName) then
-      runSafely(toolName, tools.handler(toolName), call.input, interact)
-    else
+    match call.input
+    case invalid: InvalidToolInput =>
+      new ToolOutcome:
+        "The arguments for tool '\{toolName}' are invalid: \{invalid.error}"
+        "invalid arguments · \{toolName}"
+        attachments = []
+        success = false
+    case input: ToolInput if tools.contains(toolName) =>
+      runSafely(toolName, tools.handler(toolName), input, interact)
+    case _ =>
       new ToolOutcome:
         "Unknown tool: \{toolName}"
         "unknown tool · \{toolName}"

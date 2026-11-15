@@ -226,6 +226,31 @@ def transcriptSuite(): Unit receives thisSuite = suite: "session log", () =>
         check("id", c0.get("id", "").asString == "c1")
         check("input", c0.get("input").cast[py.Dict].get("code", "").asString == "println 1")
 
+    test: "round-trips invalid arguments without changing valid call records", () =>
+      withJournal: (journal, path) =>
+        val raw = " {\"code\":\"unterminated"
+        journal.request("repair this")
+        asTurn: () =>
+          TurnLog.message(UserInput("repair this", []))
+          TurnLog.message(Assistant("", [toolCallFromJson("bad", "runCode", raw), call()]))
+          TurnLog.message(ToolResults([ToolResult("bad", "invalid JSON", [], success = false)]))
+          TurnLog.answered()
+        journal.response("answered")
+        val calls = fieldsOf(readRecords(path).get(2)).get("calls").cast[py.List]
+        val invalid = calls.get(0).cast[py.Dict]
+        check("raw arguments", invalid.get("arguments").asString == raw)
+        check("error field", invalid.get("inputError").asString.contains("invalid JSON"))
+        check("no fabricated object", !invalid.contains("input"))
+        val valid = calls.get(1).cast[py.Dict]
+        check("valid shape unchanged", valid.size == 3 && valid.contains("input") && !valid.contains("inputError"))
+        val restored = Journal.load(path)
+        match restored.get(1)
+        case Assistant(_, calls) =>
+          check("original bytes survive reload", calls[0].argumentsJson == raw)
+          check("invalid state survives reload", calls[0].input is InvalidToolInput(_, _))
+          check("valid input survives reload", calls[1].input is ToolInput(_))
+        case _ => check("assistant reloaded", false)
+
     // A refused call says so in the journal, so a driver reading its own output
     // back off a turn cannot mistake a refusal for work done.
     test: "records tool results, including a refusal", () =>

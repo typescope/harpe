@@ -112,10 +112,13 @@ section TurnLog
       var calls: List[ToolCall] = []
       for item in items(fields, "calls") do
         val c = sub(item)
+        val input: ToolInput | InvalidToolInput =
+          if c.contains("inputError") then InvalidToolInput(str(c, "arguments"), str(c, "inputError"))
+          else decodeInput(nested(c, "input"))
         val call = ToolCall:
           str(c, "id")
           str(c, "name")
-          decodeInput(nested(c, "input"))
+          input
         calls = calls + call
       Assistant(str(fields, "text"), calls)
     else
@@ -148,10 +151,13 @@ section TurnLog
     case Assistant(text, calls) =>
       var values: List[Value] = []
       for call in calls do
-        val value: Map[String, Value] = Map:
+        var value: Map[String, Value] = Map:
           "id"    ~ call.id
           "name"  ~ call.name
-          "input" ~ encodeInput(call.input)
+        match call.input
+        case input: ToolInput => value = value.add("input", encodeInput(input))
+        case invalid: InvalidToolInput =>
+          value = value.add("arguments", invalid.rawArguments).add("inputError", invalid.error)
         values = values + value
       Map:
         "role"  ~ "assistant"

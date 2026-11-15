@@ -105,6 +105,7 @@ private def anthropicMediaBlocks(attachments: List[Attachment]): py.List =
 //]
 private def anthropicToMessages(history: List[Message], cache: Anthropic.Cache): py.List =
   val msgs = py.list()
+  var invalidCalls: List[String] = []
   val lastIdx = history.size - 1
   var i = 0
 
@@ -127,12 +128,13 @@ private def anthropicToMessages(history: List[Message], cache: Anthropic.Cache):
 
     case Assistant(text, calls) =>
       val content = py.list()
+      invalidCalls = []
 
       if text != "" then content.append(py.dict("type" ~ "text", "text" ~ text))
 
       for c in calls do
-        content.append:
-          py.dict("type" ~ "tool_use", "id" ~ c.id, "name" ~ c.name, "input" ~ c.input.raw)
+        content.append(anthropicCallBlock(c))
+        if c.input is InvalidToolInput(_, _) then invalidCalls = invalidCalls + c.id
 
       if shouldCache then
         content[content.size - 1]["cache_control"] = cache.toDict
@@ -140,10 +142,7 @@ private def anthropicToMessages(history: List[Message], cache: Anthropic.Cache):
       msgs.append(py.dict("role" ~ "assistant", "content" ~ content))
 
     case ToolResults(results) =>
-      val content = py.list()
-      for r in results do
-        content.append:
-          py.dict("type" ~ "tool_result", "tool_use_id" ~ r.id, "content" ~ r.content)
+      val content = anthropicResultBlocks(results, invalidCalls, inlineMedia = false)
 
       if shouldCache then
         content[content.size - 1]["cache_control"] = cache.toDict
@@ -155,6 +154,48 @@ private def anthropicToMessages(history: List[Message], cache: Anthropic.Cache):
   end // for
 
   msgs
+
+// Anthropic's native tool_use input must be an object. Keep an invalid call's
+// original payload as text rather than inventing an empty object; its failed
+// result is also text, so no unmatched tool_result is sent on a resumed turn.
+private def anthropicCallBlock(call: ToolCall): py.Dict =
+  match call.input
+  case input: ToolInput =>
+    py.dict("type" ~ "tool_use", "id" ~ call.id, "name" ~ call.name, "input" ~ input.raw)
+  case invalid: InvalidToolInput =>
+    py.dict:
+      "type" ~ "text"
+      "text" ~ "Invalid tool call '\{call.name}' (id '\{call.id}'). Arguments:\n\{invalid.rawArguments}\nError: \{invalid.error}"
+
+private def anthropicInvalidCalls(history: List[Message]): List[String] =
+  var ids: List[String] = []
+  for message in history do
+    if message is Assistant(_, calls) then
+      ids = []
+      for call in calls if call.input is InvalidToolInput(_, _) do ids = ids + call.id
+  ids
+
+private def anthropicResultBlocks(results: List[ToolResult], invalidCalls: List[String], inlineMedia: Bool): py.List =
+  val content = py.list()
+  val diagnostics = py.list()
+  for result in results do
+    if invalidCalls.contains(result.id) then
+      diagnostics.append:
+        py.dict("type" ~ "text", "text" ~ "Result for invalid tool call '\{result.id}': \{result.content}")
+    else
+      val media = if inlineMedia then anthropicMediaBlocks(result.attachments) else py.list()
+      if media.size == 0 then
+        content.append:
+          py.dict("type" ~ "tool_result", "tool_use_id" ~ result.id, "content" ~ result.content)
+      else
+        val blocks = py.list()
+        if result.content != "" then blocks.append(py.dict("type" ~ "text", "text" ~ result.content))
+        for block in media do blocks.append(block)
+        content.append:
+          py.dict("type" ~ "tool_result", "tool_use_id" ~ result.id, "content" ~ blocks)
+  // Anthropic requires native tool_result blocks before ordinary text blocks.
+  for diagnostic in diagnostics do content.append(diagnostic)
+  content
 
 //[ Parse an Anthropic response's content blocks into an `Assistant` reply.
   !
@@ -173,7 +214,7 @@ private def anthropicParseReply(response: py.Dynamic): Assistant =
     if btype == "text" then
       text = text + block.text.asString
     else if btype == "tool_use" then
-      calls = calls + ToolCall(block.id.asString, block.name.asString, ToolInput(block.input.cast[py.Dict]))
+      calls = calls + toolCallFromValue(block.id.asString, block.name.asString, block.input)
 
   val stop = response.stop_reason
 
@@ -211,12 +252,14 @@ private class AnthropicSession(
   // first reply, then grown with raw tool_result and assistant turns.
   private var messages: py.List = py.list()
   private var initialized: Bool = false
+  private var invalidCalls: List[String] = []
 
   def model: Model = owner
 
   def reply(results: List[ToolResult], tools: List[Tool], interact: Interact): ReplyResult =
     if !initialized then
       messages = anthropicToMessages(base.messages, cache)
+      invalidCalls = anthropicInvalidCalls(base.messages)
       initialized = true
 
     val toolSpecs = py.list()
@@ -228,7 +271,7 @@ private class AnthropicSession(
     for m in messages do committed.append(m)
 
     if !results.isEmpty then
-      committed.append(anthropicToolResultMessage(results))
+      committed.append(anthropicToolResultMessage(results, invalidCalls))
 
     // request-only, never committed.
     val outgoing = py.list()
@@ -250,7 +293,15 @@ private class AnthropicSession(
     case Ok(response) =>
       // Commit the raw assistant content (incl. thinking blocks) + the tool
       // results — only on success.
-      committed.append(py.dict("role" ~ "assistant", "content" ~ response.content))
+      val content = py.list()
+      invalidCalls = []
+      for block in response.content.cast[py.List] do
+        if builtins.getattr(block, "type").asString == "tool_use" && !py.isInstance(block.input, builtins.dict) then
+          val call = toolCallFromValue(block.id.asString, block.name.asString, block.input)
+          invalidCalls = invalidCalls + call.id
+          content.append(anthropicCallBlock(call))
+        else content.append(block)
+      committed.append(py.dict("role" ~ "assistant", "content" ~ content))
       messages = committed
       val u = response.usage
       // Anthropic's `input_tokens` counts ONLY the tokens after the last cache
@@ -282,23 +333,8 @@ end
   ! block from a `ToolResults` message's `attachments`, so a past tool-delivered image
   ! is never resent once this turn ends — no positional guard needed here.
 //]
-private def anthropicToolResultMessage(results: List[ToolResult]): py.Dict =
-  val content = py.list()
-
-  for r in results do
-    val media = anthropicMediaBlocks(r.attachments)
-
-    if media.size == 0 then
-      content.append:
-        py.dict("type" ~ "tool_result", "tool_use_id" ~ r.id, "content" ~ r.content)
-    else
-      val blocks = py.list()
-      if r.content != "" then blocks.append(py.dict("type" ~ "text", "text" ~ r.content))
-      for b in media do blocks.append(b)
-      content.append:
-        py.dict("type" ~ "tool_result", "tool_use_id" ~ r.id, "content" ~ blocks)
-
-  py.dict("role" ~ "user", "content" ~ content)
+private def anthropicToolResultMessage(results: List[ToolResult], invalidCalls: List[String]): py.Dict =
+  py.dict("role" ~ "user", "content" ~ anthropicResultBlocks(results, invalidCalls, inlineMedia = true))
 
 //[ One Anthropic `messages.create` with adaptive thinking enabled.
   !
