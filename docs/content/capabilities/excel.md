@@ -33,7 +33,10 @@ strings, with empty cells returned as `""`.
 
 The shipped `OpenpyxlExcel` backend opens workbooks in read-only streaming mode
 and returns cached formula values rather than formulas. It is backed by
-`openpyxl`:
+`openpyxl`. It reads workbook content regardless of the filename extension, so
+a workbook stored under a content hash can be opened directly. Close the
+workbook to release its underlying file stream. Bind the backend in the trusted
+runtime:
 
 ```jo
 excelReader = new OpenpyxlExcel(root)

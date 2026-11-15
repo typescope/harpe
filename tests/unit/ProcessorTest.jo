@@ -91,6 +91,19 @@ private def makeXlsx(path: String): Unit =
   notes.append(py.list("hello"))
   wb.save(path)
 
+// Observe the source passed to the real loader so resource lifetime can be
+// checked on both successful opens and parse failures. Restore it on failure.
+private def withWorkbookLoader(body: py.Dynamic => Unit): Unit =
+  val patch = py.module("unittest.mock").patch:
+    "openpyxl.load_workbook"
+    wraps = py.module("openpyxl").load_workbook
+  val loader = patch.__enter__()
+  val result = py.try(body(loader))
+  val _ = patch.__exit__(py.none, py.none, py.none)
+  match result
+  case Ok(_) => pass
+  case Err(error) => abort error.message
+
 // A handwritten 2-page PDF with an information dictionary and a 2-entry outline —
 // pypdfium2 cannot author those, but PDFium parses this fixture fine.
 private def outlinedPdf: String = """
@@ -215,6 +228,22 @@ def processorSuite(): Unit receives thisSuite = suite: "media processors", () =>
     test: "rejects a file that is not a workbook", () =>
       withMedia: (fs, dir) =>
         check("garbage is Err", fs.openWorkbook("note.txt").isErr)
+        check("missing is Err", fs.openWorkbook("nope.xlsx").isErr)
+
+    test: "reads a workbook stored under an extensionless name", () =>
+      withMedia: (fs, dir) =>
+        makeXlsx(os.path.join(dir, "0a1b"))
+        val book = fs.openWorkbook("0a1b").success
+        check("sheets", book.sheets.get(0) == "Data")
+        val window = book.rows("Data", 2, 1).getOrElse(List.empty[List[String]])
+        check("lazy row read", window.size == 1 && window.get(0).get(0) == "apple")
+        book.close()
+
+    test: "closes the source when workbook loading fails", () =>
+      withMedia: (fs, dir) =>
+        withWorkbookLoader: loader =>
+          check("corrupt is Err", fs.openWorkbook("note.txt").isErr)
+          check("source closed", loader.call_args.args[0].closed.asBool)
 
     test: "lists its sheets", () =>
       withMedia: (fs, dir) =>
@@ -250,10 +279,14 @@ def processorSuite(): Unit receives thisSuite = suite: "media processors", () =>
     test: "closing twice is safe", () =>
       withMedia: (fs, dir) =>
         makeXlsx(os.path.join(dir, "table.xlsx"))
-        val book = fs.openWorkbook("table.xlsx").success
-        book.close()
-        book.close()
-        check("idempotent", true)
+        withWorkbookLoader: loader =>
+          val book = fs.openWorkbook("table.xlsx").success
+          val source = loader.call_args.args[0]
+          check("source stays open", !source.closed.asBool)
+          check("lazy read", book.rows("Notes", 1, 1).getOrElse(List.empty[List[String]]).get(0).get(0) == "hello")
+          book.close()
+          book.close()
+          check("source closed", source.closed.asBool)
 
   suite: "image", () =>
     test: "reports dimensions and metadata", () =>
