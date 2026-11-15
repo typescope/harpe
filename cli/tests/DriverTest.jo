@@ -1,0 +1,53 @@
+namespace harpe.cli.tests.DriverTest
+
+import harpe.cli.tests.Driver
+import harpe.ffi.os
+import harpe.ffi.tempfile
+import harpe.util.File
+import jtest.thisSuite
+import jtest.suite
+import jtest.test
+import jtest.check
+import jtest.checkEquals
+
+private def record(root: String, version: String): String =
+  os.path.join(root, "sandbox/.build/guest/jo-\{version}/target/guest.py.done")
+
+private def withBuilds(version: String, body: (Driver.Application, String, String) => Unit): Unit =
+  val dir = tempfile.mkdtemp()
+  val source = os.path.join(dir, "source")
+  val home = os.path.join(dir, "home")
+  File.ensureDir(os.path.join(source, "sandbox"))
+  File.write(os.path.join(source, "sandbox/jo.toml"), "jo = '\{version}' # compatibility\n")
+  for built in ["0.13", "0.14"] do
+    val path = record(source, built)
+    File.ensureDir(os.path.dirname(path))
+    File.write(path, "compiler invocation for " + built)
+    // The incompatible record is newer, regardless of which line is selected.
+    val modified = if built == version then 1 else 2
+    py.module("os").utime(path, py.tuple(modified, modified))
+
+  val attempted = py.try(body(new Driver.Application(source, "fixture"), source, home))
+  py.module("shutil").rmtree(dir)
+  match attempted
+  case Ok(_) => pass
+  case Err(error) => abort error.message
+
+def driverSuite(): Unit receives thisSuite = suite: "driver", () =>
+  test: "installs the manifest-compatible record despite a newer incompatible build", () =>
+    for version in ["0.13", "0.14"] do
+      withBuilds: version, (application, source, home) =>
+        application.installGuest(home)
+        checkEquals("copied manifest", File.read(os.path.join(home, "sandbox/jo.toml")),
+          File.read(os.path.join(source, "sandbox/jo.toml")))
+        checkEquals("matching record", File.read(record(home, version)), "compiler invocation for " + version)
+        val other = if version == "0.13" then "0.14" else "0.13"
+        check("no incompatible record installed", !File.exists(record(home, other)))
+
+  test: "reports a missing compatible record instead of installing another version", () =>
+    withBuilds: "0.14", (application, source, home) =>
+      os.unlink(record(source, "0.14"))
+      match py.try(application.installGuest(home))
+      case Ok(_) => check("missing compatible build is rejected", false)
+      case Err(error) => check("diagnostic names the required record", error.message.contains("jo-0.14/target/guest.py.done"))
+      check("incompatible record was not installed", !File.exists(record(home, "0.13")))

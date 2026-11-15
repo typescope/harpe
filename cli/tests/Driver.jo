@@ -65,16 +65,16 @@ section Driver
     def installGuest(home: String): Unit =
       val sandbox = os.path.join(home, "sandbox")
       File.ensureDir(sandbox)
-      py.module("shutil").copy2(path("sandbox/jo.toml"), os.path.join(sandbox, "jo.toml"))
-      val record = newestMatch:
-        os.path.join(root, "sandbox/.build/guest", "*/target/*.py.done")
-        "built sandbox guest"
+      val manifest = os.path.join(sandbox, "jo.toml")
+      py.module("shutil").copy2(path("sandbox/jo.toml"), manifest)
+      val version = joCompatibility(manifest)
+      val relative = ".build/guest/jo-\{version}/target/guest.py.done"
+      val record = path("sandbox/" + relative)
+      assert: File.exists(record), "e2e: no built sandbox guest found at \{record}"
 
-      val target = os.path.dirname(record)
-      val version = os.path.basename(os.path.dirname(target))
-      val installed = os.path.join(home, "sandbox/.build/guest", version, "target")
-      File.ensureDir(installed)
-      py.module("shutil").copy2(record, os.path.join(installed, os.path.basename(record)))
+      val installed = os.path.join(sandbox, relative)
+      File.ensureDir(os.path.dirname(installed))
+      py.module("shutil").copy2(record, installed)
 
     private def buildOne(specDir: String, module: String): Unit =
       val built = Process.runCapped:
@@ -90,6 +90,18 @@ section Driver
   def application(): Application =
     val root = agentHome()
     new Application(root, os.path.basename(root))
+
+  //[ The copied manifest selects the record, just as it does for `RunCodeTool`. //]
+  private def joCompatibility(specPath: String): String =
+    val declaration = `^jo[ \t]*=[ \t]*(?:"([0-9]+[.][0-9]+)"|'([0-9]+[.][0-9]+)')[ \t]*(?:#.*)?$`
+    for raw in File.read(specPath).lines do
+      val line = raw.trim
+      if line.startsWith("[") then break
+      match declaration.matchFirst(line)
+      case Some(found) => return found.getOrEmpty(1) + found.getOrEmpty(2)
+      case None => pass
+
+    abort "e2e: sandbox jo.toml must declare top-level jo = \"MAJOR.MINOR\""
 
   //[ The one file matching `paths`, or the newest when a stale build lingers
     !
