@@ -1,0 +1,68 @@
+//[ FilesystemFfiTest.jo
+  !
+  ! Exercise the typed host filesystem bindings against real temporary files.
+//]
+
+namespace harpe.test.unit.FilesystemFfiTest
+
+import harpe.ffi.os
+import harpe.ffi.shutil
+import harpe.ffi.tempfile
+import harpe.util.File
+import jtest.thisSuite
+import jtest.suite
+import jtest.test
+import jtest.check
+import jtest.checkEquals
+
+private def withDirectory(body: String => Unit): Unit =
+  val dir = tempfile.mkdtemp()
+  val attempted = py.try(body(dir))
+  shutil.rmtree(dir, ignore_errors = true)
+  match attempted
+  case Ok(_) => pass
+  case Err(error) => abort error.message
+
+def filesystemFfiSuite(): Unit receives thisSuite = suite: "filesystem ffi", () =>
+  test: "replace moves a file over an existing destination", () =>
+    withDirectory: dir =>
+      val source = os.path.join(dir, "pending")
+      val target = os.path.join(dir, "stored")
+      File.write(source, "new content")
+      File.write(target, "old content")
+      os.replace(source, target)
+      checkEquals("destination replaced", File.read(target), "new content")
+      check("source moved", !os.path.exists(source))
+
+  test: "utime refreshes an existing file without changing its contents", () =>
+    withDirectory: dir =>
+      val path = os.path.join(dir, "stored")
+      File.write(path, "content")
+      // Set an old timestamp without relying on sleeps or filesystem precision.
+      py.module("os").utime(path, py.tuple(1, 1))
+      os.utime(path)
+      check("timestamp refreshed", os.path.getmtime(path) > 1.0)
+      checkEquals("content preserved", File.read(path), "content")
+      val missing = os.path.join(dir, "missing")
+      check("missing file raises", py.try(os.utime(missing)).isErr)
+      check("missing file is not created", !os.path.exists(missing))
+
+  test: "rmdir removes empty directories and refuses nonempty ones", () =>
+    withDirectory: dir =>
+      val child = os.path.join(dir, "child")
+      File.ensureDir(child)
+      File.write(os.path.join(child, "kept"), "content")
+      check("nonempty directory raises", py.try(os.rmdir(child)).isErr)
+      os.unlink(os.path.join(child, "kept"))
+      os.rmdir(child)
+      check("empty directory removed", !os.path.exists(child))
+
+  test: "rmtree removes a tree and honors ignore_errors", () =>
+    withDirectory: dir =>
+      val tree = os.path.join(dir, "tree")
+      File.ensureDir(os.path.join(tree, "nested"))
+      File.write(os.path.join(tree, "nested/file"), "content")
+      shutil.rmtree(tree, ignore_errors = false)
+      check("tree removed", !os.path.exists(tree))
+      check("missing tree raises", py.try(shutil.rmtree(tree, ignore_errors = false)).isErr)
+      shutil.rmtree(tree, ignore_errors = true)

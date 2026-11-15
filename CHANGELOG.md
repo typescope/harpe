@@ -13,6 +13,11 @@ module immediately after the sandbox path, for example
 produced before a crash ahead of the crash diagnostic, and records both in the
 existing `harpe.tools.runCode.ran` entry's `output` field.
 
+**Typed host filesystem bindings support replacement, touching, and cleanup.**
+`harpe.ffi.os` now exposes `replace(src, dst)`, `utime(path)`, and `rmdir(path)`.
+`harpe.ffi.shutil` exposes `rmtree(path, ignore_errors = ...)`, preserving
+Python's filesystem behavior and exceptions.
+
 **Decode guest stdout and stderr as UTF-8 with replacement**. This way, output that is
 not valid UTF-8 (for example a multi-byte character cut by `head -c`) no
 longer fails `RunCodeTool` as an internal error.

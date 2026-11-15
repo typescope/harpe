@@ -75,6 +75,24 @@ delegates to the corresponding reader capability bound by the trusted runtime.
 See [PDF](/capabilities/pdf/), [Excel](/capabilities/excel/), and
 [Word](/capabilities/word/).
 
+## Trusted filesystem operations
+
+Trusted application code can import `harpe.ffi.os` and `harpe.ffi.shutil` for
+direct Python filesystem operations:
+
+```jo
+os.replace(pendingPath, storedPath)
+os.utime(storedPath)
+os.rmdir(emptyDirectory)
+shutil.rmtree(temporaryTree, ignore_errors = false)
+```
+
+`replace` overwrites an existing destination file, `utime` refreshes an existing
+file's access and modification times, and `rmdir` removes an empty directory.
+`rmtree` removes an entire directory tree. These bindings accept host paths and
+retain Python's exceptions; `ignore_errors = true` suppresses removal errors
+from `rmtree`.
+
 ## Interface reference
 
 ```jo
