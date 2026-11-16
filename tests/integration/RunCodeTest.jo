@@ -124,13 +124,19 @@ end
 private class StuckApprovalInteract
   view Interact
 
+  private val released = py.module("threading").Event()
+
   def cancelled: Bool = false
   def pause(seconds: Float): Bool = false
   def emit(event: turns.TurnEvent): Unit = pass
 
   def approve(title: String, detail: String): Approvals.Decision =
-    py.module("time").sleep(py.dynamic(1.0))
+    val _ = released.wait()
     Approvals.Approved
+
+  def release(): Unit =
+    val _ = released.set()
+    pass
 end
 
 // Wrap a runTask body in a minimal guest program.
@@ -368,11 +374,17 @@ private def parallelCases(): Unit receives thisSuite =
         approvalDeadline = 1
         buildTimeout = 120
         runTimeout = 5
-      val stuck = execAudited:
-        watchdog
-        guest("  println 7\n")
-        Map("HARPE_TEST_APPROVAL" ~ "1")
-        new StuckApprovalInteract
+      val channel = new StuckApprovalInteract
+      val attempted = py.try:
+        execAudited:
+          watchdog
+          guest("  println 7\n")
+          Map("HARPE_TEST_APPROVAL" ~ "1")
+          channel
+      // Release the daemon handler only after the watchdog has stopped the
+      // guest, including if the run raises, so it cannot race the deadline.
+      channel.release()
+      val stuck = attempted rescue Err(error) => abort error.message
       checkEquals("summary", stuck.outcome.summary.split(" · ").get(0), "approval timed out")
       checkAudit(stuck, "harpe.tools.runCode.approvalTimedOut")
 
